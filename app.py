@@ -1462,7 +1462,7 @@ def login():
         
         flash('Invalid credentials or role', 'danger')
     
-    return render_template('auth/index.html')
+    return render_template('index.html')
 
 @app.context_processor
 def inject_current_date():
