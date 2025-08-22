@@ -64,7 +64,7 @@ PROFILE_PICTURE_FOLDER = os.path.join(UPLOAD_FOLDER, 'profile_pictures')
 os.makedirs(PROFILE_PICTURE_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')  # Provide default only for development
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'U3VwZXJTZWNyZXRBZG1pblRva2VuMTIzIQ')  # Provide default only for development
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///clinic.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', UPLOAD_FOLDER)

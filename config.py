@@ -17,7 +17,7 @@ class Config:
     REMEMBER_COOKIE_HTTPONLY = True
     
     # Core Application Settings
-    SECRET_KEY = os.getenv("SECRET_KEY")
+    SECRET_KEY = os.getenv("SECRET_KEY", 'U3VwZXJTZWNyZXRBZG1pblRva2VuMTIzIQ')
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///clinic.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = os.getenv('SQLALCHEMY_TRACK_MODIFICATIONS', 'false').lower() == 'true'
     
