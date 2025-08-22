@@ -57,33 +57,33 @@ class Config:
     
     fernet = None
     
-@classmethod
-def init_fernet(cls, app):
-    """Initialize Fernet encryption with proper error handling"""
-    try:
-        key = os.getenv('FERNET_KEY')
-        if not key:
-            # Fernet.generate_key() already returns a valid 44-char key
-            key = Fernet.generate_key().decode()
-            app.logger.warning("No FERNET_KEY in environment - generating new key")
-            os.environ['FERNET_KEY'] = key
-        
-        if len(key) != 44:
-            raise ValueError("Invalid Fernet key length - must be 44 character URL-safe base64 string")
+    @classmethod
+    def init_fernet(cls, app):
+        """Initialize Fernet encryption with proper error handling"""
+        try:
+            key = os.getenv('FERNET_KEY')
+            if not key:
+                # Fernet.generate_key() already returns a valid 44-char key
+                key = Fernet.generate_key().decode()
+                app.logger.warning("No FERNET_KEY in environment - generating new key")
+                os.environ['FERNET_KEY'] = key
             
-        cls.fernet = Fernet(key.encode())
-        cls.FERNET_KEY = key
-        app.logger.info("Fernet encryption initialized successfully")
-        app.config['FERNET_KEY'] = cls.FERNET_KEY
-        
-    except Exception as e:
-        app.logger.error(f"Fernet initialization failed: {str(e)}")
-        new_key = Fernet.generate_key().decode()
-        cls.fernet = Fernet(new_key.encode())
-        cls.FERNET_KEY = new_key
-        os.environ['FERNET_KEY'] = new_key
-        app.config['FERNET_KEY'] = new_key
-        app.logger.warning("Generated new Fernet key due to initialization error")
+            if len(key) != 44:
+                raise ValueError("Invalid Fernet key length - must be 44 character URL-safe base64 string")
+                
+            cls.fernet = Fernet(key.encode())
+            cls.FERNET_KEY = key
+            app.logger.info("Fernet encryption initialized successfully")
+            app.config['FERNET_KEY'] = cls.FERNET_KEY
+            
+        except Exception as e:
+            app.logger.error(f"Fernet initialization failed: {str(e)}")
+            new_key = Fernet.generate_key().decode()
+            cls.fernet = Fernet(new_key.encode())
+            cls.FERNET_KEY = new_key
+            os.environ['FERNET_KEY'] = new_key
+            app.config['FERNET_KEY'] = new_key
+            app.logger.warning("Generated new Fernet key due to initialization error")
 
     @classmethod
     def encrypt_data(cls, data):
