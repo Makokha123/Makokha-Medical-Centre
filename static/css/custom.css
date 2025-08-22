@@ -1,0 +1,45 @@
+/* Mobile-first styles */
+@media (max-width: 768px) {
+    /* Make tables scroll horizontally */
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    /* Adjust form layout */
+    .row.g-3 > [class^="col-"] {
+        margin-bottom: 1rem;
+    }
+    
+    /* Make buttons full width */
+    .btn {
+        width: 100%;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Adjust card padding */
+    .card-body {
+        padding: 1rem;
+    }
+    
+    /* Make navigation more compact */
+    .navbar-brand {
+        font-size: 1.1rem;
+    }
+}
+
+/* General improvements */
+.btn-group-sm .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+/* Make sure alerts are visible */
+.alert {
+    margin-bottom: 1rem;
+}
+
+/* Improve form input sizes */
+.form-control, .form-select {
+    padding: 0.375rem 0.75rem;
+}

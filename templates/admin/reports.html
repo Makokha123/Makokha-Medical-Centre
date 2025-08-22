@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block content %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <div class="d-flex justify-content-between align-items-center">
+                <h4><i class="fas fa-file-alt"></i> Reports Dashboard</h4>
+                <div class="btn-group">
+                    <button id="drugReportBtn" class="btn btn-light active">
+                        <i class="fas fa-pills"></i> Drug Sales
+                    </button>
+                    <button id="patientReportBtn" class="btn btn-light">
+                        <i class="fas fa-procedures"></i> Patient Services
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row mb-4">
+                <div class="col-md-5">
+                    <label for="startDate">Start Date</label>
+                    <input type="date" id="startDate" class="form-control">
+                </div>
+                <div class="col-md-5">
+                    <label for="endDate">End Date</label>
+                    <input type="date" id="endDate" class="form-control">
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button id="generateBtn" class="btn btn-primary w-100">
+                        <i class="fas fa-chart-bar"></i> Generate
+                    </button>
+                </div>
+            </div>
+            
+            <div id="reportResults">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i> Select report type, date range, and click Generate
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Set default dates (last 30 days)
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 30);
+    
+    document.getElementById('startDate').valueAsDate = startDate;
+    document.getElementById('endDate').valueAsDate = endDate;
+    
+    // Report type management
+    let currentReportType = 'drug_sales';
+    const drugBtn = document.getElementById('drugReportBtn');
+    const patientBtn = document.getElementById('patientReportBtn');
+    
+    drugBtn.addEventListener('click', function() {
+        currentReportType = 'drug_sales';
+        drugBtn.classList.add('active');
+        patientBtn.classList.remove('active');
+    });
+    
+    patientBtn.addEventListener('click', function() {
+        currentReportType = 'patient_services';
+        patientBtn.classList.add('active');
+        drugBtn.classList.remove('active');
+    });
+    
+    // Generate report on button click
+    document.getElementById('generateBtn').addEventListener('click', async function() {
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+        
+        if (!startDate || !endDate) {
+            showError('Please select both start and end dates');
+            return;
+        }
+        
+        // Show loading state
+        const resultsDiv = document.getElementById('reportResults');
+        resultsDiv.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="sr-only">Loading...</span>
+                </div>
+                <p>Generating ${currentReportType === 'drug_sales' ? 'Drug Sales' : 'Patient Services'} report...</p>
+            </div>
+        `;
+        
+        try {
+            const response = await fetch(
+                `/admin/reports/generate?type=${currentReportType}&start_date=${startDate}&end_date=${endDate}`
+            );
+            
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || 'Failed to generate report');
+            }
+            
+            const data = await response.json();
+            renderReport(data);
+            
+        } catch (error) {
+            showError(error.message);
+            console.error('Error:', error);
+        }
+    });
+    
+    function renderReport(data) {
+        let html = `
+            <div class="mb-3">
+                <h5>${data.report_type === 'drug_sales' ? 'Drug Sales' : 'Patient Services'} Report</h5>
+                <p class="text-muted">Period: ${data.start_date} to ${data.end_date}</p>
+            </div>
+        `;
+        
+        if (!data.data || data.data.length === 0) {
+            html += `
+                <div class="alert alert-warning">
+                    No ${data.report_type === 'drug_sales' ? 'drug sales' : 'patient services'} found for this period
+                </div>
+            `;
+        } else {
+            if (data.report_type === 'drug_sales') {
+                html += `
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead class="thead-dark">
+                                <tr>
+                                    <th>Drug Name</th>
+                                    <th>Units Sold</th>
+                                    <th>Total Sales</th>
+                                    <th>Profit</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                data.data.forEach(item => {
+                    html += `
+                        <tr>
+                            <td>${item.name}</td>
+                            <td>${item.units_sold}</td>
+                            <td>Ksh.${item.total_sales.toFixed(2)}</td>
+                            <td>Ksh.${item.profit.toFixed(2)}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += `</tbody></table></div>`;
+            } else {
+                html += `
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead class="thead-dark">
+                                <tr>
+                                    <th>Service</th>
+                                    <th>Patient</th>
+                                    <th>Count</th>
+                                    <th>Total Revenue</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                data.data.forEach(item => {
+                    html += `
+                        <tr>
+                            <td>${item.service_name}</td>
+                            <td>${item.patient_name}</td>
+                            <td>${item.count}</td>
+                            <td>Ksh.${item.total_revenue.toFixed(2)}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += `</tbody></table></div>`;
+            }
+        }
+        
+        document.getElementById('reportResults').innerHTML = html;
+    }
+    
+    function showError(message) {
+        document.getElementById('reportResults').innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-circle"></i> ${message}
+            </div>
+        `;
+    }
+});
+</script>
+
+<style>
+.btn-group .btn.active {
+    background-color: #e9ecef;
+    border-color: #dee2e6;
+    color: #495057;
+    font-weight: 600;
+}
+</style>
+{% endblock %}

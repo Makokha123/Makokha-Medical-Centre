@@ -1,0 +1,789 @@
+
+{% extends "doctor/layout.html" %}
+
+{% block content %}
+<div class="content">
+    <div class="page-header">
+        <h2><i class="fas fa-user-injured"></i> Patient Details - {{ patient.decrypted_name }}</h2>
+        <div class="page-actions">
+            <a href="{{ url_for('doctor_patients') }}" class="btn btn-secondary">
+                <i class="fas fa-arrow-left"></i> Back to Patients
+            </a>
+            {% if patient.status == 'active' %}
+            <button class="btn btn-success" onclick="completeTreatment('{{ patient.id }}')">
+                <i class="fas fa-check"></i> Complete Treatment
+            </button>
+            {% else %}
+            <button class="btn btn-warning" onclick="readmitPatient('{{ patient.id }}')">
+                <i class="fas fa-user-plus"></i> Readmit Patient
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="patient-details-container">
+        <!-- Basic Information Section -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h3><i class="fas fa-id-card"></i> Basic Information</h3>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <p><strong>Name:</strong> {{ patient.decrypted_name }}</p>
+                        <p><strong>Patient ID:</strong> {{ patient.op_number or patient.ip_number }}</p>
+                        <p><strong>Age:</strong> {{ patient.age }}</p>
+                        <p><strong>Gender:</strong> {{ patient.gender }}</p>
+                        <p><strong>Religion:</strong> {{ patient.religion or 'N/A' }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <p><strong>Admission Date:</strong> {{ patient.date_of_admission.strftime('%Y-%m-%d') }}</p>
+                        <p><strong>Status:</strong> <span class="badge bg-{{ 'success' if patient.status == 'active' else 'secondary' }}">{{ patient.status|capitalize }}</span></p>
+                        <p><strong>Next of Kin:</strong> {{ patient.decrypted_nok_name }}</p>
+                        <p><strong>Kin Contact:</strong> {{ patient.decrypted_nok_contact }}</p>
+                        <p><strong>TCA Date:</strong> {{ patient.tca.strftime('%Y-%m-%d') if patient.tca else 'N/A' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chief Complaint and HPI -->
+        <div class="row">
+            <div class="col-md-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header bg-info text-white">
+                        <h3><i class="fas fa-comment-medical"></i> Chief Complaint</h3>
+                    </div>
+                    <div class="card-body">
+                        <p>{{ patient.chief_complaint or 'No chief complaint recorded' }}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header bg-info text-white">
+                        <h3><i class="fas fa-history"></i> History of Present Illness</h3>
+                    </div>
+                    <div class="card-body">
+                        <p>{{ patient.history_present_illness or 'No HPI recorded' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Review of Systems -->
+        <div class="card mb-4">
+            <div class="card-header bg-secondary text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h3><i class="fas fa-clipboard-list"></i> Review of Systems</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#reviewSystemsModal">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <h5>CNS</h5>
+                        <p>{{ review_systems.cns if review_systems and review_systems.cns else 'Normal' }}</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h5>CVS</h5>
+                        <p>{{ review_systems.cvs if review_systems and review_systems.cvs else 'Normal' }}</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h5>Respiratory</h5>
+                        <p>{{ review_systems.rs if review_systems and review_systems.rs else 'Normal' }}</p>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-md-4">
+                        <h5>GIT</h5>
+                        <p>{{ review_systems.git if review_systems and review_systems.git else 'Normal' }}</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h5>GUT</h5>
+                        <p>{{ review_systems.gut if review_systems and review_systems.gut else 'Normal' }}</p>
+                    </div>
+                    <div class="col-md-4">
+                        <h5>MSK</h5>
+                        <p>{{ review_systems.msk if review_systems and review_systems.msk else 'Normal' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Medical History -->
+        <div class="card mb-4">
+            <div class="card-header bg-warning text-dark">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h3><i class="fas fa-medkit"></i> Medical History</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#medicalHistoryModal">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Past Medical History</h5>
+                        <p>{{ history.medical_history if history and history.medical_history else 'None reported' }}</p>
+                        
+                        <h5 class="mt-3">Surgical History</h5>
+                        <p>{{ history.surgical_history if history and history.surgical_history else 'None reported' }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>Family History</h5>
+                        <p>{{ history.family_history if history and history.family_history else 'None reported' }}</p>
+                        
+                        <h5 class="mt-3">Allergies</h5>
+                        <p>{{ history.allergies if history and history.allergies else 'None reported' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Examination Findings -->
+        <div class="card mb-4">
+            <div class="card-header bg-danger text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h3><i class="fas fa-stethoscope"></i> Examination Findings</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#examinationModal">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>General Appearance</h5>
+                        <p>{{ examination.general_appearance if examination and examination.general_appearance else 'Normal' }}</p>
+                        
+                        <h5 class="mt-3">Vital Signs</h5>
+                        <ul class="list-unstyled">
+                            <li><strong>BP:</strong> {{ examination.bp_systolic if examination and examination.bp_systolic else 'N/A' }}/{{ examination.bp_diastolic if examination and examination.bp_diastolic else 'N/A' }} mmHg</li>
+                            <li><strong>Pulse:</strong> {{ examination.pulse if examination and examination.pulse else 'N/A' }} bpm</li>
+                            <li><strong>Temp:</strong> {{ examination.temperature if examination and examination.temperature else 'N/A' }} °C</li>
+                            <li><strong>SpO2:</strong> {{ examination.spo2 if examination and examination.spo2 else 'N/A' }}%</li>
+                            <li><strong>RR:</strong> {{ examination.resp_rate if examination and examination.resp_rate else 'N/A' }} /min</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>System Examinations</h5>
+                        <p><strong>CVS:</strong> {{ examination.cvs_exam if examination and examination.cvs_exam else 'Normal' }}</p>
+                        <p><strong>Resp:</strong> {{ examination.resp_exam if examination and examination.resp_exam else 'Normal' }}</p>
+                        <p><strong>Abdomen:</strong> {{ examination.abdo_exam if examination and examination.abdo_exam else 'Normal' }}</p>
+                        <p><strong>CNS:</strong> {{ examination.cns_exam if examination and examination.cns_exam else 'Normal' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diagnosis -->
+        <div class="card mb-4">
+            <div class="card-header bg-success text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h3><i class="fas fa-diagnoses"></i> Diagnosis</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#diagnosisModal">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <h5>Working Diagnosis</h5>
+                <p>{{ diagnosis.working_diagnosis if diagnosis and diagnosis.working_diagnosis else 'No diagnosis recorded' }}</p>
+                
+                <h5 class="mt-3">Differential Diagnosis</h5>
+                <p>{{ diagnosis.differential_diagnosis if diagnosis and diagnosis.differential_diagnosis else 'No differential diagnosis recorded' }}</p>
+            </div>
+        </div>
+
+        <!-- Management Plan -->
+        <div class="card mb-4">
+            <div class="card-header bg-dark text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h3><i class="fas fa-file-prescription"></i> Management Plan</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#managementModal">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Treatment Plan</h5>
+                        <p>{{ management.treatment_plan if management and management.treatment_plan else 'No treatment plan recorded' }}</p>
+                        
+                        <h5 class="mt-3">Follow Up</h5>
+                        <p>{{ management.follow_up if management and management.follow_up else 'No follow up plan recorded' }}</p>
+                        
+                        <h5 class="mt-3">Additional Notes</h5>
+                        <p>{{ management.notes if management and management.notes else 'No additional notes' }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>Prescriptions</h5>
+                        {% if prescriptions %}
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Drug</th>
+                                        <th>Dosage</th>
+                                        <th>Frequency</th>
+                                        <th>Duration</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for prescription in prescriptions %}
+                                    <tr>
+                                        <td>{{ prescription.drug.name }} ({{ prescription.quantity }})</td>
+                                        <td>{{ prescription.dosage }}</td>
+                                        <td>{{ prescription.frequency }}</td>
+                                        <td>{{ prescription.duration }}</td>
+                                        <td>{{ prescription.notes or '-' }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <p>No prescriptions recorded</p>
+                        {% endif %}
+                        
+                        <h5 class="mt-3">Services</h5>
+                        {% if patient_services %}
+                        <ul class="list-group">
+                            {% for service in patient_services %}
+                            <li class="list-group-item">
+                                {{ service.service.name }}
+                                {% if service.notes %}
+                                <br><small class="text-muted">{{ service.notes }}</small>
+                                {% endif %}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p>No services recorded</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lab Requests -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h3><i class="fas fa-flask"></i> Lab Requests</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#labRequestModal">
+                        <i class="fas fa-plus"></i> Add Request
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                {% if lab_requests %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Test</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for request in lab_requests %}
+                            <tr>
+                                <td>{{ request.test.name }}</td>
+                                <td><span class="badge bg-{{ 'success' if request.status == 'completed' else 'warning' }}">{{ request.status }}</span></td>
+                                <td>{{ request.created_at.strftime('%Y-%m-%d') }}</td>
+                                <td>{{ request.notes or '-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p>No lab requests found</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Imaging Requests -->
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h3><i class="fas fa-x-ray"></i> Imaging Requests</h3>
+                    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#imagingRequestModal">
+                        <i class="fas fa-plus"></i> Add Request
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                {% if imaging_requests %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Test</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for request in imaging_requests %}
+                            <tr>
+                                <td>{{ request.test.name }}</td>
+                                <td><span class="badge bg-{{ 'success' if request.status == 'completed' else 'warning' }}">{{ request.status }}</span></td>
+                                <td>{{ request.created_at.strftime('%Y-%m-%d') }}</td>
+                                <td>{{ request.notes or '-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p>No imaging requests found</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Review Systems Modal -->
+<div class="modal fade" id="reviewSystemsModal" tabindex="-1" aria-labelledby="reviewSystemsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-secondary text-white">
+                <h5 class="modal-title" id="reviewSystemsModalLabel">Edit Review of Systems</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="section" value="review_systems">
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="cns" class="form-label">CNS</label>
+                                <textarea class="form-control" id="cns" name="cns" rows="2">{{ review_systems.cns if review_systems and review_systems.cns }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="cvs" class="form-label">CVS</label>
+                                <textarea class="form-control" id="cvs" name="cvs" rows="2">{{ review_systems.cvs if review_systems and review_systems.cvs }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="rs" class="form-label">Respiratory</label>
+                                <textarea class="form-control" id="rs" name="rs" rows="2">{{ review_systems.rs if review_systems and review_systems.rs }}</textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="git" class="form-label">GIT</label>
+                                <textarea class="form-control" id="git" name="git" rows="2">{{ review_systems.git if review_systems and review_systems.git }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="gut" class="form-label">GUT</label>
+                                <textarea class="form-control" id="gut" name="gut" rows="2">{{ review_systems.gut if review_systems and review_systems.gut }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="msk" class="form-label">MSK</label>
+                                <textarea class="form-control" id="msk" name="msk" rows="2">{{ review_systems.msk if review_systems and review_systems.msk }}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Medical History Modal -->
+<div class="modal fade" id="medicalHistoryModal" tabindex="-1" aria-labelledby="medicalHistoryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title" id="medicalHistoryModalLabel">Edit Medical History</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="section" value="history">
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="medical_history" class="form-label">Past Medical History</label>
+                                <textarea class="form-control" id="medical_history" name="medical_history" rows="3">{{ history.medical_history if history and history.medical_history }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="surgical_history" class="form-label">Surgical History</label>
+                                <textarea class="form-control" id="surgical_history" name="surgical_history" rows="3">{{ history.surgical_history if history and history.surgical_history }}</textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="family_history" class="form-label">Family History</label>
+                                <textarea class="form-control" id="family_history" name="family_history" rows="3">{{ history.family_history if history and history.family_history }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="allergies" class="form-label">Allergies</label>
+                                <textarea class="form-control" id="allergies" name="allergies" rows="3">{{ history.allergies if history and history.allergies }}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Examination Modal -->
+<div class="modal fade" id="examinationModal" tabindex="-1" aria-labelledby="examinationModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="examinationModalLabel">Edit Examination Findings</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="section" value="examination">
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="general_appearance" class="form-label">General Appearance</label>
+                                <textarea class="form-control" id="general_appearance" name="general_appearance" rows="2">{{ examination.general_appearance if examination and examination.general_appearance }}</textarea>
+                            </div>
+                            <h5>Vital Signs</h5>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="temperature" class="form-label">Temperature (°C)</label>
+                                    <input type="number" step="0.1" class="form-control" id="temperature" name="temperature" value="{{ examination.temperature if examination and examination.temperature }}">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="pulse" class="form-label">Pulse (bpm)</label>
+                                    <input type="number" class="form-control" id="pulse" name="pulse" value="{{ examination.pulse if examination and examination.pulse }}">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="resp_rate" class="form-label">Resp Rate (/min)</label>
+                                    <input type="number" class="form-control" id="resp_rate" name="resp_rate" value="{{ examination.resp_rate if examination and examination.resp_rate }}">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="bp_systolic" class="form-label">BP Systolic (mmHg)</label>
+                                    <input type="number" class="form-control" id="bp_systolic" name="bp_systolic" value="{{ examination.bp_systolic if examination and examination.bp_systolic }}">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="bp_diastolic" class="form-label">BP Diastolic (mmHg)</label>
+                                    <input type="number" class="form-control" id="bp_diastolic" name="bp_diastolic" value="{{ examination.bp_diastolic if examination and examination.bp_diastolic }}">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="spo2" class="form-label">SpO2 (%)</label>
+                                    <input type="number" class="form-control" id="spo2" name="spo2" value="{{ examination.spo2 if examination and examination.spo2 }}">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h5>System Examinations</h5>
+                            <div class="mb-3">
+                                <label for="cvs_exam" class="form-label">CVS</label>
+                                <textarea class="form-control" id="cvs_exam" name="cvs_exam" rows="2">{{ examination.cvs_exam if examination and examination.cvs_exam }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="resp_exam" class="form-label">Respiratory</label>
+                                <textarea class="form-control" id="resp_exam" name="resp_exam" rows="2">{{ examination.resp_exam if examination and examination.resp_exam }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="abdo_exam" class="form-label">Abdomen</label>
+                                <textarea class="form-control" id="abdo_exam" name="abdo_exam" rows="2">{{ examination.abdo_exam if examination and examination.abdo_exam }}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="cns_exam" class="form-label">CNS</label>
+                                <textarea class="form-control" id="cns_exam" name="cns_exam" rows="2">{{ examination.cns_exam if examination and examination.cns_exam }}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Diagnosis Modal -->
+<div class="modal fade" id="diagnosisModal" tabindex="-1" aria-labelledby="diagnosisModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="diagnosisModalLabel">Edit Diagnosis</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="section" value="diagnosis">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="working_diagnosis" class="form-label">Working Diagnosis</label>
+                        <textarea class="form-control" id="working_diagnosis" name="working_diagnosis" rows="3">{{ diagnosis.working_diagnosis if diagnosis and diagnosis.working_diagnosis }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="differential_diagnosis" class="form-label">Differential Diagnosis</label>
+                        <textarea class="form-control" id="differential_diagnosis" name="differential_diagnosis" rows="3">{{ diagnosis.differential_diagnosis if diagnosis and diagnosis.differential_diagnosis }}</textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Management Modal -->
+<div class="modal fade" id="managementModal" tabindex="-1" aria-labelledby="managementModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title" id="managementModalLabel">Edit Management Plan</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="section" value="management">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="treatment_plan" class="form-label">Treatment Plan</label>
+                        <textarea class="form-control" id="treatment_plan" name="treatment_plan" rows="3">{{ management.treatment_plan if management and management.treatment_plan }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="follow_up" class="form-label">Follow Up</label>
+                        <textarea class="form-control" id="follow_up" name="follow_up" rows="3">{{ management.follow_up if management and management.follow_up }}</textarea>
+                    </div>
+                    
+                    <h4>Prescriptions</h4>
+                    <div id="prescription-items">
+                        <div class="prescription-item form-row mb-3">
+                            <div class="form-group col-md-3">
+                                <select class="form-control drug-select" name="drug_id" required>
+                                    <option value="">Select Drug</option>
+                                    {% for drug in drugs %}
+                                        <option value="{{ drug.id }}" data-stock="{{ drug.remaining_quantity }}">{{ drug.name }} ({{ drug.remaining_quantity }} in stock)</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="form-group col-md-1">
+                                <input type="number" class="form-control" name="quantity" placeholder="Qty" min="1" required>
+                            </div>
+                            <div class="form-group col-md-2">
+                                <input type="text" class="form-control" name="dosage" placeholder="Dosage" required>
+                            </div>
+                            <div class="form-group col-md-2">
+                                <input type="text" class="form-control" name="frequency" placeholder="Frequency" required>
+                            </div>
+                            <div class="form-group col-md-2">
+                                <input type="text" class="form-control" name="duration" placeholder="Duration" required>
+                            </div>
+                            <div class="form-group col-md-2">
+                                <input type="text" class="form-control" name="prescription_notes" placeholder="Notes">
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-secondary" id="add-prescription">
+                        <i class="fas fa-plus"></i> Add Another Medication
+                    </button>
+                    
+                    <h4 class="mt-4">Services</h4>
+                    <div class="form-group">
+                        <select class="form-control select2" name="service_id" id="service_id" multiple>
+                            {% for service in services %}
+                                <option value="{{ service.id }}">{{ service.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <textarea class="form-control mt-2" name="service_notes" placeholder="Notes for services" rows="2">{{ management.service_notes if management and management.service_notes }}</textarea>
+                    </div>
+                    
+                    <div class="form-group mt-3">
+                        <label for="management_notes">Additional Notes</label>
+                        <textarea class="form-control" id="management_notes" name="management_notes" rows="3">{{ management.notes if management and management.notes }}</textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Lab Request Modal -->
+<div class="modal fade" id="labRequestModal" tabindex="-1" aria-labelledby="labRequestModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="labRequestModalLabel">New Lab Request</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="section" value="lab_request">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="test_id" class="form-label">Test</label>
+                        <select class="form-select" id="test_id" name="test_id" required>
+                            <option value="">Select a test</option>
+                            {% for test in lab_tests %}
+                            <option value="{{ test.id }}">{{ test.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="notes" class="form-label">Notes</label>
+                        <textarea class="form-control" id="notes" name="notes" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Submit Request</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Imaging Request Modal -->
+<div class="modal fade" id="imagingRequestModal" tabindex="-1" aria-labelledby="imagingRequestModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title" id="imagingRequestModalLabel">New Imaging Request</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="section" value="imaging_request">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="test_id" class="form-label">Test</label>
+                        <select class="form-select" id="test_id" name="test_id" required>
+                            <option value="">Select a test</option>
+                            {% for test in imaging_tests %}
+                            <option value="{{ test.id }}">{{ test.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="notes" class="form-label">Notes</label>
+                        <textarea class="form-control" id="notes" name="notes" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Submit Request</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- JavaScript for actions -->
+<script>
+function completeTreatment(patientId) {
+    if (confirm('Are you sure you want to mark this treatment as complete?')) {
+        fetch(`/doctor/patient/${patientId}/complete`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to complete treatment'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Failed to complete treatment');
+        });
+    }
+}
+
+function readmitPatient(patientId) {
+    if (confirm('Are you sure you want to readmit this patient?')) {
+        fetch(`/doctor/patient/${patientId}/readmit`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to readmit patient'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Failed to readmit patient');
+        });
+    }
+}
+
+// Add prescription item
+document.getElementById('add-prescription').addEventListener('click', function() {
+    const newItem = document.querySelector('.prescription-item').cloneNode(true);
+    newItem.querySelectorAll('input').forEach(input => input.value = '');
+    newItem.querySelector('select').value = '';
+    document.getElementById('prescription-items').appendChild(newItem);
+});
+
+// Initialize Select2 for services
+$(document).ready(function() {
+    $('.select2').select2({
+        placeholder: "Select services",
+        allowClear: true
+    });
+    
+    // Show drug stock when selected
+    $('.drug-select').change(function() {
+        const selectedOption = $(this).find('option:selected');
+        const stock = selectedOption.data('stock');
+        if (stock !== undefined) {
+            alert(`Current stock: ${stock}`);
+        }
+    });
+});
+</script>
+
+<style>
+.patient-details-container .card-header {
+    font-weight: bold;
+}
+.badge {
+    padding: 0.35em 0.65em;
+    font-size: 0.875em;
+}
+.prescription-item {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+}
+.select2-container {
+    width: 100% !important;
+}
+</style>
+{% endblock %}

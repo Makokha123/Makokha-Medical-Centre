@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+              <span aria-hidden="true">&times;</span>
+            </button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    
+    <!-- Content from extending templates will go here -->
+    {% block doctor_content %}
+    {% endblock %}
+</div>
+{% endblock %}
+
+{# Add this new template for displaying patient sensitive data securely #}
+{% macro display_patient_info(patient) %}
+<div class="patient-sensitive-data">
+    <div class="row">
+        <div class="col-md-6">
+            <dl class="row">
+                <dt class="col-sm-4">Full Name:</dt>
+                <dd class="col-sm-8">{{ patient.decrypted_name or '[Name Unavailable]' }}</dd>
+                
+                <dt class="col-sm-4">Phone:</dt>
+                <dd class="col-sm-8">{{ patient.decrypted_phone or '[Phone Unavailable]' }}</dd>
+                
+                <dt class="col-sm-4">Address:</dt>
+                <dd class="col-sm-8">{{ patient.decrypted_address or '[Address Unavailable]' }}</dd>
+            </dl>
+        </div>
+        <div class="col-md-6">
+            <dl class="row">
+                <dt class="col-sm-4">Occupation:</dt>
+                <dd class="col-sm-8">{{ patient.decrypted_occupation or '[Occupation Unavailable]' }}</dd>
+                
+                <dt class="col-sm-4">Next of Kin:</dt>
+                <dd class="col-sm-8">{{ patient.decrypted_nok_name or '[Next of Kin Unavailable]' }}</dd>
+                
+                <dt class="col-sm-4">Kin Contact:</dt>
+                <dd class="col-sm-8">{{ patient.decrypted_nok_contact or '[Contact Unavailable]' }}</dd>
+            </dl>
+        </div>
+    </div>
+</div>
+
+<style>
+.patient-sensitive-data {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    border: 1px solid #dee2e6;
+}
+.patient-sensitive-data dt {
+    font-weight: 600;
+}
+</style>
+{% endmacro %}

@@ -1,0 +1,478 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Add this to the head section of all your base templates -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <div class="content">
+            <div class="page-header">
+                <h2><i class="fas fa-users"></i> User Management</h2>
+                <div class="page-actions">
+                    <button class="btn btn-primary" data-toggle="modal" data-target="#addUserModal">
+                        <i class="fas fa-plus"></i> Add New User
+                    </button>
+                </div>
+            </div>
+            
+            <div class="table-responsive">
+                <table class="data-table" id="usersTable">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Last Login</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                        <tr>
+                            <td>{{ user.username }}</td>
+                            <td>{{ user.email }}</td>
+                            <td>{{ user.role }}</td>
+                            <td>
+                                <span class="status-badge {% if user.is_active %}active{% else %}inactive{% endif %}">
+                                    {% if user.is_active %}Active{% else %}Inactive{% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                {% if user.last_login %}
+                                    {{ user.last_login.strftime('%Y-%m-%d %H:%M') }}
+                                {% else %}
+                                    Never
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-edit" data-id="{{ user.id }}" data-toggle="modal" data-target="#editUserModal">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                {% if user.id != current_user.id %}
+                                <button class="btn btn-sm btn-delete" data-id="{{ user.id }}">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add User Modal -->
+<div class="modal fade" id="addUserModal" tabindex="-1" role="dialog" aria-labelledby="addUserModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addUserModalLabel">Add New User</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <form id="addUserForm" method="POST" action="{{ url_for('manage_users') }}">
+                <input type="hidden" name="action" value="add">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="role">Role</label>
+                        <select class="form-control" id="role" name="role" required>
+                            <option value="admin">Admin</option>
+                            <option value="doctor">Doctor</option>
+                            <option value="pharmacist">Pharmacist</option>
+                            <option value="receptionist">Receptionist</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="phone">Phone</label>
+                        <input type="text" class="form-control" id="phone" name="phone">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                        <small class="form-text text-muted">Password must be at least 8 characters with uppercase, lowercase, number and symbol</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm_password">Confirm Password</label>
+                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                    </div>
+                    <div class="form-group form-check">
+                        <input type="checkbox" class="form-check-input" id="is_active" name="is_active" checked>
+                        <label class="form-check-label" for="is_active">Active</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit User Modal -->
+<div class="modal fade" id="editUserModal" tabindex="-1" role="dialog" aria-labelledby="editUserModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editUserModalLabel">Edit User</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <form id="editUserForm" method="POST" action="{{ url_for('manage_users') }}">
+                <input type="hidden" name="action" value="edit">
+                <input type="hidden" id="edit_user_id" name="user_id">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="edit_username">Username</label>
+                        <input type="text" class="form-control" id="edit_username" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_email">Email</label>
+                        <input type="email" class="form-control" id="edit_email" name="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_role">Role</label>
+                        <select class="form-control" id="edit_role" name="role" required>
+                            <option value="admin">Admin</option>
+                            <option value="doctor">Doctor</option>
+                            <option value="pharmacist">Pharmacist</option>
+                            <option value="receptionist">Receptionist</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_phone">Phone</label>
+                        <input type="text" class="form-control" id="edit_phone" name="phone">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_password">New Password (leave blank to keep current)</label>
+                        <input type="password" class="form-control" id="edit_password" name="password">
+                        <small class="form-text text-muted">Password must be at least 8 characters with uppercase, lowercase, number and symbol</small>
+                    </div>
+                    <div class="form-group form-check">
+                        <input type="checkbox" class="form-check-input" id="edit_is_active" name="is_active">
+                        <label class="form-check-label" for="edit_is_active">Active</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Update User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteUserModal" tabindex="-1" role="dialog" aria-labelledby="deleteUserModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteUserModalLabel">Confirm Deletion</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <form method="POST" action="{{ url_for('manage_users') }}">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" id="delete_user_id" name="user_id">
+                <div class="modal-body">
+                    <p>Are you sure you want to delete this user? This action cannot be undone.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Delete User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<!-- DataTables and other JS libraries -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery-ui@1.12.1/jquery-ui.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery-ui@1.12.1/jquery-ui.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.responsive.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.jqueryui.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.responsive.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.buttons.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/1.7.1/js/buttons.html5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/1.7.1/js/buttons.print.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.select.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.fixedHeader.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.colReorder.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.keyTable.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.fixedColumns.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.searchBuilder.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.searchPanes.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.autoFill.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.scroller.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.responsive.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.buttons.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.select.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.fixedHeader.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.colReorder.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.keyTable.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.fixedColumns.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.searchBuilder.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.searchPanes.bootstrap4.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/js/all.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-validate/1.19.3/jquery.validate.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-datepicker@1.9.0/dist/js/bootstrap-datepicker.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-datepicker@1.9.0/dist/locales/bootstrap-datepicker.en.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-select@1.13.1/dist/js/bootstrap-select.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-select@1.13.1/dist/js/i18n/defaults-en_US.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/moment-timezone@0.5.34/moment-timezone-with-data.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/axios@0.21.1/dist/axios.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/clipboard@2.0.6/dist/clipboard.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/flatpickr.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/l10n/en.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/plugins/rangePlugin.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/plugins/confirmDatePlugin.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/plugins/scrollPlugin.js"></script>
+
+
+
+<script>
+$(document).ready(function() {
+    // Initialize DataTable
+    $('#usersTable').DataTable({
+        responsive: true,
+        dom: '<"top"lf>rt<"bottom"ip>',
+        pageLength: 25
+    });
+    
+    // Edit user modal handler
+    $('.btn-edit').click(function() {
+        const userId = $(this).data('id');
+        $.get(`/admin/users/${userId}`, function(user) {
+            $('#edit_user_id').val(user.id);
+            $('#edit_username').val(user.username);
+            $('#edit_email').val(user.email);
+            $('#edit_role').val(user.role);
+            $('#edit_phone').val(user.phone);
+            $('#edit_is_active').prop('checked', user.is_active);
+            $('#editUserModal').modal('show');
+        });
+    });
+    
+    // Delete user modal handler
+    $('.btn-delete').click(function() {
+        const userId = $(this).data('id');
+        $('#delete_user_id').val(userId);
+        $('#deleteUserModal').modal('show');
+    });
+    
+    // Password validation
+    $('#addUserForm, #editUserForm').submit(function(e) {
+        const password = $('#password').val();
+        const confirmPassword = $('#confirm_password').val();
+        
+        if (password && password.length < 8) {
+            alert('Password must be at least 8 characters long');
+            e.preventDefault();
+            return false;
+        }
+        
+        if (password && !/(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*\W)/.test(password)) {
+            alert('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character');
+            e.preventDefault();
+            return false;
+        }
+        
+        if (password !== confirmPassword) {
+            alert('Passwords do not match');
+            e.preventDefault();
+            return false;
+        }
+        
+        return true;
+    });
+});
+</script>
+
+<style>
+    /* User Management Specific Styles */
+    .user-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+    }
+    
+    .user-table th {
+        background-color: #f8f9fa;
+        color: #495057;
+        font-weight: 600;
+        padding: 12px 15px;
+        text-align: left;
+        border-bottom: 2px solid #dee2e6;
+    }
+    
+    .user-table td {
+        padding: 12px 15px;
+        border-bottom: 1px solid #e9ecef;
+        vertical-align: middle;
+    }
+    
+    .user-table tr:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    
+    .status-badge.active {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    
+    .status-badge.inactive {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+    
+    .user-actions .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+        margin-right: 0.25rem;
+    }
+    
+    /* Modal Specific Styles */
+    .user-modal .form-group {
+        margin-bottom: 1.25rem;
+    }
+    
+    .user-modal .modal-header {
+        background-color: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+    }
+    
+    .user-modal .modal-title {
+        color: #495057;
+        font-weight: 600;
+    }
+    
+    /* Navigation Tabs */
+    .management-tabs {
+        border-bottom: 1px solid #dee2e6;
+        margin-bottom: 1.5rem;
+    }
+    
+    .management-tabs .nav-link {
+        color: #495057;
+        font-weight: 500;
+        padding: 0.75rem 1.5rem;
+        border: none;
+        border-bottom: 2px solid transparent;
+    }
+    
+    .management-tabs .nav-link.active {
+        color: #007bff;
+        border-bottom: 2px solid #007bff;
+        background-color: transparent;
+    }
+    
+    .management-tabs .nav-link:hover:not(.active) {
+        color: #007bff;
+        background-color: rgba(0, 123, 255, 0.05);
+    }
+    
+    /* Page Header */
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+    }
+    
+    .page-header h2 {
+        margin: 0;
+        color: #343a40;
+    }
+    
+    .page-actions .btn {
+        margin-left: 0.5rem;
+    }
+    
+    /* Responsive Adjustments */
+    @media (max-width: 768px) {
+        .user-table th, 
+        .user-table td {
+            padding: 0.5rem;
+            font-size: 0.875rem;
+        }
+        
+        .management-tabs .nav-link {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+        
+        .page-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .page-actions {
+            margin-top: 1rem;
+            width: 100%;
+        }
+        
+        .page-actions .btn {
+            width: 100%;
+            margin: 0.25rem 0;
+        }
+    }
+    
+    /* DataTables Overrides */
+    .dataTables_wrapper .dataTables_filter input {
+        border: 1px solid #ced4da;
+        border-radius: 0.25rem;
+        padding: 0.375rem 0.75rem;
+    }
+    
+    .dataTables_wrapper .dataTables_length select {
+        border: 1px solid #ced4da;
+        border-radius: 0.25rem;
+        padding: 0.375rem 0.75rem;
+    }
+    
+    .dataTables_wrapper .dataTables_paginate .paginate_button {
+        padding: 0.25rem 0.5rem;
+        margin-left: 0.25rem;
+        border: 1px solid transparent;
+        border-radius: 0.25rem;
+    }
+    
+    .dataTables_wrapper .dataTables_paginate .paginate_button.current {
+        background: #007bff;
+        color: white !important;
+        border: 1px solid #007bff;
+    }
+</style>
+{% endblock %}

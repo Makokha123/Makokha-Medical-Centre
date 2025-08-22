@@ -1,0 +1,966 @@
+{% extends "base.html" %}
+{% block title %}Medical Tests Management{% endblock %}
+
+{% block content %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-lg-12">
+            <h2 class="mt-4 mb-3">Medical Tests Management</h2>
+            
+            <!-- Tab Navigation -->
+            <ul class="nav nav-tabs" id="medicalTestsTab" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="services-tab" data-bs-toggle="tab" data-bs-target="#services" type="button" role="tab">
+                        <i class="bi bi-heart-pulse me-1"></i> Services
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="tests-tab" data-bs-toggle="tab" data-bs-target="#tests" type="button" role="tab">
+                        <i class="bi bi-clipboard2-pulse me-1"></i> Lab & Imaging Tests
+                    </button>
+                </li>
+            </ul>
+            
+            <!-- Tab Content -->
+            <div class="tab-content p-3 border border-top-0 rounded-bottom" id="medicalTestsTabContent">
+                <!-- Services Tab -->
+                <div class="tab-pane fade show active" id="services" role="tabpanel">
+                    <div class="card mb-4">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Manage Services</h5>
+                            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addServiceModal">
+                                <i class="bi bi-plus-lg"></i> Add Service
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped table-hover" id="servicesTable">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Name</th>
+                                            <th>Price</th>
+                                            <th>Description</th>
+                                            <th>Created</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% if services %}
+                                            {% for service in services %}
+                                            <tr>
+                                                <td>{{ service.id }}</td>
+                                                <td>{{ service.name }}</td>
+                                                <td>{{ "%.2f"|format(service.price) }}</td>
+                                                <td>{{ service.description|truncate(50) if service.description else 'N/A' }}</td>
+                                                <td>{{ service.created_at.strftime('%Y-%m-%d') }}</td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-warning edit-service" data-id="{{ service.id }}">
+                                                        <i class="bi bi-pencil-square"></i>
+                                                    </button>
+                                                    <button class="btn btn-sm btn-danger delete-service" data-id="{{ service.id }}">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        {% else %}
+                                            <tr>
+                                                <td colspan="6" class="text-center py-4">No services found. Click "Add Service" to create one.</td>
+                                            </tr>
+                                        {% endif %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Tests Tab -->
+                <div class="tab-pane fade" id="tests" role="tabpanel">
+                    <div class="card mb-4">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Manage Lab & Imaging Tests</h5>
+                            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addTestModal">
+                                <i class="bi bi-plus-lg"></i> Add Test
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped table-hover" id="testsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Type</th>
+                                            <th>Name</th>
+                                            <th>Price</th>
+                                            <th>Description</th>
+                                            <th>Status</th>
+                                            <th>Created</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% if lab_tests or imaging_tests %}
+                                            {% for test in lab_tests %}
+                                            <tr>
+                                                <td>{{ test.id }}</td>
+                                                <td><span class="badge bg-info">Lab Test</span></td>
+                                                <td>{{ test.name }}</td>
+                                                <td>{{ "%.2f"|format(test.price) }}</td>
+                                                <td>{{ test.description|truncate(50) if test.description else 'N/A' }}</td>
+                                                <td><span class="badge bg-success">Active</span></td>
+                                                <td>{{ test.created_at.strftime('%Y-%m-%d') }}</td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-warning edit-test" data-id="{{ test.id }}" data-type="lab">
+                                                        <i class="bi bi-pencil-square"></i>
+                                                    </button>
+                                                    <button class="btn btn-sm btn-danger delete-test" data-id="{{ test.id }}" data-type="lab">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                            {% for test in imaging_tests %}
+                                            <tr>
+                                                <td>{{ test.id }}</td>
+                                                <td><span class="badge bg-primary">Imaging</span></td>
+                                                <td>{{ test.name }}</td>
+                                                <td>{{ "%.2f"|format(test.price) }}</td>
+                                                <td>{{ test.description|truncate(50) if test.description else 'N/A' }}</td>
+                                                <td>
+                                                    {% if test.is_active %}
+                                                        <span class="badge bg-success">Active</span>
+                                                    {% else %}
+                                                        <span class="badge bg-secondary">Inactive</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>{{ test.created_at.strftime('%Y-%m-%d') }}</td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-warning edit-test" data-id="{{ test.id }}" data-type="imaging">
+                                                        <i class="bi bi-pencil-square"></i>
+                                                    </button>
+                                                    <button class="btn btn-sm btn-danger delete-test" data-id="{{ test.id }}" data-type="imaging">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        {% else %}
+                                            <tr>
+                                                <td colspan="8" class="text-center py-4">No tests found. Click "Add Test" to create one.</td>
+                                            </tr>
+                                        {% endif %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Service Modal -->
+<div class="modal fade" id="addServiceModal" tabindex="-1" aria-labelledby="addServiceModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addServiceModalLabel">Add New Service</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="addServiceForm" method="POST" action="/admin/services/add">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="serviceName" class="form-label">Service Name</label>
+                        <input type="text" class="form-control" id="serviceName" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="servicePrice" class="form-label">Price</label>
+                        <input type="number" step="0.01" class="form-control" id="servicePrice" name="price" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="serviceDescription" class="form-label">Description</label>
+                        <textarea class="form-control" id="serviceDescription" name="description" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Service</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Service Modal -->
+<div class="modal fade" id="editServiceModal" tabindex="-1" aria-labelledby="editServiceModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editServiceModalLabel">Edit Service</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="editServiceForm" method="POST">
+                <input type="hidden" id="editServiceId" name="id">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="editServiceName" class="form-label">Service Name</label>
+                        <input type="text" class="form-control" id="editServiceName" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editServicePrice" class="form-label">Price</label>
+                        <input type="number" step="0.01" class="form-control" id="editServicePrice" name="price" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editServiceDescription" class="form-label">Description</label>
+                        <textarea class="form-control" id="editServiceDescription" name="description" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Update Service</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Add Test Modal -->
+<div class="modal fade" id="addTestModal" tabindex="-1" aria-labelledby="addTestModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addTestModalLabel">Add New Test</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="addTestForm" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="testType" class="form-label">Test Type</label>
+                        <select class="form-select" id="testType" name="type" required>
+                            <option value="">Select Type</option>
+                            <option value="lab">Lab Test</option>
+                            <option value="imaging">Imaging Test</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="testName" class="form-label">Test Name</label>
+                        <input type="text" class="form-control" id="testName" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="testPrice" class="form-label">Price</label>
+                        <input type="number" step="0.01" class="form-control" id="testPrice" name="price" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="testDescription" class="form-label">Description</label>
+                        <textarea class="form-control" id="testDescription" name="description" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3 form-check" id="activeCheckContainer" style="display: none;">
+                        <input type="checkbox" class="form-check-input" id="testIsActive" name="is_active" checked>
+                        <label class="form-check-label" for="testIsActive">Active</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Test</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Test Modal -->
+<div class="modal fade" id="editTestModal" tabindex="-1" aria-labelledby="editTestModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editTestModalLabel">Edit Test</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="editTestForm" method="POST">
+                <input type="hidden" id="editTestId" name="id">
+                <input type="hidden" id="editTestType" name="type">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="editTestName" class="form-label">Test Name</label>
+                        <input type="text" class="form-control" id="editTestName" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editTestPrice" class="form-label">Price</label>
+                        <input type="number" step="0.01" class="form-control" id="editTestPrice" name="price" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editTestDescription" class="form-label">Description</label>
+                        <textarea class="form-control" id="editTestDescription" name="description" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3 form-check" id="editActiveCheckContainer">
+                        <input type="checkbox" class="form-check-input" id="editTestIsActive" name="is_active">
+                        <label class="form-check-label" for="editTestIsActive">Active</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Update Test</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteConfirmationModal" tabindex="-1" aria-labelledby="deleteConfirmationModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="deleteConfirmationModalLabel">Confirm Deletion</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete this item? This action cannot be undone.</p>
+                <input type="hidden" id="deleteItemId">
+                <input type="hidden" id="deleteItemType">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Success Notification Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+    <div id="successToast" class="toast hide" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="toast-header bg-success text-white">
+            <strong class="me-auto">Success</strong>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+        <div class="toast-body">
+            Operation completed successfully!
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    // Initialize DataTables
+    $('#servicesTable, #testsTable').DataTable({
+        responsive: true,
+        columnDefs: [
+            { responsivePriority: 1, targets: 0 },
+            { responsivePriority: 2, targets: 1 },
+            { responsivePriority: 3, targets: -1 }
+        ],
+        language: {
+            emptyTable: "No data available in table"
+        }
+    });
+
+    // Show/hide active checkbox based on test type
+    $('#testType').change(function() {
+        if ($(this).val() === 'imaging') {
+            $('#activeCheckContainer').show();
+        } else {
+            $('#activeCheckContainer').hide();
+        }
+    });
+
+    // Initialize toast notifications
+    const successToast = new bootstrap.Toast(document.getElementById('successToast'));
+
+    // Service CRUD operations
+    $('.edit-service').click(function() {
+        const serviceId = $(this).data('id');
+        $.get(`/admin/services/${serviceId}`, function(data) {
+            $('#editServiceId').val(data.id);
+            $('#editServiceName').val(data.name);
+            $('#editServicePrice').val(data.price);
+            $('#editServiceDescription').val(data.description);
+            $('#editServiceModal').modal('show');
+        }).fail(function() {
+            alert('Failed to load service data');
+        });
+    });
+
+    $('.delete-service').click(function() {
+        const serviceId = $(this).data('id');
+        $('#deleteItemId').val(serviceId);
+        $('#deleteItemType').val('service');
+        $('#deleteConfirmationModal').modal('show');
+    });
+
+    // Test CRUD operations
+    $('.edit-test').click(function() {
+        const testId = $(this).data('id');
+        const testType = $(this).data('type');
+        
+        const endpoint = testType === 'lab' ? `/admin/lab-tests/${testId}` : `/admin/imaging-tests/${testId}`;
+        
+        $.get(endpoint, function(data) {
+            $('#editTestId').val(data.id);
+            $('#editTestType').val(testType);
+            $('#editTestName').val(data.name);
+            $('#editTestPrice').val(data.price);
+            $('#editTestDescription').val(data.description);
+            
+            if (testType === 'imaging') {
+                $('#editActiveCheckContainer').show();
+                $('#editTestIsActive').prop('checked', data.is_active);
+            } else {
+                $('#editActiveCheckContainer').hide();
+            }
+            
+            $('#editTestModal').modal('show');
+        }).fail(function() {
+            alert('Failed to load test data');
+        });
+    });
+
+    $('.delete-test').click(function() {
+        const testId = $(this).data('id');
+        const testType = $(this).data('type');
+        $('#deleteItemId').val(testId);
+        $('#deleteItemType').val(testType);
+        $('#deleteConfirmationModal').modal('show');
+    });
+
+    // Form submissions
+    $('#addServiceForm').submit(function(e) {
+        e.preventDefault();
+        $.ajax({
+            url: $(this).attr('action'),
+            type: $(this).attr('method'),
+            data: $(this).serialize(),
+            success: function(response) {
+                if (response.success) {
+                    $('#addServiceModal').modal('hide');
+                    $('.toast-body').text('Service added successfully!');
+                    successToast.show();
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1500);
+                } else {
+                    alert(response.error || 'Failed to add service');
+                }
+            },
+            error: function() {
+                alert('Failed to add service');
+            }
+        });
+    });
+
+    $('#editServiceForm').submit(function(e) {
+        e.preventDefault();
+        const serviceId = $('#editServiceId').val();
+        $.ajax({
+            url: `/admin/services/${serviceId}/update`,
+            type: 'POST',
+            data: $(this).serialize(),
+            success: function(response) {
+                if (response.success) {
+                    $('#editServiceModal').modal('hide');
+                    $('.toast-body').text('Service updated successfully!');
+                    successToast.show();
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1500);
+                } else {
+                    alert(response.error || 'Failed to update service');
+                }
+            },
+            error: function() {
+                alert('Failed to update service');
+            }
+        });
+    });
+
+    $('#addTestForm').submit(function(e) {
+        e.preventDefault();
+        const endpoint = $('#testType').val() === 'lab' ? '/admin/lab-tests/add' : '/admin/imaging-tests/add';
+        $.ajax({
+            url: endpoint,
+            type: 'POST',
+            data: $(this).serialize(),
+            success: function(response) {
+                if (response.success) {
+                    $('#addTestModal').modal('hide');
+                    $('.toast-body').text('Test added successfully!');
+                    successToast.show();
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1500);
+                } else {
+                    alert(response.error || 'Failed to add test');
+                }
+            },
+            error: function() {
+                alert('Failed to add test');
+            }
+        });
+    });
+
+    $('#editTestForm').submit(function(e) {
+        e.preventDefault();
+        const testId = $('#editTestId').val();
+        const endpoint = $('#editTestType').val() === 'lab' ? `/admin/lab-tests/${testId}/update` : `/admin/imaging-tests/${testId}/update`;
+        $.ajax({
+            url: endpoint,
+            type: 'POST',
+            data: $(this).serialize(),
+            success: function(response) {
+                if (response.success) {
+                    $('#editTestModal').modal('hide');
+                    $('.toast-body').text('Test updated successfully!');
+                    successToast.show();
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1500);
+                } else {
+                    alert(response.error || 'Failed to update test');
+                }
+            },
+            error: function() {
+                alert('Failed to update test');
+            }
+        });
+    });
+
+    $('#confirmDeleteBtn').click(function() {
+        const itemId = $('#deleteItemId').val();
+        const itemType = $('#deleteItemType').val();
+        
+        let endpoint;
+        if (itemType === 'service') {
+            endpoint = `/admin/services/${itemId}/delete`;
+        } else if (itemType === 'lab') {
+            endpoint = `/admin/lab-tests/${itemId}/delete`;
+        } else if (itemType === 'imaging') {
+            endpoint = `/admin/imaging-tests/${itemId}/delete`;
+        }
+        
+        $.ajax({
+            url: endpoint,
+            type: 'POST',
+            success: function(response) {
+                if (response.success) {
+                    $('#deleteConfirmationModal').modal('hide');
+                    $('.toast-body').text('Item deleted successfully!');
+                    successToast.show();
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1500);
+                } else {
+                    alert(response.error || 'Failed to delete item');
+                }
+            },
+            error: function() {
+                alert('Failed to delete item');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --sidebar-width: 250px;
+        --header-height: 60px;
+        --primary-color: #3498db;
+        --secondary-color: #2c3e50;
+        --success-color: #28a745;
+        --danger-color: #dc3545;
+        --warning-color: #ffc107;
+        --info-color: #17a2b8;
+        --light-color: #f8f9fa;
+        --dark-color: #343a40;
+    }
+    
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f5f7fa;
+        margin: 0;
+        padding: 0;
+        color: #333;
+    }
+    
+    .main-content {
+        margin-left: var(--sidebar-width);
+        padding: 20px;
+        min-height: calc(100vh - var(--header-height));
+    }
+    
+    .header {
+        background-color: white;
+        height: var(--header-height);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        position: sticky;
+        top: 0;
+        z-index: 999;
+    }
+    .tab-content {
+        background: white;
+        border-radius: 0 0 8px 8px;
+        padding: 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    .nav-tabs {
+        border-bottom: 1px solid #dee2e6;
+    }
+    
+    .nav-tabs .nav-link {
+        color: #495057;
+        background-color: transparent;
+        border: none;
+        border-bottom: 3px solid transparent;
+        padding: 12px 20px;
+        font-weight: 500;
+    }
+    
+    .nav-tabs .nav-link:hover {
+        border-color: transparent;
+        color: var(--primary-color);
+    }
+    
+    .nav-tabs .nav-link.active {
+        color: var(--primary-color);
+        background-color: transparent;
+        border-bottom: 3px solid #0d6efd;
+    }
+    .dataTables_wrapper {
+    width: 100% !important;
+    margin-top: 20px;
+    }
+    .tab-content {
+        display: block !important;
+    }
+
+    .tab-pane {
+        display: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .tab-pane.active {
+        display: block;
+    }
+
+    .table {
+        width: 100% !important;
+        margin-top: 20px;
+        border-collapse: collapse;
+    }
+
+    .table th, .table td {
+        padding: 12px;
+        border: 1px solid #dee2e6;
+    }
+
+    .table th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+    }
+/* Card and Table Styles */
+.medical-tests-card {
+    border: none;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1.5rem;
+}
+
+.medical-tests-card .card-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    padding: 1rem 1.25rem;
+    font-weight: 600;
+    color: #212529;
+}
+
+.medical-tests-table {
+    width: 100%;
+    margin-bottom: 1rem;
+    color: #212529;
+}
+
+.medical-tests-table th {
+    background-color: #f8f9fa;
+    color: #495057;
+    font-weight: 600;
+    vertical-align: middle;
+    padding: 0.75rem;
+    border-top: 1px solid #dee2e6;
+}
+
+.medical-tests-table td {
+    vertical-align: middle;
+    padding: 0.75rem;
+    border-top: 1px solid #dee2e6;
+}
+
+.medical-tests-table tr:hover {
+    background-color: rgba(13, 110, 253, 0.05);
+}
+
+/* Badge Styles */
+.badge-lab {
+    background-color: #0dcaf0;
+    color: #fff;
+}
+
+.badge-imaging {
+    background-color: #6610f2;
+    color: #fff;
+}
+
+.badge-service {
+    background-color: #198754;
+    color: #fff;
+}
+
+    .badge {
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+    
+    .badge.bg-info {
+        background-color: #0dcaf0 !important;
+    }
+    
+    .badge.bg-primary {
+        background-color: #0d6efd !important;
+    }
+    
+    /* Toast notification styles */
+    .toast {
+        min-width: 300px;
+    }
+    
+    .toast-header {
+        padding: 0.5rem 1rem;
+    }
+    
+    .toast-body {
+        padding: 1rem;
+    }
+
+/* Button Styles */
+.btn-medical-action {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+    border-radius: 0.2rem;
+    margin: 0 0.125rem;
+}
+
+.btn-add-new {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+.btn-add-new:hover {
+    background-color: #0b5ed7;
+    border-color: #0a58ca;
+}
+
+/* Modal Styles */
+.medical-modal .modal-header {
+    border-bottom: 1px solid #dee2e6;
+    padding: 1rem 1.25rem;
+}
+
+.medical-modal .modal-title {
+    font-weight: 600;
+    color: #212529;
+}
+
+.medical-modal .modal-body {
+    padding: 1.25rem;
+}
+
+.medical-modal .form-label {
+    font-weight: 500;
+    color: #495057;
+    margin-bottom: 0.5rem;
+}
+
+.medical-modal .form-control,
+.medical-modal .form-select {
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.25rem;
+    border: 1px solid #ced4da;
+}
+
+.medical-modal .form-control:focus,
+.medical-modal .form-select:focus {
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Empty State Styles */
+.empty-state {
+    text-align: center;
+    padding: 2rem;
+    color: #6c757d;
+}
+
+.empty-state-icon {
+    font-size: 3rem;
+    color: #dee2e6;
+    margin-bottom: 1rem;
+}
+
+.empty-state-message {
+    font-size: 1.1rem;
+    margin-bottom: 1.5rem;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .medical-tests-card .card-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .btn-add-new {
+        margin-top: 0.5rem;
+        width: 100%;
+    }
+    
+    .medical-tests-table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+}
+
+/* Animation for modal transitions */
+.modal.fade .modal-dialog {
+    transition: transform 0.3s ease-out;
+    transform: translate(0, -50px);
+}
+
+.modal.show .modal-dialog {
+    transform: none;
+}
+
+/* Status indicators */
+.status-active {
+    color: #198754;
+    font-weight: 500;
+}
+
+.status-inactive {
+    color: #6c757d;
+    font-weight: 500;
+}
+
+/* Action buttons */
+.action-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-action {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+/* Price formatting */
+.price-value {
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+    color: #212529;
+}
+
+/* Test type selector */
+.test-type-selector {
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid #dee2e6;
+    padding-bottom: 1rem;
+}
+
+/* Form validation */
+.is-invalid {
+    border-color: #dc3545;
+}
+
+.invalid-feedback {
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+/* Hover effects for interactive elements */
+.interactive-item:hover {
+    cursor: pointer;
+    background-color: #f8f9fa;
+}
+
+/* Loading state */
+.loading-state {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem;
+}
+
+.loading-spinner {
+    width: 3rem;
+    height: 3rem;
+    border: 0.25em solid rgba(13, 110, 253, 0.2);
+    border-top-color: #0d6efd;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Print styles */
+@media print {
+    .no-print {
+        display: none !important;
+    }
+    
+    .medical-tests-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .medical-tests-table th,
+    .medical-tests-table td {
+        border: 1px solid #ddd;
+        padding: 8px;
+    }
+    
+    .medical-tests-table th {
+        background-color: #f2f2f2 !important;
+    }
+}
+</style>
+{% endblock %}

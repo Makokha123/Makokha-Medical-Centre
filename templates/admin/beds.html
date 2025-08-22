@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+
+{% block content %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<div class="content">
+    <h2>Bed Management</h2>
+    
+    <div class="bed-stats">
+        <div class="stat-card">
+            <div class="stat-value">{{ total_beds }}</div>
+            <div class="stat-label">Total Beds</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ occupied_beds }}</div>
+            <div class="stat-label">Occupied</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ available_beds }}</div>
+            <div class="stat-label">Available</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">
+                {% if total_beds > 0 %}
+                    {{ ((occupied_beds / total_beds) * 100) | round(1) }}%
+                {% else %}
+                    0%
+                {% endif %}
+            </div>
+            <div class="stat-label">Occupancy Rate</div>
+        </div>
+    </div>
+    
+    <div class="bed-management-section">
+        <div class="ward-management">
+            <h3>Ward Management</h3>
+            <form method="POST" class="ward-form">
+                <input type="hidden" name="action" value="add_ward">
+                <div class="form-group">
+                    <label for="ward_name">Ward Name</label>
+                    <input type="text" id="ward_name" name="ward_name" required>
+                </div>
+                <div class="form-group">
+                    <label for="ward_description">Description</label>
+                    <textarea id="ward_description" name="ward_description"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Add Ward</button>
+            </form>
+            
+            <div class="ward-list">
+                <h4>Existing Wards</h4>
+                <ul>
+                    {% for ward in wards %}
+                    <li>{{ ward.name }} ({{ ward.beds|length }} beds)
+                        <form method="POST" class="inline-form" onsubmit="return confirm('Delete this ward?');">
+                            <input type="hidden" name="action" value="delete_ward">
+                            <input type="hidden" name="ward_id" value="{{ ward.id }}">
+                            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                        </form>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        
+        <div class="bed-management">
+            <h3>Bed Management</h3>
+            <form method="POST" class="bed-form">
+                <input type="hidden" name="action" value="add_bed">
+                <div class="form-group">
+                    <label for="ward_id">Ward</label>
+                    <select id="ward_id" name="ward_id" required>
+                        {% for ward in wards %}
+                        <option value="{{ ward.id }}">{{ ward.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="bed_number">Bed Number</label>
+                    <input type="text" id="bed_number" name="bed_number" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Add Bed</button>
+            </form>
+            
+            <div class="bed-list">
+                <h4>Bed Assignments</h4>
+                <table class="bed-table">
+                    <thead>
+                        <tr>
+                            <th>Bed Number</th>
+                            <th>Ward</th>
+                            <th>Status</th>
+                            <th>Patient</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bed in beds %}
+                        <tr>
+                            <td>{{ bed.bed_number }}</td>
+                            <td>{{ bed.ward.name }}</td>
+                            <td>
+                                <span class="status-badge {{ bed.status }}">
+                                    {{ bed.status }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if bed.patient %}
+                                {{ bed.patient.decrypted_name }} ({{ bed.patient.ip_number }})
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if bed.status == 'available' %}
+                                <form method="POST" class="inline-form">
+                                    <input type="hidden" name="action" value="assign_bed">
+                                    <input type="hidden" name="bed_id" value="{{ bed.id }}">
+                                    <select name="patient_id" required>
+                                        <option value="">Select Patient</option>
+                                        {% for patient in patients %}
+                                        <option value="{{ patient.id }}">
+                                            {{ patient.decrypted_name }} ({{ patient.ip_number }})
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="submit" class="btn btn-sm btn-success">Assign</button>
+                                </form>
+                                {% else %}
+                                <form method="POST" class="inline-form">
+                                    <input type="hidden" name="action" value="release_bed">
+                                    <input type="hidden" name="bed_id" value="{{ bed.id }}">
+                                    <button type="submit" class="btn btn-sm btn-warning">Release</button>
+                                </form>
+                                {% endif %}
+                                <form method="POST" class="inline-form" onsubmit="return confirm('Delete this bed?');">
+                                    <input type="hidden" name="action" value="delete_bed">
+                                    <input type="hidden" name="bed_id" value="{{ bed.id }}">
+                                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
+
+<style>
+.bed-management-section {
+    display: flex;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.ward-management, .bed-management {
+    flex: 1;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.bed-stats {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.stat-card {
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 15px;
+    text-align: center;
+    flex: 1;
+}
+
+.stat-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #2c3e50;
+}
+
+.stat-label {
+    font-size: 14px;
+    color: #7f8c8d;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.bed-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.bed-table th, .bed-table td {
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    text-align: left;
+}
+
+.bed-table th {
+    background: #f5f5f5;
+}
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-badge.available {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-badge.occupied {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.status-badge.maintenance {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.inline-form {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+}
+
+.btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-primary {
+    background: #007bff;
+    color: white;
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-warning {
+    background: #ffc107;
+    color: #212529;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: white;
+}
+
+.btn-sm {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+</style>
+{% endblock %}
