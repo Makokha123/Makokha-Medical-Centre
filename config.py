@@ -1,4 +1,3 @@
-# config.py
 import base64
 import os
 from dotenv import load_dotenv
@@ -19,7 +18,7 @@ class Config:
     
     # Core Application Settings
     SECRET_KEY = os.getenv("SECRET_KEY")
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///clinic.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = os.getenv('SQLALCHEMY_TRACK_MODIFICATIONS', 'false').lower() == 'true'
     
     # File Handling
@@ -34,7 +33,6 @@ class Config:
     
     # Encryption
     FERNET_KEY = os.getenv('FERNET_KEY')
-    fernet = None
     
     # Email Configuration
     MAIL_SERVER = os.getenv('MAIL_SERVER', 'smtp-relay.brevo.com')
@@ -54,8 +52,6 @@ class Config:
         "timeout": float(os.getenv("DEEPSEEK_TIMEOUT", 30.0)),
         "max_retries": int(os.getenv("DEEPSEEK_MAX_RETRIES", 3))
     }
-    
-    fernet = None
     
     @classmethod
     def init_fernet(cls, app):

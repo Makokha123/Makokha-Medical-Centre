@@ -64,7 +64,6 @@ PROFILE_PICTURE_FOLDER = os.path.join(UPLOAD_FOLDER, 'profile_pictures')
 os.makedirs(PROFILE_PICTURE_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
-app.debug = os.getenv("DEBUG") == "True"
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')  # Provide default only for development
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///clinic.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -80,6 +79,7 @@ app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'true').lower() == 'true'
 app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME', 'your.email@gmail.com')
 app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD', 'your-password-or-app-password')
 app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', 'your.email@gmail.com')
+
 
 mail = Mail(app)
 ts = URLSafeTimedSerializer(app.config['SECRET_KEY'])
