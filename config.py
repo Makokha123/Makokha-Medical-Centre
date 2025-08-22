@@ -8,14 +8,23 @@ from flask import current_app
 load_dotenv()
 
 class Config:
+    DEBUG = False
+    TESTING = False
+    
+    # Security
+    SESSION_COOKIE_SECURE = True
+    REMEMBER_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_HTTPONLY = True
+    
     # Core Application Settings
-    SECRET_KEY = os.getenv("SECRET_KEY", default='development-secret-key')
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', default='sqlite:///clinic.db')
+    SECRET_KEY = os.getenv("SECRET_KEY")
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
     SQLALCHEMY_TRACK_MODIFICATIONS = os.getenv('SQLALCHEMY_TRACK_MODIFICATIONS', 'false').lower() == 'true'
     
     # File Handling
-    UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
-    BACKUP_FOLDER = os.getenv('BACKUP_FOLDER', 'backups')
+    UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER')
+    BACKUP_FOLDER = os.getenv('BACKUP_FOLDER')
     MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH', 16 * 1024 * 1024))  # 16MB default
     
     # Security Settings
