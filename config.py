@@ -25,6 +25,7 @@ class Config:
     
     # Encryption
     FERNET_KEY = os.getenv('FERNET_KEY')
+    fernet = None
     
     # Email Configuration
     MAIL_SERVER = os.getenv('MAIL_SERVER', 'smtp-relay.brevo.com')
