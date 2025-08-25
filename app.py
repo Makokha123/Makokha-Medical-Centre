@@ -873,7 +873,7 @@ class DebtPayment(db.Model):
     __tablename__ = 'debt_payments'
     
     id = db.Column(db.Integer, primary_key=True)
-    debt_id = db.Column(db.Integer, db.ForeignKey('debts.id'))
+    debtor_id = db.Column(db.Integer, db.ForeignKey('debts.id'))
     amount = db.Column(db.Float, nullable=False)
     payment_date = db.Column(db.Date, nullable=False)
     payment_method = db.Column(db.String(50), nullable=False)
@@ -1131,24 +1131,28 @@ class Payroll(db.Model):
 def generate_payroll_number():
     return f"PAY-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
-class Customer(db.Model):
-    __tablename__ = 'customers'
+class Debtor(db.Model):
+    __tablename__ = 'debtor'
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     contact = db.Column(db.String(100))
     email = db.Column(db.String(100))
-    address = db.Column(db.Text)
+    Total_debt = db.Column(db.Float, nullable=False)
+    amount_paid = db.Column(db.Float, nullable=False)
+    amount_owed = db.Column(db.Float, default=0.0)
+    last_payment_date = db.Column(db.Date)
+    next_payment_date = db.Column(db.Date)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    
-    payments = db.relationship('DebtorPayment', backref='customer', lazy=True)
+
+    payments = db.relationship('DebtorPayment', backref='debtor', lazy=True)
 
 class DebtorPayment(db.Model):
     __tablename__ = 'debtor_payments'
     
     id = db.Column(db.Integer, primary_key=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'))
+    debtor_id = db.Column(db.Integer, db.ForeignKey('debtor.id'))
     amount = db.Column(db.Float, nullable=False)
     payment_date = db.Column(db.Date, nullable=False)
     payment_method = db.Column(db.String(50), nullable=False)
@@ -1171,20 +1175,6 @@ class PatientService(db.Model):
     service = db.relationship('Service', backref='patient_services')
     performer = db.relationship('User', foreign_keys=[performed_by])
 
-class Debtor(db.Model):
-    __tablename__ = 'debtors'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    contact = db.Column(db.String(100))
-    email = db.Column(db.String(100))
-    Total_debt = db.Column(db.Float, nullable=False)
-    amount_paid = db.Column(db.Float, nullable=False)
-    amount_owed = db.Column(db.Float, default=0.0)
-    last_payment_date = db.Column(db.Date)
-    next_payment_date = db.Column(db.Date)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 class AuditLog(db.Model):
     __tablename__ = 'audit_logs'
@@ -3410,7 +3400,6 @@ def manage_money():
                         payroll=Payroll.query.order_by(Payroll.created_at.desc()).all(),
                         debtors=Debtor.query.order_by(Debtor.amount_owed.desc()).all(),
                         employees=Employee.query.all(),
-                        customers=Customer.query.all(),
                         current_date=datetime.utcnow().date())
 
 # ==============
@@ -3991,6 +3980,7 @@ def money_summary():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
 @app.route('/admin/dosage', methods=['GET', 'POST'])
 @login_required
 def manage_dosage():

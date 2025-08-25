@@ -236,21 +236,21 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for payroll in payroll %}
-                    {% set employee = employees|selectattr("id", "equalto", payroll.employee_id)|first %}
+                    {% for pr in payroll %}
+                    {% set employee = employees|selectattr("id", "equalto", pr.employee_id)|first %}
                     <tr>
                         <td>{{ employee.name if employee else 'Unknown' }}</td>
-                        <td>Ksh {{ "%.2f"|format(payroll.amount) }}</td>
-                        <td>{{ payroll.payment_date.strftime('%Y-%m-%d') }}</td>
-                        <td>{{ payroll.pay_period }}</td>
-                        <td>{{ payroll.notes }}</td>
+                        <td>Ksh {{ "%.2f"|format(pr.amount) }}</td>
+                        <td>{{ pr.payment_date.strftime('%Y-%m-%d') }}</td>
+                        <td>{{ pr.pay_period }}</td>
+                        <td>{{ pr.notes }}</td>
                         <td class="action-btns">
                             <button class="action-btn btn-primary" 
-                                    onclick="moneyManagement.editPayroll({{ payroll.id }}, {{ payroll.employee_id }}, {{ payroll.amount }}, '{{ payroll.payment_date.strftime('%Y-%m-%d') }}', '{{ payroll.pay_period }}', '{{ payroll.notes | replace("'", "\\'") }}')">
+                                    onclick="moneyManagement.editPayroll({{ pr.id }}, {{ pr.employee_id }}, {{ pr.amount }}, '{{ pr.payment_date.strftime('%Y-%m-%d') }}', '{{ pr.pay_period }}', '{{ pr.notes | replace("'", "\\'") }}')">
                                 <i class="fas fa-edit"></i>
                             </button>
                             <button class="action-btn btn-danger" 
-                                    data-delete-record="{{ payroll.id }}" 
+                                    data-delete-record="{{ pr.id }}" 
                                     data-record-type="payroll">
                                 <i class="fas fa-trash"></i>
                             </button>
