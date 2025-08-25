@@ -38,6 +38,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from openai import OpenAI, APITimeoutError, APIError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import logging
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from functools import wraps
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer
 from flask_limiter import Limiter
@@ -58,6 +60,9 @@ migrate = Migrate(app, db)
 auth_bp = Blueprint('auth', __name__)
 csrf = CSRFProtect()
 limiter = Limiter(key_func=get_remote_address)
+# Ensure CSRF and Limiter are initialized on the app
+csrf.init_app(app)
+limiter.init_app(app)
 
 UPLOAD_FOLDER = os.path.join(app.root_path, 'static', 'uploads')
 PROFILE_PICTURE_FOLDER = os.path.join(UPLOAD_FOLDER, 'profile_pictures')
@@ -1344,6 +1349,46 @@ def log_audit(action, table=None, record_id=None, user_id=None, changes=None,
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Failed to log audit trail: {str(e)}")
+
+# Admin JSON decorator and helpers
+
+def admin_required_json(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated or current_user.role != 'admin':
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def parse_price(value):
+    try:
+        amount = Decimal(str(value))
+        if amount < 0:
+            return None, 'Price must be non-negative'
+        amount = amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return amount, None
+    except (InvalidOperation, TypeError):
+        return None, 'Invalid price'
+
+
+def parse_bool(value):
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ('1', 'true', 'on', 'yes')
+
+
+def bad_request(message):
+    return jsonify({'success': False, 'error': message}), 400
+
+
+def success_response(data=None, status=200):
+    payload = {'success': True}
+    if data is not None:
+        payload['data'] = data
+    return jsonify(payload), status
 
 # Utility functions
 def generate_patient_number(patient_type):
@@ -4430,38 +4475,46 @@ def manage_medical_tests():
 
 # Service CRUD
 @app.route('/admin/services/add', methods=['POST'])
-@login_required
+@limiter.limit("10 per minute")
+@admin_required_json
 def add_service():
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
+    name = (request.form.get('name') or '').strip()
+    price_str = request.form.get('price')
+    description = (request.form.get('description') or '').strip() or None
+
+    if not name:
+        return bad_request('Name is required')
+    price, err = parse_price(price_str)
+    if err:
+        return bad_request(err)
+
+    service = Service(name=name, price=float(price), description=description)
     try:
-        service = Service(
-            name=request.form.get('name'),
-            price=float(request.form.get('price')),
-            description=request.form.get('description')
-        )
         db.session.add(service)
         db.session.commit()
-        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'add_service failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
         log_audit('add_service', 'Service', service.id, None, {
             'name': service.name,
             'price': service.price
         })
-        
-        return jsonify({'success': True})
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'audit add_service failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': service.id, 'name': service.name, 'price': service.price, 'description': service.description}, status=201)
 
 @app.route('/admin/services/<int:id>')
-@login_required
+@limiter.limit("60 per minute")
+@admin_required_json
 def get_service(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    service = Service.query.get_or_404(id)
-    return jsonify({
+    service = Service.query.get(id)
+    if not service:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    return success_response({
         'id': service.id,
         'name': service.name,
         'price': service.price,
@@ -4469,92 +4522,115 @@ def get_service(id):
     })
 
 @app.route('/admin/services/<int:id>/update', methods=['POST'])
-@login_required
+@limiter.limit("20 per minute")
+@admin_required_json
 def update_service(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    service = Service.query.get_or_404(id)
-    
+    service = Service.query.get(id)
+    if not service:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    old_data = {
+        'name': service.name,
+        'price': service.price,
+        'description': service.description
+    }
+
+    name = (request.form.get('name') or '').strip()
+    price_str = request.form.get('price')
+    description = (request.form.get('description') or '').strip() or None
+
+    if not name:
+        return bad_request('Name is required')
+    price, err = parse_price(price_str)
+    if err:
+        return bad_request(err)
+
     try:
-        old_data = {
-            'name': service.name,
-            'price': service.price,
-            'description': service.description
-        }
-        
-        service.name = request.form.get('name')
-        service.price = float(request.form.get('price'))
-        service.description = request.form.get('description')
-        
+        service.name = name
+        service.price = float(price)
+        service.description = description
         db.session.commit()
-        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'update_service failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
         log_audit('update_service', 'Service', service.id, old_data, {
             'name': service.name,
             'price': service.price,
             'description': service.description
         })
-        
-        return jsonify({'success': True})
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'audit update_service failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': service.id, 'name': service.name, 'price': service.price, 'description': service.description})
 
 @app.route('/admin/services/<int:id>/delete', methods=['POST'])
-@login_required
+@limiter.limit("20 per minute")
+@admin_required_json
 def delete_service(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    service = Service.query.get_or_404(id)
-    
+    service = Service.query.get(id)
+    if not service:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
     try:
-        log_audit('delete_service', 'Service', service.id, {
-            'name': service.name,
-            'price': service.price
-        }, None)
-        
         db.session.delete(service)
         db.session.commit()
-        return jsonify({'success': True})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'delete_service failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
+        log_audit('delete_service', 'Service', service.id, {'name': service.name, 'price': service.price}, None)
+    except Exception as e:
+        current_app.logger.error(f'audit delete_service failed: {str(e)}', exc_info=True)
+
+    return success_response()
 
 # Lab Test CRUD
 @app.route('/admin/lab-tests/add', methods=['POST'])
-@login_required
+@limiter.limit("10 per minute")
+@admin_required_json
 def add_lab_test():
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
+    name = (request.form.get('name') or '').strip()
+    price_str = request.form.get('price')
+    description = (request.form.get('description') or '').strip() or None
+
+    if not name:
+        return bad_request('Name is required')
+    price, err = parse_price(price_str)
+    if err:
+        return bad_request(err)
+
+    lab_test = LabTest(name=name, price=float(price), description=description)
     try:
-        lab_test = LabTest(
-            name=request.form.get('name'),
-            price=float(request.form.get('price')),
-            description=request.form.get('description')
-        )
         db.session.add(lab_test)
         db.session.commit()
-        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'add_lab_test failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
         log_audit('add_lab_test', 'LabTest', lab_test.id, None, {
             'name': lab_test.name,
             'price': lab_test.price
         })
-        
-        return jsonify({'success': True})
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'audit add_lab_test failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': lab_test.id, 'name': lab_test.name, 'price': lab_test.price, 'description': lab_test.description}, status=201)
 
 @app.route('/admin/lab-tests/<int:id>')
-@login_required
+@limiter.limit("60 per minute")
+@admin_required_json
 def get_lab_test(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    lab_test = LabTest.query.get_or_404(id)
-    return jsonify({
+    lab_test = LabTest.query.get(id)
+    if not lab_test:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    return success_response({
         'id': lab_test.id,
         'name': lab_test.name,
         'price': lab_test.price,
@@ -4562,94 +4638,125 @@ def get_lab_test(id):
     })
 
 @app.route('/admin/lab-tests/<int:id>/update', methods=['POST'])
-@login_required
+@limiter.limit("20 per minute")
+@admin_required_json
 def update_lab_test(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    lab_test = LabTest.query.get_or_404(id)
-    
+    lab_test = LabTest.query.get(id)
+    if not lab_test:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    old_data = {
+        'name': lab_test.name,
+        'price': lab_test.price,
+        'description': lab_test.description
+    }
+
+    name = (request.form.get('name') or '').strip()
+    price_str = request.form.get('price')
+    description = (request.form.get('description') or '').strip() or None
+
+    if not name:
+        return bad_request('Name is required')
+    price, err = parse_price(price_str)
+    if err:
+        return bad_request(err)
+
     try:
-        old_data = {
-            'name': lab_test.name,
-            'price': lab_test.price,
-            'description': lab_test.description
-        }
-        
-        lab_test.name = request.form.get('name')
-        lab_test.price = float(request.form.get('price'))
-        lab_test.description = request.form.get('description')
-        
+        lab_test.name = name
+        lab_test.price = float(price)
+        lab_test.description = description
         db.session.commit()
-        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'update_lab_test failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
         log_audit('update_lab_test', 'LabTest', lab_test.id, old_data, {
             'name': lab_test.name,
             'price': lab_test.price,
             'description': lab_test.description
         })
-        
-        return jsonify({'success': True})
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'audit update_lab_test failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': lab_test.id, 'name': lab_test.name, 'price': lab_test.price, 'description': lab_test.description})
 
 @app.route('/admin/lab-tests/<int:id>/delete', methods=['POST'])
-@login_required
+@limiter.limit("20 per minute")
+@admin_required_json
 def delete_lab_test(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    lab_test = LabTest.query.get_or_404(id)
-    
+    lab_test = LabTest.query.get(id)
+    if not lab_test:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    try:
+        db.session.delete(lab_test)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'delete_lab_test failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
     try:
         log_audit('delete_lab_test', 'LabTest', lab_test.id, {
             'name': lab_test.name,
             'price': lab_test.price
         }, None)
-        
-        db.session.delete(lab_test)
-        db.session.commit()
-        return jsonify({'success': True})
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'audit delete_lab_test failed: {str(e)}', exc_info=True)
+
+    return success_response()
 
 # Imaging Test CRUD
 @app.route('/admin/imaging-tests/add', methods=['POST'])
-@login_required
+@limiter.limit("10 per minute")
+@admin_required_json
 def add_imaging_test():
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
+    name = (request.form.get('name') or '').strip()
+    price_str = request.form.get('price')
+    description = (request.form.get('description') or '').strip() or None
+    is_active = parse_bool(request.form.get('is_active'))
+
+    if not name:
+        return bad_request('Name is required')
+    price, err = parse_price(price_str)
+    if err:
+        return bad_request(err)
+
+    imaging_test = ImagingTest(
+        name=name,
+        price=float(price),
+        description=description,
+        is_active=is_active
+    )
     try:
-        imaging_test = ImagingTest(
-            name=request.form.get('name'),
-            price=float(request.form.get('price')),
-            description=request.form.get('description'),
-            is_active=request.form.get('is_active') == 'on'
-        )
         db.session.add(imaging_test)
         db.session.commit()
-        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'add_imaging_test failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
         log_audit('add_imaging_test', 'ImagingTest', imaging_test.id, None, {
             'name': imaging_test.name,
             'price': imaging_test.price,
             'is_active': imaging_test.is_active
         })
-        
-        return jsonify({'success': True})
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'audit add_imaging_test failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': imaging_test.id, 'name': imaging_test.name, 'price': imaging_test.price, 'description': imaging_test.description, 'is_active': imaging_test.is_active}, status=201)
 
 @app.route('/admin/imaging-tests/<int:id>')
-@login_required
+@limiter.limit("60 per minute")
+@admin_required_json
 def get_imaging_test(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    imaging_test = ImagingTest.query.get_or_404(id)
-    return jsonify({
+    imaging_test = ImagingTest.query.get(id)
+    if not imaging_test:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    return success_response({
         'id': imaging_test.id,
         'name': imaging_test.name,
         'price': imaging_test.price,
@@ -4658,60 +4765,79 @@ def get_imaging_test(id):
     })
 
 @app.route('/admin/imaging-tests/<int:id>/update', methods=['POST'])
-@login_required
+@limiter.limit("20 per minute")
+@admin_required_json
 def update_imaging_test(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    imaging_test = ImagingTest.query.get_or_404(id)
-    
+    imaging_test = ImagingTest.query.get(id)
+    if not imaging_test:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    old_data = {
+        'name': imaging_test.name,
+        'price': imaging_test.price,
+        'description': imaging_test.description,
+        'is_active': imaging_test.is_active
+    }
+
+    name = (request.form.get('name') or '').strip()
+    price_str = request.form.get('price')
+    description = (request.form.get('description') or '').strip() or None
+    is_active = parse_bool(request.form.get('is_active'))
+
+    if not name:
+        return bad_request('Name is required')
+    price, err = parse_price(price_str)
+    if err:
+        return bad_request(err)
+
     try:
-        old_data = {
-            'name': imaging_test.name,
-            'price': imaging_test.price,
-            'description': imaging_test.description,
-            'is_active': imaging_test.is_active
-        }
-        
-        imaging_test.name = request.form.get('name')
-        imaging_test.price = float(request.form.get('price'))
-        imaging_test.description = request.form.get('description')
-        imaging_test.is_active = request.form.get('is_active') == 'on'
-        
+        imaging_test.name = name
+        imaging_test.price = float(price)
+        imaging_test.description = description
+        imaging_test.is_active = is_active
         db.session.commit()
-        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'update_imaging_test failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
         log_audit('update_imaging_test', 'ImagingTest', imaging_test.id, old_data, {
             'name': imaging_test.name,
             'price': imaging_test.price,
             'description': imaging_test.description,
             'is_active': imaging_test.is_active
         })
-        
-        return jsonify({'success': True})
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'audit update_imaging_test failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': imaging_test.id, 'name': imaging_test.name, 'price': imaging_test.price, 'description': imaging_test.description, 'is_active': imaging_test.is_active})
 
 @app.route('/admin/imaging-tests/<int:id>/delete', methods=['POST'])
-@login_required
+@limiter.limit("20 per minute")
+@admin_required_json
 def delete_imaging_test(id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    imaging_test = ImagingTest.query.get_or_404(id)
-    
+    imaging_test = ImagingTest.query.get(id)
+    if not imaging_test:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    try:
+        db.session.delete(imaging_test)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'delete_imaging_test failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
     try:
         log_audit('delete_imaging_test', 'ImagingTest', imaging_test.id, {
             'name': imaging_test.name,
             'price': imaging_test.price
         }, None)
-        
-        db.session.delete(imaging_test)
-        db.session.commit()
-        return jsonify({'success': True})
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f'audit delete_imaging_test failed: {str(e)}', exc_info=True)
+
+    return success_response()
 
 @app.route('/pharmacist')
 @login_required

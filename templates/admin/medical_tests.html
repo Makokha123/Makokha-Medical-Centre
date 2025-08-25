@@ -52,7 +52,7 @@
                                             <tr>
                                                 <td>{{ service.id }}</td>
                                                 <td>{{ service.name }}</td>
-                                                <td>{{ "%.2f"|format(service.price) }}</td>
+                                                <td><span class="price-value">Ksh {{ "{:,.2f}".format(service.price) }}</span></td>
                                                 <td>{{ service.description|truncate(50) if service.description else 'N/A' }}</td>
                                                 <td>{{ service.created_at.strftime('%Y-%m-%d') }}</td>
                                                 <td>
@@ -108,7 +108,7 @@
                                                 <td>{{ test.id }}</td>
                                                 <td><span class="badge bg-info">Lab Test</span></td>
                                                 <td>{{ test.name }}</td>
-                                                <td>{{ "%.2f"|format(test.price) }}</td>
+                                                <td><span class="price-value">Ksh {{ "{:,.2f}".format(test.price) }}</span></td>
                                                 <td>{{ test.description|truncate(50) if test.description else 'N/A' }}</td>
                                                 <td><span class="badge bg-success">Active</span></td>
                                                 <td>{{ test.created_at.strftime('%Y-%m-%d') }}</td>
@@ -127,7 +127,7 @@
                                                 <td>{{ test.id }}</td>
                                                 <td><span class="badge bg-primary">Imaging</span></td>
                                                 <td>{{ test.name }}</td>
-                                                <td>{{ "%.2f"|format(test.price) }}</td>
+                                                <td><span class="price-value">Ksh {{ "{:,.2f}".format(test.price) }}</span></td>
                                                 <td>{{ test.description|truncate(50) if test.description else 'N/A' }}</td>
                                                 <td>
                                                     {% if test.is_active %}
@@ -172,6 +172,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form id="addServiceForm" method="POST" action="/admin/services/add">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="serviceName" class="form-label">Service Name</label>
@@ -204,6 +205,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form id="editServiceForm" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" id="editServiceId" name="id">
                 <div class="modal-body">
                     <div class="mb-3">
@@ -237,6 +239,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form id="addTestForm" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="testType" class="form-label">Test Type</label>
@@ -281,6 +284,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form id="editTestForm" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" id="editTestId" name="id">
                 <input type="hidden" id="editTestType" name="type">
                 <div class="modal-body">
@@ -373,6 +377,15 @@ $(document).ready(function() {
 
     // Initialize toast notifications
     const successToast = new bootstrap.Toast(document.getElementById('successToast'));
+    // CSRF token for AJAX requests
+    const csrfToken = "{{ csrf_token() }}";
+    $.ajaxSetup({
+        beforeSend: function(xhr, settings) {
+            if (!/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type)) {
+                xhr.setRequestHeader("X-CSRFToken", csrfToken);
+            }
+        }
+    });
 
     // Service CRUD operations
     $('.edit-service').click(function() {
