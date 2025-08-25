@@ -304,11 +304,11 @@
                     </td>
                     <td class="action-btns">
                         <button class="action-btn btn-success" 
-                                onclick="moneyManagement.addDebtorPayment({{ debtor.id }}, '{{ debtor.name | replace("'", "\\'") }}', {{ debtor.Total_debt }}, {{ debtor.amount_paid }}, {{ debtor.amount_owed }})">
+                                onclick="moneyManagement.addDebtorPayment({{ debtor.id }}, '{{ debtor.name | replace("'", "\\'") }}', {{ debtor.Total_debt }}, {{ debtor.amount_paid }}, {{ debtor.amount_owed }}, '{{ debtor.next_payment_date.strftime('%Y-%m-%d') if debtor.next_payment_date else '' }}')">
                             <i class="fas fa-money-bill-wave"></i>
                         </button>
                         <button class="action-btn btn-primary" 
-                                onclick="moneyManagement.editDebtor({{ debtor.id }}, '{{ debtor.name | replace("'", "\\'") }}', '{{ debtor.contact | replace("'", "\\'") }}', '{{ debtor.email | replace("'", "\\'") }}', {{ debtor.Total_debt }}, '{{ debtor.last_payment_date.strftime('%Y-%m-%d') if debtor.last_payment_date else '' }}')">
+                        onclick="moneyManagement.editDebtor({{ debtor.id }}, '{{ debtor.name | replace("'", "\\'") }}', '{{ debtor.contact | replace("'", "\\'") }}', '{{ debtor.email | replace("'", "\\'") }}', {{ debtor.Total_debt }}, {{ debtor.amount_paid }}, {{ debtor.amount_owed }}, '{{ debtor.last_payment_date.strftime('%Y-%m-%d') if debtor.last_payment_date else '' }}', '{{ debtor.next_payment_date.strftime('%Y-%m-%d') if debtor.next_payment_date else '' }}', '{{ debtor.notes | replace("'", "\\'") if debtor.notes else '' }}')">
                             <i class="fas fa-edit"></i>
                         </button>
                         <button class="action-btn btn-danger" 

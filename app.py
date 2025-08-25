@@ -3445,34 +3445,33 @@ def add_drawing():
 @login_required
 def update_drawing(id):
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
     drawing = Transaction.query.get_or_404(id)
     try:
         drawing.amount = float(request.form.get('amount'))
-        drawing.notes = request.form.get('description')
+        description = request.form.get('description')
+        drawing.notes = f"Owner's drawing: {description}" if description is not None else drawing.notes
         db.session.commit()
-        flash('Drawing updated successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Drawing updated successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error updating drawing: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/delete_drawing/<int:id>', methods=['POST'])
 @login_required
 def delete_drawing(id):
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     drawing = Transaction.query.get_or_404(id)
     try:
         db.session.delete(drawing)
         db.session.commit()
-        flash('Drawing deleted successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Drawing deleted successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error deleting drawing: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 # =============
 # BILLS ROUTES
@@ -3482,7 +3481,7 @@ def delete_drawing(id):
 @login_required
 def add_bill():
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     try:
         expense = Expense(
@@ -3496,17 +3495,16 @@ def add_bill():
         )
         db.session.add(expense)
         db.session.commit()
-        flash('Bill added successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Bill added successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error adding bill: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/update_bill/<int:id>', methods=['POST'])
 @login_required
 def update_bill(id):
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     bill = Expense.query.get_or_404(id)
     try:
@@ -3515,33 +3513,31 @@ def update_bill(id):
         bill.description = request.form.get('description')
         bill.due_date = datetime.strptime(request.form.get('due_date'), '%Y-%m-%d').date()
         db.session.commit()
-        flash('Bill updated successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Bill updated successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error updating bill: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/delete_bill/<int:id>', methods=['POST'])
 @login_required
 def delete_bill(id):
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     bill = Expense.query.get_or_404(id)
     try:
         db.session.delete(bill)
         db.session.commit()
-        flash('Bill deleted successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Bill deleted successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error deleting bill: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/pay_bill/<int:id>', methods=['POST'])
 @login_required
 def pay_bill(id):
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     bill = Expense.query.get_or_404(id)
     try:
@@ -3558,11 +3554,10 @@ def pay_bill(id):
         )
         db.session.add(transaction)
         db.session.commit()
-        flash('Bill payment recorded successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Bill payment recorded successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error paying bill: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 # ================
 # PURCHASE ROUTES
@@ -3572,7 +3567,7 @@ def pay_bill(id):
 @login_required
 def add_purchase():
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     try:
         purchase = Purchase(
@@ -3585,28 +3580,28 @@ def add_purchase():
             user_id=current_user.id
         )
         db.session.add(purchase)
+        db.session.flush()
         
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
-            transaction_type='expense',
-            amount=float(request.form.get('amount')),
+            transaction_type='purchase',
+            amount=purchase.amount,
             user_id=current_user.id,
             reference_id=purchase.id,
             notes=f"Purchase: {purchase.purchase_type}"
         )
         db.session.add(transaction)
         db.session.commit()
-        flash('Purchase added successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Purchase added successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error adding purchase: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/update_purchase/<int:id>', methods=['POST'])
 @login_required
 def update_purchase(id):
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     purchase = Purchase.query.get_or_404(id)
     try:
@@ -3616,17 +3611,16 @@ def update_purchase(id):
         purchase.supplier = request.form.get('supplier')
         purchase.description = request.form.get('description')
         db.session.commit()
-        flash('Purchase updated successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Purchase updated successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error updating purchase: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/delete_purchase/<int:id>', methods=['POST'])
 @login_required
 def delete_purchase(id):
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     purchase = Purchase.query.get_or_404(id)
     try:
@@ -3634,11 +3628,10 @@ def delete_purchase(id):
         Transaction.query.filter_by(transaction_type='purchase', reference_id=id).delete()
         db.session.delete(purchase)
         db.session.commit()
-        flash('Purchase deleted successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Purchase deleted successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error deleting purchase: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 # ===============
 # PAYROLL ROUTES
 # ===============
@@ -3647,24 +3640,20 @@ def delete_purchase(id):
 @login_required
 def add_payroll():
     if current_user.role != 'admin':
-        flash('Unauthorized access', 'danger')
-        return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     try:
         # Validate required fields
         if not all([request.form.get('employee_id'), request.form.get('amount'), request.form.get('payment_date')]):
-            flash('Please fill all required fields', 'danger')
-            return redirect(url_for('manage_money'))
+            return jsonify({'success': False, 'error': 'Please fill all required fields'}), 400
 
         employee = db.session.get(Employee, request.form.get('employee_id'))
         if not employee:
-            flash('Employee not found', 'danger')
-            return redirect(url_for('manage_money'))
+            return jsonify({'success': False, 'error': 'Employee not found'}), 404
 
         amount = float(request.form.get('amount'))
         if amount <= 0:
-            flash('Amount must be positive', 'danger')
-            return redirect(url_for('manage_money'))
+            return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
 
         payment_date = datetime.strptime(request.form.get('payment_date'), '%Y-%m-%d').date()
         
@@ -3679,11 +3668,12 @@ def add_payroll():
             user_id=current_user.id
         )
         db.session.add(payroll)
+        db.session.flush()
         
         # Create transaction record
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
-            transaction_type='expense',
+            transaction_type='payroll',
             amount=amount,
             user_id=current_user.id,
             reference_id=payroll.id,
@@ -3693,38 +3683,32 @@ def add_payroll():
         db.session.add(transaction)
         
         db.session.commit()
-        flash('Payroll payment added successfully', 'success')
-    except ValueError as e:
+        return jsonify({'success': True, 'message': 'Payroll payment added successfully'})
+    except ValueError:
         db.session.rollback()
-        flash(f'Invalid data format: {str(e)}', 'danger')
-    except Exception as e:
+        return jsonify({'success': False, 'error': 'Invalid data format'}), 400
+    except Exception:
         db.session.rollback()
-        flash(f'Error adding payroll: {str(e)}', 'danger')
-    
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/update_payroll/<int:id>', methods=['POST'])
 @login_required
 def update_payroll(id):
     if current_user.role != 'admin':
-        flash('Unauthorized access', 'danger')
-        return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     payroll = Payroll.query.get_or_404(id)
     try:
         if not all([request.form.get('employee_id'), request.form.get('amount'), request.form.get('payment_date')]):
-            flash('Please fill all required fields', 'danger')
-            return redirect(url_for('manage_money'))
+            return jsonify({'success': False, 'error': 'Please fill all required fields'}), 400
 
         employee = Employee.query.get(request.form.get('employee_id'))
         if not employee:
-            flash('Employee not found', 'danger')
-            return redirect(url_for('manage_money'))
+            return jsonify({'success': False, 'error': 'Employee not found'}), 404
 
         amount = float(request.form.get('amount'))
         if amount <= 0:
-            flash('Amount must be positive', 'danger')
-            return redirect(url_for('manage_money'))
+            return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
 
         # Update payroll
         payroll.employee_id = employee.id
@@ -3741,22 +3725,19 @@ def update_payroll(id):
             transaction.created_at = datetime.utcnow()
         
         db.session.commit()
-        flash('Payroll updated successfully', 'success')
-    except ValueError as e:
+        return jsonify({'success': True, 'message': 'Payroll updated successfully'})
+    except ValueError:
         db.session.rollback()
-        flash(f'Invalid data format: {str(e)}', 'danger')
-    except Exception as e:
+        return jsonify({'success': False, 'error': 'Invalid data format'}), 400
+    except Exception:
         db.session.rollback()
-        flash(f'Error updating payroll: {str(e)}', 'danger')
-    
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/delete_payroll/<int:id>', methods=['POST'])
 @login_required
 def delete_payroll(id):
     if current_user.role != 'admin':
-        flash('Unauthorized access', 'danger')
-        return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     payroll = Payroll.query.get_or_404(id)
     try:
@@ -3766,12 +3747,10 @@ def delete_payroll(id):
         # Delete payroll
         db.session.delete(payroll)
         db.session.commit()
-        flash('Payroll deleted successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Payroll deleted successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error deleting payroll: {str(e)}', 'danger')
-    
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 # ================
 # DEBTOR ROUTES
@@ -3780,19 +3759,16 @@ def delete_payroll(id):
 @login_required
 def add_debtor():
     if current_user.role != 'admin':
-        flash('Unauthorized access', 'danger')
-        return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     try:
         # Validate required fields
         if not all([request.form.get('name'), request.form.get('total_debt')]):
-            flash('Name and total debt are required', 'danger')
-            return redirect(url_for('manage_money'))
+            return jsonify({'success': False, 'error': 'Name and total debt are required'}), 400
 
         total_debt = float(request.form.get('total_debt'))
         if total_debt <= 0:
-            flash('Total debt must be positive', 'danger')
-            return redirect(url_for('manage_money'))
+            return jsonify({'success': False, 'error': 'Total debt must be positive'}), 400
 
         # Create new debtor
         debtor = Debtor(
@@ -3803,37 +3779,37 @@ def add_debtor():
             amount_paid=0.0,  # Initialize with 0
             amount_owed=total_debt,  # Initially equals total debt
             last_payment_date=datetime.strptime(request.form.get('last_payment_date'), '%Y-%m-%d').date() if request.form.get('last_payment_date') else None,
+            next_payment_date=datetime.strptime(request.form.get('next_payment_date'), '%Y-%m-%d').date() if request.form.get('next_payment_date') else None,
+            notes=request.form.get('notes', '')
         )
         
         db.session.add(debtor)
         db.session.commit()
-        flash('Debtor added successfully', 'success')
+        return jsonify({'success': True, 'message': 'Debtor added successfully'})
     except ValueError:
         db.session.rollback()
-        flash('Invalid amount format', 'danger')
-    except Exception as e:
+        return jsonify({'success': False, 'error': 'Invalid amount or date format'}), 400
+    except Exception:
         db.session.rollback()
-        flash(f'Error adding debtor: {str(e)}', 'danger')
-    
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/add_debtor_payment/<int:debtor_id>', methods=['POST'])
 @login_required
-def add_debtor_payment(id):
+def add_debtor_payment(debtor_id):
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    debtor = Debtor.query.get_or_404(id)
+    debtor = Debtor.query.get_or_404(debtor_id)
     try:
         if not all([request.form.get('amount'), request.form.get('payment_date')]):
-            return jsonify({'error': 'Amount and payment date are required'}), 400
+            return jsonify({'success': False, 'error': 'Amount and payment date are required'}), 400
 
         payment_amount = float(request.form.get('amount'))
         if payment_amount <= 0:
-            return jsonify({'error': 'Payment amount must be positive'}), 400
+            return jsonify({'success': False, 'error': 'Payment amount must be positive'}), 400
 
         if payment_amount > debtor.amount_owed:
-            return jsonify({'error': 'Payment amount exceeds owed amount'}), 400
+            return jsonify({'success': False, 'error': 'Payment amount exceeds owed amount'}), 400
 
         payment_date = datetime.strptime(request.form.get('payment_date'), '%Y-%m-%d').date()
         
@@ -3844,7 +3820,7 @@ def add_debtor_payment(id):
         
         # Create payment record
         payment = DebtorPayment(
-            id=id,
+            debtor_id=debtor_id,
             amount=payment_amount,
             payment_date=payment_date,
             payment_method=request.form.get('payment_method', 'cash'),
@@ -3852,6 +3828,7 @@ def add_debtor_payment(id):
             user_id=current_user.id
         )
         db.session.add(payment)
+        db.session.flush()
         
         # Create transaction record
         transaction = Transaction(
@@ -3874,13 +3851,17 @@ def add_debtor_payment(id):
         })
     except ValueError:
         db.session.rollback()
-        return jsonify({'error': 'Invalid amount or date format'}), 400
-    except Exception as e:
+        return jsonify({'success': False, 'error': 'Invalid amount or date format'}), 400
+    except Exception:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/update_debtor/<int:id>', methods=['POST'])
+@login_required
 def update_debtor(id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
     debtor = Debtor.query.get_or_404(id)
     try:
         debtor.name = request.form.get('name')
@@ -3888,33 +3869,35 @@ def update_debtor(id):
         debtor.email = request.form.get('email', debtor.email)
         debtor.Total_debt = float(request.form.get('total_debt'))
         debtor.amount_owed = debtor.Total_debt - debtor.amount_paid
-        debtor.balance = debtor.amount_owed  # If using Option 1
+        # Optional fields
+        if request.form.get('last_payment_date'):
+            debtor.last_payment_date = datetime.strptime(request.form.get('last_payment_date'), '%Y-%m-%d').date()
+        if request.form.get('next_payment_date'):
+            debtor.next_payment_date = datetime.strptime(request.form.get('next_payment_date'), '%Y-%m-%d').date()
+        if 'notes' in request.form:
+            debtor.notes = request.form.get('notes', debtor.notes)
         db.session.commit()
-        flash('Debtor updated successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Debtor updated successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error updating debtor: {str(e)}', 'danger')
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 
 @app.route('/admin/delete_debtor/<int:id>', methods=['POST'])
 @login_required
 def delete_debtor(id):
     if current_user.role != 'admin':
-        flash('Unauthorized access', 'danger')
-        return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     debtor = Debtor.query.get_or_404(id)
     try:
         # Only delete the debtor, payments and transactions remain
         db.session.delete(debtor)
         db.session.commit()
-        flash('Debtor deleted successfully', 'success')
-    except Exception as e:
+        return jsonify({'success': True, 'message': 'Debtor deleted successfully'})
+    except Exception:
         db.session.rollback()
-        flash(f'Error deleting debtor: {str(e)}', 'danger')
-    
-    return redirect(url_for('manage_money'))
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
     
 # =====================
 # TRANSACTION ROUTES
