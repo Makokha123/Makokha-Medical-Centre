@@ -338,6 +338,7 @@
             <button class="close-btn" data-modal-target="add-drawing">&times;</button>
         </div>
         <form id="add-drawing-form" method="POST" action="/admin/add_drawing">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="drawing-amount">Amount (Ksh)</label>
                 <input type="number" step="0.01" id="drawing-amount" name="amount" required>
@@ -362,6 +363,7 @@
             <button class="close-btn" data-modal-target="edit-drawing">&times;</button>
         </div>
         <form id="edit-drawing-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="edit-drawing-id">
             <div class="form-group">
                 <label for="edit-drawing-amount">Amount (Ksh)</label>
@@ -387,6 +389,7 @@
             <button class="close-btn" data-modal-target="add-bill">&times;</button>
         </div>
         <form id="add-bill-form" method="POST" action="/admin/add_bill">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="bill_type">Bill Type</label>
                 <select id="bill_type" name="bill_type" required>
@@ -427,6 +430,7 @@
             <button class="close-btn" data-modal-target="edit-bill">&times;</button>
         </div>
         <form id="edit-bill-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="edit-bill-id">
             <div class="form-group">
                 <label for="edit-bill-type">Bill Type</label>
@@ -467,6 +471,7 @@
             <button class="close-btn" data-modal-target="pay-bill">&times;</button>
         </div>
         <form id="pay-bill-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="pay-bill-id">
             <div class="form-group">
                 <label>Bill Type</label>
@@ -492,6 +497,7 @@
             <button class="close-btn" data-modal-target="add-purchase">&times;</button>
         </div>
         <form id="add-purchase-form" method="POST" action="/admin/add_purchase">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="purchase_type">Purchase Type</label>
                 <select id="purchase_type" name="purchase_type" required>
@@ -535,6 +541,7 @@
             <button class="close-btn" data-modal-target="edit-purchase">&times;</button>
         </div>
         <form id="edit-purchase-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="edit-purchase-id">
             <div class="form-group">
                 <label for="edit-purchase-type">Purchase Type</label>
@@ -578,6 +585,7 @@
             <button class="close-btn" data-modal-target="add-payroll">&times;</button>
         </div>
         <form id="add-payroll-form" method="POST" action="/admin/add_payroll">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="employee_id">Employee</label>
                 <select id="employee_id" name="employee_id" required>
@@ -625,6 +633,7 @@
             <button class="close-btn" data-modal-target="edit-payroll">&times;</button>
         </div>
         <form id="edit-payroll-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="edit-payroll-id">
             <div class="form-group">
                 <label for="edit-payroll-employee">Employee</label>
@@ -672,6 +681,7 @@
             <button class="close-btn" data-modal-target="add-debtor">&times;</button>
         </div>
         <form id="add-debtor-form" method="POST" action="/admin/add_debtor">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="debtor-name">Name *</label>
                 <input type="text" id="debtor-name" name="name" required>
@@ -716,6 +726,7 @@
             <button class="close-btn" data-modal-target="edit-debtor">&times;</button>
         </div>
         <form id="edit-debtor-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="edit-debtor-id">
             <div class="form-group">
                 <label for="edit-debtor-name">Name *</label>
@@ -769,6 +780,7 @@
             <button class="close-btn" data-modal-target="add-debtor-payment">&times;</button>
         </div>
         <form id="add-debtor-payment-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="debtor_id" id="debtor-payment-id">
             <div class="form-group">
                 <label>Debtor Name</label>
@@ -824,6 +836,7 @@
         <div class="modal-body">
             <p id="delete-confirm-message">Are you sure you want to delete this record?</p>
             <form id="delete-form" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="id" id="delete-record-id">
                 <input type="hidden" name="type" id="delete-record-type">
             </form>
