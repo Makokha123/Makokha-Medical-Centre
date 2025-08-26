@@ -3,6 +3,13 @@
 {% block content %}
 <!-- Add this to the head section of all your base templates -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+/* Sales table enhancements */
+#salesTable thead th { background: #0d6efd; color: #fff; border: none; }
+#salesTable tbody tr:nth-child(odd) { background-color: #f8fbff; }
+#salesTable tbody tr:nth-child(even) { background-color: #ffffff; }
+#salesTable tbody tr:hover { background-color: #eaf2ff; }
+</style>
         
 <div class="content">
     <h2>Pharmacist Dashboard</h2>
@@ -291,6 +298,11 @@
 
 <script>
 $(document).ready(function() {
+    // Currency formatter (Ksh)
+    function formatKsh(value) {
+        const num = Number(value) || 0;
+        return 'Ksh ' + new Intl.NumberFormat('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
+    }
     // Tab switching
     $('.pharmacist-tabs .tab').removeClass('active');
     $('#dispenseTab').addClass('active');
@@ -332,7 +344,7 @@ $(document).ready(function() {
                                     <h5>${drug.name}</h5>
                                     <p>${drug.specification || 'No specification'}</p>
                                     <div class="drug-meta">
-                                        <span class="price">Ksh ${Number(drug.selling_price).toFixed(2)}</span>
+                                        <span class="price">${formatKsh(drug.selling_price)}</span>
                                         <span class="stock">${drug.remaining_quantity} in stock</span>
                                     </div>
                                 </div>
@@ -463,7 +475,7 @@ $(document).ready(function() {
             itemCount += item.quantity;
         });
         
-        $('#cartTotal').text('Ksh ' + total.toFixed(2));
+        $('#cartTotal').text(formatKsh(total));
         $('#cartItemCount').text(itemCount);
         return total;
     }
@@ -492,7 +504,7 @@ $(document).ready(function() {
                     <div class="item-info">
                         <h5>${item.drugName}</h5>
                         <div class="item-meta">
-                            <span class="item-price">Ksh ${item.price.toFixed(2)}</span>
+                            <span class="item-price">${formatKsh(item.price)}</span>
                             <span class="item-stock">${item.currentStock} in stock</span>
                         </div>
                     </div>
@@ -507,7 +519,7 @@ $(document).ready(function() {
                             <i class="fas fa-plus"></i>
                         </button>
                     </div>
-                    <div class="item-total">Ksh ${(item.price * item.quantity).toFixed(2)}</div>
+                    <div class="item-total">${formatKsh(item.price * item.quantity)}</div>
                     <button class="btn btn-sm btn-outline-danger btn-remove" data-id="${item.drugId}">
                         <i class="fas fa-trash"></i>
                     </button>
@@ -631,7 +643,7 @@ $(document).ready(function() {
     // Helper Functions
     function updateCartItem(drugId, item) {
         const $itemElement = $(`.cart-item[data-id="${drugId}"]`);
-        $itemElement.find('.item-total').text('Ksh ' + (item.price * item.quantity).toFixed(2));
+        $itemElement.find('.item-total').text(formatKsh(item.price * item.quantity));
         const cart = getCart();
         const idx = cart.items.findIndex(i => i.drugId == drugId);
         if (idx !== -1) {
@@ -674,10 +686,10 @@ $(document).ready(function() {
                     html += `
                         <tr>
                             <td>${sale.sale_number}</td>
-                            <td>${new Date(sale.created_at).toLocaleString()}</td>
+                            <td data-order="${new Date(sale.created_at).getTime()}">${new Date(sale.created_at).toLocaleString()}</td>
                             <td>${sale.patient ? sale.patient.name : 'Walk-in'}</td>
                             <td>${sale.items.length}</td>
-                            <td>Ksh ${Number(sale.total_amount).toFixed(2)}</td>
+                            <td data-order="${Number(sale.total_amount)}">${formatKsh(sale.total_amount)}</td>
                             <td>${sale.payment_method}</td>
                             <td>
                                 <button class="btn btn-sm btn-view-receipt" data-id="${sale.id}">
@@ -688,6 +700,15 @@ $(document).ready(function() {
                     `;
                 });
                 $('#salesTable tbody').html(html);
+                if ($.fn.DataTable && $.fn.DataTable.isDataTable && $.fn.DataTable.isDataTable('#salesTable')) {
+                    $('#salesTable').DataTable().clear().destroy();
+                }
+                $('#salesTable').DataTable({
+                    responsive: true,
+                    dom: '<"top"f>rt<"bottom"lip><"clear">',
+                    pageLength: 25,
+                    order: [[1, 'desc']]
+                });
             } else {
                 $('#salesTable tbody').html('<tr><td colspan="7" class="text-center"><i class="fas fa-info-circle"></i> No sales found</td></tr>');
             }
@@ -843,7 +864,7 @@ $(document).ready(function() {
                             <div class="col-md-4">
                                 <div class="detail-group">
                                     <label>Selling Price:</label>
-                                    <p>Ksh ${Number(data.selling_price).toFixed(2)}</p>
+                                    <p>${formatKsh(data.selling_price)}</p>
                                 </div>
                             </div>
                             <div class="col-md-4">
@@ -1179,7 +1200,7 @@ $(document).ready(function() {
                 $('#refundSaleNo').text(sale.sale_number);
                 $('#refundSaleDate').text(sale.created_at);
                 $('#refundPatient').text(sale.patient_name || 'Walk-in');
-                $('#refundTotal').text('Ksh ' + sale.total_amount.toFixed(2));
+                $('#refundTotal').text(formatKsh(sale.total_amount));
                 // Persist sale id for refund processing
                 $('#refundResults').data('sale-id', sale.id);
                 
@@ -1189,7 +1210,7 @@ $(document).ready(function() {
                     html += `
                         <tr>
                             <td>${item.drug_name}</td>
-                            <td>Ksh ${Number(item.unit_price).toFixed(2)}</td>
+                            <td>${formatKsh(item.unit_price)}</td>
                             <td>${item.quantity_sold}</td>
                             <td>${item.quantity_remaining}</td>
                             <td>
@@ -1230,7 +1251,7 @@ $(document).ready(function() {
             total += quantity * unitPrice;
         });
         
-        $('#refundAmountTotal').text('Ksh ' + total.toFixed(2));
+        $('#refundAmountTotal').text(formatKsh(total));
         
         // Enable/disable refund button based on whether there are items to refund
         $('#processRefundBtn').prop('disabled', total <= 0);
