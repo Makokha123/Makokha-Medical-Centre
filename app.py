@@ -4605,11 +4605,82 @@ def patient_details(patient_id):
         } for prescription in patient.prescriptions for item in prescription.items]
     })
 # Medical Tests Management
-@app.route('/admin/medical-tests')
+@app.route('/admin/medical-tests', methods=['GET', 'POST'])
 @login_required
 def manage_medical_tests():
     if current_user.role != 'admin':
         abort(403)
+
+    # Accept POST to support non-JS fallback submissions from the page's forms
+    if request.method == 'POST':
+        try:
+            test_type = (request.form.get('type') or '').strip().lower()
+            name = (request.form.get('name') or '').strip()
+            price_raw = request.form.get('price')
+            description = (request.form.get('description') or '').strip() or None
+            is_active = parse_bool(request.form.get('is_active'))
+
+            # Basic validation
+            if not test_type or test_type not in ('lab', 'imaging'):
+                flash('Invalid test type', 'danger')
+                return redirect(url_for('manage_medical_tests'))
+            if not name:
+                flash('Test name is required', 'danger')
+                return redirect(url_for('manage_medical_tests'))
+
+            amt, err = parse_price(price_raw)
+            if err:
+                flash(err, 'danger')
+                return redirect(url_for('manage_medical_tests'))
+
+            test_id = request.form.get('id')
+            if test_id:
+                # Update existing test
+                if test_type == 'lab':
+                    t = LabTest.query.get(test_id)
+                    if not t:
+                        flash('Lab test not found', 'danger')
+                        return redirect(url_for('manage_medical_tests'))
+                    old = {'name': t.name, 'price': t.price, 'description': t.description}
+                    t.name = name
+                    t.price = float(amt)
+                    t.description = description
+                    db.session.commit()
+                    log_audit('update', table='lab_test', record_id=t.id, old_values=old, new_values={'name': name, 'price': float(amt), 'description': description})
+                    flash('Lab test updated successfully', 'success')
+                else:
+                    t = ImagingTest.query.get(test_id)
+                    if not t:
+                        flash('Imaging test not found', 'danger')
+                        return redirect(url_for('manage_medical_tests'))
+                    old = {'name': t.name, 'price': t.price, 'description': t.description, 'is_active': getattr(t, 'is_active', True)}
+                    t.name = name
+                    t.price = float(amt)
+                    t.description = description
+                    if hasattr(t, 'is_active'):
+                        t.is_active = is_active
+                    db.session.commit()
+                    log_audit('update', table='imaging_test', record_id=t.id, old_values=old, new_values={'name': name, 'price': float(amt), 'description': description, 'is_active': is_active})
+                    flash('Imaging test updated successfully', 'success')
+            else:
+                # Create new test
+                if test_type == 'lab':
+                    t = LabTest(name=name, price=float(amt), description=description)
+                    db.session.add(t)
+                    db.session.commit()
+                    log_audit('create', table='lab_test', record_id=t.id, changes={'name': name, 'price': float(amt)})
+                    flash('Lab test added successfully', 'success')
+                else:
+                    t = ImagingTest(name=name, price=float(amt), description=description, is_active=is_active)
+                    db.session.add(t)
+                    db.session.commit()
+                    log_audit('create', table='imaging_test', record_id=t.id, changes={'name': name, 'price': float(amt), 'is_active': is_active})
+                    flash('Imaging test added successfully', 'success')
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"manage_medical_tests POST handler error: {str(e)}", exc_info=True)
+            flash('An unexpected error occurred while processing the request', 'danger')
+        return redirect(url_for('manage_medical_tests'))
     
     services = Service.query.order_by(Service.name).all()
     lab_tests = LabTest.query.order_by(LabTest.name).all()
