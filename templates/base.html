@@ -5,6 +5,8 @@
     <!-- Enhanced Mobile Viewport Settings -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
     <meta name="theme-color" content="#0d6efd">
+    <!-- CSRF token for forms and JS -->
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}Makokha Medical Centre{% endblock %}</title>
 
     <!-- PWA Configuration -->
@@ -194,6 +196,73 @@
     <!-- Local JS -->
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    <!-- Auto-inject CSRF token into all POST forms that don't include it -->
+    <script>
+        (function() {
+            function injectCsrfIntoForms(root) {
+                try {
+                    var tokenMeta = document.querySelector('meta[name="csrf-token"]');
+                    if (!tokenMeta) return;
+                    var token = tokenMeta.getAttribute('content');
+                    if (!token) return;
+                    var forms = (root || document).querySelectorAll('form[method="POST" i], form[method="post" i]');
+                    forms.forEach(function(form) {
+                        if (!form.querySelector('input[name="csrf_token"]')) {
+                            var input = document.createElement('input');
+                            input.type = 'hidden';
+                            input.name = 'csrf_token';
+                            input.value = token;
+                            form.appendChild(input);
+                        }
+                    });
+                } catch (e) {
+                    // fail silently
+                }
+            }
+
+            // Initial injection on DOM ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', function() { injectCsrfIntoForms(); });
+            } else {
+                injectCsrfIntoForms();
+            }
+
+            // Ensure dynamically created forms also get the token on submit
+            document.addEventListener('submit', function(ev) {
+                var form = ev.target;
+                if (form && form.tagName === 'FORM' && /post/i.test(form.method)) {
+                    var tokenMeta = document.querySelector('meta[name="csrf-token"]');
+                    if (!tokenMeta) return;
+                    if (!form.querySelector('input[name="csrf_token"]')) {
+                        var input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'csrf_token';
+                        input.value = tokenMeta.getAttribute('content') || '';
+                        form.appendChild(input);
+                    }
+                }
+            }, true);
+
+            // Optional: observe DOM for added forms and inject token lazily
+            if (window.MutationObserver) {
+                var obs = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(m) {
+                        m.addedNodes && m.addedNodes.forEach(function(node) {
+                            if (node.nodeType === 1) { // ELEMENT_NODE
+                                if (node.tagName === 'FORM') {
+                                    injectCsrfIntoForms(node);
+                                } else if (node.querySelectorAll) {
+                                    var nestedForms = node.querySelectorAll('form');
+                                    if (nestedForms.length) injectCsrfIntoForms(node);
+                                }
+                            }
+                        });
+                    });
+                });
+                obs.observe(document.documentElement, { childList: true, subtree: true });
+            }
+        })();
+    </script>
 
     <!-- Mobile Optimization Scripts -->
     <script>
