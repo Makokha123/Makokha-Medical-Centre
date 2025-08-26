@@ -4625,6 +4625,25 @@ def manage_medical_tests():
 @limiter.limit("10 per minute")
 @admin_required_json
 def add_service():
+    try:
+        name = (request.form.get('name') or '').strip()
+        price_raw = request.form.get('price')
+        description = (request.form.get('description') or '').strip() or None
+        if not name:
+            return bad_request('Service name is required')
+        amt, err = parse_price(price_raw)
+        if err:
+            return bad_request(err)
+        service = Service(name=name, price=float(amt), description=description)
+        db.session.add(service)
+        db.session.commit()
+        log_audit('create', table='service', record_id=service.id, changes={'name': name, 'price': float(amt)})
+        return jsonify({'success': True, 'id': service.id})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'add_service error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
+def add_service():
     name = (request.form.get('name') or '').strip()
     price_str = request.form.get('price')
     description = (request.form.get('description') or '').strip() or None
@@ -4658,6 +4677,11 @@ def add_service():
 @limiter.limit("60 per minute")
 @admin_required_json
 def get_service(id):
+    svc = Service.query.get(id)
+    if not svc:
+        return jsonify({'success': False, 'error': 'Service not found'}), 404
+    return jsonify({'id': svc.id, 'name': svc.name, 'price': svc.price, 'description': svc.description})
+def get_service(id):
     service = Service.query.get(id)
     if not service:
         return jsonify({'success': False, 'error': 'Not found'}), 404
@@ -4671,6 +4695,30 @@ def get_service(id):
 @app.route('/admin/services/<int:id>/update', methods=['POST'])
 @limiter.limit("20 per minute")
 @admin_required_json
+def update_service(id):
+    try:
+        svc = Service.query.get(id)
+        if not svc:
+            return jsonify({'success': False, 'error': 'Service not found'}), 404
+        name = (request.form.get('name') or '').strip()
+        price_raw = request.form.get('price')
+        description = (request.form.get('description') or '').strip() or None
+        if not name:
+            return bad_request('Service name is required')
+        amt, err = parse_price(price_raw)
+        if err:
+            return bad_request(err)
+        old = {'name': svc.name, 'price': svc.price, 'description': svc.description}
+        svc.name = name
+        svc.price = float(amt)
+        svc.description = description
+        db.session.commit()
+        log_audit('update', table='service', record_id=svc.id, old_values=old, new_values={'name': name, 'price': float(amt), 'description': description})
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'update_service error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 def update_service(id):
     service = Service.query.get(id)
     if not service:
@@ -4717,6 +4765,19 @@ def update_service(id):
 @limiter.limit("20 per minute")
 @admin_required_json
 def delete_service(id):
+    try:
+        svc = Service.query.get(id)
+        if not svc:
+            return jsonify({'success': False, 'error': 'Service not found'}), 404
+        db.session.delete(svc)
+        db.session.commit()
+        log_audit('delete', table='service', record_id=id)
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'delete_service error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
+def delete_service(id):
     service = Service.query.get(id)
     if not service:
         return jsonify({'success': False, 'error': 'Not found'}), 404
@@ -4740,6 +4801,25 @@ def delete_service(id):
 @app.route('/admin/lab-tests/add', methods=['POST'])
 @limiter.limit("10 per minute")
 @admin_required_json
+def add_lab_test():
+    try:
+        name = (request.form.get('name') or '').strip()
+        price_raw = request.form.get('price')
+        description = (request.form.get('description') or '').strip() or None
+        if not name:
+            return bad_request('Test name is required')
+        amt, err = parse_price(price_raw)
+        if err:
+            return bad_request(err)
+        test = LabTest(name=name, price=float(amt), description=description)
+        db.session.add(test)
+        db.session.commit()
+        log_audit('create', table='lab_test', record_id=test.id, changes={'name': name, 'price': float(amt)})
+        return jsonify({'success': True, 'id': test.id})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'add_lab_test error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 def add_lab_test():
     name = (request.form.get('name') or '').strip()
     price_str = request.form.get('price')
@@ -4774,6 +4854,11 @@ def add_lab_test():
 @limiter.limit("60 per minute")
 @admin_required_json
 def get_lab_test(id):
+    t = LabTest.query.get(id)
+    if not t:
+        return jsonify({'success': False, 'error': 'Test not found'}), 404
+    return jsonify({'id': t.id, 'name': t.name, 'price': t.price, 'description': t.description})
+def get_lab_test(id):
     lab_test = LabTest.query.get(id)
     if not lab_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
@@ -4787,6 +4872,30 @@ def get_lab_test(id):
 @app.route('/admin/lab-tests/<int:id>/update', methods=['POST'])
 @limiter.limit("20 per minute")
 @admin_required_json
+def update_lab_test(id):
+    try:
+        t = LabTest.query.get(id)
+        if not t:
+            return jsonify({'success': False, 'error': 'Test not found'}), 404
+        name = (request.form.get('name') or '').strip()
+        price_raw = request.form.get('price')
+        description = (request.form.get('description') or '').strip() or None
+        if not name:
+            return bad_request('Test name is required')
+        amt, err = parse_price(price_raw)
+        if err:
+            return bad_request(err)
+        old = {'name': t.name, 'price': t.price, 'description': t.description}
+        t.name = name
+        t.price = float(amt)
+        t.description = description
+        db.session.commit()
+        log_audit('update', table='lab_test', record_id=t.id, old_values=old, new_values={'name': name, 'price': float(amt), 'description': description})
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'update_lab_test error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 def update_lab_test(id):
     lab_test = LabTest.query.get(id)
     if not lab_test:
@@ -4833,6 +4942,19 @@ def update_lab_test(id):
 @limiter.limit("20 per minute")
 @admin_required_json
 def delete_lab_test(id):
+    try:
+        t = LabTest.query.get(id)
+        if not t:
+            return jsonify({'success': False, 'error': 'Test not found'}), 404
+        db.session.delete(t)
+        db.session.commit()
+        log_audit('delete', table='lab_test', record_id=id)
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'delete_lab_test error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
+def delete_lab_test(id):
     lab_test = LabTest.query.get(id)
     if not lab_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
@@ -4859,6 +4981,26 @@ def delete_lab_test(id):
 @app.route('/admin/imaging-tests/add', methods=['POST'])
 @limiter.limit("10 per minute")
 @admin_required_json
+def add_imaging_test():
+    try:
+        name = (request.form.get('name') or '').strip()
+        price_raw = request.form.get('price')
+        description = (request.form.get('description') or '').strip() or None
+        is_active = 'is_active' in request.form
+        if not name:
+            return bad_request('Test name is required')
+        amt, err = parse_price(price_raw)
+        if err:
+            return bad_request(err)
+        test = ImagingTest(name=name, price=float(amt), description=description, is_active=is_active)
+        db.session.add(test)
+        db.session.commit()
+        log_audit('create', table='imaging_test', record_id=test.id, changes={'name': name, 'price': float(amt), 'is_active': is_active})
+        return jsonify({'success': True, 'id': test.id})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'add_imaging_test error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 def add_imaging_test():
     name = (request.form.get('name') or '').strip()
     price_str = request.form.get('price')
@@ -4900,6 +5042,11 @@ def add_imaging_test():
 @limiter.limit("60 per minute")
 @admin_required_json
 def get_imaging_test(id):
+    t = ImagingTest.query.get(id)
+    if not t:
+        return jsonify({'success': False, 'error': 'Test not found'}), 404
+    return jsonify({'id': t.id, 'name': t.name, 'price': t.price, 'description': t.description, 'is_active': getattr(t, 'is_active', True)})
+def get_imaging_test(id):
     imaging_test = ImagingTest.query.get(id)
     if not imaging_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
@@ -4914,6 +5061,33 @@ def get_imaging_test(id):
 @app.route('/admin/imaging-tests/<int:id>/update', methods=['POST'])
 @limiter.limit("20 per minute")
 @admin_required_json
+def update_imaging_test(id):
+    try:
+        t = ImagingTest.query.get(id)
+        if not t:
+            return jsonify({'success': False, 'error': 'Test not found'}), 404
+        name = (request.form.get('name') or '').strip()
+        price_raw = request.form.get('price')
+        description = (request.form.get('description') or '').strip() or None
+        is_active = 'is_active' in request.form
+        if not name:
+            return bad_request('Test name is required')
+        amt, err = parse_price(price_raw)
+        if err:
+            return bad_request(err)
+        old = {'name': t.name, 'price': t.price, 'description': t.description, 'is_active': getattr(t, 'is_active', True)}
+        t.name = name
+        t.price = float(amt)
+        t.description = description
+        if hasattr(t, 'is_active'):
+            t.is_active = is_active
+        db.session.commit()
+        log_audit('update', table='imaging_test', record_id=t.id, old_values=old, new_values={'name': name, 'price': float(amt), 'description': description, 'is_active': is_active})
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'update_imaging_test error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 def update_imaging_test(id):
     imaging_test = ImagingTest.query.get(id)
     if not imaging_test:
@@ -4963,6 +5137,19 @@ def update_imaging_test(id):
 @app.route('/admin/imaging-tests/<int:id>/delete', methods=['POST'])
 @limiter.limit("20 per minute")
 @admin_required_json
+def delete_imaging_test(id):
+    try:
+        t = ImagingTest.query.get(id)
+        if not t:
+            return jsonify({'success': False, 'error': 'Test not found'}), 404
+        db.session.delete(t)
+        db.session.commit()
+        log_audit('delete', table='imaging_test', record_id=id)
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'delete_imaging_test error: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 def delete_imaging_test(id):
     imaging_test = ImagingTest.query.get(id)
     if not imaging_test:
