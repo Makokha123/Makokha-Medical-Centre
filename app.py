@@ -1,7 +1,5 @@
 from sqlalchemy import MetaData, Table
 from sqlalchemy import MetaData, Table
-
-# app.py
 import csv
 import io
 from threading import Thread
