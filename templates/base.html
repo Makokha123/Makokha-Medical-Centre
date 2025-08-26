@@ -264,6 +264,154 @@
         })();
     </script>
 
+    <!-- Table Enhancement: auto-wrap, mobile labels, sortable headers -->
+    <script>
+    (function() {
+        function enhanceTables() {
+            var tables = Array.prototype.slice.call(document.querySelectorAll('table'));
+            tables.forEach(function(table) {
+                if (table.dataset.noEnhance === 'true' || table.classList.contains('no-enhance') || table.classList.contains('dataTable')) {
+                    return;
+                }
+                // Wrap in responsive container if needed
+                var parent = table.parentElement;
+                var needsWrap = !(parent && (parent.classList.contains('table-responsive') || parent.classList.contains('table-container')));
+                if (needsWrap) {
+                    var wrapper = document.createElement('div');
+                    wrapper.className = 'table-responsive table-container';
+                    parent.insertBefore(wrapper, table);
+                    wrapper.appendChild(table);
+                } else {
+                    // Ensure table-container exists for consistent styling
+                    parent.classList.add('table-container');
+                }
+
+                // Add enhanced class
+                table.classList.add('table-enhanced');
+
+                // Build header map
+                var headers = [];
+                var thead = table.tHead;
+                if (thead && thead.rows.length) {
+                    var ths = thead.rows[0].cells;
+                    for (var i = 0; i < ths.length; i++) {
+                        headers.push((ths[i].innerText || ths[i].textContent || '').trim());
+                        ths[i].classList.add('sortable');
+                        ths[i].setAttribute('role', 'columnheader');
+                        ths[i].setAttribute('aria-sort', 'none');
+                    }
+                }
+
+                // Assign data-label for mobile stacked view
+                if (headers.length) {
+                    var rows = table.tBodies.length ? table.tBodies[0].rows : [];
+                    for (var r = 0; r < rows.length; r++) {
+                        var cells = rows[r].cells;
+                        for (var c = 0; c < cells.length; c++) {
+                            if (!cells[c].getAttribute('data-label') && headers[c]) {
+                                cells[c].setAttribute('data-label', headers[c]);
+                            }
+                        }
+                    }
+                }
+
+                // Detect numeric columns
+                if (table.tBodies.length && table.tBodies[0].rows.length) {
+                    var sampleRow = table.tBodies[0].rows[0];
+                    var colCount = sampleRow ? sampleRow.cells.length : 0;
+                    for (var col = 0; col < colCount; col++) {
+                        var numericCount = 0, checked = 0;
+                        for (var rr = 0; rr < table.tBodies[0].rows.length && checked < 10; rr++, checked++) {
+                            var txt = (table.tBodies[0].rows[rr].cells[col].innerText || '').trim();
+                            if (/^-?[\d,.]+(\s*[A-Za-z%]+)?$/.test(txt)) numericCount++;
+                        }
+                        if (numericCount >= Math.max(3, Math.floor(checked * 0.6))) {
+                            // Mark numeric column
+                            if (thead && thead.rows.length && thead.rows[0].cells[col]) {
+                                thead.rows[0].cells[col].classList.add('num-col');
+                            }
+                            for (var rb = 0; rb < table.tBodies[0].rows.length; rb++) {
+                                var cell = table.tBodies[0].rows[rb].cells[col];
+                                if (cell) cell.classList.add('num-col');
+                            }
+                        }
+                    }
+                }
+
+                // Add sticky first column if table overflows horizontally
+                var wrapperEl = table.closest('.table-container') || table.parentElement;
+                if (wrapperEl && wrapperEl.scrollWidth > wrapperEl.clientWidth) {
+                    table.classList.add('sticky-first-col');
+                }
+
+                // Add sorting behavior
+                if (thead && thead.rows.length) {
+                    var thCells = thead.rows[0].cells;
+                    for (let idx = 0; idx < thCells.length; idx++) {
+                        thCells[idx].addEventListener('click', function() {
+                            sortTable(table, idx);
+                            // Update aria-sort
+                            for (var j = 0; j < thCells.length; j++) {
+                                thCells[j].setAttribute('aria-sort', 'none');
+                                thCells[j].classList.remove('sorted-asc', 'sorted-desc');
+                            }
+                            var dir = table.dataset.sortDir === 'asc' ? 'descending' : 'ascending';
+                            thCells[idx].setAttribute('aria-sort', dir);
+                            thCells[idx].classList.add(dir === 'ascending' ? 'sorted-asc' : 'sorted-desc');
+                        });
+                    }
+                }
+            });
+        }
+
+        function sortTable(table, colIndex) {
+            var tbody = table.tBodies[0];
+            if (!tbody) return;
+            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+            var dir = table.dataset.sortDir === 'asc' ? 'desc' : 'asc';
+            table.dataset.sortDir = dir;
+
+            var extract = function(cell) {
+                var text = (cell.innerText || cell.textContent || '').trim();
+                // Try number
+                var num = text.replace(/[^0-9.+-]/g, '');
+                if (num && !isNaN(num)) return parseFloat(num);
+                // Try date
+                var d = Date.parse(text);
+                if (!isNaN(d)) return d;
+                return text.toLowerCase();
+            };
+
+            rows.sort(function(a, b) {
+                var A = extract(a.cells[colIndex] || { innerText: '' });
+                var B = extract(b.cells[colIndex] || { innerText: '' });
+                if (A < B) return dir === 'asc' ? -1 : 1;
+                if (A > B) return dir === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            // Re-append
+            rows.forEach(function(r) { tbody.appendChild(r); });
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', enhanceTables);
+        } else {
+            enhanceTables();
+        }
+        // Re-enhance on window resize to re-evaluate overflow
+        window.addEventListener('resize', function() {
+            document.querySelectorAll('table.table-enhanced').forEach(function(t) {
+                var wrapperEl = t.closest('.table-container') || t.parentElement;
+                if (wrapperEl) {
+                    if (wrapperEl.scrollWidth > wrapperEl.clientWidth) t.classList.add('sticky-first-col');
+                    else t.classList.remove('sticky-first-col');
+                }
+            });
+        });
+    })();
+    </script>
+
     <!-- Mobile Optimization Scripts -->
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -340,6 +488,120 @@
             }
         });
     </script>
+
+    <!-- Table Enhancement Styles -->
+    <style>
+    /* Enhanced table styles */
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin-bottom: 1.25rem;
+    }
+    table.table-enhanced {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        background: #fff;
+        border: 1px solid rgba(0,0,0,0.06);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+    }
+    .table-enhanced thead th {
+        position: sticky;
+        top: 0;
+        background: linear-gradient(180deg, var(--primary-blue), var(--dark-blue));
+        color: #fff;
+        z-index: 2;
+        padding: 0.75rem 1rem;
+        font-weight: 600;
+        white-space: nowrap;
+        border-bottom: 1px solid rgba(255,255,255,0.2);
+    }
+    .table-enhanced tbody td {
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid rgba(0,0,0,0.06);
+        vertical-align: middle;
+        background: #fff;
+    }
+    .table-enhanced tbody tr:nth-child(even) td {
+        background: #fafbff;
+    }
+    .table-enhanced tbody tr:hover td {
+        background: #eef5ff;
+    }
+    .table-enhanced tbody tr.selected td {
+        background: #dce9ff !important;
+    }
+    .table-enhanced .num-col {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    .table-enhanced.sticky-first-col thead th:first-child,
+    .table-enhanced.sticky-first-col tbody td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 1;
+        background-clip: padding-box;
+        box-shadow: 2px 0 0 rgba(0,0,0,0.04);
+    }
+    .table-enhanced thead th.sortable {
+        cursor: pointer;
+        position: relative;
+        padding-right: 1.5rem;
+    }
+    .table-enhanced thead th.sortable::after {
+        content: '\2195';
+        position: absolute;
+        right: 0.5rem;
+        top: 50%;
+        transform: translateY(-50%);
+        opacity: 0.6;
+        font-size: 0.85rem;
+    }
+    .table-enhanced thead th.sorted-asc::after {
+        content: '\2191';
+        opacity: 1;
+    }
+    .table-enhanced thead th.sorted-desc::after {
+        content: '\2193';
+        opacity: 1;
+    }
+    /* Mobile stacked view */
+    @media (max-width: 576px) {
+        .table-enhanced thead {
+            display: none;
+        }
+        .table-enhanced tbody tr {
+            display: block;
+            margin: 0.6rem 0;
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+        .table-enhanced tbody td {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.6rem 0.9rem;
+            border-bottom: 1px dashed rgba(0,0,0,0.06);
+        }
+        .table-enhanced tbody td:last-child {
+            border-bottom: none;
+        }
+        .table-enhanced tbody td::before {
+            content: attr(data-label);
+            font-weight: 600;
+            color: #555;
+            margin-right: 0.75rem;
+        }
+        .table-enhanced .num-col {
+            text-align: left;
+        }
+    }
+    </style>
 
     <!-- Responsive Styles -->
     <style>
