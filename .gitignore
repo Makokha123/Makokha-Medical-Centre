@@ -1,4 +1,7 @@
 uploads/
+backups/
+instance/
+static/
 .env
 .env.*
 !.env.example

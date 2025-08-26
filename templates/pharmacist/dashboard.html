@@ -6,6 +6,7 @@
         
 <div class="content">
     <h2>Pharmacist Dashboard</h2>
+    <div id="alertsContainer"></div>
     
     <div class="pharmacist-tabs">
         <div class="tab active" id="dispenseTab">
@@ -293,6 +294,26 @@ $(document).ready(function() {
     // Tab switching
     $('.pharmacist-tabs .tab').removeClass('active');
     $('#dispenseTab').addClass('active');
+
+    // Setup CSRF token for AJAX requests (Flask-WTF)
+    (function() {
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+        }
+        const metaToken = document.querySelector('meta[name="csrf-token"]');
+        const csrfToken = metaToken ? metaToken.getAttribute('content') : (getCookie('csrf_token') || getCookie('csrf-access-token'));
+        if (csrfToken) {
+            $.ajaxSetup({
+                beforeSend: function(xhr, settings) {
+                    if (!/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type)) {
+                        xhr.setRequestHeader('X-CSRFToken', csrfToken);
+                    }
+                }
+            });
+        }
+    })();
     
     // Load drugs for dispensing
     function loadDrugs() {
@@ -311,7 +332,7 @@ $(document).ready(function() {
                                     <h5>${drug.name}</h5>
                                     <p>${drug.specification || 'No specification'}</p>
                                     <div class="drug-meta">
-                                        <span class="price">Ksh ${drug.selling_price.toFixed(2)}</span>
+                                        <span class="price">Ksh ${Number(drug.selling_price).toFixed(2)}</span>
                                         <span class="stock">${drug.remaining_quantity} in stock</span>
                                     </div>
                                 </div>
@@ -611,7 +632,14 @@ $(document).ready(function() {
     function updateCartItem(drugId, item) {
         const $itemElement = $(`.cart-item[data-id="${drugId}"]`);
         $itemElement.find('.item-total').text('Ksh ' + (item.price * item.quantity).toFixed(2));
-        saveCart(getCart());
+        const cart = getCart();
+        const idx = cart.items.findIndex(i => i.drugId == drugId);
+        if (idx !== -1) {
+            cart.items[idx].quantity = item.quantity;
+            saveCart(cart);
+        } else {
+            saveCart(cart);
+        }
         updateCartSummary();
     }
 
@@ -630,83 +658,11 @@ $(document).ready(function() {
     }
 
     // Initialize cart on page load
-    $(document).ready(function() {
-        renderCartItems();
-        updateCartSummary();
-    });
+    renderCartItems();
+    updateCartSummary();
     
-    $('#confirmSaleBtn').click(function() {
-        const cart = getCart();
-        const paymentMethod = $('#paymentMethod').val();
-        
-        if (cart.items.length === 0) {
-            alert('Your cart is empty. Add items before proceeding.');
-            return;
-        }
-
-        // Prepare items with all required fields
-        const items = cart.items.map(item => ({
-            drug_id: item.drugId,         // Must match backend expectation
-            drug_name: item.drugName,      // Additional identifier
-            quantity: item.quantity,
-            unit_price: item.price,        // Critical for calculations
-            total_price: item.price * item.quantity
-        }));
-
-        const saleData = {
-            items: items,
-            payment_method: paymentMethod,
-            is_quick_sale: true            // If your backend expects this
-        };
-
-        // Show loading state
-        $(this).prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Processing...');
-
-        $.ajax({
-            url: '/pharmacist/sale',
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify(saleData),
-            success: function(response) {
-                if (response.success) {
-                    // Clear cart on success
-                    saveCart({ items: [] });
-                    renderCartItems();
-                    updateCartSummary();
-                    
-                    // Show receipt
-                    showReceipt(response.sale_id);
-                } else {
-                    alert('Error: ' + (response.error || 'Failed to process sale'));
-                }
-            },
-            error: function(xhr) {
-                let errorMsg = 'An error occurred. Please try again.';
-                if (xhr.responseJSON) {
-                    errorMsg = xhr.responseJSON.error || errorMsg;
-                    if (xhr.responseJSON.details) {
-                        errorMsg += '\nDetails: ' + xhr.responseJSON.details;
-                    }
-                }
-                alert(errorMsg);
-            },
-            complete: function() {
-                $('#confirmSaleBtn').prop('disabled', false).html('<i class="fas fa-check"></i> Confirm Sale');
-            }
-        });
-    });
-
-    function showReceipt(saleId) {
-        $('#receiptContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading receipt...</div>');
-        $('#receiptModal').modal('show');
-        
-        $.get(`/pharmacist/sale/${saleId}/receipt`, function(data) {
-            $('#receiptContent').html(data);
-        }).fail(function() {
-            $('#receiptContent').html('<div class="alert alert-danger">Failed to load receipt</div>');
-        });
-    }
-
+    
+    
     // Load sales
     function loadSales() {
         $('#salesTable tbody').html('<tr><td colspan="7" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading sales...</td></tr>');
@@ -721,7 +677,7 @@ $(document).ready(function() {
                             <td>${new Date(sale.created_at).toLocaleString()}</td>
                             <td>${sale.patient ? sale.patient.name : 'Walk-in'}</td>
                             <td>${sale.items.length}</td>
-                            <td>Ksh ${sale.total_amount.toFixed(2)}</td>
+                            <td>Ksh ${Number(sale.total_amount).toFixed(2)}</td>
                             <td>${sale.payment_method}</td>
                             <td>
                                 <button class="btn btn-sm btn-view-receipt" data-id="${sale.id}">
@@ -794,7 +750,7 @@ $(document).ready(function() {
                             <td>${drug.category || '-'}</td>
                             <td>${drug.batch_number || '-'}</td>
                             <td>${drug.expiry_date ? new Date(drug.expiry_date).toLocaleDateString() : '-'}</td>
-                            <td>Ksh ${drug.selling_price.toFixed(2)}</td>
+                            <td>Ksh ${Number(drug.selling_price).toFixed(2)}</td>
                             <td>${drug.remaining_quantity}</td>
                             <td>
                                 <span class="status-badge ${statusClass}">
@@ -816,7 +772,10 @@ $(document).ready(function() {
                 $('#lowStockCount').text(lowStock);
                 $('#expiringSoonCount').text(expiringSoon);
                 
-                // Initialize DataTable
+                // Initialize or reinitialize DataTable safely
+                if ($.fn.DataTable && $.fn.DataTable.isDataTable && $.fn.DataTable.isDataTable('#inventoryTable')) {
+                    $('#inventoryTable').DataTable().clear().destroy();
+                }
                 $('#inventoryTable').DataTable({
                     responsive: true,
                     dom: '<"top"f>rt<"bottom"lip><"clear">',
@@ -884,7 +843,7 @@ $(document).ready(function() {
                             <div class="col-md-4">
                                 <div class="detail-group">
                                     <label>Selling Price:</label>
-                                    <p>Ksh ${data.selling_price.toFixed(2)}</p>
+                                    <p>Ksh ${Number(data.selling_price).toFixed(2)}</p>
                                 </div>
                             </div>
                             <div class="col-md-4">
@@ -992,8 +951,10 @@ $(document).ready(function() {
         window.location.href = `/pharmacist/drugs/export?filter=${filter}&search=${search}&sort=${sort}`;
     });
 
-    // Initialize inventory on page load
-    loadInventory();
+    // Initialize inventory on page load (only if table exists in DOM)
+    if ($('#inventoryTable').length) {
+        loadInventory();
+    }
 
     // Load prescriptions
     function loadPrescriptions() {
@@ -1219,6 +1180,8 @@ $(document).ready(function() {
                 $('#refundSaleDate').text(sale.created_at);
                 $('#refundPatient').text(sale.patient_name || 'Walk-in');
                 $('#refundTotal').text('Ksh ' + sale.total_amount.toFixed(2));
+                // Persist sale id for refund processing
+                $('#refundResults').data('sale-id', sale.id);
                 
                 // Load items
                 let html = '';
@@ -1226,7 +1189,7 @@ $(document).ready(function() {
                     html += `
                         <tr>
                             <td>${item.drug_name}</td>
-                            <td>Ksh ${item.unit_price.toFixed(2)}</td>
+                            <td>Ksh ${Number(item.unit_price).toFixed(2)}</td>
                             <td>${item.quantity_sold}</td>
                             <td>${item.quantity_remaining}</td>
                             <td>
@@ -1302,7 +1265,8 @@ $(document).ready(function() {
             method: 'POST',
             contentType: 'application/json',
             data: JSON.stringify({
-                sale_id: $('#refundSaleNo').text(),
+                sale_id: $('#refundResults').data('sale-id'),
+                sale_number: $('#refundSaleNo').text(),
                 items: items
             }),
             success: function(response) {
@@ -1353,16 +1317,6 @@ $(document).ready(function() {
         loadSales();
     });
     
-    $('#refreshInventoryBtn').click(function() {
-        loadInventory();
-    });
-    
-    // Export inventory
-    $('#exportInventoryBtn').click(function() {
-        // This would typically export to CSV or Excel
-        alert('Export functionality would be implemented here');
-    });
-    
     // Filter inventory
     $('#inventoryFilter').change(function() {
         const filter = $(this).val();
@@ -1376,6 +1330,15 @@ $(document).ready(function() {
         showReceipt(saleId);
     });
     
+    // Simple client-side search filter for drugs
+    $('#pharmaDrugSearch').on('input', function() {
+        const q = $(this).val().toLowerCase();
+        $('#pharmaDrugList .drug-card').each(function() {
+            const text = $(this).find('.drug-info').text().toLowerCase();
+            $(this).toggle(text.indexOf(q) > -1);
+        });
+    });
+
     // Initialize on page load
     loadDrugs();
     loadSales();

@@ -1,3 +1,5 @@
+from sqlalchemy import MetaData, Table
+from sqlalchemy import MetaData, Table
 
 # app.py
 import csv
@@ -84,6 +86,8 @@ app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'true').lower() == 'true'
 app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME', 'your.email@gmail.com')
 app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD', 'your-password-or-app-password')
 app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', 'your.email@gmail.com')
+
+
 
 
 mail = Mail(app)
@@ -2587,17 +2591,20 @@ def manage_transactions():
     transactions = Transaction.query.order_by(Transaction.created_at.desc()).all()
     return render_template('admin/transactions.html', transactions=transactions)
 
-
 # Configuration for backup
 BACKUP_CONFIG = {
     'local_storage_path': os.path.join(app.instance_path, 'backups'),
     's3_bucket': os.getenv('AWS_BACKUP_BUCKET', 'your-backup-bucket'),
-    'encryption_key': os.getenv('BACKUP_ENCRYPTION_KEY', Fernet.generate_key().decode()),
+    'encryption_key': os.getenv('BACKUP_ENCRYPTION_KEY'),
     'tables_to_backup': [
-        'users', 'transactions', 'expenses', 'purchases', 'payroll', 
-        'debtors', 'employees', 'customers', 'drugs', 'drug_dosages'
+        'appointments', 'audit_logs', 'beds', 'debt_payments', 
+        'debtors', 'drug', 'drug_dosage', 'employees', 'expenses', 
+        'patients', 'patient_services', 'payroll', 'purchase_items', 'purchases', 'sales', 
+        'service_items', 'services', 'transactions', 'user', 'wards'
     ]
 }
+if not BACKUP_CONFIG['encryption_key']:
+    raise RuntimeError("Missing BACKUP_ENCRYPTION_KEY")
 
 # Initialize S3 client if configured
 if os.getenv('AWS_ACCESS_KEY_ID'):
@@ -2634,7 +2641,8 @@ def backup_management():
                 
                 # Run backup in background
                 from threading import Thread
-                thread = Thread(target=create_backup, args=(backup.id,))
+                user_id = current_user.id
+                thread = Thread(target=create_backup, args=(backup.id, user_id), daemon=True)
                 thread.start()
                 
                 flash('Backup process started successfully. You will be notified when complete.', 'success')
@@ -2654,7 +2662,7 @@ def backup_management():
                 
                 # Run restore in background
                 from threading import Thread
-                thread = Thread(target=restore_backup, args=(backup.id,))
+                thread = Thread(target=restore_backup, args=(backup.id,), daemon=True)
                 thread.start()
                 
                 flash('Restore process started successfully. The system may be unavailable during restoration.', 'warning')
@@ -2674,12 +2682,30 @@ def backup_management():
                 backup_file = get_backup_file(backup)
                 
                 # Create a response with the backup file
-                response = send_file(
-                    backup_file,
-                    as_attachment=True,
-                    download_name=f'backup_{backup.backup_id}.zip',
-                    mimetype='application/zip'
-                )
+                decrypt = request.form.get('decrypt') == 'true'
+                if not decrypt:
+                    response = send_file(
+                        backup_file,
+                        as_attachment=True,
+                        download_name=f"backup_{backup.backup_id}.zip.enc",
+                        mimetype='application/octet-stream'
+                    )
+                else:
+                    temp_dir = tempfile.mkdtemp()
+                    enc_path = os.path.join(temp_dir, f"{backup.backup_id}.zip.enc")
+                    dec_path = os.path.join(temp_dir, f"{backup.backup_id}.zip")
+                    with open(enc_path, 'wb') as f:
+                        f.write(backup_file.read())
+                    cipher = Fernet(BACKUP_CONFIG['encryption_key'].encode())
+                    with open(enc_path, 'rb') as f_in, open(dec_path, 'wb') as f_out:
+                        f_out.write(cipher.decrypt(f_in.read()))
+                    response = send_file(
+                        dec_path,
+                        as_attachment=True,
+                        download_name=f"backup_{backup.backup_id}.zip",
+                        mimetype='application/zip'
+                    )
+                    response.call_on_close(lambda: (os.remove(enc_path), os.remove(dec_path), os.rmdir(temp_dir)))
                 
                 # Log download activity
                 log_audit('download', 'BackupRecord', backup.id, None, {'downloaded_by': current_user.id})
@@ -2773,7 +2799,7 @@ def disaster_recovery():
                 
                 # Run test restore in background
                 from threading import Thread
-                thread = Thread(target=test_disaster_recovery, args=(plan.id, backup.id))
+                thread = Thread(target=test_disaster_recovery, args=(plan.id, backup.id), daemon=True)
                 thread.start()
                 
                 flash('Disaster recovery test initiated. You will be notified when complete.', 'info')
@@ -2825,359 +2851,365 @@ def backup_logs():
 # BACKUP IMPLEMENTATION
 # ======================
 
-def create_backup(backup_id):
+def create_backup(backup_id, created_by_user_id=None):
     """Create a database backup in background"""
-    backup = db.session.get(BackupRecord, backup_id)  # Updated to use session.get()
-    if not backup:
-        return
-    
-    try:
-        # Create a temporary file
-        temp_dir = tempfile.mkdtemp()
-        backup_file = os.path.join(temp_dir, f'backup_{backup.backup_id}.zip')
+    with app.app_context():
+        backup = db.session.get(BackupRecord, backup_id)  # Updated to use session.get()
+        if not backup:
+            return
         
-        # Create a ZIP file containing all table data as JSON
-        with zipfile.ZipFile(backup_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # Backup each table
-            for table_name in BACKUP_CONFIG['tables_to_backup']:
-                try:
-                    # Get table data using SQLAlchemy 2.0 syntax
-                    with db.engine.connect() as conn:
-                        result = conn.execute(text(f'SELECT * FROM {table_name}'))
-                        rows = [dict(row._mapping) for row in result]
-                    
-                    # Convert to JSON
-                    table_data = json.dumps(rows, indent=2, default=str)
-                    
-                    # Add to ZIP
-                    zipf.writestr(f'{table_name}.json', table_data)
-                except Exception as e:
-                    app.logger.error(f'Error backing up table {table_name}: {str(e)}')
-                    continue
-            
-            # Add metadata
-            metadata = {
-                'backup_id': backup.backup_id,
-                'timestamp': datetime.now(timezone.utc).isoformat(),  # Updated to timezone-aware
-                'database_url': str(db.engine.url),
-                'tables_backed_up': BACKUP_CONFIG['tables_to_backup'],
-                'app_version': '1.0.0'
-            }
-            zipf.writestr('metadata.json', json.dumps(metadata, indent=2))
-        
-        # Calculate checksum
-        with open(backup_file, 'rb') as f:
-            file_hash = hashlib.sha256()
-            while chunk := f.read(8192):
-                file_hash.update(chunk)
-            checksum = file_hash.hexdigest()
-        
-        # Encrypt the backup
-        cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
-        with open(backup_file, 'rb') as f:
-            encrypted_data = cipher_suite.encrypt(f.read())
-        
-        encrypted_file = backup_file + '.enc'
-        with open(encrypted_file, 'wb') as f:
-            f.write(encrypted_data)
-        
-        # Get file size
-        file_size = os.path.getsize(encrypted_file)
-        
-        # Store backup (local or S3)
-        if s3_client:
-            # Upload to S3
-            s3_key = f'backups/{backup.backup_id}.zip.enc'
-            s3_client.upload_file(
-                encrypted_file,
-                BACKUP_CONFIG['s3_bucket'],
-                s3_key,
-                ExtraArgs={
-                    'Metadata': {
-                        'backup-id': backup.backup_id,
-                        'checksum': checksum,
-                        'created-by': str(current_user.id)
-                    }
-                }
-            )
-            storage_location = f's3://{BACKUP_CONFIG["s3_bucket"]}/{s3_key}'
-        else:
-            # Store locally
-            local_backup_dir = BACKUP_CONFIG['local_storage_path']
-            os.makedirs(local_backup_dir, exist_ok=True)
-            local_path = os.path.join(local_backup_dir, f'{backup.backup_id}.zip.enc')
-            os.rename(encrypted_file, local_path)
-            storage_location = local_path
-        
-        # Update backup record
-        backup.status = 'completed'
-        backup.size_bytes = file_size
-        backup.storage_location = storage_location
-        backup.checksum = checksum
-        db.session.commit()
-        
-        # Clean up
         try:
-            os.remove(backup_file)
-            if os.path.exists(encrypted_file):
-                os.remove(encrypted_file)
-            os.rmdir(temp_dir)
-        except:
-            pass
-        
-    except Exception as e:
-        app.logger.error(f'Backup failed: {str(e)}', exc_info=True)
-        backup.status = 'failed'
-        backup.notes = f'Error: {str(e)}'
-        db.session.commit()
+            # Create a temporary file
+            temp_dir = tempfile.mkdtemp()
+            backup_file = os.path.join(temp_dir, f'backup_{backup.backup_id}.zip')
+            
+            # Create a ZIP file containing all table data as NDJSON streamed per row
+            with zipfile.ZipFile(backup_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Backup each table
+                for table_name in BACKUP_CONFIG['tables_to_backup']:
+                    try:
+                        # Get table data using SQLAlchemy 2.0 syntax with streaming
+                        with db.engine.connect() as conn:
+                            result = conn.execution_options(stream_results=True).execute(text(f"SELECT * FROM {table_name}"))
+                            with zipf.open(f"{table_name}.ndjson", "w") as zf:
+                                for row in result:
+                                    zf.write((json.dumps(dict(row._mapping), default=str) + "\n").encode("utf-8"))
+                    except Exception as e:
+                        app.logger.error(f'Error backing up table {table_name}: {str(e)}')
+                        continue
+                
+                # Add metadata
+                metadata = {
+                    'backup_id': backup.backup_id,
+                    'timestamp': datetime.now(timezone.utc).isoformat(),  # Updated to timezone-aware
+                    'database_url': str(db.engine.url),
+                    'tables_backed_up': BACKUP_CONFIG['tables_to_backup'],
+                    'app_version': '1.0.0',
+                    'key_id': 'fernet-v1'
+                }
+                zipf.writestr('metadata.json', json.dumps(metadata, indent=2))
+            
+            # Calculate checksum
+            with open(backup_file, 'rb') as f:
+                file_hash = hashlib.sha256()
+                while True:
+                    chunk = f.read(8192)
+                    if not chunk:
+                        break
+                    file_hash.update(chunk)
+                checksum = file_hash.hexdigest()
+            
+            # Encrypt the backup
+            cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
+            with open(backup_file, 'rb') as f:
+                encrypted_data = cipher_suite.encrypt(f.read())
+            
+            encrypted_file = backup_file + '.enc'
+            with open(encrypted_file, 'wb') as f:
+                f.write(encrypted_data)
+            
+            # Get file size
+            file_size = os.path.getsize(encrypted_file)
+            
+            # Store backup (local or S3)
+            if s3_client:
+                # Upload to S3
+                s3_key = f'backups/{backup.backup_id}.zip.enc'
+                s3_client.upload_file(
+                    encrypted_file,
+                    BACKUP_CONFIG['s3_bucket'],
+                    s3_key,
+                    ExtraArgs={
+                        'ServerSideEncryption': 'AES256',
+                        'ACL': 'private',
+                        'Metadata': {
+                            'backup-id': backup.backup_id,
+                            'checksum': checksum,
+                            'created-by': str(created_by_user_id) if created_by_user_id is not None else 'system'
+                        }
+                    }
+                )
+                # Verify checksum metadata after upload
+                head = s3_client.head_object(Bucket=BACKUP_CONFIG['s3_bucket'], Key=s3_key)
+                if head.get('Metadata', {}).get('checksum') != checksum:
+                    backup.status = 'failed'
+                    backup.notes = 'Checksum mismatch after upload'
+                    db.session.commit()
+                    raise RuntimeError("Checksum mismatch after upload")
+                storage_location = f's3://{BACKUP_CONFIG["s3_bucket"]}/{s3_key}'
+            else:
+                # Store locally
+                local_backup_dir = BACKUP_CONFIG['local_storage_path']
+                os.makedirs(local_backup_dir, exist_ok=True)
+                local_path = os.path.join(local_backup_dir, f'{backup.backup_id}.zip.enc')
+                os.rename(encrypted_file, local_path)
+                storage_location = local_path
+            
+            # Update backup record
+            backup.status = 'completed'
+            backup.size_bytes = file_size
+            backup.storage_location = storage_location
+            backup.checksum = checksum
+            db.session.commit()
+            
+            # Clean up
+            try:
+                os.remove(backup_file)
+                if os.path.exists(encrypted_file):
+                    os.remove(encrypted_file)
+                os.rmdir(temp_dir)
+            except:
+                pass
+            
+        except Exception as e:
+            app.logger.error(f'Backup failed: {str(e)}', exc_info=True)
+            backup.status = 'failed'
+            backup.notes = f'Error: {str(e)}'
+            db.session.commit()
 
 def restore_backup(backup_id):
     """Restore database from backup"""
-    backup = db.session.get(BackupRecord, backup_id)
-    if not backup:
-        return
-    
-    try:
-        # Get the backup file
-        backup_file = get_backup_file(backup)
-        if not backup_file:
-            backup.status = 'failed'
-            backup.notes = 'Backup file not found'
-            db.session.commit()
+    with app.app_context():
+        backup = db.session.get(BackupRecord, backup_id)
+        if not backup:
             return
         
-        # Create a temporary directory
-        temp_dir = tempfile.mkdtemp()
-        encrypted_file = os.path.join(temp_dir, 'backup.zip.enc')
-        
-        # Write the backup data to a temporary file
-        with open(encrypted_file, 'wb') as f:
-            f.write(backup_file.read())
-        
-        # Decrypt the backup
-        cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
-        with open(encrypted_file, 'rb') as f:
-            decrypted_data = cipher_suite.decrypt(f.read())
-        
-        decrypted_file = os.path.join(temp_dir, 'backup.zip')
-        with open(decrypted_file, 'wb') as f:
-            f.write(decrypted_data)
-        
-        # Extract the ZIP file
-        with zipfile.ZipFile(decrypted_file, 'r') as zipf:
-            zipf.extractall(temp_dir)
-        
-        # Read metadata
-        with open(os.path.join(temp_dir, 'metadata.json'), 'r') as f:
-            metadata = json.load(f)
-        
-        # Restore each table using SQLAlchemy 2.0 syntax
-        for table_name in metadata['tables_backed_up']:
-            try:
-                table_file = os.path.join(temp_dir, f'{table_name}.json')
-                if not os.path.exists(table_file):
-                    continue
-                
-                with open(table_file, 'r') as f:
-                    rows = json.load(f)
-                
-                if not rows:
-                    continue
-                
-                # Truncate existing table
-                with db.engine.connect() as conn:
-                    conn.execute(text(f'TRUNCATE TABLE {table_name} CASCADE'))
-                    conn.commit()
-                
-                # Insert data
-                with db.engine.connect() as conn:
-                    for row in rows:
-                        # Handle special cases (like dates)
-                        for key, value in row.items():
-                            if value and isinstance(value, str) and value.endswith('+00:00'):
-                                try:
-                                    row[key] = datetime.fromisoformat(value)
-                                except:
-                                    pass
-                        
-                        # Insert row
-                        columns = ", ".join(row.keys())
-                        values = ", ".join([f":{k}" for k in row.keys()])
-                        conn.execute(
-                            text(f'INSERT INTO {table_name} ({columns}) VALUES ({values})'),
-                            row
-                        )
-                        conn.commit()
-                
-            except Exception as e:
-                app.logger.error(f'Error restoring table {table_name}: {str(e)}')
-                continue
-        
-        # Update backup record
-        backup.notes = 'Restore completed successfully'
-        db.session.commit()
-        
-        # Clean up
         try:
-            os.remove(encrypted_file)
-            os.remove(decrypted_file)
-            for f in os.listdir(temp_dir):
-                os.remove(os.path.join(temp_dir, f))
-            os.rmdir(temp_dir)
-        except:
-            pass
-        
-    except Exception as e:
-        app.logger.error(f'Restore failed: {str(e)}', exc_info=True)
-        backup.notes = f'Restore error: {str(e)}'
-        db.session.commit()
+            # Get the backup file
+            backup_file = get_backup_file(backup)
+            if not backup_file:
+                backup.status = 'failed'
+                backup.notes = 'Backup file not found'
+                db.session.commit()
+                return
+            
+            # Create a temporary directory
+            temp_dir = tempfile.mkdtemp()
+            encrypted_file = os.path.join(temp_dir, 'backup.zip.enc')
+            
+            # Write the backup data to a temporary file
+            with open(encrypted_file, 'wb') as f:
+                f.write(backup_file.read())
+            
+            # Decrypt the backup
+            cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
+            with open(encrypted_file, 'rb') as f:
+                decrypted_data = cipher_suite.decrypt(f.read())
+            
+            decrypted_file = os.path.join(temp_dir, 'backup.zip')
+            with open(decrypted_file, 'wb') as f:
+                f.write(decrypted_data)
+            
+            # Extract and process the ZIP file
+            allowed_tables = set(BACKUP_CONFIG['tables_to_backup'])
+            with zipfile.ZipFile(decrypted_file, 'r') as z:
+                # Read metadata
+                metadata = json.loads(z.read('metadata.json').decode('utf-8'))
+                
+                for table_name in metadata['tables_backed_up']:
+                    if table_name not in allowed_tables:
+                        app.logger.warning(f"Skipping non-whitelisted table: {table_name}")
+                        continue
+                    
+                    ndjson_name = f"{table_name}.ndjson"
+                    if ndjson_name not in z.namelist():
+                        continue
+                    
+                    meta = MetaData()
+                    table = Table(table_name, meta, autoload_with=db.engine)
+                    
+                    # Truncate and insert in an atomic transaction
+                    batch = []
+                    batch_size = 1000
+                    with db.engine.begin() as conn:
+                        conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
+                        with z.open(ndjson_name) as f:
+                            for raw_line in f:
+                                line = raw_line.decode('utf-8').strip()
+                                if not line:
+                                    continue
+                                row = json.loads(line)
+                                # Handle special cases (like dates)
+                                for key, value in list(row.items()):
+                                    if value and isinstance(value, str) and value.endswith('+00:00'):
+                                        try:
+                                            row[key] = datetime.fromisoformat(value)
+                                        except:
+                                            pass
+                                batch.append(row)
+                                if len(batch) >= batch_size:
+                                    conn.execute(table.insert(), batch)
+                                    batch.clear()
+                            if batch:
+                                conn.execute(table.insert(), batch)
+            
+            # Update backup record
+            backup.notes = 'Restore completed successfully'
+            db.session.commit()
+            
+            # Clean up
+            try:
+                os.remove(encrypted_file)
+                os.remove(decrypted_file)
+                for f in os.listdir(temp_dir):
+                    os.remove(os.path.join(temp_dir, f))
+                os.rmdir(temp_dir)
+            except:
+                pass
+            
+        except Exception as e:
+            app.logger.error(f'Restore failed: {str(e)}', exc_info=True)
+            backup.notes = f'Restore error: {str(e)}'
+            db.session.commit()
 
 def test_disaster_recovery(plan_id, backup_id):
     """Test disaster recovery plan by restoring to a test database"""
-    plan = DisasterRecoveryPlan.query.get(plan_id)
-    backup = BackupRecord.query.get(backup_id)
-    
-    if not plan or not backup:
-        return
-    
-    try:
-        # Create a test database URL by appending _test to the main DB name
-        original_db_url = db.engine.url
-        test_db_url = f"{original_db_url}_recovery_test"
+    with app.app_context():
+        plan = DisasterRecoveryPlan.query.get(plan_id)
+        backup = BackupRecord.query.get(backup_id)
         
-        # Create a new engine for the test database
-        test_engine = create_engine(test_db_url)
-        
-        # Create the test database if it doesn't exist
-        with test_engine.connect() as conn:
-            conn.execute("COMMIT")  # End any open transaction
-            try:
-                conn.execute(f"CREATE DATABASE {original_db_url.database}_recovery_test")
-            except Exception as e:
-                app.logger.info(f"Test database already exists or couldn't be created: {str(e)}")
-        
-        # Now connect to the test database
-        test_engine.dispose()
-        test_engine = create_engine(test_db_url)
-        
-        # Get the backup file
-        backup_file = get_backup_file(backup)
-        if not backup_file:
-            plan.test_results = "Backup file not found"
-            plan.last_tested = datetime.utcnow()
-            db.session.commit()
+        if not plan or not backup:
             return
         
-        # Create a temporary directory
-        temp_dir = tempfile.mkdtemp()
-        encrypted_file = os.path.join(temp_dir, 'backup.zip.enc')
-        
-        # Write the backup data to a temporary file
-        with open(encrypted_file, 'wb') as f:
-            f.write(backup_file.read())
-        
-        # Decrypt the backup
-        cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
-        with open(encrypted_file, 'rb') as f:
-            decrypted_data = cipher_suite.decrypt(f.read())
-        
-        decrypted_file = os.path.join(temp_dir, 'backup.zip')
-        with open(decrypted_file, 'wb') as f:
-            f.write(decrypted_data)
-        
-        # Extract the ZIP file
-        with zipfile.ZipFile(decrypted_file, 'r') as zipf:
-            zipf.extractall(temp_dir)
-        
-        # Read metadata
-        with open(os.path.join(temp_dir, 'metadata.json'), 'r') as f:
-            metadata = json.load(f)
-        
-        # Restore each table to the test database
-        test_metadata = {
-            'tables_restored': [],
-            'row_counts': {},
-            'errors': []
-        }
-        
-        for table_name in metadata['tables_backed_up']:
-            try:
-                table_file = os.path.join(temp_dir, f'{table_name}.json')
-                if not os.path.exists(table_file):
-                    continue
-                
-                with open(table_file, 'r') as f:
-                    rows = json.load(f)
-                
-                if not rows:
-                    continue
-                
-                # Truncate existing table in test database
-                with test_engine.connect() as conn:
-                    conn.execute(f'TRUNCATE TABLE {table_name} CASCADE')
-                
-                # Insert data into test database
-                row_count = 0
-                with test_engine.connect() as conn:
-                    for row in rows:
-                        # Handle special cases (like dates)
-                        for key, value in row.items():
-                            if value and isinstance(value, str) and value.endswith('+00:00'):
-                                try:
-                                    row[key] = datetime.fromisoformat(value)
-                                except:
-                                    pass
-                        
-                        # Insert row
-                        conn.execute(
-                            f'INSERT INTO {table_name} ({", ".join(row.keys())}) VALUES ({", ".join([f":{k}" for k in row.keys()])})',
-                            **row
-                        )
-                        row_count += 1
-                
-                test_metadata['tables_restored'].append(table_name)
-                test_metadata['row_counts'][table_name] = row_count
-                
-            except Exception as e:
-                error_msg = f'Error restoring table {table_name}: {str(e)}'
-                app.logger.error(error_msg)
-                test_metadata['errors'].append(error_msg)
-                continue
-        
-        # Verification Phase
-        verification_results = verify_test_restoration(test_engine, metadata, test_metadata)
-        
-        # Combine results
-        test_results = {
-            'backup_id': backup.backup_id,
-            'backup_timestamp': backup.timestamp.isoformat(),
-            'tables_restored': len(test_metadata['tables_restored']),
-            'total_rows_restored': sum(test_metadata['row_counts'].values()),
-            'verification_passed': verification_results['success'],
-            'verification_details': verification_results,
-            'errors': test_metadata['errors']
-        }
-        
-        # Update plan with test results
-        plan.last_tested = datetime.utcnow()
-        plan.test_results = json.dumps(test_results, indent=2)
-        db.session.commit()
-        
-        # Clean up
         try:
-            os.remove(encrypted_file)
-            os.remove(decrypted_file)
-            for f in os.listdir(temp_dir):
-                os.remove(os.path.join(temp_dir, f))
-            os.rmdir(temp_dir)
-        except:
-            pass
-        
-    except Exception as e:
-        app.logger.error(f'Disaster recovery test failed: {str(e)}', exc_info=True)
-        plan.last_tested = datetime.utcnow()
-        plan.test_results = f"Test failed: {str(e)}"
-        db.session.commit()
+            # Create a test database URL by appending _test to the main DB name
+            original_db_url = db.engine.url
+            test_db_url = f"{original_db_url}_recovery_test"
+            
+            # Create a new engine for the test database
+            test_engine = create_engine(test_db_url)
+            
+            # Create the test database if it doesn't exist
+            with test_engine.connect() as conn:
+                conn.execute("COMMIT")  # End any open transaction
+                try:
+                    conn.execute(f"CREATE DATABASE {original_db_url.database}_recovery_test")
+                except Exception as e:
+                    app.logger.info(f"Test database already exists or couldn't be created: {str(e)}")
+            
+            # Now connect to the test database
+            test_engine.dispose()
+            test_engine = create_engine(test_db_url)
+            
+            # Get the backup file
+            backup_file = get_backup_file(backup)
+            if not backup_file:
+                plan.test_results = "Backup file not found"
+                plan.last_tested = datetime.now(timezone.utc)
+                db.session.commit()
+                return
+            
+            # Create a temporary directory
+            temp_dir = tempfile.mkdtemp()
+            encrypted_file = os.path.join(temp_dir, 'backup.zip.enc')
+            
+            # Write the backup data to a temporary file
+            with open(encrypted_file, 'wb') as f:
+                f.write(backup_file.read())
+            
+            # Decrypt the backup
+            cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
+            with open(encrypted_file, 'rb') as f:
+                decrypted_data = cipher_suite.decrypt(f.read())
+            
+            decrypted_file = os.path.join(temp_dir, 'backup.zip')
+            with open(decrypted_file, 'wb') as f:
+                f.write(decrypted_data)
+            
+            # Read and restore from the ZIP file into the test database
+            test_metadata = {
+                'tables_restored': [],
+                'row_counts': {},
+                'errors': []
+            }
+            allowed_tables = set(BACKUP_CONFIG['tables_to_backup'])
+            
+            with zipfile.ZipFile(decrypted_file, 'r') as z:
+                # Read metadata
+                metadata = json.loads(z.read('metadata.json').decode('utf-8'))
+                
+                for table_name in metadata['tables_backed_up']:
+                    if table_name not in allowed_tables:
+                        app.logger.warning(f"Skipping non-whitelisted table in test restore: {table_name}")
+                        continue
+                    
+                    ndjson_name = f"{table_name}.ndjson"
+                    if ndjson_name not in z.namelist():
+                        continue
+                    
+                    meta = MetaData()
+                    table = Table(table_name, meta, autoload_with=test_engine)
+                    
+                    row_count = 0
+                    try:
+                        with test_engine.begin() as conn:
+                            conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
+                            batch = []
+                            batch_size = 1000
+                            with z.open(ndjson_name) as f:
+                                for raw_line in f:
+                                    line = raw_line.decode('utf-8').strip()
+                                    if not line:
+                                        continue
+                                    row = json.loads(line)
+                                    # Handle special cases (like dates)
+                                    for key, value in list(row.items()):
+                                        if value and isinstance(value, str) and value.endswith('+00:00'):
+                                            try:
+                                                row[key] = datetime.fromisoformat(value)
+                                            except:
+                                                pass
+                                    batch.append(row)
+                                    if len(batch) >= batch_size:
+                                        conn.execute(table.insert(), batch)
+                                        row_count += len(batch)
+                                        batch.clear()
+                                if batch:
+                                    conn.execute(table.insert(), batch)
+                                    row_count += len(batch)
+                        
+                        test_metadata['tables_restored'].append(table_name)
+                        test_metadata['row_counts'][table_name] = row_count
+                    except Exception as e:
+                        error_msg = f'Error restoring table {table_name}: {str(e)}'
+                        app.logger.error(error_msg)
+                        test_metadata['errors'].append(error_msg)
+                        continue
+            
+            # Verification Phase
+            verification_results = verify_test_restoration(test_engine, metadata, test_metadata)
+            
+            # Combine results
+            test_results = {
+                'backup_id': backup.backup_id,
+                'backup_timestamp': backup.timestamp.isoformat(),
+                'tables_restored': len(test_metadata['tables_restored']),
+                'total_rows_restored': sum(test_metadata['row_counts'].values()),
+                'verification_passed': verification_results['success'],
+                'verification_details': verification_results,
+                'errors': test_metadata['errors']
+            }
+            
+            # Update plan with test results
+            plan.last_tested = datetime.now(timezone.utc)
+            plan.test_results = json.dumps(test_results, indent=2)
+            db.session.commit()
+            
+            # Clean up
+            try:
+                os.remove(encrypted_file)
+                os.remove(decrypted_file)
+                for f in os.listdir(temp_dir):
+                    os.remove(os.path.join(temp_dir, f))
+                os.rmdir(temp_dir)
+            except:
+                pass
+            
+        except Exception as e:
+            app.logger.error(f'Disaster recovery test failed: {str(e)}', exc_info=True)
+            plan.last_tested = datetime.now(timezone.utc)
+            plan.test_results = f"Test failed: {str(e)}"
+            db.session.commit()
 
 def verify_test_restoration(test_engine, original_metadata, test_metadata):
     """Verify that the test restoration was successful"""
