@@ -331,20 +331,20 @@
 </div>
 
 <!-- Include all modals -->
-<div class="modal" id="add-drawing-modal">
+<div class="modal" id="add-drawing-modal" role="dialog" aria-modal="true" aria-labelledby="add-drawing-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Add Owner's Drawing</h2>
+            <h2 id="add-drawing-title">Add Owner's Drawing</h2>
             <button class="close-btn" data-modal-target="add-drawing">&times;</button>
         </div>
         <form id="add-drawing-form" method="POST" action="/admin/add_drawing">
             <div class="form-group">
-                <label for="amount">Amount (Ksh)</label>
-                <input type="number" step="0.01" id="amount" name="amount" required>
+                <label for="drawing-amount">Amount (Ksh)</label>
+                <input type="number" step="0.01" id="drawing-amount" name="amount" required>
             </div>
             <div class="form-group">
-                <label for="description">Description</label>
-                <textarea id="description" name="description" required></textarea>
+                <label for="drawing-description">Description</label>
+                <textarea id="drawing-description" name="description" required></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" data-modal-target="add-drawing">Cancel</button>
@@ -355,10 +355,10 @@
 </div>
 
 <!-- Edit Drawing Modal -->
-<div class="modal" id="edit-drawing-modal">
+<div class="modal" id="edit-drawing-modal" role="dialog" aria-modal="true" aria-labelledby="edit-drawing-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Edit Owner's Drawing</h2>
+            <h2 id="edit-drawing-title">Edit Owner's Drawing</h2>
             <button class="close-btn" data-modal-target="edit-drawing">&times;</button>
         </div>
         <form id="edit-drawing-form" method="POST">
@@ -380,10 +380,10 @@
 </div>
 
 <!-- Add Bill Modal -->
-<div class="modal" id="add-bill-modal">
+<div class="modal" id="add-bill-modal" role="dialog" aria-modal="true" aria-labelledby="add-bill-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Add New Bill</h2>
+            <h2 id="add-bill-title">Add New Bill</h2>
             <button class="close-btn" data-modal-target="add-bill">&times;</button>
         </div>
         <form id="add-bill-form" method="POST" action="/admin/add_bill">
@@ -400,16 +400,16 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="amount">Amount (Ksh)</label>
-                <input type="number" step="0.01" id="amount" name="amount" required>
+                <label for="bill-amount">Amount (Ksh)</label>
+                <input type="number" step="0.01" id="bill-amount" name="amount" required>
             </div>
             <div class="form-group">
-                <label for="due_date">Due Date</label>
-                <input type="date" id="due_date" name="due_date" required>
+                <label for="bill-due-date">Due Date</label>
+                <input type="date" id="bill-due-date" name="due_date" required>
             </div>
             <div class="form-group">
-                <label for="description">Description</label>
-                <textarea id="description" name="description"></textarea>
+                <label for="bill-description">Description</label>
+                <textarea id="bill-description" name="description"></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" data-modal-target="add-bill">Cancel</button>
@@ -420,10 +420,10 @@
 </div>
 
 <!-- Edit Bill Modal -->
-<div class="modal" id="edit-bill-modal">
+<div class="modal" id="edit-bill-modal" role="dialog" aria-modal="true" aria-labelledby="edit-bill-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Edit Bill</h2>
+            <h2 id="edit-bill-title">Edit Bill</h2>
             <button class="close-btn" data-modal-target="edit-bill">&times;</button>
         </div>
         <form id="edit-bill-form" method="POST">
@@ -460,10 +460,10 @@
 </div>
 
 <!-- Pay Bill Modal -->
-<div class="modal" id="pay-bill-modal">
+<div class="modal" id="pay-bill-modal" role="dialog" aria-modal="true" aria-labelledby="pay-bill-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Pay Bill</h2>
+            <h2 id="pay-bill-title">Pay Bill</h2>
             <button class="close-btn" data-modal-target="pay-bill">&times;</button>
         </div>
         <form id="pay-bill-form" method="POST">
@@ -485,10 +485,10 @@
 </div>
 
 <!-- Add Purchase Modal -->
-<div class="modal" id="add-purchase-modal">
+<div class="modal" id="add-purchase-modal" role="dialog" aria-modal="true" aria-labelledby="add-purchase-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Add Purchase</h2>
+            <h2 id="add-purchase-title">Add Purchase</h2>
             <button class="close-btn" data-modal-target="add-purchase">&times;</button>
         </div>
         <form id="add-purchase-form" method="POST" action="/admin/add_purchase">
@@ -504,20 +504,20 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="amount">Amount (Ksh)</label>
-                <input type="number" step="0.01" id="amount" name="amount" required>
+                <label for="purchase-amount">Amount (Ksh)</label>
+                <input type="number" step="0.01" id="purchase-amount" name="amount" required>
             </div>
             <div class="form-group">
-                <label for="purchase_date">Purchase Date</label>
-                <input type="date" id="purchase_date" name="purchase_date" required>
+                <label for="purchase-date">Purchase Date</label>
+                <input type="date" id="purchase-date" name="purchase_date" required>
             </div>
             <div class="form-group">
-                <label for="supplier">Supplier</label>
-                <input type="text" id="supplier" name="supplier" required>
+                <label for="purchase-supplier">Supplier</label>
+                <input type="text" id="purchase-supplier" name="supplier" required>
             </div>
             <div class="form-group">
-                <label for="description">Description</label>
-                <textarea id="description" name="description"></textarea>
+                <label for="purchase-description">Description</label>
+                <textarea id="purchase-description" name="description"></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" data-modal-target="add-purchase">Cancel</button>
@@ -528,10 +528,10 @@
 </div>
 
 <!-- Edit Purchase Modal -->
-<div class="modal" id="edit-purchase-modal">
+<div class="modal" id="edit-purchase-modal" role="dialog" aria-modal="true" aria-labelledby="edit-purchase-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Edit Purchase</h2>
+            <h2 id="edit-purchase-title">Edit Purchase</h2>
             <button class="close-btn" data-modal-target="edit-purchase">&times;</button>
         </div>
         <form id="edit-purchase-form" method="POST">
@@ -571,10 +571,10 @@
 </div>
 
 <!-- Add Payroll Modal -->
-<div class="modal" id="add-payroll-modal">
+<div class="modal" id="add-payroll-modal" role="dialog" aria-modal="true" aria-labelledby="add-payroll-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Add Payroll Payment</h2>
+            <h2 id="add-payroll-title">Add Payroll Payment</h2>
             <button class="close-btn" data-modal-target="add-payroll">&times;</button>
         </div>
         <form id="add-payroll-form" method="POST" action="/admin/add_payroll">
@@ -588,16 +588,16 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="amount">Amount (Ksh)</label>
-                <input type="number" step="0.01" id="amount" name="amount" required>
+                <label for="payroll-amount">Amount (Ksh)</label>
+                <input type="number" step="0.01" id="payroll-amount" name="amount" required>
             </div>
             <div class="form-group">
-                <label for="payment_date">Payment Date</label>
-                <input type="date" id="payment_date" name="payment_date" required>
+                <label for="payroll-payment-date">Payment Date</label>
+                <input type="date" id="payroll-payment-date" name="payment_date" required>
             </div>
             <div class="form-group">
-                <label for="pay_period">Pay Period</label>
-                <select id="pay_period" name="pay_period" required>
+                <label for="payroll-pay-period">Pay Period</label>
+                <select id="payroll-pay-period" name="pay_period" required>
                     <option value="monthly">Monthly</option>
                     <option value="biweekly">Bi-weekly</option>
                     <option value="weekly">Weekly</option>
@@ -606,8 +606,8 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="notes">Notes</label>
-                <textarea id="notes" name="notes"></textarea>
+                <label for="payroll-notes">Notes</label>
+                <textarea id="payroll-notes" name="notes"></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" data-modal-target="add-payroll">Cancel</button>
@@ -618,10 +618,10 @@
 </div>
 
 <!-- Edit Payroll Modal -->
-<div class="modal" id="edit-payroll-modal">
+<div class="modal" id="edit-payroll-modal" role="dialog" aria-modal="true" aria-labelledby="edit-payroll-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Edit Payroll Payment</h2>
+            <h2 id="edit-payroll-title">Edit Payroll Payment</h2>
             <button class="close-btn" data-modal-target="edit-payroll">&times;</button>
         </div>
         <form id="edit-payroll-form" method="POST">
@@ -665,10 +665,10 @@
 </div>
 
 <!-- Add Debtor Modal -->
-<div class="modal" id="add-debtor-modal">
+<div class="modal" id="add-debtor-modal" role="dialog" aria-modal="true" aria-labelledby="add-debtor-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Add Debtor</h2>
+            <h2 id="add-debtor-title">Add Debtor</h2>
             <button class="close-btn" data-modal-target="add-debtor">&times;</button>
         </div>
         <form id="add-debtor-form" method="POST" action="/admin/add_debtor">
@@ -694,7 +694,7 @@
             </div>
             <div class="form-group">
                 <label for="next-payment-date">Next Payment Date *</label>
-                <input type="date" id="next-payment-date" name="next_payment_date" required>
+                <input type="date" id="next-payment-date" name="next_payment_date">
             </div>
             <div class="form-group">
                 <label for="debtor-notes">Notes</label>
@@ -709,10 +709,10 @@
 </div>
 
 <!-- Edit Debtor Modal -->
-<div class="modal" id="edit-debtor-modal">
+<div class="modal" id="edit-debtor-modal" role="dialog" aria-modal="true" aria-labelledby="edit-debtor-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Edit Debtor</h2>
+            <h2 id="edit-debtor-title">Edit Debtor</h2>
             <button class="close-btn" data-modal-target="edit-debtor">&times;</button>
         </div>
         <form id="edit-debtor-form" method="POST">
@@ -747,7 +747,7 @@
             </div>
             <div class="form-group">
                 <label for="edit-next-payment-date">Next Payment Date *</label>
-                <input type="date" id="edit-next-payment-date" name="next_payment_date" required>
+                <input type="date" id="edit-next-payment-date" name="next_payment_date">
             </div>
             <div class="form-group">
                 <label for="edit-debtor-notes">Notes</label>
@@ -762,10 +762,10 @@
 </div>
 
 <!-- Add Payment Modal -->
-<div class="modal" id="add-debtor-payment-modal">
+<div class="modal" id="add-debtor-payment-modal" role="dialog" aria-modal="true" aria-labelledby="add-debtor-payment-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Record Payment to Debtor</h2>
+            <h2 id="add-debtor-payment-title">Record Payment to Debtor</h2>
             <button class="close-btn" data-modal-target="add-debtor-payment">&times;</button>
         </div>
         <form id="add-debtor-payment-form" method="POST">
@@ -815,10 +815,10 @@
 </div>
 
 <!-- Delete Confirmation Modal -->
-<div class="modal" id="delete-confirm-modal">
+<div class="modal" id="delete-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-confirm-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Confirm Deletion</h2>
+            <h2 id="delete-confirm-title">Confirm Deletion</h2>
             <button class="close-btn" data-modal-target="delete-confirm">&times;</button>
         </div>
         <div class="modal-body">
@@ -930,23 +930,28 @@ window.moneyManagement = {
 
             fetch(action, {
                 method: method,
-                body: formData
+                body: formData,
+                headers: (function() {
+                    const token = moneyManagement.getCSRFToken();
+                    return token ? { 'X-CSRFToken': token } : {};
+                })()
             })
             .then(response => response.json())
             .then(data => {
                 if (data.error) {
-                    alert(data.error);
+                    moneyManagement.showAlert('danger', data.error);
                     return;
                 }
                 if (data.success) {
                     const modalId = form.closest('.modal').attr('id').replace('-modal', '');
                     moneyManagement.closeModal(modalId);
+                    moneyManagement.showAlert('success', 'Saved successfully');
                     moneyManagement.refreshAllData();
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('An error occurred. Please try again.');
+                moneyManagement.showAlert('danger', 'An error occurred. Please try again.');
             });
         });
     },
@@ -964,9 +969,9 @@ window.moneyManagement = {
                     console.error(data.error);
                     return;
                 }
-                $('#total-income').text(`Ksh ${data.total_income.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`);
-                $('#total-expenses').text(`Ksh ${data.total_expenses.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`);
-                $('#net-profit').text(`Ksh ${data.net_profit.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`);
+                $('#total-income').text(moneyManagement.formatCurrency(data.total_income));
+                $('#total-expenses').text(moneyManagement.formatCurrency(data.total_expenses));
+                $('#net-profit').text(moneyManagement.formatCurrency(data.net_profit));
             })
             .catch(error => {
                 console.error('Error loading summary data:', error);
@@ -1043,7 +1048,7 @@ window.moneyManagement = {
     payBill: function(id, type, amount) {
         $('#pay-bill-id').val(id);
         $('#pay-bill-type-display').text(type);
-        $('#pay-bill-amount-display').text(`Ksh ${amount.toFixed(2)}`);
+        $('#pay-bill-amount-display').text(moneyManagement.formatCurrency(amount));
         $('#pay-bill-form').attr('action', `/admin/pay_bill/${id}`);
         this.openModal('pay-bill');
     },
@@ -1076,8 +1081,8 @@ window.moneyManagement = {
         $('#edit-debtor-contact').val(contact || '');
         $('#edit-debtor-email').val(email || '');
         $('#edit-total-debt').val(totalDebt);
-        $('#edit-amount-paid-display').text('Ksh ' + amountPaid.toFixed(2));
-        $('#edit-amount-owed-display').text('Ksh ' + amountOwed.toFixed(2));
+        $('#edit-amount-paid-display').text(moneyManagement.formatCurrency(amountPaid));
+        $('#edit-amount-owed-display').text(moneyManagement.formatCurrency(amountOwed));
         $('#edit-last-payment-date').val(lastPaymentDate || '');
         $('#edit-next-payment-date').val(nextPaymentDate || '');
         $('#edit-debtor-notes').val(notes || '');
@@ -1088,9 +1093,9 @@ window.moneyManagement = {
     addDebtorPayment: function(id, name, totalDebt, amountPaid, amountOwed, nextPaymentDate) {
         $('#debtor-payment-id').val(id);
         $('#debtor-payment-name').text(name);
-        $('#debtor-total-debt-display').text('Ksh ' + totalDebt.toFixed(2));
-        $('#debtor-amount-paid-display').text('Ksh ' + amountPaid.toFixed(2));
-        $('#debtor-amount-owed-display').text('Ksh ' + amountOwed.toFixed(2));
+        $('#debtor-total-debt-display').text(moneyManagement.formatCurrency(totalDebt));
+        $('#debtor-amount-paid-display').text(moneyManagement.formatCurrency(amountPaid));
+        $('#debtor-amount-owed-display').text(moneyManagement.formatCurrency(amountOwed));
         
         // Set max payment amount
         $('#payment-amount').attr('max', amountOwed);
@@ -1113,7 +1118,7 @@ window.moneyManagement = {
             case 'bill': message = 'Are you sure you want to delete this bill?'; break;
             case 'purchase': message = 'Are you sure you want to delete this purchase?'; break;
             case 'payroll': message = 'Are you sure you want to delete this payroll record?'; break;
-            case 'debtor': message = 'Are you sure you want to delete this debtor and all associated payments?'; break;
+            case 'debtor': message = 'Are you sure you want to delete this debtor? Payments and transactions will NOT be deleted.'; break;
             default: message = 'Are you sure you want to delete this record?';
         }
         
@@ -1123,11 +1128,50 @@ window.moneyManagement = {
     },
 
     confirmDelete: function() {
-        $('#delete-form').submit();
+        const form = document.getElementById('delete-form');
+        const action = form.getAttribute('action');
+        const formData = new FormData(form);
+        const headers = {};
+        const token = moneyManagement.getCSRFToken();
+        if (token) headers['X-CSRFToken'] = token;
+        fetch(action, { method: 'POST', body: formData, headers })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    moneyManagement.closeModal('delete-confirm');
+                    moneyManagement.showAlert('success', 'Record deleted successfully');
+                    moneyManagement.refreshAllData();
+                } else {
+                    moneyManagement.showAlert('danger', data.error || 'Failed to delete record');
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                moneyManagement.showAlert('danger', 'An error occurred while deleting the record');
+            });
     },
 
     formatCurrency: function(amount) {
         return 'Ksh ' + parseFloat(amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    },
+    getCSRFToken: function() {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta && meta.content) return meta.content;
+        const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
+        if (match) return decodeURIComponent(match[1]);
+        const alt = document.cookie.match(/(?:^|; )csrf-access-token=([^;]*)/);
+        return alt ? decodeURIComponent(alt[1]) : null;
+    },
+    showAlert: function(type, message) {
+        const container = document.getElementById('alert-container');
+        if (!container) return alert(message);
+        const div = document.createElement('div');
+        div.className = `alert alert-${type}`;
+        div.innerHTML = `${message} <button class="close-alert">&times;</button>`;
+        container.prepend(div);
+        setTimeout(() => {
+            if (div && div.parentNode) div.parentNode.removeChild(div);
+        }, 4000);
     }
 };
 

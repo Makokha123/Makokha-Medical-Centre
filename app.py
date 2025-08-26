@@ -61,7 +61,12 @@ migrate = Migrate(app, db)
 
 auth_bp = Blueprint('auth', __name__)
 csrf = CSRFProtect()
-limiter = Limiter(key_func=get_remote_address)
+# Configure rate limit storage backend via env or config; default to in-memory for development
+app.config['RATELIMIT_STORAGE_URI'] = os.getenv(
+    'RATELIMIT_STORAGE_URI',
+    app.config.get('RATELIMIT_STORAGE_URI', 'memory://')
+)
+limiter = Limiter(key_func=get_remote_address, storage_uri=app.config['RATELIMIT_STORAGE_URI'])
 # Ensure CSRF and Limiter are initialized on the app
 csrf.init_app(app)
 limiter.init_app(app)
