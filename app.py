@@ -3831,6 +3831,116 @@ def delete_payroll(id):
 def add_debtor():
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    try:
+        name = (request.form.get('name') or '').strip()
+        contact = (request.form.get('contact') or '').strip() or None
+        email = (request.form.get('email') or '').strip() or None
+        total_debt_raw = request.form.get('total_debt')
+        last_payment_date = request.form.get('last_payment_date') or None
+        next_payment_date = request.form.get('next_payment_date') or None
+        notes = (request.form.get('notes') or '').strip() or None
+
+        if not name:
+            return bad_request('Name is required')
+        if total_debt_raw is None or str(total_debt_raw).strip() == '':
+            return bad_request('Total debt is required')
+        try:
+            total_debt = float(total_debt_raw)
+        except (TypeError, ValueError):
+            return bad_request('Invalid total debt')
+        if total_debt < 0:
+            return bad_request('Total debt must be non-negative')
+
+        def parse_date(value):
+            if not value:
+                return None
+            try:
+                return datetime.strptime(value, '%Y-%m-%d').date()
+            except Exception:
+                return None
+
+        debtor = Debtor(
+            name=name,
+            contact=contact,
+            email=email,
+            Total_debt=total_debt,
+            amount_paid=0.0,
+            amount_owed=total_debt,
+            last_payment_date=parse_date(last_payment_date),
+            next_payment_date=parse_date(next_payment_date)
+        )
+        db.session.add(debtor)
+        db.session.commit()
+
+        log_audit(
+            'create',
+            table='debtor',
+            record_id=debtor.id,
+            changes={'action': 'add_debtor', 'name': name, 'total_debt': total_debt, 'contact': contact, 'email': email}
+        )
+
+        return jsonify({'success': True, 'id': debtor.id})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"add_debtor failed: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
+def add_debtor():
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    try:
+        name = (request.form.get('name') or '').strip()
+        contact = (request.form.get('contact') or '').strip() or None
+        email = (request.form.get('email') or '').strip() or None
+        total_debt_raw = request.form.get('total_debt')
+        last_payment_date = request.form.get('last_payment_date') or None
+        next_payment_date = request.form.get('next_payment_date') or None
+        notes = (request.form.get('notes') or '').strip() or None
+
+        if not name:
+            return bad_request('Name is required')
+        if total_debt_raw is None or str(total_debt_raw).strip() == '':
+            return bad_request('Total debt is required')
+        try:
+            total_debt = float(total_debt_raw)
+        except (TypeError, ValueError):
+            return bad_request('Invalid total debt')
+        if total_debt < 0:
+            return bad_request('Total debt must be non-negative')
+
+        def parse_date(value):
+            if not value:
+                return None
+            try:
+                return datetime.strptime(value, '%Y-%m-%d').date()
+            except Exception:
+                return None
+
+        debtor = Debtor(
+            name=name,
+            contact=contact,
+            email=email,
+            Total_debt=total_debt,
+            amount_paid=0.0,
+            amount_owed=total_debt,
+            last_payment_date=parse_date(last_payment_date),
+            next_payment_date=parse_date(next_payment_date)
+        )
+        db.session.add(debtor)
+        db.session.commit()
+
+        log_audit(
+            'create',
+            table='debtor',
+            record_id=debtor.id,
+            changes={'action': 'add_debtor', 'name': name, 'total_debt': total_debt, 'contact': contact, 'email': email}
+        )
+
+        return jsonify({'success': True, 'id': debtor.id})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"add_debtor failed: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     try:
         # Validate required fields
