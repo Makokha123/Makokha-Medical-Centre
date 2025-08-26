@@ -354,7 +354,7 @@
 <script>
 $(document).ready(function() {
     // Initialize DataTables
-    $('#servicesTable, #testsTable').DataTable({
+    const dtOptions = {
         responsive: true,
         columnDefs: [
             { responsivePriority: 1, targets: 0 },
@@ -364,7 +364,9 @@ $(document).ready(function() {
         language: {
             emptyTable: "No data available in table"
         }
-    });
+    };
+    const servicesDT = $('#servicesTable').DataTable(dtOptions);
+    const testsDT = $('#testsTable').DataTable(dtOptions);
 
     // Show/hide active checkbox based on test type
     $('#testType').change(function() {
@@ -387,8 +389,8 @@ $(document).ready(function() {
         }
     });
 
-    // Service CRUD operations
-    $('.edit-service').click(function() {
+    // Service CRUD operations (delegated for dynamic rows)
+    $('#servicesTable').on('click', '.edit-service', function() {
         const serviceId = $(this).data('id');
         $.get(`/admin/services/${serviceId}`, function(data) {
             $('#editServiceId').val(data.id);
@@ -401,7 +403,7 @@ $(document).ready(function() {
         });
     });
 
-    $('.delete-service').click(function() {
+    $('#servicesTable').on('click', '.delete-service', function() {
         const serviceId = $(this).data('id');
         $('#deleteItemId').val(serviceId);
         $('#deleteItemType').val('service');
@@ -452,12 +454,42 @@ $(document).ready(function() {
             data: $(this).serialize(),
             success: function(response) {
                 if (response.success) {
-                    $('#addServiceModal').modal('hide');
-                    $('.toast-body').text('Service added successfully!');
-                    successToast.show();
-                    setTimeout(function() {
+                    const id = response.id || (response.data && response.data.id);
+                    if (!id) {
+                        // Fallback to reload if server didn't return id
                         location.reload();
-                    }, 1500);
+                        return;
+                    }
+                    // Fetch full service details to render row
+                    $.get(`/admin/services/${id}`, function(data) {
+                        const priceStr = 'Ksh ' + Number(data.price).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        const desc = data.description ? (data.description.length > 50 ? data.description.substring(0, 50) + '…' : data.description) : 'N/A';
+                        const created = new Date().toISOString().split('T')[0];
+                        const actions = `
+                            <button class="btn btn-sm btn-warning edit-service" data-id="${data.id}">
+                                <i class="bi bi-pencil-square"></i>
+                            </button>
+                            <button class="btn btn-sm btn-danger delete-service" data-id="${data.id}">
+                                <i class="bi bi-trash"></i>
+                            </button>`;
+                        servicesDT.row.add([
+                            data.id,
+                            data.name,
+                            `<span class="price-value">${priceStr}</span>`,
+                            desc,
+                            created,
+                            actions
+                        ]).draw(false);
+
+                        // Reset form and notify
+                        $('#addServiceForm')[0].reset();
+                        $('#addServiceModal').modal('hide');
+                        $('.toast-body').text('Service added successfully!');
+                        successToast.show();
+                    }).fail(function() {
+                        // If fetching details fails, reload to stay consistent
+                        location.reload();
+                    });
                 } else {
                     alert(response.error || 'Failed to add service');
                 }
@@ -466,6 +498,7 @@ $(document).ready(function() {
                 alert('Failed to add service');
             }
         });
+        return false;
     });
 
     $('#editServiceForm').submit(function(e) {
