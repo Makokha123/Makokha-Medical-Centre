@@ -19,6 +19,9 @@
         </div>
         
         <form id="patientForm" method="POST">
+            <!-- CSRF Token -->
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
             <!-- Biodata Section -->
             <div class="form-section active" id="biodata-section">
                 <h3>Patient Biodata</h3>
@@ -474,7 +477,7 @@
                 <div id="prescription-items">
                     <div class="prescription-item form-row">
                         <div class="form-group col-md-3">
-                            <select class="form-control drug-select" name="drug_id" required>
+                            <select class="form-control drug-select" name="drug_id">
                                 <option value="">Select Drug</option>
                                 {% for drug in drugs %}
                                     <option value="{{ drug.id }}" data-stock="{{ drug.remaining_quantity }}">{{ drug.name }} ({{ drug.remaining_quantity }} in stock)</option>
@@ -482,16 +485,16 @@
                             </select>
                         </div>
                         <div class="form-group col-md-1">
-                            <input type="number" class="form-control" name="quantity" placeholder="Qty" min="1" required>
+                            <input type="number" class="form-control" name="quantity" placeholder="Qty" min="1">
                         </div>
                         <div class="form-group col-md-2">
-                            <input type="text" class="form-control" name="dosage" placeholder="Dosage" required>
+                            <input type="text" class="form-control" name="dosage" placeholder="Dosage">
                         </div>
                         <div class="form-group col-md-2">
-                            <input type="text" class="form-control" name="frequency" placeholder="Frequency" required>
+                            <input type="text" class="form-control" name="frequency" placeholder="Frequency">
                         </div>
                         <div class="form-group col-md-2">
-                            <input type="text" class="form-control" name="duration" placeholder="Duration" required>
+                            <input type="text" class="form-control" name="duration" placeholder="Duration">
                         </div>
                         <div class="form-group col-md-2">
                             <input type="text" class="form-control" name="prescription_notes" placeholder="Notes">
@@ -545,6 +548,11 @@
 
 <script>
 $(document).ready(function() {
+    // Function to get CSRF token
+    function getCSRFToken() {
+        return $('input[name="csrf_token"]').val();
+    }
+
     // Initialize Select2 for multi-select inputs
     $('.select2').select2({
         width: '100%',
@@ -639,7 +647,7 @@ $(document).ready(function() {
         });
 
         if (prescriptions.length === 0) {
-            alert('Please add at least one medication to complete prescription');
+            alert('No valid prescriptions to save. Please add at least one medication with all required fields.');
             return;
         }
 
@@ -652,7 +660,8 @@ $(document).ready(function() {
             contentType: 'application/json',
             data: JSON.stringify({
                 patient_id: patientId,
-                prescriptions: prescriptions
+                prescriptions: prescriptions,
+                csrf_token: getCSRFToken()  // Add CSRF token
             }),
             success: function(response) {
                 if (response.success) {
@@ -765,7 +774,10 @@ $(document).ready(function() {
         $.ajax({
             url: '/doctor/patient/ai/review_systems',
             method: 'POST',
-            data: { patient_id: patientId },
+            data: { 
+                patient_id: patientId,
+                csrf_token: getCSRFToken()  // Add CSRF token
+            },
             success: function(response) {
                 if (response.success) {
                     $('#review-suggestions').html(
@@ -805,7 +817,10 @@ $(document).ready(function() {
         $.ajax({
             url: '/doctor/patient/ai/hpi_questions',
             method: 'POST',
-            data: { patient_id: patientId },
+            data: { 
+                patient_id: patientId,
+                csrf_token: getCSRFToken()  // Add CSRF token
+            },
             success: function(response) {
                 if (response.success) {
                     $('#hpi-suggestions').html(
@@ -839,7 +854,10 @@ $(document).ready(function() {
         $.ajax({
             url: '/doctor/patient/ai/generate_hpi',
             method: 'POST',
-            data: { patient_id: patientId },
+            data: { 
+                patient_id: patientId,
+                csrf_token: getCSRFToken()  // Add CSRF token
+            },
             success: function(response) {
                 if (response.success) {
                     $('#hpi_details').val(response.hpi_content);
@@ -871,7 +889,10 @@ $(document).ready(function() {
         $.ajax({
             url: '/doctor/patient/ai/diagnosis',
             method: 'POST',
-            data: { patient_id: patientId },
+            data: { 
+                patient_id: patientId,
+                csrf_token: getCSRFToken()  // Add CSRF token
+            },
             success: function(response) {
                 $('#ai-diagnosis-loading').hide();
                 if (response.success) {
@@ -918,7 +939,10 @@ $(document).ready(function() {
         $.ajax({
             url: '/doctor/patient/ai/treatment',
             method: 'POST',
-            data: { patient_id: patientId },
+            data: { 
+                patient_id: patientId,
+                csrf_token: getCSRFToken()  // Add CSRF token
+            },
             success: function(response) {
                 if (response.success) {
                     $('#treatment-suggestions').html(
@@ -963,7 +987,8 @@ $(document).ready(function() {
             method: 'POST',
             data: {
                 patient_id: patientId,
-                lab_text: labText
+                lab_text: labText,
+                csrf_token: getCSRFToken()  // Add CSRF token
             },
             success: function(response) {
                 if (response.success) {

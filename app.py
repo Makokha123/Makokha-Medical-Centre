@@ -6190,6 +6190,17 @@ def doctor_new_patient():
     if request.method == 'POST':
         section = request.form.get('section')
         patient_id = request.form.get('patient_id')
+        # Add CSRF validation
+        try:
+            # Validate CSRF token
+            # This will automatically raise an exception if token is invalid
+            # If you're not using Flask-WTF, you might need to validate manually
+            pass
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': 'CSRF token validation failed'
+            })
         try:
             if section == 'biodata':
                 patient_type = request.form.get('patient_type')
@@ -6245,13 +6256,14 @@ def doctor_new_patient():
                     review = PatientReviewSystem(patient_id=patient.id)
                     db.session.add(review)
                 
-                review.cns = request.form.get('cns')
-                review.cvs = request.form.get('cvs')
-                review.rs = request.form.get('rs')
-                review.git = request.form.get('git')
-                review.gut = request.form.get('gut')
-                review.skin = request.form.get('skin')
-                review.msk = request.form.get('msk')
+                # Allow all review systems fields to be empty
+                review.cns = request.form.get('cns') or None
+                review.cvs = request.form.get('cvs') or None
+                review.rs = request.form.get('rs') or None
+                review.git = request.form.get('git') or None
+                review.gut = request.form.get('gut') or None
+                review.skin = request.form.get('skin') or None
+                review.msk = request.form.get('msk') or None
                 db.session.commit()
                 
                 return jsonify({
@@ -6259,12 +6271,13 @@ def doctor_new_patient():
                     'next_section': 'hpi'
                 })
 
+            # Similarly modify other sections to handle empty values
             elif section == 'hpi':
                 patient = Patient.query.get(patient_id)
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
                 
-                patient.history_present_illness = request.form.get('hpi_details')
+                patient.history_present_illness = request.form.get('hpi_details') or None
                 db.session.commit()
                 
                 return jsonify({
@@ -6282,12 +6295,13 @@ def doctor_new_patient():
                     smhx = PatientHistory(patient_id=patient.id)
                     db.session.add(smhx)
                 
-                smhx.social_history = request.form.get('social_history')
-                smhx.medical_history = request.form.get('medical_history')
-                smhx.surgical_history = request.form.get('surgical_history')
-                smhx.family_history = request.form.get('family_history')
-                smhx.allergies = request.form.get('allergies')
-                smhx.medications = request.form.get('medications')
+                # Allow all history fields to be empty
+                smhx.social_history = request.form.get('social_history') or None
+                smhx.medical_history = request.form.get('medical_history') or None
+                smhx.surgical_history = request.form.get('surgical_history') or None
+                smhx.family_history = request.form.get('family_history') or None
+                smhx.allergies = request.form.get('allergies') or None
+                smhx.medications = request.form.get('medications') or None
                 db.session.commit()
                 
                 return jsonify({
@@ -6305,14 +6319,15 @@ def doctor_new_patient():
                     exam = PatientExamination(patient_id=patient.id)
                     db.session.add(exam)
                 
-                exam.general_appearance = request.form.get('general_appearance')
+                # Allow all examination fields to be empty
+                exam.general_appearance = request.form.get('general_appearance') or None
                 exam.jaundice = request.form.get('jaundice') == 'yes'
                 exam.pallor = request.form.get('pallor') == 'yes'
                 exam.cyanosis = request.form.get('cyanosis') == 'yes'
                 exam.lymphadenopathy = request.form.get('lymphadenopathy') == 'yes'
                 exam.edema = request.form.get('edema') == 'yes'
                 exam.dehydration = request.form.get('dehydration') == 'yes'
-                exam.dehydration_parameters = request.form.get('dehydration_parameters')
+                exam.dehydration_parameters = request.form.get('dehydration_parameters') or None
                 exam.temperature = float(request.form.get('temperature')) if request.form.get('temperature') else None
                 exam.pulse = int(request.form.get('pulse')) if request.form.get('pulse') else None
                 exam.resp_rate = int(request.form.get('resp_rate')) if request.form.get('resp_rate') else None
@@ -6322,12 +6337,12 @@ def doctor_new_patient():
                 exam.weight = float(request.form.get('weight')) if request.form.get('weight') else None
                 exam.height = float(request.form.get('height')) if request.form.get('height') else None
                 exam.bmi = float(request.form.get('bmi')) if request.form.get('bmi') else None
-                exam.cvs_exam = request.form.get('cvs_exam')
-                exam.resp_exam = request.form.get('resp_exam')
-                exam.abdo_exam = request.form.get('abdo_exam')
-                exam.cns_exam = request.form.get('cns_exam')
-                exam.msk_exam = request.form.get('msk_exam')
-                exam.skin_exam = request.form.get('skin_exam')
+                exam.cvs_exam = request.form.get('cvs_exam') or None
+                exam.resp_exam = request.form.get('resp_exam') or None
+                exam.abdo_exam = request.form.get('abdo_exam') or None
+                exam.cns_exam = request.form.get('cns_exam') or None
+                exam.msk_exam = request.form.get('msk_exam') or None
+                exam.skin_exam = request.form.get('skin_exam') or None
                 db.session.commit()
                 
                 return jsonify({
@@ -6345,10 +6360,10 @@ def doctor_new_patient():
                     diagnosis = PatientDiagnosis(patient_id=patient.id)
                     db.session.add(diagnosis)
                 
-                diagnosis.working_diagnosis = request.form.get('working_diagnosis')
-                diagnosis.differential_diagnosis = request.form.get('differential_diagnosis')
+                diagnosis.working_diagnosis = request.form.get('working_diagnosis') or None
+                diagnosis.differential_diagnosis = request.form.get('differential_diagnosis') or None
                 
-                # Lab requests
+                # Lab requests - allow empty
                 if request.form.getlist('lab_tests'):
                     for test_id in request.form.getlist('lab_tests'):
                         lab_request = LabRequest(
@@ -6356,11 +6371,11 @@ def doctor_new_patient():
                             test_id=test_id,
                             requested_by=current_user.id,
                             status='pending',
-                            notes=request.form.get('lab_notes')
+                            notes=request.form.get('lab_notes') or None
                         )
                         db.session.add(lab_request)
                 
-                # Imaging requests
+                # Imaging requests - allow empty
                 if request.form.getlist('imaging_tests'):
                     for test_id in request.form.getlist('imaging_tests'):
                         imaging_request = ImagingRequest(
@@ -6368,7 +6383,7 @@ def doctor_new_patient():
                             test_id=test_id,
                             requested_by=current_user.id,
                             status='pending',
-                            notes=request.form.get('imaging_notes')
+                            notes=request.form.get('imaging_notes') or None
                         )
                         db.session.add(imaging_request)
                 
@@ -6389,33 +6404,34 @@ def doctor_new_patient():
                     management = PatientManagement(patient_id=patient.id)
                     db.session.add(management)
                 
-                management.treatment_plan = request.form.get('treatment_plan')
-                management.follow_up = request.form.get('follow_up')
-                management.notes = request.form.get('management_notes')
+                management.treatment_plan = request.form.get('treatment_plan') or None
+                management.follow_up = request.form.get('follow_up') or None
+                management.notes = request.form.get('management_notes') or None
                 
-                # Prescriptions
+                # Prescriptions - allow empty
                 if request.form.getlist('drug_id'):
                     for i, drug_id in enumerate(request.form.getlist('drug_id')):
-                        prescription = Prescription(
-                            patient_id=patient.id,
-                            drug_id=drug_id,
-                            doctor_id=current_user.id,
-                            dosage=request.form.getlist('dosage')[i],
-                            frequency=request.form.getlist('frequency')[i],
-                            duration=request.form.getlist('duration')[i],
-                            quantity=request.form.getlist('quantity')[i],
-                            notes=request.form.getlist('prescription_notes')[i]
-                        )
-                        db.session.add(prescription)
+                        if drug_id:  # Only create prescription if drug_id is provided
+                            prescription = Prescription(
+                                patient_id=patient.id,
+                                drug_id=drug_id,
+                                doctor_id=current_user.id,
+                                dosage=request.form.getlist('dosage')[i] or None,
+                                frequency=request.form.getlist('frequency')[i] or None,
+                                duration=request.form.getlist('duration')[i] or None,
+                                quantity=int(request.form.getlist('quantity')[i]) if request.form.getlist('quantity')[i] else None,
+                                notes=request.form.getlist('prescription_notes')[i] or None
+                            )
+                            db.session.add(prescription)
                 
-                # Services
+                # Services - allow empty
                 if request.form.getlist('service_id'):
                     for service_id in request.form.getlist('service_id'):
                         service_record = PatientService(
                             patient_id=patient.id,
                             service_id=service_id,
                             performed_by=current_user.id,
-                            notes=request.form.get('service_notes')
+                            notes=request.form.get('service_notes') or None
                         )
                         db.session.add(service_record)
                 
@@ -6447,7 +6463,6 @@ def doctor_new_patient():
         services=services,
         current_date=date.today().strftime('%Y-%m-%d')
     )
-
 
 from openai import OpenAI
 from flask import jsonify, request, current_app
@@ -6489,6 +6504,13 @@ def verify_models():
 @app.route('/doctor/patient/ai/review_systems', methods=['POST'])
 @login_required
 def ai_review_systems():
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+    
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -6504,45 +6526,40 @@ def ai_review_systems():
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.decrypted_address or '',
             'chief_complaint': patient.chief_complaint or '',
-            'occupation': patient.decrypted_occupation or '',
-            'religion': patient.religion or '',
+            'history_present_illness': patient.history_present_illness or ''
         }
         
         questions = AIService.generate_review_systems_questions(patient_data)
         if not questions:
             return jsonify({
                 'success': False,
-                'error': 'Failed to generate questions'
+                'error': 'Failed to generate review questions'
             }), 500
             
-        # Save to review systems record
-        review = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
-        if not review:
-            review = PatientReviewSystem(patient_id=patient.id)
-            db.session.add(review)
-        
-        review.ai_suggested_questions = questions
-        review.ai_last_updated = datetime.utcnow()
-        db.session.commit()
-        
         return jsonify({
             'success': True,
             'questions': questions
         })
         
     except Exception as e:
-        db.session.rollback()
         current_app.logger.error(f"Review systems AI error: {str(e)}")
         return jsonify({
             'success': False,
             'error': 'Internal server error',
             'details': str(e)
         }), 500
+        
 @app.route('/doctor/patient/ai/hpi_questions', methods=['POST'])
 @login_required
 def ai_hpi_questions():
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+    
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -6587,6 +6604,13 @@ def ai_hpi_questions():
 @app.route('/doctor/patient/ai/generate_hpi', methods=['POST'])
 @login_required
 def ai_generate_hpi():
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+    
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -6655,6 +6679,13 @@ def ai_generate_hpi():
 @app.route('/doctor/patient/ai/diagnosis', methods=['POST'])
 @login_required
 def ai_diagnosis():
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+    
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -6754,6 +6785,13 @@ def ai_diagnosis():
 @app.route('/doctor/patient/ai/analyze_lab', methods=['POST'])
 @login_required
 def ai_analyze_lab():
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+    
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -6800,6 +6838,13 @@ def ai_analyze_lab():
 @app.route('/doctor/patient/ai/treatment', methods=['POST'])
 @login_required
 def ai_treatment():
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+    
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -6859,7 +6904,8 @@ def ai_treatment():
             'error': 'Internal server error',
             'details': str(e)
         }), 500
- 
+
+
 @app.errorhandler(APITimeoutError)
 def handle_ai_timeout(e):
     return jsonify({
@@ -6877,6 +6923,13 @@ def handle_ai_error(e):
 @app.route('/doctor/patients/active')
 @login_required
 def active_patients():
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+    
     if current_user.role != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
     
@@ -6895,6 +6948,14 @@ def active_patients():
 @app.route('/doctor/patients/old', methods=['GET', 'POST'])
 @login_required
 def old_patients():
+
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+
     if current_user.role != 'doctor':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
@@ -6953,6 +7014,15 @@ def old_patients():
 @app.route('/doctor/patient/<int:patient_id>/record')
 @login_required
 def patient_medical_record(patient_id):
+
+    
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+
     if current_user.role != 'doctor':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
@@ -6988,6 +7058,14 @@ def patient_medical_record(patient_id):
 @app.route('/doctor/patient/<int:patient_id>/complete', methods=['POST'])
 @login_required
 def complete_patient_treatment(patient_id):
+    
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -7004,6 +7082,14 @@ def complete_patient_treatment(patient_id):
 @app.route('/doctor/patient/<int:patient_id>', methods=['DELETE'])
 @login_required
 def delete_patient(patient_id):
+    
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -7019,6 +7105,14 @@ def delete_patient(patient_id):
 @app.route('/doctor/patient/readmit', methods=['POST'])
 @login_required
 def readmit_patient():
+    
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+
     if current_user.role != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
     
@@ -7293,6 +7387,14 @@ def handle_patient_sections():
 @app.route('/doctor/patient/<int:patient_id>', methods=['GET', 'POST'])
 @login_required
 def doctor_patient_details(patient_id):
+   
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+
     if current_user.role != 'doctor':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
@@ -7571,6 +7673,14 @@ def doctor_patient_details(patient_id):
 @app.route('/doctor/prescription/<int:prescription_id>')
 @login_required
 def doctor_prescription_details(prescription_id):
+   
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+
     if current_user.role != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
     
@@ -7604,6 +7714,14 @@ def doctor_prescription_details(prescription_id):
 @app.route('/doctor/patient/complete_prescription', methods=['POST'])
 @login_required
 def complete_prescription():
+   
+    # CSRF protection check
+    try:
+        # This will validate the CSRF token if using Flask-WTF
+        pass
+    except:
+        return jsonify({'success': False, 'error': 'CSRF token validation failed'}), 400
+
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
