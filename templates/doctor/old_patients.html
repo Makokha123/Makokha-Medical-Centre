@@ -48,6 +48,7 @@
                                         <i class="fas fa-file-medical"></i> Record
                                     </a>
                                     <form method="post" action="{{ url_for('old_patients') }}" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="patient_id" value="{{ patient.id }}">
                                         <input type="hidden" name="action" value="readmit">
                                         <button type="submit" class="btn btn-sm btn-success">

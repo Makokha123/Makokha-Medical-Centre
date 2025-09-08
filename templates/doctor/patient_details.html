@@ -362,6 +362,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="review_systems">
                 <div class="modal-body">
                     <div class="row">
@@ -413,6 +414,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="history">
                 <div class="modal-body">
                     <div class="row">
@@ -456,6 +458,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="examination">
                 <div class="modal-body">
                     <div class="row">
@@ -531,6 +534,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="diagnosis">
                 <div class="modal-body">
                     <div class="mb-3">
@@ -560,6 +564,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="management">
                 <div class="modal-body">
                     <div class="mb-3">
@@ -636,6 +641,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="lab_request">
                 <div class="modal-body">
                     <div class="mb-3">
@@ -670,6 +676,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="imaging_request">
                 <div class="modal-body">
                     <div class="mb-3">
@@ -702,8 +709,10 @@ function completeTreatment(patientId) {
         fetch(`/doctor/patient/${patientId}/complete`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
-            }
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            },
+            body: JSON.stringify({})
         })
         .then(response => response.json())
         .then(data => {
@@ -725,8 +734,10 @@ function readmitPatient(patientId) {
         fetch(`/doctor/patient/${patientId}/readmit`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
-            }
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            },
+            body: JSON.stringify({ patient_id: patientId })
         })
         .then(response => response.json())
         .then(data => {

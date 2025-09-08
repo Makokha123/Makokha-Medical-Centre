@@ -548,6 +548,17 @@
 
 <script>
 $(document).ready(function() {
+    // Ensure all AJAX requests carry CSRF header
+    var csrfMeta = $('meta[name="csrf-token"]').attr('content');
+    if (csrfMeta) {
+        $.ajaxSetup({
+            beforeSend: function(xhr, settings) {
+                if (/^(POST|PUT|PATCH|DELETE)$/i.test(settings.type)) {
+                    xhr.setRequestHeader('X-CSRFToken', csrfMeta);
+                }
+            }
+        });
+    }
     // Function to get CSRF token
     function getCSRFToken() {
         return $('input[name="csrf_token"]').val();
