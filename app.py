@@ -6988,10 +6988,7 @@ def patient_medical_record(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
 
-    patient = db.session.get(Patient, patient_id)
-    if not patient:
-        flash('Patient not found', 'danger')
-        return redirect(url_for('doctor_patients'))
+    patient = Patient.query.get_or_404(patient_id)
     
     # Get all medical record components
     review_systems = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
@@ -7003,7 +7000,7 @@ def patient_medical_record(patient_id):
     # Get all related records
     lab_requests = LabRequest.query.filter_by(patient_id=patient.id).order_by(LabRequest.created_at.desc()).all()
     imaging_requests = ImagingRequest.query.filter_by(patient_id=patient.id).order_by(ImagingRequest.created_at.desc()).all()
-    prescriptions = Prescription.query.filter_by(patient_id=patient.id).options(db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)).order_by(Prescription.created_at.desc()).all()
+    prescriptions = Prescription.query.filter_by(patient_id=patient.id).order_by(Prescription.created_at.desc()).all()
     services = PatientService.query.filter_by(patient_id=patient.id).order_by(PatientService.created_at.desc()).all()
     
     return render_template('doctor/medical_record.html',
@@ -7117,7 +7114,7 @@ def handle_patient_sections():
             })
 
         elif section == 'chief_complaint':
-            patient = db.session.get(Patient, patient_id)
+            patient = Patient.query.get(patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7131,7 +7128,7 @@ def handle_patient_sections():
             })
 
         elif section == 'review_systems':
-            patient = db.session.get(Patient, patient_id)
+            patient = Patient.query.get(patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7155,7 +7152,7 @@ def handle_patient_sections():
             })
 
         elif section == 'hpi':
-            patient = db.session.get(Patient, patient_id)
+            patient = Patient.query.get(patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7168,7 +7165,7 @@ def handle_patient_sections():
             })
 
         elif section == 'smhx':
-            patient = db.session.get(Patient, patient_id)
+            patient = Patient.query.get(patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7191,7 +7188,7 @@ def handle_patient_sections():
             })
 
         elif section == 'examination':
-            patient = db.session.get(Patient, patient_id)
+            patient = Patient.query.get(patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7231,7 +7228,7 @@ def handle_patient_sections():
             })
 
         elif section == 'diagnosis':
-            patient = db.session.get(Patient, patient_id)
+            patient = Patient.query.get(patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7275,7 +7272,7 @@ def handle_patient_sections():
             })
 
         elif section == 'management':
-            patient = db.session.get(Patient, patient_id)
+            patient = Patient.query.get(patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             

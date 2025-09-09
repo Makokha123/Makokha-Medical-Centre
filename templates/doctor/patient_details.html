@@ -150,6 +150,18 @@
             </div>
         </div>
 
+
+        <!-- Added Progression Section -->
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white">
+                <h3><i class="fas fa-chart-line"></i> Daily Progression</h3>
+            </div>
+            <div class="card-body">
+                <textarea name="progression" class="form-control mb-3" rows="3">{{ patient.progression or '' }}</textarea>
+                <button type="submit" class="btn btn-primary">Save Progression</button>
+            </div>
+        </div>
+
         <!-- Examination Findings -->
         <div class="card mb-4">
             <div class="card-header bg-danger text-white">
@@ -182,6 +194,26 @@
                         <p><strong>Abdomen:</strong> {{ examination.abdo_exam if examination and examination.abdo_exam else 'Normal' }}</p>
                         <p><strong>CNS:</strong> {{ examination.cns_exam if examination and examination.cns_exam else 'Normal' }}</p>
                     </div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Added Examination Findings Section -->
+        <div class="card mb-4">
+            <div class="card-header bg-warning text-white">
+                <h3><i class="fas fa-stethoscope"></i> Daily New Examination Findings</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/doctor/add_examination_finding">
+                    <textarea name="examination_finding" class="form-control mb-3" rows="3" placeholder="Add new finding..."></textarea>
+                    <button type="submit" class="btn btn-success">Add Finding</button>
+                </form>
+                <div class="mt-4">
+                    <h6>Previous Findings:</h6>
+                    {% for finding in examination.findings %}
+                        <p><strong>{{ finding.timestamp }}:</strong> {{ finding.note }}</p>
+                    {% endfor %}
                 </div>
             </div>
         </div>
@@ -359,8 +391,6 @@
                 {% endif %}
             </div>
         </div>
-    </div>
-</div>
 
 <!-- Review Systems Modal -->
 <div class="modal fade" id="reviewSystemsModal" tabindex="-1" aria-labelledby="reviewSystemsModalLabel" aria-hidden="true">
@@ -616,6 +646,10 @@
                     <button type="button" class="btn btn-sm btn-secondary" id="add-prescription">
                         <i class="fas fa-plus"></i> Add Another Medication
                     </button>
+                    <button type="button" class="btn btn-success" id="complete-prescription">
+                        <i class="fas fa-check-circle"></i> Complete Prescription
+                    </button>
+                    <button type="button" class="btn btn-danger" id="cancel-prescription">Cancel Prescription</button>
                     
                     <h4 class="mt-4">Services</h4>
                     <div class="form-group">

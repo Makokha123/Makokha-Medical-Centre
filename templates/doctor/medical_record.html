@@ -48,18 +48,11 @@
             <h5>Chief Complaint & History</h5>
         </div>
         <div class="card-body">
-            <form method="POST" action="/doctor/update_notes">
-                <p><strong>Chief Complaint:</strong></p>
-                <textarea name="chief_complaint" class="form-control mb-3" rows="2">{{ patient.chief_complaint or '' }}</textarea>
-
-                <p><strong>History of Present Illness:</strong></p>
-                <textarea name="history_present_illness" class="form-control mb-3" rows="3">{{ patient.history_present_illness or '' }}</textarea>
-
-                <p><strong>Progression:</strong></p>
-                <textarea name="progression" class="form-control mb-3" rows="3">{{ patient.progression or '' }}</textarea>
-
-                <button type="submit" class="btn btn-primary">Save Notes</button>
-            </form>
+            <p><strong>Chief Complaint:</strong></p>
+            <p>{{ patient.chief_complaint or 'Not recorded' }}</p>
+            
+            <p class="mt-3"><strong>History of Present Illness:</strong></p>
+            <p>{{ patient.history_present_illness or 'Not recorded' }}</p>
         </div>
     </div>
 
@@ -115,25 +108,42 @@
     </div>
     {% endif %}
 
-    <!-- Examination Findings -->
+    <!-- Examination -->
+    {% if examination %}
     <div class="card mb-4">
         <div class="card-header">
             <h5>Examination Findings</h5>
         </div>
         <div class="card-body">
-            <form method="POST" action="/doctor/add_examination_finding">
-                <textarea name="examination_finding" class="form-control mb-3" rows="3" placeholder="Add new finding..."></textarea>
-                <button type="submit" class="btn btn-success">Add Finding</button>
-            </form>
-
-            <div class="mt-4">
-                <h6>Previous Findings:</h6>
-                {% for finding in examination.findings %}
-                    <p><strong>{{ finding.timestamp }}:</strong> {{ finding.note }}</p>
-                {% endfor %}
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>General Appearance:</strong> {{ examination.general_appearance or 'Normal' }}</p>
+                    <p><strong>Vital Signs:</strong></p>
+                    <ul>
+                        <li>Temp: {{ examination.temperature or '--' }}°C</li>
+                        <li>Pulse: {{ examination.pulse or '--' }}/min</li>
+                        <li>BP: {{ examination.bp_systolic or '--' }}/{{ examination.bp_diastolic or '--' }} mmHg</li>
+                        <li>SpO2: {{ examination.spo2 or '--' }}%</li>
+                        <li>RR: {{ examination.resp_rate or '--' }}/min</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Findings:</strong></p>
+                    <ul>
+                        <li>Jaundice: {{ 'Yes' if examination.jaundice else 'No' }}</li>
+                        <li>Pallor: {{ 'Yes' if examination.pallor else 'No' }}</li>
+                        <li>Cyanosis: {{ 'Yes' if examination.cyanosis else 'No' }}</li>
+                        <li>Edema: {{ 'Yes' if examination.edema else 'No' }}</li>
+                    </ul>
+                    
+                    <p class="mt-3"><strong>System Examinations:</strong></p>
+                    <p>CVS: {{ examination.cvs_exam or 'Normal' }}</p>
+                    <p>Resp: {{ examination.resp_exam or 'Normal' }}</p>
+                </div>
             </div>
         </div>
     </div>
+    {% endif %}
 
     <!-- Diagnosis -->
     {% if diagnosis %}
@@ -314,19 +324,17 @@
                     </thead>
                     <tbody>
                         {% for prescription in prescriptions %}
-                            {% for item in prescription.items %}
-                            <tr>
-                                <td>{{ item.drug.name }} ({{ item.quantity }})</td>
-                                <td>{{ item.dosage }}</td>
-                                <td>{{ item.frequency }}</td>
-                                <td>{{ item.duration }}</td>
-                                <td>
-                                    <span class="badge badge-{{ 'success' if item.status == 'dispensed' else 'warning' }}">
-                                        {{ item.status|capitalize }}
-                                    </span>
-                                </td>
-                            </tr>
-                            {% endfor %}
+                        <tr>
+                            <td>{{ prescription.drug.name }}</td>
+                            <td>{{ prescription.dosage }}</td>
+                            <td>{{ prescription.frequency }}</td>
+                            <td>{{ prescription.duration }}</td>
+                            <td>
+                                <span class="badge badge-{{ 'success' if prescription.status == 'completed' else 'warning' }}">
+                                    {{ prescription.status }}
+                                </span>
+                            </td>
+                        </tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -334,46 +342,6 @@
             {% else %}
             <p>No prescriptions recorded</p>
             {% endif %}
-
-            <!-- Prescription entry form -->
-            <form id="medicalRecordPrescriptionForm">
-                <div id="prescription-items">
-                    <div class="prescription-item form-row">
-                        <div class="form-group col-md-3">
-                            <select class="form-control drug-select" name="drug_id">
-                                <option value="">Select Drug</option>
-                                {% for drug in drugs %}
-                                    <option value="{{ drug.id }}" data-stock="{{ drug.remaining_quantity }}">{{ drug.name }} ({{ drug.remaining_quantity }} in stock)</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div class="form-group col-md-1">
-                            <input type="number" class="form-control" name="quantity" placeholder="Qty" min="1">
-                        </div>
-                        <div class="form-group col-md-2">
-                            <input type="text" class="form-control" name="dosage" placeholder="Dosage">
-                        </div>
-                        <div class="form-group col-md-2">
-                            <input type="text" class="form-control" name="frequency" placeholder="Frequency">
-                        </div>
-                        <div class="form-group col-md-2">
-                            <input type="text" class="form-control" name="duration" placeholder="Duration">
-                        </div>
-                        <div class="form-group col-md-2">
-                            <input type="text" class="form-control" name="prescription_notes" placeholder="Notes">
-                        </div>
-                    </div>
-                </div>
-                <button type="button" class="btn btn-sm btn-secondary" id="add-prescription">
-                    <i class="fas fa-plus"></i> Add Another Medication
-                </button>
-                <div class="mt-3">
-                    <button type="button" class="btn btn-success" id="complete-prescription">
-                        <i class="fas fa-check-circle"></i> Complete Prescription
-                    </button>
-                    <div id="prescription-feedback" class="mt-2" style="display: none;"></div>
-                </div>
-            </form>
         </div>
     </div>
 
@@ -431,101 +399,4 @@
     </div>
 </div>
 {% endfor %}
-{% endblock %}
-{% block scripts %}
-<script>
-$(document).ready(function() {
-    // Add prescription item
-    $('#add-prescription').click(function() {
-        const newItem = $('.prescription-item').first().clone();
-        newItem.find('input').val('');
-        newItem.find('select').val('');
-        $('#prescription-items').append(newItem);
-        // Reinitialize Select2 for the new drug select if used
-        if (newItem.find('.drug-select').length && $.fn.select2) {
-            newItem.find('.drug-select').select2({ width: '100%' });
-        }
-    });
-
-    // Drug stock validation
-    $(document).on('change', '.drug-select', function() {
-        const selectedOption = $(this).find('option:selected');
-        const stock = selectedOption.data('stock');
-        const quantityInput = $(this).closest('.prescription-item').find('input[name="quantity"]');
-        if (stock !== undefined) {
-            quantityInput.attr('max', stock);
-            if (parseInt(quantityInput.val()) > parseInt(stock)) {
-                alert('Quantity exceeds available stock');
-                quantityInput.val('');
-            }
-        }
-    });
-
-    // Handle Complete Prescription button
-    $('#complete-prescription').click(function() {
-        if (!confirm('Are you sure you want to complete this prescription?')) {
-            return;
-        }
-
-        const patientId = {{ patient.id }};
-        if (!patientId) {
-            alert('Patient not found');
-            return;
-        }
-
-        // Gather prescription data
-        const prescriptions = [];
-        $('.prescription-item').each(function() {
-            const drugId = $(this).find('select[name="drug_id"]').val();
-            const quantity = $(this).find('input[name="quantity"]').val();
-            const dosage = $(this).find('input[name="dosage"]').val();
-            const frequency = $(this).find('input[name="frequency"]').val();
-            const duration = $(this).find('input[name="duration"]').val();
-            const notes = $(this).find('input[name="prescription_notes"]').val();
-            if (drugId && quantity && dosage && frequency && duration) {
-                prescriptions.push({
-                    drug_id: drugId,
-                    quantity: quantity,
-                    dosage: dosage,
-                    frequency: frequency,
-                    duration: duration,
-                    notes: notes
-                });
-            }
-        });
-        if (prescriptions.length === 0) {
-            alert('No valid prescriptions to save. Please add at least one medication with all required fields.');
-            return;
-        }
-        $('#prescription-feedback').html('<div class="spinner-border spinner-border-sm" role="status"></div> Saving prescription...').show();
-        $('#complete-prescription').prop('disabled', true);
-        $.ajax({
-            url: '/doctor/patient/complete_prescription',
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({
-                patient_id: patientId,
-                prescriptions: prescriptions
-            }),
-            success: function(response) {
-                if (response.success) {
-                    $('#prescription-feedback').html('<div class="alert alert-success">Prescription saved successfully! The pharmacist can now dispense the medications.</div>');
-                    // Optionally clear the prescription form
-                    $('.prescription-item').not(':first').remove();
-                    $('.prescription-item').find('input').val('');
-                    $('.prescription-item').find('select').val('');
-                    setTimeout(function() { location.reload(); }, 1500);
-                } else {
-                    $('#prescription-feedback').html('<div class="alert alert-danger">Error: ' + (response.error || 'Failed to save prescription') + '</div>');
-                    $('#complete-prescription').prop('disabled', false);
-                }
-            },
-            error: function(xhr) {
-                $('#prescription-feedback').html('<div class="alert alert-danger">Error: ' + (xhr.responseJSON?.error || 'Failed to connect to server') + '</div>');
-                $('#complete-prescription').prop('disabled', false);
-            }
-        });
-    });
-});
-</script>
 {% endblock %}
