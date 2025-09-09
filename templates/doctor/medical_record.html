@@ -463,11 +463,16 @@ $(document).ready(function() {
 
     // Handle Complete Prescription button
     $('#complete-prescription').click(function() {
+        if (!confirm('Are you sure you want to complete this prescription?')) {
+            return;
+        }
+
         const patientId = {{ patient.id }};
         if (!patientId) {
             alert('Patient not found');
             return;
         }
+
         // Gather prescription data
         const prescriptions = [];
         $('.prescription-item').each(function() {

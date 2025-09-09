@@ -1,4 +1,3 @@
-
 {% extends "doctor/layout.html" %}
 
 {% block content %}
@@ -56,6 +55,10 @@
                     </div>
                     <div class="card-body">
                         <p>{{ patient.chief_complaint or 'No chief complaint recorded' }}</p>
+                        <form method="POST" action="/doctor/patient/{{ patient.id }}/add_note">
+                            <textarea name="chief_complaint" class="form-control mb-2" placeholder="Add or update chief complaint"></textarea>
+                            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -66,6 +69,10 @@
                     </div>
                     <div class="card-body">
                         <p>{{ patient.history_present_illness or 'No HPI recorded' }}</p>
+                        <form method="POST" action="/doctor/patient/{{ patient.id }}/add_note">
+                            <textarea name="history_present_illness" class="form-control mb-2" placeholder="Add or update HPI"></textarea>
+                            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                        </form>
                     </div>
                 </div>
             </div>

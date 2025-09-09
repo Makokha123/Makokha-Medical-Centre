@@ -209,10 +209,10 @@ def get_total_beds():
     return Bed.query.count()
 
 def get_available_beds():
-    return Bed.query.filter_by(status='available').count()
+    return Bed.query.options(db.joinedload(Bed.patient)).filter_by(status='available').count()
 
 def get_occupied_beds():
-    return Bed.query.filter_by(status='occupied').count()
+    return Bed.query.options(db.joinedload(Bed.patient)).filter_by(status='occupied').count()
 
 class Drug(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -290,7 +290,7 @@ class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     op_number = db.Column(db.String(20), unique=True, nullable=True)
     ip_number = db.Column(db.String(20), unique=True, nullable=True)
-    name = db.Column(db.String(100), nullable=False)  # encrypted
+    name = db.Column(db.String(100), nullable=True)  # encrypted
     age = db.Column(db.Integer, nullable=True)
     gender = db.Column(db.String(10), nullable=True)
     address = db.Column(db.String(200), nullable=True)  # encrypted
@@ -2446,7 +2446,7 @@ def get_employee(employee_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    employee = Employee.query.get_or_404(employee_id)
+    employee = db.session.get(Employee, request.form.get('employee_id'))
     return jsonify({
         'id': employee.id,
         'name': employee.name,
@@ -7000,7 +7000,7 @@ def patient_medical_record(patient_id):
     # Get all related records
     lab_requests = LabRequest.query.filter_by(patient_id=patient.id).order_by(LabRequest.created_at.desc()).all()
     imaging_requests = ImagingRequest.query.filter_by(patient_id=patient.id).order_by(ImagingRequest.created_at.desc()).all()
-    prescriptions = Prescription.query.filter_by(patient_id=patient.id).order_by(Prescription.created_at.desc()).all()
+    prescriptions = Prescription.query.filter_by(patient_id=patient.id).options(db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)).order_by(Prescription.created_at.desc()).all()
     services = PatientService.query.filter_by(patient_id=patient.id).order_by(PatientService.created_at.desc()).all()
     
     return render_template('doctor/medical_record.html',
@@ -7585,7 +7585,7 @@ def doctor_patient_details(patient_id):
     imaging_tests = ImagingTest.query.all()
     lab_requests = LabRequest.query.filter_by(patient_id=patient.id).all()
     imaging_requests = ImagingRequest.query.filter_by(patient_id=patient.id).all()
-    prescriptions = Prescription.query.filter_by(patient_id=patient.id).all()
+    prescriptions = Prescription.query.filter_by(patient_id=patient.id).options(db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)).all()
     patient_services = PatientService.query.filter_by(patient_id=patient.id).all()
     
     return render_template('doctor/patient_details.html',
