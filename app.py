@@ -6433,20 +6433,22 @@ class AIService:
             current_app.logger.error(f"AI Treatment Plan Error: {str(e)}")
             return None
 
-# Initialize DeepSeek client with proper error handling
-try:
-    deepseek_client = OpenAI(
-        api_key=os.getenv("DEEPSEEK_API_KEY"),
-        base_url="https://api.deepseek.com/v1",
-        timeout=30.0
-    )
-    # Test the connection
-    if os.getenv("DEEPSEEK_API_KEY"):
-        models = deepseek_client.models.list()
-        current_app.logger.info(f"Connected to DeepSeek API. Available models: {[m.id for m in models.data]}")
-except Exception as e:
-    current_app.logger.error(f"Failed to initialize DeepSeek client: {str(e)}")
-    deepseek_client = None
+from flask import current_app
+# Initialize DeepSeek client with proper error handling inside app context
+with app.app_context():
+    try:
+        deepseek_client = OpenAI(
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com/v1",
+            timeout=30.0
+        )
+        # Test the connection
+        if os.getenv("DEEPSEEK_API_KEY"):
+            models = deepseek_client.models.list()
+            current_app.logger.info(f"Connected to DeepSeek API. Available models: {[m.id for m in models.data]}")
+    except Exception as e:
+        current_app.logger.error(f"Failed to initialize DeepSeek client: {str(e)}")
+        deepseek_client = None
     
 @app.route('/api/verify-models', methods=['GET'])
 @login_required

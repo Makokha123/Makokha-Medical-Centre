@@ -597,7 +597,7 @@ $(document).ready(function() {
 
     // Generate patient number when type is selected
     $('#patient_type').change(function() {
-        if $(this).val()) {
+        if ($(this).val()) {
             $('#patient_number').val('Generating...');
             const type = $(this).val();
             // Call server to generate number
