@@ -1613,3 +1613,164 @@ $(document).ready(function() {
 </style>
 
 {% endblock %}
+
+{% block scripts %}
+<script>
+// Money Management Functions
+function updateSalary() {
+    const employeeId = document.getElementById('employee_id').value;
+    if (!employeeId) return;
+
+    fetch(`/admin/get_employee_salary/${employeeId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('payroll-amount').value = data.salary;
+            }
+        })
+        .catch(error => console.error('Error fetching salary:', error));
+}
+
+function submitPayroll(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+
+    fetch('/admin/payroll', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Add new row to payroll table
+            const payroll = data.payroll;
+            const newRow = document.createElement('tr');
+            newRow.innerHTML = `
+                <td>${payroll.employee}</td>
+                <td>${payroll.amount}</td>
+                <td>${payroll.date}</td>
+                <td><span class="status ${payroll.status}">${payroll.status}</span></td>
+                <td>
+                    <button class="action-btn edit" onclick="editPayroll(${payroll.id})">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="action-btn delete" onclick="deletePayroll(${payroll.id})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            `;
+            document.querySelector('#payroll-table tbody').insertBefore(newRow, document.querySelector('#payroll-table tbody').firstChild);
+            
+            // Close modal and show success message
+            closeModal('add-payroll-modal');
+            showAlert('success', 'Payroll record created successfully');
+            
+            // Clear form
+            form.reset();
+        } else {
+            showAlert('error', data.error || 'Error creating payroll record');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showAlert('error', 'An unexpected error occurred');
+    });
+}
+
+function submitDrawing(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+
+    fetch('/admin/add_drawing', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Add new row to drawings table
+            const drawing = data.drawing;
+            const newRow = document.createElement('tr');
+            newRow.innerHTML = `
+                <td>${drawing.amount}</td>
+                <td>${drawing.description}</td>
+                <td>${drawing.date}</td>
+                <td>
+                    <button class="action-btn edit" onclick="editDrawing(${drawing.id})">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="action-btn delete" onclick="deleteDrawing(${drawing.id})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            `;
+            document.querySelector('#drawings-table tbody').insertBefore(newRow, document.querySelector('#drawings-table tbody').firstChild);
+            
+            // Hide form and show success message
+            hideDrawingForm();
+            showAlert('success', 'Drawing added successfully');
+            
+            // Clear form
+            form.reset();
+        } else {
+            showAlert('error', data.error || 'Error adding drawing');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showAlert('error', 'An unexpected error occurred');
+    });
+}
+
+function showAlert(type, message) {
+    const alertContainer = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type}`;
+    alert.innerHTML = `
+        ${message}
+        <button class="close-alert" onclick="this.parentElement.remove()">&times;</button>
+    `;
+    alertContainer.appendChild(alert);
+    setTimeout(() => alert.remove(), 5000);
+}
+
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    modal.style.display = 'none';
+}
+
+// Initialize event listeners when document is ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize employee select change handler
+    const employeeSelect = document.getElementById('employee_id');
+    if (employeeSelect) {
+        employeeSelect.addEventListener('change', updateSalary);
+    }
+
+    // Initialize form submissions
+    const payrollForm = document.getElementById('add-payroll-form');
+    if (payrollForm) {
+        payrollForm.addEventListener('submit', submitPayroll);
+    }
+
+    const drawingForm = document.getElementById('drawingForm');
+    if (drawingForm) {
+        drawingForm.addEventListener('submit', submitDrawing);
+    }
+});
+</script>
+{% endblock %}
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+</style>
+
+{% endblock %}
