@@ -50,6 +50,7 @@
                 <div class="billing-form">
                     <h3><i class="fas fa-file-invoice"></i> New Bill</h3>
                     <form id="billing-form" method="POST" action="{{ url_for('create_bill') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="form-group">
                             <label for="patient-id">Patient</label>
                             <select id="patient-id" name="patient_id" class="form-control" required>

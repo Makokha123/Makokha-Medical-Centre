@@ -43,6 +43,8 @@
                         <td>
                             <div class="btn-group">
                                 <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
+                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}#findings" class="btn btn-sm btn-warning">Findings</a>
+                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}#prescription" class="btn btn-sm btn-secondary">Prescription</a>
                                 <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ patient.id }}')">Complete</button>
                                 <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
                                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
@@ -99,6 +101,8 @@
         </div>
     </div>
 </div>
+
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
 <script>
 function openTab(evt, tabId) {

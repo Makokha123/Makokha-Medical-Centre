@@ -1493,6 +1493,9 @@ def home():
 @login_required
 def profile():
     if request.method == 'POST':
+        # ...existing code for saving patient...
+        db.session.commit()
+        flash('Patient saved successfully!', 'success')
         if 'profile_picture' in request.files:
             file = request.files['profile_picture']
             if file and file.filename != '' and allowed_file(file.filename):
