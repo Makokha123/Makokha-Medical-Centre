@@ -772,17 +772,54 @@ class AIService:
         
     @staticmethod
     def generate_diagnosis(patient_data):
-        """Generate diagnosis with proper error handling"""
-        prompt = f"""
-        [Your diagnosis prompt here...]
         """
-        
+        Generate a concise working diagnosis and differentials using all available patient data.
+        """
+        import json
+        prompt = f"""
+        You are an expert physician. Based on the following patient information, provide:
+        1. The most likely (working) diagnosis (1-2 sentences)
+        2. 3-5 differential diagnoses, each with a brief explanation (1-2 sentences each)
+        3. Key findings supporting each diagnosis
+        4. Recommended diagnostic tests to confirm
+
+        Patient Demographics:
+        - Name: {patient_data.get('name', 'Not specified')}
+        - Age: {patient_data.get('age', 'Not specified')}
+        - Gender: {patient_data.get('gender', 'Not specified')}
+        - Address: {patient_data.get('address', 'Not specified')}
+        - Occupation: {patient_data.get('occupation', 'Not specified')}
+        - Religion: {patient_data.get('religion', 'Not specified')}
+
+        Chief Complaint:
+        {patient_data.get('chief_complaint', 'Not specified')}
+
+        History of Present Illness (HPI):
+        {patient_data.get('history_present_illness', 'Not documented')}
+
+        Review of Systems (ROS):
+        {json.dumps(patient_data.get('review_systems', {}), indent=2)}
+
+        Medical History:
+        - Social: {patient_data.get('social_history', 'Not documented')}
+        - Medical: {patient_data.get('medical_history', 'Not documented')}
+        - Surgical: {patient_data.get('surgical_history', 'Not documented')}
+        - Family: {patient_data.get('family_history', 'Not documented')}
+        - Allergies: {patient_data.get('allergies', 'None known')}
+        - Medications: {patient_data.get('medications', 'None')}
+
+        Physical Examination:
+        {json.dumps(patient_data.get('examination', {}), indent=2)}
+
+        Please be brief and straight to the point. Format your answer as:
+        - Working Diagnosis:
+        - Differentials:
+        - Key Findings:
+        - Recommended Tests:
+        """
         try:
-            # Initialize client outside try block to make it available in fallback
             client = None
             client = AIService.get_client()
-            
-            # Try primary model
             response = client.chat.completions.create(
                 model=AIService.MODELS['primary'],
                 messages=[{"role": "user", "content": prompt}],
@@ -791,16 +828,11 @@ class AIService:
                 timeout=20
             )
             return response.choices[0].message.content
-        
         except Exception as primary_error:
             current_app.logger.error(f"Primary model failed: {str(primary_error)}")
-            
             try:
-                # Ensure client is available for fallback
                 if client is None:
                     client = AIService.get_client()
-                
-                # Try fallback model
                 response = client.chat.completions.create(
                     model=AIService.MODELS['fallback'],
                     messages=[{"role": "user", "content": prompt}],
@@ -810,7 +842,6 @@ class AIService:
                 )
                 current_app.logger.warning("Used fallback model successfully")
                 return response.choices[0].message.content
-                
             except Exception as fallback_error:
                 current_app.logger.error(f"Fallback model failed: {str(fallback_error)}")
                 return None

@@ -573,6 +573,41 @@
 
 <script>
 $(document).ready(function() {
+    // Function to generate AI recommendations (diagnosis) automatically
+    function generateAIRecommendations() {
+        const patientId = $('#patient_id').val();
+        if (!patientId) {
+            alert('Please save patient data first');
+            return;
+        }
+        $('#ai-diagnosis-loading').show();
+        $('#ai-diagnosis-results').hide();
+        $('#diagnosis-placeholder').hide();
+        $.ajax({
+            url: '/doctor/patient/ai/diagnosis',
+            method: 'POST',
+            data: {
+                patient_id: patientId,
+                csrf_token: getCSRFToken()  // Add CSRF token
+            },
+            success: function(response) {
+                $('#ai-diagnosis-loading').hide();
+                if (response.success) {
+                    $('#ai-diagnosis-text').html(formatAIText(response.diagnosis));
+                    $('#ai-diagnosis-results').show();
+                    $('#diagnosis-placeholder').hide();
+                } else {
+                    showAIError(response.error || 'Failed to generate diagnosis');
+                    $('#diagnosis-placeholder').show();
+                }
+            },
+            error: function(xhr) {
+                $('#ai-diagnosis-loading').hide();
+                showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                $('#diagnosis-placeholder').show();
+            }
+        });
+    }
     // Ensure all AJAX requests carry CSRF header
     var csrfMeta = $('meta[name="csrf-token"]').attr('content');
     if (csrfMeta) {
