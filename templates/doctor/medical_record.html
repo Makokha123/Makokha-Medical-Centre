@@ -48,11 +48,18 @@
             <h5>Chief Complaint & History</h5>
         </div>
         <div class="card-body">
-            <p><strong>Chief Complaint:</strong></p>
-            <p>{{ patient.chief_complaint or 'Not recorded' }}</p>
-            
-            <p class="mt-3"><strong>History of Present Illness:</strong></p>
-            <p>{{ patient.history_present_illness or 'Not recorded' }}</p>
+            <form method="POST" action="/doctor/update_notes">
+                <p><strong>Chief Complaint:</strong></p>
+                <textarea name="chief_complaint" class="form-control mb-3" rows="2">{{ patient.chief_complaint or '' }}</textarea>
+
+                <p><strong>History of Present Illness:</strong></p>
+                <textarea name="history_present_illness" class="form-control mb-3" rows="3">{{ patient.history_present_illness or '' }}</textarea>
+
+                <p><strong>Progression:</strong></p>
+                <textarea name="progression" class="form-control mb-3" rows="3">{{ patient.progression or '' }}</textarea>
+
+                <button type="submit" class="btn btn-primary">Save Notes</button>
+            </form>
         </div>
     </div>
 
@@ -108,42 +115,25 @@
     </div>
     {% endif %}
 
-    <!-- Examination -->
-    {% if examination %}
+    <!-- Examination Findings -->
     <div class="card mb-4">
         <div class="card-header">
             <h5>Examination Findings</h5>
         </div>
         <div class="card-body">
-            <div class="row">
-                <div class="col-md-6">
-                    <p><strong>General Appearance:</strong> {{ examination.general_appearance or 'Normal' }}</p>
-                    <p><strong>Vital Signs:</strong></p>
-                    <ul>
-                        <li>Temp: {{ examination.temperature or '--' }}°C</li>
-                        <li>Pulse: {{ examination.pulse or '--' }}/min</li>
-                        <li>BP: {{ examination.bp_systolic or '--' }}/{{ examination.bp_diastolic or '--' }} mmHg</li>
-                        <li>SpO2: {{ examination.spo2 or '--' }}%</li>
-                        <li>RR: {{ examination.resp_rate or '--' }}/min</li>
-                    </ul>
-                </div>
-                <div class="col-md-6">
-                    <p><strong>Findings:</strong></p>
-                    <ul>
-                        <li>Jaundice: {{ 'Yes' if examination.jaundice else 'No' }}</li>
-                        <li>Pallor: {{ 'Yes' if examination.pallor else 'No' }}</li>
-                        <li>Cyanosis: {{ 'Yes' if examination.cyanosis else 'No' }}</li>
-                        <li>Edema: {{ 'Yes' if examination.edema else 'No' }}</li>
-                    </ul>
-                    
-                    <p class="mt-3"><strong>System Examinations:</strong></p>
-                    <p>CVS: {{ examination.cvs_exam or 'Normal' }}</p>
-                    <p>Resp: {{ examination.resp_exam or 'Normal' }}</p>
-                </div>
+            <form method="POST" action="/doctor/add_examination_finding">
+                <textarea name="examination_finding" class="form-control mb-3" rows="3" placeholder="Add new finding..."></textarea>
+                <button type="submit" class="btn btn-success">Add Finding</button>
+            </form>
+
+            <div class="mt-4">
+                <h6>Previous Findings:</h6>
+                {% for finding in examination.findings %}
+                    <p><strong>{{ finding.timestamp }}:</strong> {{ finding.note }}</p>
+                {% endfor %}
             </div>
         </div>
     </div>
-    {% endif %}
 
     <!-- Diagnosis -->
     {% if diagnosis %}

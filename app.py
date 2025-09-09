@@ -560,6 +560,18 @@ class PatientLab(db.Model):
     performer = db.relationship('User', foreign_keys=[performed_by])
     reviewer = db.relationship('User', foreign_keys=[reviewed_by])
 
+# New model for examination findings
+class ExaminationFinding(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    note = db.Column(db.Text, nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+    patient = db.relationship('Patient', back_populates='examination_findings')
+
+# Update Patient model to include relationship
+Patient.examination_findings = db.relationship('ExaminationFinding', back_populates='patient', lazy=True)
+
 # Enhanced AIService class with more comprehensive AI integration
 class AIService:
     
