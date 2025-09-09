@@ -485,6 +485,10 @@ class LabRequest(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+    # Relationships for template access
+    test = db.relationship('LabTest', backref='lab_requests')
+    requester = db.relationship('User', backref='created_lab_requests')
+
 class ImagingRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
@@ -494,6 +498,10 @@ class ImagingRequest(db.Model):
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # Relationships for template access
+    test = db.relationship('ImagingTest', backref='imaging_requests')
+    requester = db.relationship('User', backref='created_imaging_requests')
 
 class ImagingTest(db.Model):
     """Model for imaging tests available in the clinic"""
@@ -1497,7 +1505,7 @@ def login():
         
         if user and user.check_password(password) and user.is_active and user.role == role:
             login_user(user, remember=remember)
-            user.last_login = datetime.utcnow()
+            user.last_login = datetime.now(timezone.utc)
             db.session.commit()
             flash('Login successful!', 'success')
             return redirect(url_for('home'))
@@ -5851,7 +5859,6 @@ def pharmacist_prescriptions():
     return render_template('pharmacist/prescriptions.html',
         prescriptions=prescriptions
     )
-        
 # Doctor Routes
 @app.route('/doctor')
 @login_required
@@ -5983,7 +5990,7 @@ def doctor_new_patient():
                 })
                 
             elif section == 'review_systems':
-                patient = Patient.query.get(patient_id)
+                patient = db.session.get(Patient, patient_id)
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
                 
@@ -6007,7 +6014,7 @@ def doctor_new_patient():
                 })
 
             elif section == 'hpi':
-                patient = Patient.query.get(patient_id)
+                patient = db.session.get(Patient, patient_id)
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
                 
@@ -6020,7 +6027,7 @@ def doctor_new_patient():
                 })
 
             elif section == 'smhx':
-                patient = Patient.query.get(patient_id)
+                patient = db.session.get(Patient, patient_id)
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
                 
@@ -6043,7 +6050,7 @@ def doctor_new_patient():
                 })
 
             elif section == 'examination':
-                patient = Patient.query.get(patient_id)
+                patient = db.session.get(Patient, patient_id)
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
                 
@@ -6083,7 +6090,7 @@ def doctor_new_patient():
                 })
 
             elif section == 'diagnosis':
-                patient = Patient.query.get(patient_id)
+                patient = db.session.get(Patient, patient_id)
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
                 
@@ -6127,7 +6134,7 @@ def doctor_new_patient():
                 })
 
             elif section == 'management':
-                patient = Patient.query.get(patient_id)
+                patient = db.session.get(Patient, patient_id)
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
                 
@@ -6198,33 +6205,265 @@ def doctor_new_patient():
 
 
 # In your configuration/initialization code
-deepseek_client = OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com/v1",  # Note the /v1 suffix
-    timeout=30.0
-)
+# AI Assistant for diagnosis and treatment suggestions
+class AIService:
+    @staticmethod
+    def generate_review_systems_questions(patient_data):
+        """Generate review of systems questions based on patient data"""
+        try:
+            # Use a default model if none is specified
+            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            
+            prompt = f"""
+            Based on the following patient information, generate relevant review of systems questions:
+            - Age: {patient_data.get('age', 'Not specified')}
+            - Gender: {patient_data.get('gender', 'Not specified')}
+            - Chief Complaint: {patient_data.get('chief_complaint', 'Not specified')}
+            - Occupation: {patient_data.get('occupation', 'Not specified')}
+            
+            Generate 5-8 specific, targeted questions that would help in the review of systems for this patient.
+            Format the response as a bulleted list.
+            """
+            
+            response = deepseek_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"AI Review Systems Error: {str(e)}")
+            return None
 
-# Optional OpenAI fallback
-if os.getenv("OPENAI_API_KEY"):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
+    @staticmethod
+    def generate_hpi_questions(patient_data):
+        """Generate HPI questions based on patient data"""
+        try:
+            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            
+            prompt = f"""
+            Based on the following patient information, generate relevant History of Present Illness (HPI) questions:
+            - Age: {patient_data.get('age', 'Not specified')}
+            - Gender: {patient_data.get('gender', 'Not specified')}
+            - Chief Complaint: {patient_data.get('chief_complaint', 'Not specified')}
+            
+            Generate 5-8 specific questions that would help elaborate the history of present illness.
+            Focus on the chronology, quality, severity, and associated symptoms.
+            Format the response as a bulleted list.
+            """
+            
+            response = deepseek_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"AI HPI Questions Error: {str(e)}")
+            return None
+
+    @staticmethod
+    def generate_hpi_content(patient_data):
+        """Generate HPI content based on patient data"""
+        try:
+            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            
+            prompt = f"""
+            Based on the following patient information, generate a comprehensive History of Present Illness (HPI):
+            - Age: {patient_data.get('age', 'Not specified')}
+            - Gender: {patient_data.get('gender', 'Not specified')}
+            - Chief Complaint: {patient_data.get('chief_complaint', 'Not specified')}
+            - Review of Systems: {patient_data.get('review_systems', 'Not documented')}
+            
+            Create a well-structured HPI that includes:
+            1. Onset and chronology
+            2. Quality and character
+            3. Severity and progression
+            4. Associated symptoms
+            5. Alleviating and aggravating factors
+            
+            Write in professional medical narrative format.
+            """
+            
+            response = deepseek_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"AI HPI Generation Error: {str(e)}")
+            return None
+
+    @staticmethod
+    def generate_diagnosis(patient_data):
+        """Generate differential diagnosis based on patient data"""
+        try:
+            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            
+            prompt = f"""
+            Based on the following patient information, generate a differential diagnosis:
+            
+            Patient Demographics:
+            - Age: {patient_data.get('age', 'Not specified')}
+            - Gender: {patient_data.get('gender', 'Not specified')}
+            
+            Clinical Presentation:
+            - Chief Complaint: {patient_data.get('chief_complaint', 'Not specified')}
+            - History of Present Illness: {patient_data.get('history_present_illness', 'Not documented')}
+            
+            Review of Systems:
+            {json.dumps(patient_data.get('review_systems', {}), indent=2)}
+            
+            Medical History:
+            - Social: {patient_data.get('social_history', 'Not documented')}
+            - Medical: {patient_data.get('medical_history', 'Not documented')}
+            - Surgical: {patient_data.get('surgical_history', 'Not documented')}
+            - Family: {patient_data.get('family_history', 'Not documented')}
+            - Allergies: {patient_data.get('allergies', 'None known')}
+            - Medications: {patient_data.get('medications', 'None')}
+            
+            Physical Examination:
+            {json.dumps(patient_data.get('examination', {}), indent=2)}
+            
+            Please provide:
+            1. Most likely diagnosis (working diagnosis)
+            2. 3-5 differential diagnoses in order of likelihood
+            3. Brief rationale for each
+            4. Suggested diagnostic tests to confirm
+            """
+            
+            response = deepseek_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"AI Diagnosis Error: {str(e)}")
+            return None
+
+    @staticmethod
+    def analyze_lab_results(patient_data, lab_text):
+        """Analyze lab results in context of patient data"""
+        try:
+            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            
+            prompt = f"""
+            Analyze these lab results in the context of this patient:
+            
+            Patient Information:
+            - Age: {patient_data.get('age', 'Not specified')}
+            - Gender: {patient_data.get('gender', 'Not specified')}
+            - Chief Complaint: {patient_data.get('chief_complaint', 'Not specified')}
+            - Working Diagnosis: {patient_data.get('diagnosis', 'Not specified')}
+            
+            Lab Results:
+            {lab_text}
+            
+            Please provide:
+            1. Interpretation of abnormal values
+            2. Clinical significance in context of patient
+            3. Any additional tests recommended
+            4. Potential treatment implications
+            """
+            
+            response = deepseek_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"AI Lab Analysis Error: {str(e)}")
+            return None
+
+    @staticmethod
+    def generate_treatment_plan(patient_data, available_drugs):
+        """Generate treatment plan based on patient data and available drugs"""
+        try:
+            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            
+            # Format available drugs for the prompt
+            drugs_list = "\n".join([f"- {drug.name} ({drug.category})" for drug in available_drugs])
+            
+            prompt = f"""
+            Create a comprehensive treatment plan for this patient:
+            
+            Patient Information:
+            - Age: {patient_data.get('age', 'Not specified')}
+            - Gender: {patient_data.get('gender', 'Not specified')}
+            - Diagnosis: {patient_data.get('diagnosis', 'Not specified')}
+            - Allergies: {patient_data.get('allergies', 'None known')}
+            - Current Medications: {patient_data.get('medications', 'None')}
+            
+            Available Medications:
+            {drugs_list}
+            
+            Please provide:
+            1. First-line treatment recommendations
+            2. Alternative options
+            3. Dosage guidelines appropriate for patient demographics
+            4. Monitoring parameters
+            5. Patient education points
+            6. Follow-up schedule
+            
+            Consider drug interactions and contraindications based on patient information.
+            """
+            
+            response = deepseek_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1200,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"AI Treatment Plan Error: {str(e)}")
+            return None
+
+# Initialize DeepSeek client with proper error handling
+try:
+    deepseek_client = OpenAI(
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com/v1",
+        timeout=30.0
+    )
+    # Test the connection
+    if os.getenv("DEEPSEEK_API_KEY"):
+        models = deepseek_client.models.list()
+        current_app.logger.info(f"Connected to DeepSeek API. Available models: {[m.id for m in models.data]}")
+except Exception as e:
+    current_app.logger.error(f"Failed to initialize DeepSeek client: {str(e)}")
+    deepseek_client = None
     
 @app.route('/api/verify-models', methods=['GET'])
 @login_required
 def verify_models():
     """Endpoint to check available models"""
     try:
-        # Test DeepSeek
-        deepseek_models = deepseek_client.models.list()
-        current_app.logger.info(f"DeepSeek available models: {[m.id for m in deepseek_models.data]}")
+        models_list = []
         
-        # Test OpenAI if configured
-        openai_models = []
-        if 'openai' in globals():
-            openai_models = openai.Model.list()
+        # Test DeepSeek if configured
+        if deepseek_client and os.getenv("DEEPSEEK_API_KEY"):
+            deepseek_models = deepseek_client.models.list()
+            models_list.extend([m.id for m in deepseek_models.data])
+            current_app.logger.info(f"DeepSeek available models: {models_list}")
         
         return jsonify({
-            'deepseek_models': [m.id for m in deepseek_models.data],
-            'openai_models': [m.id for m in openai_models.data] if openai_models else []
+            'available_models': models_list,
+            'default_model': os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -6267,7 +6506,7 @@ def ai_review_systems():
             db.session.add(review)
         
         review.ai_suggested_questions = questions
-        review.ai_last_updated = datetime.utcnow()
+        review.ai_last_updated = datetime.now(timezone.utc)
         db.session.commit()
         
         return jsonify({
@@ -6283,6 +6522,7 @@ def ai_review_systems():
             'error': 'Internal server error',
             'details': str(e)
         }), 500
+        
 @app.route('/doctor/patient/ai/hpi_questions', methods=['POST'])
 @login_required
 def ai_hpi_questions():
@@ -6586,7 +6826,7 @@ def ai_treatment():
         
         management.ai_generated_plan = True
         management.ai_alternative_treatments = treatment_plan
-        management.ai_last_updated = datetime.utcnow()
+        management.ai_last_updated = datetime.now(timezone.utc)  # Fixed deprecated datetime.utcnow()
         db.session.commit()
         
         return jsonify({
@@ -6670,11 +6910,11 @@ def old_patients():
         
         if action == 'readmit':
             patient_id = request.form.get('patient_id')
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if patient:
                 try:
                     patient.status = 'active'
-                    patient.updated_at = datetime.utcnow()
+                    patient.updated_at = datetime.now(timezone.utc)  # Fixed deprecated datetime.utcnow()
                     db.session.commit()
                     
                     log_audit('readmit_patient', 'Patient', patient.id, None, None)
@@ -6690,7 +6930,7 @@ def old_patients():
     return render_template('doctor/old_patients.html',
         patients=completed_patients,
         search_query=search_query,
-        current_time=datetime.utcnow()
+        current_time=datetime.now(timezone.utc)  # Fixed deprecated datetime.utcnow()
     )
 
 @app.route('/doctor/patient/<int:patient_id>/record')
@@ -6700,7 +6940,10 @@ def patient_medical_record(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
 
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        flash('Patient not found', 'danger')
+        return redirect(url_for('doctor_patients'))
     
     # Get all medical record components
     review_systems = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
@@ -6734,10 +6977,13 @@ def complete_patient_treatment(patient_id):
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+        
     try:
         patient.status = 'completed'
-        patient.updated_at = datetime.utcnow()
+        patient.updated_at = datetime.now(timezone.utc)  # Fixed deprecated datetime.utcnow()
         db.session.commit()
         return jsonify({'success': True})
     except Exception as e:
@@ -6750,7 +6996,10 @@ def delete_patient(patient_id):
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+        
     try:
         db.session.delete(patient)
         db.session.commit()
@@ -6766,7 +7015,7 @@ def readmit_patient():
         return jsonify({'error': 'Unauthorized'}), 403
     
     patient_id = request.form.get('patient_id')
-    patient = Patient.query.get(patient_id)
+    patient = db.session.get(Patient, patient_id)
     
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
@@ -6820,7 +7069,7 @@ def handle_patient_sections():
             })
 
         elif section == 'chief_complaint':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -6834,7 +7083,7 @@ def handle_patient_sections():
             })
 
         elif section == 'review_systems':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -6858,7 +7107,7 @@ def handle_patient_sections():
             })
 
         elif section == 'hpi':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -6871,7 +7120,7 @@ def handle_patient_sections():
             })
 
         elif section == 'smhx':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -6894,7 +7143,7 @@ def handle_patient_sections():
             })
 
         elif section == 'examination':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -6934,7 +7183,7 @@ def handle_patient_sections():
             })
 
         elif section == 'diagnosis':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -6978,7 +7227,7 @@ def handle_patient_sections():
             })
 
         elif section == 'management':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7211,7 +7460,7 @@ def doctor_patient_details(patient_id):
                     flash('Please select a test', 'danger')
                     return redirect(url_for('doctor_patient_details', patient_id=patient_id))
                 
-                lab_test = LabTest.query.get(test_id)
+                lab_test = db.session.get(LabTest, test_id)
                 if not lab_test:
                     flash('Lab test not found', 'danger')
                     return redirect(url_for('doctor_patient_details', patient_id=patient_id))
@@ -7238,7 +7487,7 @@ def doctor_patient_details(patient_id):
                     flash('Please select a test', 'danger')
                     return redirect(url_for('doctor_patient_details', patient_id=patient_id))
                 
-                imaging_test = ImagingTest.query.get(test_id)
+                imaging_test = db.session.get(ImagingTest, test_id)
                 if not imaging_test:
                     flash('Imaging test not found', 'danger')
                     return redirect(url_for('doctor_patient_details', patient_id=patient_id))
@@ -7261,7 +7510,7 @@ def doctor_patient_details(patient_id):
         elif request.form.get('action') == 'complete_treatment':
             try:
                 patient.status = 'completed'
-                patient.updated_at = datetime.utcnow()
+                patient.updated_at = datetime.now(timezone.utc)  # Fixed deprecated datetime.utcnow()
                 db.session.commit()
                 flash('Patient treatment marked as completed!', 'success')
                 return redirect(url_for('doctor_patients'))
@@ -7272,7 +7521,7 @@ def doctor_patient_details(patient_id):
         elif request.form.get('action') == 'readmit_patient':
             try:
                 patient.status = 'active'
-                patient.updated_at = datetime.utcnow()
+                patient.updated_at = datetime.now(timezone.utc)  # Fixed deprecated datetime.utcnow()
                 db.session.commit()
                 flash('Patient readmitted successfully!', 'success')
             except Exception as e:
@@ -7317,7 +7566,7 @@ def doctor_prescription_details(prescription_id):
     if current_user.role != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    prescription = Prescription.query.get(prescription_id)
+    prescription = db.session.get(Prescription, prescription_id)
     if not prescription:
         return jsonify({'error': 'Prescription not found'}), 404
     
@@ -7373,7 +7622,7 @@ def complete_prescription():
         
         # Add prescription items
         for item in prescriptions:
-            drug = Drug.query.get(item['drug_id'])
+            drug = db.session.get(Drug, item['drug_id'])
             if not drug:
                 continue  # Skip if drug not found
             
