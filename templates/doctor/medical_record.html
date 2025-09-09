@@ -442,3 +442,95 @@
 </div>
 {% endfor %}
 {% endblock %}
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Add prescription item
+    $('#add-prescription').click(function() {
+        const newItem = $('.prescription-item').first().clone();
+        newItem.find('input').val('');
+        newItem.find('select').val('');
+        $('#prescription-items').append(newItem);
+        // Reinitialize Select2 for the new drug select if used
+        if (newItem.find('.drug-select').length && $.fn.select2) {
+            newItem.find('.drug-select').select2({ width: '100%' });
+        }
+    });
+
+    // Drug stock validation
+    $(document).on('change', '.drug-select', function() {
+        const selectedOption = $(this).find('option:selected');
+        const stock = selectedOption.data('stock');
+        const quantityInput = $(this).closest('.prescription-item').find('input[name="quantity"]');
+        if (stock !== undefined) {
+            quantityInput.attr('max', stock);
+            if (parseInt(quantityInput.val()) > parseInt(stock)) {
+                alert('Quantity exceeds available stock');
+                quantityInput.val('');
+            }
+        }
+    });
+
+    // Handle Complete Prescription button
+    $('#complete-prescription').click(function() {
+        const patientId = {{ patient.id }};
+        if (!patientId) {
+            alert('Patient not found');
+            return;
+        }
+        // Gather prescription data
+        const prescriptions = [];
+        $('.prescription-item').each(function() {
+            const drugId = $(this).find('select[name="drug_id"]').val();
+            const quantity = $(this).find('input[name="quantity"]').val();
+            const dosage = $(this).find('input[name="dosage"]').val();
+            const frequency = $(this).find('input[name="frequency"]').val();
+            const duration = $(this).find('input[name="duration"]').val();
+            const notes = $(this).find('input[name="prescription_notes"]').val();
+            if (drugId && quantity && dosage && frequency && duration) {
+                prescriptions.push({
+                    drug_id: drugId,
+                    quantity: quantity,
+                    dosage: dosage,
+                    frequency: frequency,
+                    duration: duration,
+                    notes: notes
+                });
+            }
+        });
+        if (prescriptions.length === 0) {
+            alert('No valid prescriptions to save. Please add at least one medication with all required fields.');
+            return;
+        }
+        $('#prescription-feedback').html('<div class="spinner-border spinner-border-sm" role="status"></div> Saving prescription...').show();
+        $('#complete-prescription').prop('disabled', true);
+        $.ajax({
+            url: '/doctor/patient/complete_prescription',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                patient_id: patientId,
+                prescriptions: prescriptions
+            }),
+            success: function(response) {
+                if (response.success) {
+                    $('#prescription-feedback').html('<div class="alert alert-success">Prescription saved successfully! The pharmacist can now dispense the medications.</div>');
+                    // Optionally clear the prescription form
+                    $('.prescription-item').not(':first').remove();
+                    $('.prescription-item').find('input').val('');
+                    $('.prescription-item').find('select').val('');
+                    setTimeout(function() { location.reload(); }, 1500);
+                } else {
+                    $('#prescription-feedback').html('<div class="alert alert-danger">Error: ' + (response.error || 'Failed to save prescription') + '</div>');
+                    $('#complete-prescription').prop('disabled', false);
+                }
+            },
+            error: function(xhr) {
+                $('#prescription-feedback').html('<div class="alert alert-danger">Error: ' + (xhr.responseJSON?.error || 'Failed to connect to server') + '</div>');
+                $('#complete-prescription').prop('disabled', false);
+            }
+        });
+    });
+});
+</script>
+{% endblock %}
