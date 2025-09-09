@@ -236,13 +236,15 @@
                                 </thead>
                                 <tbody>
                                     {% for prescription in prescriptions %}
-                                    <tr>
-                                        <td>{{ prescription.drug.name }} ({{ prescription.quantity }})</td>
-                                        <td>{{ prescription.dosage }}</td>
-                                        <td>{{ prescription.frequency }}</td>
-                                        <td>{{ prescription.duration }}</td>
-                                        <td>{{ prescription.notes or '-' }}</td>
-                                    </tr>
+                                        {% for item in prescription.items %}
+                                        <tr>
+                                            <td>{{ item.drug.name }} ({{ item.quantity }})</td>
+                                            <td>{{ item.dosage }}</td>
+                                            <td>{{ item.frequency }}</td>
+                                            <td>{{ item.duration }}</td>
+                                            <td>{{ item.notes or '-' }}</td>
+                                        </tr>
+                                        {% endfor %}
                                     {% endfor %}
                                 </tbody>
                             </table>

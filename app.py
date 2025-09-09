@@ -288,23 +288,23 @@ class DrugDosage(db.Model):
 
 class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    op_number = db.Column(db.String(20), unique=True)
-    ip_number = db.Column(db.String(20), unique=True)
+    op_number = db.Column(db.String(20), unique=True, nullable=True)
+    ip_number = db.Column(db.String(20), unique=True, nullable=True)
     name = db.Column(db.String(100), nullable=False)  # encrypted
-    age = db.Column(db.Integer)
-    gender = db.Column(db.String(10))
-    address = db.Column(db.String(200))  # encrypted
-    phone = db.Column(db.String(20))  # encrypted
-    destination = db.Column(db.String(100))
-    occupation = db.Column(db.String(100))  # encrypted
-    religion = db.Column(db.String(100))
-    nok_name = db.Column(db.String(100))  # encrypted
-    nok_contact = db.Column(db.String(20))  # encrypted
-    tca = db.Column(db.Date)
-    date_of_admission = db.Column(db.Date)
-    status = db.Column(db.String(20), default='active')
-    chief_complaint = db.Column(db.Text)
-    history_present_illness = db.Column(db.Text)
+    age = db.Column(db.Integer, nullable=True)
+    gender = db.Column(db.String(10), nullable=True)
+    address = db.Column(db.String(200), nullable=True)  # encrypted
+    phone = db.Column(db.String(20), nullable=True)  # encrypted
+    destination = db.Column(db.String(100), nullable=True)
+    occupation = db.Column(db.String(100), nullable=True)  # encrypted
+    religion = db.Column(db.String(100), nullable=True)
+    nok_name = db.Column(db.String(100), nullable=True)  # encrypted
+    nok_contact = db.Column(db.String(20), nullable=True)  # encrypted
+    tca = db.Column(db.Date, nullable=True)
+    date_of_admission = db.Column(db.Date, nullable=True)
+    status = db.Column(db.String(20), default='active', nullable=True)
+    chief_complaint = db.Column(db.Text, nullable=True)
+    history_present_illness = db.Column(db.Text, nullable=True)
     
     # AI Integration Fields
     ai_assistance_enabled = db.Column(db.Boolean, default=False)
@@ -825,7 +825,7 @@ class AIService:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=1000,
-                timeout=20
+                timeout=3600  # 60 minutes
             )
             return response.choices[0].message.content
         except Exception as primary_error:
@@ -838,7 +838,7 @@ class AIService:
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                     max_tokens=1000,
-                    timeout=20
+                    timeout=3600  # 60 minutes
                 )
                 current_app.logger.warning("Used fallback model successfully")
                 return response.choices[0].message.content
@@ -6426,7 +6426,7 @@ class AIService:
             model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
             
             # Format available drugs for the prompt
-            drugs_list = "\n".join([f"- {drug.name} ({drug.category})" for drug in available_drugs])
+            drugs_list = "\n".join([f"- {drug.name}" for drug in available_drugs])
             
             prompt = f"""
             Create a comprehensive treatment plan for this patient:
