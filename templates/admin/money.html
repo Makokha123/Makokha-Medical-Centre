@@ -1,4 +1,3 @@
-
 {% extends "base.html" %}
 
 {% block content %}
@@ -1728,23 +1727,6 @@ function submitDrawing(event) {
         console.error('Error:', error);
         showAlert('error', 'An unexpected error occurred');
     });
-}
-
-function showAlert(type, message) {
-    const alertContainer = document.getElementById('alert-container');
-    const alert = document.createElement('div');
-    alert.className = `alert alert-${type}`;
-    alert.innerHTML = `
-        ${message}
-        <button class="close-alert" onclick="this.parentElement.remove()">&times;</button>
-    `;
-    alertContainer.appendChild(alert);
-    setTimeout(() => alert.remove(), 5000);
-}
-
-function closeModal(modalId) {
-    const modal = document.getElementById(modalId);
-    modal.style.display = 'none';
 }
 
 // Initialize event listeners when document is ready
