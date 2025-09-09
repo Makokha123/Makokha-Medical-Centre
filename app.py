@@ -3529,8 +3529,7 @@ if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
 @login_required
 def manage_money():
     if current_user.role != 'admin':
-        flash('Unauthorized access', 'danger')
-        return redirect(url_for('home'))
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     return render_template('admin/money.html',
                         drawings=Transaction.query.filter_by(transaction_type='drawing').order_by(Transaction.created_at.desc()).all(),
@@ -3541,6 +3540,122 @@ def manage_money():
                         employees=Employee.query.all(),
                         current_date=datetime.utcnow().date())
 
+# ================
+# PAYROLL ROUTES
+# ================
+
+@app.route('/admin/get_employee_salary/<int:employee_id>', methods=['GET'])
+@login_required
+def get_employee_salary(employee_id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+    employee = Employee.query.get_or_404(employee_id)
+    return jsonify({
+        'success': True,
+        'salary': employee.salary or 0
+    })
+
+@app.route('/admin/payroll', methods=['POST'])
+@login_required
+def add_payroll():
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        employee_id = request.form.get('employee_id')
+        amount = float(request.form.get('amount'))
+        payment_date = request.form.get('payment_date')
+        is_paid = request.form.get('is_paid', 'false').lower() == 'true'
+        
+        payroll = Payroll(
+            payroll_number=generate_payroll_number(),
+            employee_id=employee_id,
+            amount=amount,
+            payment_date=datetime.strptime(payment_date, '%Y-%m-%d').date(),
+            status='paid' if is_paid else 'pending',
+            created_at=datetime.now(timezone.utc)
+        )
+        
+        db.session.add(payroll)
+        
+        # If payroll is marked as paid, create an expense record
+        if is_paid:
+            expense = Expense(
+                expense_number=generate_expense_number(),
+                expense_type='payroll',
+                amount=amount,
+                description=f'Payroll payment for employee ID: {employee_id}',
+                date=datetime.strptime(payment_date, '%Y-%m-%d').date(),
+                user_id=current_user.id,
+                reference_id=employee_id
+            )
+            db.session.add(expense)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Payroll record created successfully',
+            'payroll': {
+                'id': payroll.id,
+                'employee': payroll.employee.name,
+                'amount': payroll.amount,
+                'status': payroll.status,
+                'date': payroll.payment_date.strftime('%Y-%m-%d')
+            }
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/admin/payroll/<int:payroll_id>/pay', methods=['POST'])
+@login_required
+def pay_payroll(payroll_id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        payroll = Payroll.query.get_or_404(payroll_id)
+        if payroll.status == 'paid':
+            return jsonify({
+                'success': False,
+                'message': 'Payroll is already paid'
+            }), 400
+
+        payroll.status = 'paid'
+        
+        # Create expense record
+        expense = Expense(
+            expense_number=generate_expense_number(),
+            expense_type='payroll',
+            amount=payroll.amount,
+            description=f'Payroll payment for employee ID: {payroll.employee_id}',
+            date=datetime.now().date(),
+            user_id=current_user.id,
+            reference_id=payroll.employee_id
+        )
+        
+        db.session.add(expense)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Payroll marked as paid and expense recorded',
+            'payroll': {
+                'id': payroll.id,
+                'status': payroll.status
+            }
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
 # ==============
 # DRAWING ROUTES
 # ==============
@@ -3549,7 +3664,7 @@ def manage_money():
 @login_required
 def add_drawing():
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     try:
         amount = float(request.form.get('amount'))
@@ -3557,17 +3672,27 @@ def add_drawing():
         
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
-            transaction_type='drawing',  # Changed from 'expense' to 'drawing'
+            transaction_type='drawing',
             amount=amount,
             user_id=current_user.id,
             notes=f"Owner's drawing: {description}"
         )
         db.session.add(transaction)
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Drawing added successfully'})
+        
+        return jsonify({
+            'success': True,
+            'message': 'Drawing added successfully',
+            'drawing': {
+                'id': transaction.id,
+                'amount': transaction.amount,
+                'description': transaction.notes,
+                'date': transaction.created_at.strftime('%Y-%m-%d')
+            }
+        })
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/admin/update_drawing/<int:id>', methods=['POST'])
 @login_required
