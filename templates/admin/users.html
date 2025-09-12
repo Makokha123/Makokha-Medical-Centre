@@ -8,6 +8,7 @@
     .input-group .toggle-password {
         cursor: pointer;
         border-color: #ced4da;
+        border-left: 0;
     }
     
     .input-group .toggle-password:hover {
@@ -48,6 +49,22 @@
         background-color: #e9ecef;
         border-radius: 0.25rem;
         margin: 0.5rem 0;
+        height: 5px;
+    }
+    
+    /* Password toggle styling */
+    .input-group .toggle-password {
+        cursor: pointer;
+        padding: 0.375rem 0.75rem;
+    }
+
+    .input-group .toggle-password:hover {
+        background-color: #e9ecef;
+    }
+
+    .input-group .toggle-password:focus {
+        outline: none;
+        box-shadow: none;
     }
 </style>
         <div class="content">
@@ -120,6 +137,7 @@
                 </button>
             </div>
             <form id="addUserForm" method="POST" action="{{ url_for('manage_users') }}">
+                {{ csrf_token() }}
                 <input type="hidden" name="action" value="add">
                 <div class="modal-body">
                     <div class="form-group">
@@ -150,19 +168,19 @@
                             </div>
                         </div>
                         <div class="password-strength-meter mt-2">
-                            <div class="progress" style="height: 5px;">
+                            <div class="progress">
                                 <div class="progress-bar" role="progressbar" style="width: 0%"></div>
                             </div>
-                            <small class="password-strength-text text-muted">Password strength: <span>None</span></small>
+                            <small class="password-strength-text text-muted">Password strength: <span id="passwordStrengthText">None</span></small>
                         </div>
                         <div class="password-requirements mt-2">
                             <small class="form-text">Password requirements:</small>
                             <ul class="list-unstyled">
-                                <li><small><i class="fas fa-circle text-muted"></i> At least 8 characters</small></li>
-                                <li><small><i class="fas fa-circle text-muted"></i> At least one uppercase letter</small></li>
-                                <li><small><i class="fas fa-circle text-muted"></i> At least one lowercase letter</small></li>
-                                <li><small><i class="fas fa-circle text-muted"></i> At least one number</small></li>
-                                <li><small><i class="fas fa-circle text-muted"></i> At least one special character</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="lengthReq"></i> At least 8 characters</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="upperReq"></i> At least one uppercase letter</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="lowerReq"></i> At least one lowercase letter</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="numberReq"></i> At least one number</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="specialReq"></i> At least one special character</small></li>
                             </ul>
                         </div>
                     </div>
@@ -176,7 +194,7 @@
                                 </button>
                             </div>
                         </div>
-                        <small class="password-match-text text-muted"></small>
+                        <small class="password-match-text text-muted" id="passwordMatchText"></small>
                     </div>
                     <div class="form-group form-check">
                         <input type="checkbox" class="form-check-input" id="is_active" name="is_active" checked>
@@ -203,6 +221,7 @@
                 </button>
             </div>
             <form id="editUserForm" method="POST" action="{{ url_for('manage_users') }}">
+                {{ csrf_token() }}
                 <input type="hidden" name="action" value="edit">
                 <input type="hidden" id="edit_user_id" name="user_id">
                 <div class="modal-body">
@@ -234,19 +253,19 @@
                             </div>
                         </div>
                         <div class="password-strength-meter mt-2">
-                            <div class="progress" style="height: 5px;">
+                            <div class="progress">
                                 <div class="progress-bar" role="progressbar" style="width: 0%"></div>
                             </div>
-                            <small class="password-strength-text text-muted">Password strength: <span>None</span></small>
+                            <small class="password-strength-text text-muted">Password strength: <span id="editPasswordStrengthText">None</span></small>
                         </div>
                         <div class="password-requirements mt-2">
                             <small class="form-text">Password requirements:</small>
                             <ul class="list-unstyled">
-                                <li><small><i class="fas fa-circle text-muted"></i> At least 8 characters</small></li>
-                                <li><small><i class="fas fa-circle text-muted"></i> At least one uppercase letter</small></li>
-                                <li><small><i class="fas fa-circle text-muted"></i> At least one lowercase letter</small></li>
-                                <li><small><i class="fas fa-circle text-muted"></i> At least one number</small></li>
-                                <li><small><i class="fas fa-circle text-muted"></i> At least one special character</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="editLengthReq"></i> At least 8 characters</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="editUpperReq"></i> At least one uppercase letter</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="editLowerReq"></i> At least one lowercase letter</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="editNumberReq"></i> At least one number</small></li>
+                                <li><small><i class="fas fa-circle text-muted" id="editSpecialReq"></i> At least one special character</small></li>
                             </ul>
                         </div>
                     </div>
@@ -288,62 +307,13 @@
         </div>
     </div>
 </div>
-<!-- DataTables and other JS libraries -->
+
+<!-- Simplified JS libraries -->
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jquery-ui@1.12.1/jquery-ui.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jquery-ui@1.12.1/jquery-ui.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.responsive.min.js"></script>
 <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.jqueryui.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.responsive.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.buttons.min.js"></script>
-<script src="https://cdn.datatables.net/buttons/1.7.1/js/buttons.html5.min.js"></script>
-<script src="https://cdn.datatables.net/buttons/1.7.1/js/buttons.print.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.select.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.fixedHeader.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.colReorder.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.keyTable.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.fixedColumns.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.searchBuilder.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.searchPanes.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.autoFill.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.scroller.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.responsive.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.buttons.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.select.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.fixedHeader.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.colReorder.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.keyTable.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.fixedColumns.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.searchBuilder.bootstrap4.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.searchPanes.bootstrap4.min.js"></script>
 <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/js/all.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-validate/1.19.3/jquery.validate.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap-datepicker@1.9.0/dist/js/bootstrap-datepicker.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap-datepicker@1.9.0/dist/locales/bootstrap-datepicker.en.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap-select@1.13.1/dist/js/bootstrap-select.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap-select@1.13.1/dist/js/i18n/defaults-en_US.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/moment-timezone@0.5.34/moment-timezone-with-data.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/axios@0.21.1/dist/axios.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/clipboard@2.0.6/dist/clipboard.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/flatpickr.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/l10n/en.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/plugins/rangePlugin.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/plugins/confirmDatePlugin.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.9/dist/plugins/scrollPlugin.js"></script>
-
-
 
 <script>
 $(document).ready(function() {
@@ -362,7 +332,6 @@ $(document).ready(function() {
             $('#edit_username').val(user.username);
             $('#edit_email').val(user.email);
             $('#edit_role').val(user.role);
-            $('#edit_phone').val(user.phone);
             $('#edit_is_active').prop('checked', user.is_active);
             $('#editUserModal').modal('show');
         });
@@ -375,30 +344,156 @@ $(document).ready(function() {
         $('#deleteUserModal').modal('show');
     });
     
-    // Password validation
-    $('#addUserForm, #editUserForm').submit(function(e) {
-        const password = $('#password').val();
-        const confirmPassword = $('#confirm_password').val();
+    // Password toggle functionality
+    function setupPasswordToggle() {
+        $('.toggle-password').click(function() {
+            const inputGroup = $(this).closest('.input-group');
+            const input = inputGroup.find('input');
+            const icon = $(this).find('i');
+            
+            if (input.attr('type') === 'password') {
+                input.attr('type', 'text');
+                icon.removeClass('fa-eye').addClass('fa-eye-slash');
+            } else {
+                input.attr('type', 'password');
+                icon.removeClass('fa-eye-slash').addClass('fa-eye');
+            }
+        });
+    }
+    
+    // Password strength checker
+    function checkPasswordStrength(password, prefix) {
+        let strength = 0;
+        let requirements = {
+            length: password.length >= 8,
+            upper: /[A-Z]/.test(password),
+            lower: /[a-z]/.test(password),
+            number: /[0-9]/.test(password),
+            special: /[^A-Za-z0-9]/.test(password)
+        };
         
-        if (password && password.length < 8) {
-            alert('Password must be at least 8 characters long');
-            e.preventDefault();
+        // Update requirement indicators
+        Object.keys(requirements).forEach((req, index) => {
+            const element = $(`#${prefix}${req.charAt(0).toUpperCase() + req.slice(1)}Req`);
+            if (requirements[req]) {
+                element.removeClass('text-muted').addClass('text-success');
+                strength += 20;
+            } else {
+                element.removeClass('text-success').addClass('text-muted');
+            }
+        });
+        
+        // Update strength meter
+        const progressBar = $(`#${prefix === 'edit' ? 'editUserModal' : 'addUserModal'} .progress-bar`);
+        const strengthText = $(`#${prefix}PasswordStrengthText`);
+        
+        progressBar.css('width', strength + '%');
+        
+        if (strength <= 40) {
+            progressBar.removeClass('bg-warning bg-success').addClass('bg-danger');
+            strengthText.text('Weak').removeClass('text-warning text-success').addClass('text-danger');
+        } else if (strength <= 80) {
+            progressBar.removeClass('bg-danger bg-success').addClass('bg-warning');
+            strengthText.text('Medium').removeClass('text-danger text-success').addClass('text-warning');
+        } else {
+            progressBar.removeClass('bg-danger bg-warning').addClass('bg-success');
+            strengthText.text('Strong').removeClass('text-danger text-warning').addClass('text-success');
+        }
+        
+        return strength === 100;
+    }
+    
+    // Password match checker
+    function checkPasswordMatch(password, confirmPassword, prefix) {
+        const matchText = $(`#${prefix}passwordMatchText`);
+        
+        if (!confirmPassword) {
+            matchText.text('');
             return false;
         }
         
-        if (password && !/(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*\W)/.test(password)) {
-            alert('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character');
+        if (password === confirmPassword) {
+            matchText.text('Passwords match').removeClass('text-danger').addClass('text-success');
+            return true;
+        } else {
+            matchText.text('Passwords do not match').removeClass('text-success').addClass('text-danger');
+            return false;
+        }
+    }
+    
+    // Setup password validation for add user form
+    $('#password').on('input', function() {
+        const password = $(this).val();
+        checkPasswordStrength(password, '');
+        
+        const confirmPassword = $('#confirm_password').val();
+        if (confirmPassword) {
+            checkPasswordMatch(password, confirmPassword, '');
+        }
+    });
+    
+    $('#confirm_password').on('input', function() {
+        const password = $('#password').val();
+        const confirmPassword = $(this).val();
+        checkPasswordMatch(password, confirmPassword, '');
+    });
+    
+    // Setup password validation for edit user form
+    $('#edit_password').on('input', function() {
+        const password = $(this).val();
+        checkPasswordStrength(password, 'edit');
+    });
+    
+    // Setup password toggles
+    setupPasswordToggle();
+    
+    // Reset password fields when modals are closed
+    $('#addUserModal, #editUserModal').on('hidden.bs.modal', function() {
+        $(this).find('input[type="password"]').val('').attr('type', 'password');
+        $(this).find('.toggle-password i').removeClass('fa-eye-slash').addClass('fa-eye');
+        $(this).find('.progress-bar').css('width', '0%').removeClass('bg-danger bg-warning bg-success');
+        $(this).find('.password-strength-text span').text('None').removeClass('text-danger text-warning text-success');
+        $(this).find('.password-requirements i').removeClass('text-success').addClass('text-muted');
+        $(this).find('.password-match-text').text('');
+    });
+    
+    // Form validation
+    $('#addUserForm').submit(function(e) {
+        const password = $('#password').val();
+        const confirmPassword = $('#confirm_password').val();
+        
+        if (password && !checkPasswordStrength(password, '')) {
             e.preventDefault();
+            alert('Please meet all password requirements');
             return false;
         }
         
         if (password !== confirmPassword) {
-            alert('Passwords do not match');
             e.preventDefault();
+            alert('Passwords do not match');
             return false;
         }
         
         return true;
+    });
+    
+    $('#editUserForm').submit(function(e) {
+        const password = $('#edit_password').val();
+        
+        // Only validate if a new password was provided
+        if (password && !checkPasswordStrength(password, 'edit')) {
+            e.preventDefault();
+            alert('Please meet all password requirements');
+            return false;
+        }
+        
+        return true;
+    });
+    
+    // Initialize password strength when modal is shown
+    $('#addUserModal').on('shown.bs.modal', function() {
+        // Set up event listeners for the add user modal
+        $('#password').trigger('input');
     });
 });
 </script>
@@ -565,144 +660,5 @@ $(document).ready(function() {
         color: white !important;
         border: 1px solid #007bff;
     }
-
-    /* Password toggle styling */
-    .input-group .toggle-password {
-        cursor: pointer;
-        padding: 0.375rem 0.75rem;
-    }
-
-    .input-group .toggle-password:hover {
-        background-color: #e9ecef;
-    }
-
-    .input-group .toggle-password:focus {
-        outline: none;
-        box-shadow: none;
-    }
 </style>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    function setupPasswordFeatures(prefix) {
-        const passwordField = document.getElementById(prefix + 'password');
-        const confirmPasswordField = document.getElementById(prefix + 'confirm_password');
-        const form = document.getElementById(prefix + 'UserForm');
-        const modal = form.closest('.modal-content');
-        const strengthMeter = modal.querySelector('.password-strength-meter .progress-bar');
-        const strengthText = modal.querySelector('.password-strength-text span');
-        const requirements = {
-            length: { regex: /.{8,}/, element: modal.querySelector('.password-requirements li:nth-child(1) i') },
-            uppercase: { regex: /[A-Z]/, element: modal.querySelector('.password-requirements li:nth-child(2) i') },
-            lowercase: { regex: /[a-z]/, element: modal.querySelector('.password-requirements li:nth-child(3) i') },
-            number: { regex: /[0-9]/, element: modal.querySelector('.password-requirements li:nth-child(4) i') },
-            special: { regex: /[^A-Za-z0-9]/, element: modal.querySelector('.password-requirements li:nth-child(5) i') }
-        };
-
-        // Password toggle functionality
-        modal.querySelectorAll('.toggle-password').forEach(button => {
-            button.addEventListener('click', function(e) {
-                e.preventDefault();
-                const input = this.closest('.input-group').querySelector('input');
-                const icon = this.querySelector('i');
-                if (input.type === 'password') {
-                    input.type = 'text';
-                    icon.classList.remove('fa-eye');
-                    icon.classList.add('fa-eye-slash');
-                } else {
-                    input.type = 'password';
-                    icon.classList.remove('fa-eye-slash');
-                    icon.classList.add('fa-eye');
-                }
-            });
-        });
-
-        // Password strength checker
-        function checkPasswordStrength(password) {
-            let strength = 0;
-            let metRequirements = 0;
-            Object.keys(requirements).forEach(req => {
-                const isValid = requirements[req].regex.test(password);
-                const element = requirements[req].element;
-                if (isValid) {
-                    strength += 20;
-                    metRequirements++;
-                    element.classList.remove('text-muted');
-                    element.classList.add('text-success');
-                } else {
-                    element.classList.remove('text-success');
-                    element.classList.add('text-muted');
-                }
-            });
-            strengthMeter.style.width = strength + '%';
-            if (strength <= 40) {
-                strengthMeter.className = 'progress-bar bg-danger';
-                strengthText.textContent = 'Weak';
-                strengthText.className = 'text-danger';
-            } else if (strength <= 80) {
-                strengthMeter.className = 'progress-bar bg-warning';
-                strengthText.textContent = 'Medium';
-                strengthText.className = 'text-warning';
-            } else {
-                strengthMeter.className = 'progress-bar bg-success';
-                strengthText.textContent = 'Strong';
-                strengthText.className = 'text-success';
-            }
-            return metRequirements === 5;
-        }
-
-        // Password match (only for add user)
-        function checkPasswordMatch() {
-            const matchText = modal.querySelector('.password-match-text');
-            if (confirmPasswordField && matchText) {
-                if (confirmPasswordField.value) {
-                    if (passwordField.value === confirmPasswordField.value) {
-                        matchText.textContent = 'Passwords match';
-                        matchText.className = 'password-match-text text-success';
-                        return true;
-                    } else {
-                        matchText.textContent = 'Passwords do not match';
-                        matchText.className = 'password-match-text text-danger';
-                        return false;
-                    }
-                }
-            }
-            return false;
-        }
-
-        if (passwordField) {
-            passwordField.addEventListener('input', function() {
-                checkPasswordStrength(this.value);
-                if (confirmPasswordField) checkPasswordMatch();
-            });
-        }
-        if (confirmPasswordField) {
-            confirmPasswordField.addEventListener('input', checkPasswordMatch);
-        }
-
-        // Form submission
-        if (form) {
-            form.addEventListener('submit', function(e) {
-                const isPasswordValid = checkPasswordStrength(passwordField.value);
-                let isPasswordMatching = true;
-                if (confirmPasswordField) {
-                    isPasswordMatching = checkPasswordMatch();
-                }
-                if (!isPasswordValid || !isPasswordMatching) {
-                    e.preventDefault();
-                    if (!isPasswordValid) {
-                        alert('Please meet all password requirements');
-                    } else {
-                        alert('Passwords do not match');
-                    }
-                }
-            });
-        }
-    }
-    // Setup for Add User
-    setupPasswordFeatures('');
-    // Setup for Edit User
-    setupPasswordFeatures('edit_');
-});
-</script>
 {% endblock %}

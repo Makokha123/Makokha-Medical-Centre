@@ -1,3 +1,5 @@
+# Route to return user details as JSON for modals
+
 from sqlalchemy import MetaData, Table
 from sqlalchemy import MetaData, Table
 import csv
@@ -2215,7 +2217,23 @@ def get_drug(drug_id):
         'is_expired': drug.expiry_date < datetime.now().date(),
         'expires_soon': drug.expiry_date <= (datetime.now().date() + timedelta(days=30))
     })
-
+    
+@app.route('/rs/<int:user_id>', methods=['GET'])
+@login_required
+def get_user_details(user_id):
+    if current_user.role != 'admin':
+        return {'error': 'Unauthorized'}, 403
+    user = User.query.get(user_id)
+    if not user:
+        return {'error': 'User not found'}, 404
+    return {
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'role': user.role,
+        'is_active': user.is_active,
+        'last_login': user.last_login.strftime('%Y-%m-%d %H:%M') if user.last_login else None
+    }
 @app.route('/admin/users', methods=['GET', 'POST'])
 @login_required
 def manage_users():
@@ -5243,16 +5261,6 @@ def pharmacist_inventory():
         flash('An error occurred while loading inventory', 'danger')
         return redirect(url_for('pharmacist_dashboard'))
     
-@app.route('/pharmacist/sales')
-@login_required
-def pharmacist_sales():
-    if current_user.role != 'pharmacist':
-        flash('Unauthorized access', 'danger')
-        return redirect(url_for('home'))
-    
-    sales = Sale.query.order_by(Sale.created_at.desc()).limit(50).all()
-    return render_template('pharmacist/sales.html', sales=sales)
-
 @app.route('/pharmacist/drugs/export')
 @login_required
 def export_drugs():
@@ -5404,6 +5412,16 @@ def pharmacist_dispense():
             'details': str(e)
         }), 500
 
+@app.route('/pharmacist/sales')
+@login_required
+def pharmacist_sales():
+    if current_user.role != 'pharmacist':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    sales = Sale.query.order_by(Sale.created_at.desc()).limit(50).all()
+    return render_template('pharmacist/sales.html', sales=sales)
+
 @app.route('/pharmacist/sale', methods=['POST'])
 @login_required
 def process_sale():
@@ -5411,9 +5429,16 @@ def process_sale():
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
+        # Check if request contains JSON data
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Content-Type must be application/json'}), 400
+            
         data = request.get_json()
-        if not data or 'items' not in data:
-            return jsonify({'success': False, 'error': 'Invalid request data'}), 400
+        if not data:
+            return jsonify({'success': False, 'error': 'No JSON data received'}), 400
+            
+        if 'items' not in data:
+            return jsonify({'success': False, 'error': 'Missing required field: items'}), 400
 
         items = data.get('items', [])
         payment_method = data.get('payment_method', 'cash')
@@ -5421,6 +5446,17 @@ def process_sale():
         
         if not items:
             return jsonify({'success': False, 'error': 'No items in cart'}), 400
+            
+        # Validate each item
+        for item in items:
+            if not isinstance(item, dict):
+                return jsonify({'success': False, 'error': 'Invalid item format'}), 400
+            if 'drug_id' not in item:
+                return jsonify({'success': False, 'error': 'Missing drug_id in item'}), 400
+            if 'quantity' not in item:
+                return jsonify({'success': False, 'error': 'Missing quantity in item'}), 400
+            if 'unit_price' not in item:
+                return jsonify({'success': False, 'error': 'Missing unit_price in item'}), 400
 
         try:
             # Generate bulk sale number if multiple items
@@ -5428,7 +5464,7 @@ def process_sale():
             if len(items) > 1:
                 bulk_sale_number = f"BULK-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
 
-            total_amount = sum(float(item.get('total_price', 0)) for item in items)
+            total_amount = sum(float(item.get('unit_price', 0)) * int(item.get('quantity', 0)) for item in items)
             
             sale = Sale(
                 sale_number=generate_sale_number(),
@@ -5439,7 +5475,7 @@ def process_sale():
                 total_amount=total_amount,
                 payment_method=payment_method,
                 status='completed',
-                created_at=datetime.now()
+                created_at=datetime.now(timezone.utc)
             )
             
             db.session.add(sale)
@@ -5449,7 +5485,7 @@ def process_sale():
                 drug_id = item.get('drug_id')
                 quantity = int(item.get('quantity', 1))
                 unit_price = float(item.get('unit_price', 0))
-                total_price = float(item.get('total_price', unit_price * quantity))
+                total_price = unit_price * quantity
                 
                 if not drug_id or quantity <= 0:
                     continue
@@ -5477,12 +5513,12 @@ def process_sale():
                     drug_id=drug_id,
                     drug_name=drug.name,
                     drug_specification=drug.specification,
-                    individual_sale_number=generate_sale_number(),
+                    individual_sale_number=generate_individual_sale_number(),
                     description=f"Sale of {drug.name}",
                     quantity=quantity,
                     unit_price=unit_price,
                     total_price=total_price,
-                    created_at=datetime.now()
+                    created_at=datetime.now(timezone.utc)
                 )
                 
                 db.session.add(sale_item)
@@ -5496,7 +5532,7 @@ def process_sale():
                 user_id=current_user.id,
                 reference_id=sale.id,
                 notes=f"Sale #{sale.sale_number}",
-                created_at=datetime.now()
+                created_at=datetime.now(timezone.utc)
             )
             db.session.add(transaction)
             
@@ -5508,6 +5544,12 @@ def process_sale():
                 'sale_number': sale.sale_number,
                 'bulk_sale_number': sale.bulk_sale_number,
                 'total_amount': sale.total_amount,
+                'items': [{
+                    'drug_id': item.drug_id,
+                    'quantity': item.quantity,
+                    'unit_price': item.unit_price,
+                    'total_price': item.total_price
+                } for item in sale.items],
                 'message': 'Sale processed successfully'
             })
             
@@ -5668,7 +5710,7 @@ def process_refund():
     
     try:
         refund = Refund(
-            refund_number=generate_refund_number(),
+            refund_number=generate_refund_number(),  # This function needs to be defined
             sale_id=sale.id,
             user_id=current_user.id,
             total_amount=0,

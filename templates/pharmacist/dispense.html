@@ -2,6 +2,7 @@
 
 {% block content %}
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
             
 <div class="dispense-container">
     <div class="card">
@@ -213,6 +214,12 @@
 
 <script>
 $(document).ready(function() {
+    // Setup CSRF token for all AJAX requests
+    $.ajaxSetup({
+        beforeSend: function(xhr) {
+            xhr.setRequestHeader('X-CSRFToken', $('meta[name="csrf-token"]').attr('content'));
+        }
+    });
     // Initialize DataTable
     var itemsTable = $('#prescriptionItemsTable').DataTable({
         responsive: true,
@@ -255,7 +262,8 @@ $(document).ready(function() {
         fetch(`/api/prescriptions/search?q=${encodeURIComponent(searchTerm)}`, {
             headers: {
                 'Accept': 'application/json',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
             }
         })
         .then(response => {
@@ -475,7 +483,8 @@ $(document).ready(function() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'X-CSRFToken': getCSRFToken()
             },
             body: JSON.stringify(dispensingData)
         })

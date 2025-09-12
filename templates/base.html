@@ -30,11 +30,376 @@
     <!-- Mobile-Specific Styles -->
     <style>
         :root {
-            --tap-min-size: 48px;
-            --mobile-breakpoint: 768px;
-            --primary-blue: #0d6efd;
-            --dark-blue: #0a58ca;
-            --light-gray: #f8f9fa;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
+            --primary-color: #0d6efd;
+            --secondary-color: #6c757d;
+            --header-height: 60px;
+            --transition-speed: 0.3s;
+            --border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            width: var(--sidebar-width);
+            background: var(--primary-color);
+            color: white;
+            transition: width var(--transition-speed) ease;
+            z-index: 1000;
+            overflow-x: hidden;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .sidebar.collapsed {
+            width: 0;
+        }
+
+        /* Toggle Button */
+        .toggle-nav {
+            position: fixed;
+            left: 1rem;
+            top: 1rem;
+            z-index: 1060;
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: var(--primary-color);
+            border: none;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: all var(--transition-speed);
+        }
+
+        .sidebar.collapsed ~ main .toggle-nav {
+            left: 1rem;
+        }
+
+        .toggle-nav:hover {
+            background: var(--dark-blue);
+        }
+
+        /* Sidebar Header */
+        .sidebar-header {
+            height: var(--header-height);
+            padding: 0 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .toggle-nav {
+            background: transparent;
+            border: none;
+            color: white;
+            cursor: pointer;
+            padding: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform var(--transition-speed);
+        }
+
+        .sidebar.collapsed .toggle-nav {
+            transform: rotate(180deg);
+        }
+
+        /* Navigation Menu */
+        .sidebar-nav {
+            padding: 1rem 0;
+            height: calc(100vh - var(--header-height));
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .nav-item {
+            margin: 0.25rem 1rem;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            color: rgba(255, 255, 255, 0.85) !important;
+            text-decoration: none;
+            border-radius: 0.5rem;
+            transition: all var(--transition-speed);
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        .nav-link i {
+            min-width: 24px;
+            text-align: center;
+            margin-right: 12px;
+            font-size: 1.1rem;
+        }
+
+        .nav-link .nav-text {
+            font-size: 0.95rem;
+            font-weight: 500;
+            opacity: 1;
+            transition: opacity var(--transition-speed);
+        }
+
+        .nav-link:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: white !important;
+        }
+
+        .nav-link i {
+            width: 20px;
+            margin-right: 1rem;
+            font-size: 1.1rem;
+            text-align: center;
+        }
+
+        .sidebar.collapsed .nav-text,
+        .sidebar.collapsed .brand-text {
+            display: none;
+        }
+
+        /* Main Content Adjustment */
+        main.container-fluid {
+            margin-left: var(--sidebar-width);
+            transition: margin var(--transition-speed) ease;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+
+        main.container-fluid.expanded {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Profile Section */
+        .profile-section {
+            margin-top: auto;
+            border-top: 1px solid var(--border-color);
+            padding: 1rem;
+        }
+
+        .profile-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+        }
+
+        .profile-picture {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+            }
+
+            .sidebar.show {
+                transform: translateX(0);
+            }
+
+            main.container-fluid {
+                margin-left: 0 !important;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+            }
+
+            .overlay.show {
+                display: block;
+            }
+        }
+        
+        /* Sidebar and Navigation Styles */
+        #mainNavbar {
+            padding: 0;
+            width: var(--sidebar-width);
+            height: 100vh;
+            z-index: 1040;
+        }
+        
+        .hamburger-menu {
+            position: relative;
+            z-index: 1050;
+            padding: 10px;
+        }
+        
+        .navbar-brand {
+            margin: 0;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .sidebar-nav .nav-item {
+            width: 100%;
+        }
+        
+        .sidebar-nav .nav-link {
+            padding: 0.8rem 1.5rem;
+            color: rgba(255, 255, 255, 0.85);
+            transition: all 0.3s ease;
+            border-left: 3px solid transparent;
+        }
+        
+        .sidebar-nav .nav-link:hover {
+            color: white;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-left-color: white;
+        }
+        
+        .sidebar-nav .nav-link.active {
+            color: white;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-left-color: white;
+        }
+        
+        .hamburger-icon {
+            width: 24px;
+            height: 18px;
+            position: relative;
+            transform: rotate(0deg);
+            transition: .5s ease-in-out;
+            cursor: pointer;
+        }
+        
+        .hamburger-icon span {
+            display: block;
+            position: absolute;
+            height: 2px;
+            width: 100%;
+            background: #fff;
+            border-radius: 2px;
+            opacity: 1;
+            left: 0;
+            transform: rotate(0deg);
+            transition: .25s ease-in-out;
+        }
+        
+        .hamburger-icon span:nth-child(1) {
+            top: 0px;
+        }
+        
+        .hamburger-icon span:nth-child(2) {
+            top: 8px;
+        }
+        
+        .hamburger-icon span:nth-child(3) {
+            top: 16px;
+        }
+        
+        .navbar-toggler[aria-expanded="true"] .hamburger-icon span:nth-child(1) {
+            top: 8px;
+            transform: rotate(135deg);
+        }
+        
+        .navbar-toggler[aria-expanded="true"] .hamburger-icon span:nth-child(2) {
+            opacity: 0;
+            left: -60px;
+        }
+        
+        .navbar-toggler[aria-expanded="true"] .hamburger-icon span:nth-child(3) {
+            top: 8px;
+            transform: rotate(-135deg);
+        }
+
+        @media (min-width: 992px) {
+            #mainNavbar {
+                width: var(--sidebar-width);
+                height: 100vh;
+                padding-top: var(--header-height);
+            }
+            
+            .navbar-collapse {
+                display: flex !important;
+                flex-direction: column;
+                height: calc(100vh - var(--header-height));
+                overflow-y: auto;
+            }
+            
+            .sidebar-nav {
+                width: 100%;
+            }
+            
+            main.container-fluid {
+                margin-left: var(--sidebar-width);
+                width: calc(100% - var(--sidebar-width));
+            }
+            
+            .navbar-nav .nav-link {
+                padding: 12px 16px;
+                width: 100%;
+                display: flex;
+                align-items: center;
+            }
+            
+            .nav-link i {
+                width: 24px;
+                text-align: center;
+                margin-right: 8px;
+            }
+            
+            .nav-link .nav-text {
+                flex: 1;
+            }
+        }
+        
+        @media (max-width: 991.98px) {
+            #mainNavbar {
+                padding: 0.5rem 1rem;
+            }
+            
+            .navbar-collapse {
+                position: fixed;
+                top: var(--header-height);
+                left: -100%;
+                width: var(--sidebar-width);
+                height: calc(100vh - var(--header-height));
+                background-color: var(--primary-blue);
+                transition: left 0.3s ease-in-out;
+                overflow-y: auto;
+                z-index: 1040;
+            }
+            
+            .navbar-collapse.show {
+                left: 0;
+            }
+            
+            .nav-link {
+                padding: 12px 16px !important;
+                display: flex !important;
+                align-items: center !important;
+            }
+            
+            .nav-link i {
+                width: 24px;
+                text-align: center;
+                margin-right: 8px;
+            }
         }
         
         /* Base mobile optimizations */
@@ -86,78 +451,202 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body class="d-flex flex-column min-vh-100">
-    <!-- Navigation Bar -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top" id="mainNavbar">
-        <div class="container-fluid">
-            <a class="navbar-brand fs-5" href="{{ url_for('home') }}">
+    <!-- Sidebar Navigation -->
+    <div class="sidebar" id="sidebar">
+        <!-- Sidebar Header -->
+        <div class="sidebar-header">
+            <button class="toggle-nav" id="toggleNav">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+            
+        <div class="collapse navbar-collapse flex-column h-100" id="navbarNav">
+            <!-- Home/Brand Link at Top -->
+            <a class="navbar-brand fs-5 py-3 px-3 mb-3 w-100 border-bottom border-light" href="{{ url_for('home') }}">
                 <i class="bi bi-hospital me-2"></i>MMC
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" 
-                    aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
-                    {% if current_user.is_authenticated %}
-                        {% if current_user.role == 'admin' %}
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('admin_dashboard') }}"><i class="bi bi-speedometer2 me-1"></i><span class="nav-text">Dashboard</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_drugs') }}"><i class="bi bi-capsule me-1"></i><span class="nav-text">Drugs</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_users') }}"><i class="bi bi-people me-1"></i><span class="nav-text">Users</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_employees') }}"><i class="bi bi-person-vcard me-1"></i><span class="nav-text">Employees</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('admin_reports') }}"><i class="bi bi-file-earmark-bar-graph me-1"></i><span class="nav-text">Reports</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_transactions') }}"><i class="bi bi-cash-stack me-1"></i><span class="nav-text">Transactions</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_money') }}"><i class="bi bi-wallet2 me-1"></i><span class="nav-text">Money</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_dosage') }}"><i class="bi bi-file-medical me-1"></i><span class="nav-text">Dosage</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_patients') }}"><i class="bi bi-file-person me-1"></i><span class="nav-text">Patients</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_medical_tests') }}"><i class="bi bi-clipboard2-pulse me-1"></i><span class="nav-text">Medical Tests</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('manage_beds') }}"><i class="fas fa-procedures me-1"></i><span class="nav-text">Beds</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('backup_management') }}"><i class="bi bi-database me-1"></i><span class="nav-text">Backup</span></a></li>
-                        {% elif current_user.role == 'doctor' %}
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('doctor_dashboard') }}"><i class="bi bi-speedometer2 me-1"></i><span class="nav-text">Dashboard</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('doctor_patients') }}"><i class="bi bi-person-lines-fill me-1"></i><span class="nav-text">Patients</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('api_lab_tests') }}"><i class="bi bi-clipboard2-pulse me-1"></i><span class="nav-text">Lab Tests</span></a></li>
-                        {% elif current_user.role == 'pharmacist' %}
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('pharmacist_dashboard') }}"><i class="bi bi-speedometer2 me-1"></i><span class="nav-text">Dashboard</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('pharmacist_dispense') }}"><i class="bi bi-capsule me-1"></i><span class="nav-text">Dispense</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('pharmacist_sales') }}"><i class="bi bi-cash-stack me-1"></i><span class="nav-text">Sales</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('pharmacist_inventory') }}"><i class="bi bi-box-seam me-1"></i><span class="nav-text">Inventory</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('pharmacist_refunds') }}"><i class="bi bi-arrow-counterclockwise me-1"></i><span class="nav-text">Refunds</span></a></li>
-                        {% elif current_user.role == 'receptionist' %}
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('receptionist_dashboard') }}"><i class="bi bi-speedometer2 me-1"></i><span class="nav-text">Dashboard</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('receptionist_patients') }}"><i class="bi bi-person-lines-fill me-1"></i><span class="nav-text">Patients</span></a></li>
-                            <li class="nav-item"><a class="nav-link fs-6 px-2 mx-1 icon-nav" href="{{ url_for('receptionist_billing') }}"><i class="bi bi-cash-coin me-1"></i><span class="nav-text">Billing</span></a></li>
-
-                        {% endif %}
-                    {% endif %}
-                </ul>
-                <ul class="navbar-nav">
-                    {% if current_user.is_authenticated %}
-                        <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle d-flex align-items-center fs-6" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
-                                {% if current_user.profile_picture %}
-                                    <img src="{{ url_for('static', filename=current_user.profile_picture) }}" alt="Profile" class="profile-picture me-2">
-                                {% else %}
-                                    <i class="bi bi-person-circle me-2"></i>
-                                {% endif %}
-                                {{ current_user.username }}
+            
+            <!-- Navigation Menu -->
+            <nav class="sidebar-nav">
+                {% if current_user.is_authenticated %}
+                    {% if current_user.role == 'admin' %}
+                        <!-- Admin Navigation -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('admin_dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
                             </a>
-                            <ul class="dropdown-menu dropdown-menu-end">
-                                <li><a class="dropdown-item" href="{{ url_for('profile') }}"><i class="bi bi-person me-2"></i>Profile</a></li>
-                                <li><hr class="dropdown-divider"></li>
-                                <li><a class="dropdown-item" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
-                            </ul>
-                        </li>
-                    {% else %}
-                        <li class="nav-item">
-                        <a class="nav-link fs-6" href="{{ url_for('auth.login') }}">
-                            <i class="bi bi-box-arrow-in-right me-1"></i>Login
-                        </a>
-                        </li>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_drugs') }}" class="nav-link">
+                                <i class="bi bi-capsule"></i>
+                                <span class="nav-text">Drugs</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_users') }}" class="nav-link">
+                                <i class="bi bi-people"></i>
+                                <span class="nav-text">Users</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_employees') }}" class="nav-link">
+                                <i class="bi bi-person-vcard"></i>
+                                <span class="nav-text">Employees</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('admin_reports') }}" class="nav-link">
+                                <i class="bi bi-file-earmark-bar-graph"></i>
+                                <span class="nav-text">Reports</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_transactions') }}" class="nav-link">
+                                <i class="bi bi-cash-stack"></i>
+                                <span class="nav-text">Transactions</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_money') }}" class="nav-link">
+                                <i class="bi bi-wallet2"></i>
+                                <span class="nav-text">Money</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_dosage') }}" class="nav-link">
+                                <i class="bi bi-file-medical"></i>
+                                <span class="nav-text">Dosage</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_patients') }}" class="nav-link">
+                                <i class="bi bi-file-person"></i>
+                                <span class="nav-text">Patients</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_medical_tests') }}" class="nav-link">
+                                <i class="bi bi-clipboard2-pulse"></i>
+                                <span class="nav-text">Medical Tests</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('manage_beds') }}" class="nav-link">
+                                <i class="bi bi-hospital"></i>
+                                <span class="nav-text">Beds</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('backup_management') }}" class="nav-link">
+                                <i class="bi bi-database"></i>
+                                <span class="nav-text">Backup</span>
+                            </a>
+                        </div>
+                    {% elif current_user.role == 'doctor' %}
+                        <!-- Doctor Navigation -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('doctor_dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('doctor_patients') }}" class="nav-link">
+                                <i class="bi bi-person-lines-fill"></i>
+                                <span class="nav-text">Patients</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('api_lab_tests') }}" class="nav-link">
+                                <i class="bi bi-clipboard2-pulse"></i>
+                                <span class="nav-text">Lab Tests</span>
+                            </a>
+                        </div>
+                    {% elif current_user.role == 'pharmacist' %}
+                        <!-- Pharmacist Navigation -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('pharmacist_dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('pharmacist_dispense') }}" class="nav-link">
+                                <i class="bi bi-capsule"></i>
+                                <span class="nav-text">Dispense</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('pharmacist_sales') }}" class="nav-link">
+                                <i class="bi bi-cash-stack"></i>
+                                <span class="nav-text">Sales</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('pharmacist_inventory') }}" class="nav-link">
+                                <i class="bi bi-box-seam"></i>
+                                <span class="nav-text">Inventory</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('pharmacist_refunds') }}" class="nav-link">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                                <span class="nav-text">Refunds</span>
+                            </a>
+                        </div>
+                    {% elif current_user.role == 'receptionist' %}
+                        <!-- Receptionist Navigation -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('receptionist_dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('receptionist_patients') }}" class="nav-link">
+                                <i class="bi bi-person-lines-fill"></i>
+                                <span class="nav-text">Patients</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('receptionist_billing') }}" class="nav-link">
+                                <i class="bi bi-cash-coin"></i>
+                                <span class="nav-text">Billing</span>
+                            </a>
+                        </div>
                     {% endif %}
-                </ul>
+                {% endif %}
+            </nav>
+            
+            <!-- Profile Section at Bottom -->
+            <div class="mt-auto border-top border-light w-100">
+                {% if current_user.is_authenticated %}
+                    <div class="nav-item dropdown w-100">
+                        <a class="nav-link dropdown-toggle d-flex align-items-center fs-6 px-3 py-3" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
+                            {% if current_user.profile_picture %}
+                                <img src="{{ url_for('static', filename=current_user.profile_picture) }}" alt="Profile" class="profile-picture rounded-circle me-2" style="width: 32px; height: 32px;">
+                            {% else %}
+                                <i class="bi bi-person-circle me-2"></i>
+                            {% endif %}
+                            <span class="flex-grow-1">{{ current_user.username }}</span>
+                        </a>
+                        <ul class="dropdown-menu w-100 m-0 border-0 rounded-0">
+                            <li><a class="dropdown-item py-2" href="{{ url_for('profile') }}"><i class="bi bi-person me-2"></i>Profile</a></li>
+                            <li><hr class="dropdown-divider mx-2 my-1"></li>
+                            <li><a class="dropdown-item py-2" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+                        </ul>
+                    </div>
+                {% else %}
+                    <div class="nav-item w-100">
+                        <a class="nav-link fs-6 px-3 py-3" href="{{ url_for('auth.login') }}">
+                            <i class="bi bi-box-arrow-in-right me-2"></i>Login
+                        </a>
+                    </div>
+                {% endif %}
             </div>
         </div>
-    </nav>
+    </div>
 
     <!-- Main Content -->
     <main class="container-fluid flex-grow-1 py-3" style="margin-top: 60px;">
@@ -196,6 +685,67 @@
     <!-- Local JS -->
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    
+    <!-- Sidebar Behavior -->
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const sidebar = document.getElementById('sidebar');
+        const toggleNav = document.getElementById('toggleNav');
+        const mainContent = document.querySelector('main.container-fluid');
+        let overlay = document.createElement('div');
+        overlay.className = 'overlay';
+        document.body.appendChild(overlay);
+        
+        // Move toggle button outside sidebar when collapsed
+        function updateTogglePosition() {
+            if (sidebar.classList.contains('collapsed')) {
+                document.body.appendChild(toggleNav);
+            } else {
+                sidebar.querySelector('.sidebar-header').appendChild(toggleNav);
+            }
+        }
+
+        // Toggle sidebar
+        toggleNav.addEventListener('click', function() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+            updateTogglePosition();
+            
+            // Store the state
+            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+        });
+
+        // Mobile handling
+        function handleMobileView() {
+            if (window.innerWidth <= 768) {
+                sidebar.classList.remove('collapsed');
+                mainContent.classList.remove('expanded');
+                
+                toggleNav.addEventListener('click', function() {
+                    sidebar.classList.toggle('show');
+                    overlay.classList.toggle('show');
+                });
+
+                overlay.addEventListener('click', function() {
+                    sidebar.classList.remove('show');
+                    overlay.classList.remove('show');
+                });
+            }
+        }
+
+        // Restore sidebar state
+        const sidebarCollapsed = localStorage.getItem('sidebarCollapsed');
+        if (sidebarCollapsed === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('expanded');
+        }
+
+        // Handle resize
+        window.addEventListener('resize', handleMobileView);
+        handleMobileView();
+    });
+    </script>
+    
     <!-- Auto-inject CSRF token into all POST forms that don't include it -->
     <script>
         (function() {
@@ -396,7 +946,7 @@
 
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', enhanceTables);
-        } else {
+            } else {
             enhanceTables();
         }
         // Re-enhance on window resize to re-evaluate overflow
