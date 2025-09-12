@@ -1,3 +1,4 @@
+
 {% extends "base.html" %}
 
 {% block content %}
@@ -576,21 +577,21 @@
     </div>
 </div>
 
-<!-- Add Payroll Modal -->
+<!-- Add Payroll Modal (Updated) -->
 <div class="modal" id="add-payroll-modal" role="dialog" aria-modal="true" aria-labelledby="add-payroll-title">
     <div class="modal-content">
         <div class="modal-header">
             <h2 id="add-payroll-title">Add Payroll Payment</h2>
             <button class="close-btn" data-modal-target="add-payroll">&times;</button>
         </div>
-        <form id="add-payroll-form" onsubmit="submitPayroll(event)">
+        <form id="add-payroll-form" method="POST" action="/admin/add_payroll">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label for="employee_id">Employee</label>
-                <select id="employee_id" name="employee_id" required onchange="updateSalary()">
+                <select id="employee_id" name="employee_id" required onchange="moneyManagement.loadEmployeeSalary(this.value)">
                     <option value="">Select Employee</option>
                     {% for employee in employees %}
-                    <option value="{{ employee.id }}">{{ employee.name }}</option>
+                    <option value="{{ employee.id }}" data-salary="{{ employee.salary }}">{{ employee.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -615,12 +616,6 @@
             <div class="form-group">
                 <label for="payroll-notes">Notes</label>
                 <textarea id="payroll-notes" name="notes"></textarea>
-            </div>
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" id="is_paid" name="is_paid">
-                    Mark as Paid (will be recorded as expense)
-                </label>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" data-modal-target="add-payroll">Cancel</button>
@@ -936,23 +931,38 @@ window.moneyManagement = {
     this.loadDebtors();
     */
     },
-
+    loadEmployeeSalary: function(employeeId) {
+        if (!employeeId) return;
+        
+        fetch(`/admin/get_employee_salary/${employeeId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.salary) {
+                    document.getElementById('payroll-amount').value = data.salary;
+                }
+            })
+            .catch(error => {
+                console.error('Error loading employee salary:', error);
+            });
+    },
+    
+    // Update the setupFormSubmissions method to prevent redirects
     setupFormSubmissions: function() {
-        // Handle form submissions with AJAX
+        // Handle form submissions with AJAX - prevent page redirects
         $('form[id$="-form"]').on('submit', function(e) {
             e.preventDefault();
             const form = $(this);
             const action = form.attr('action');
             const method = form.attr('method') || 'POST';
             const formData = new FormData(this);
+            const currentTab = $('.tab.active').data('tab');
 
             fetch(action, {
                 method: method,
                 body: formData,
-                headers: (function() {
-                    const token = moneyManagement.getCSRFToken();
-                    return token ? { 'X-CSRFToken': token } : {};
-                })()
+                headers: {
+                    'X-CSRFToken': moneyManagement.getCSRFToken()
+                }
             })
             .then(response => response.json())
             .then(data => {
@@ -963,8 +973,10 @@ window.moneyManagement = {
                 if (data.success) {
                     const modalId = form.closest('.modal').attr('id').replace('-modal', '');
                     moneyManagement.closeModal(modalId);
-                    moneyManagement.showAlert('success', 'Saved successfully');
-                    moneyManagement.refreshAllData();
+                    moneyManagement.showAlert('success', data.message || 'Saved successfully');
+                    
+                    // Instead of refreshing the page, just reload the current tab data
+                    moneyManagement.refreshTabData(currentTab);
                 }
             })
             .catch(error => {
@@ -972,6 +984,31 @@ window.moneyManagement = {
                 moneyManagement.showAlert('danger', 'An error occurred. Please try again.');
             });
         });
+    },
+    
+    refreshTabData: function(tabId) {
+        // Implement tab-specific data refreshing here
+        switch(tabId) {
+            case 'drawings':
+                // Reload drawings data
+                break;
+            case 'bills':
+                // Reload bills data
+                break;
+            case 'purchases':
+                // Reload purchases data
+                break;
+            case 'payroll':
+                // Reload payroll data
+                break;
+            case 'debtors':
+                // Reload debtors data
+                break;
+        }
+        
+        // Also refresh summary data
+        this.loadSummaryData();
+        this.checkPendingPayments();
     },
 
     loadSummaryData: function() {
@@ -1545,6 +1582,18 @@ $(document).ready(function() {
         align-items: center;
     }
 
+    .loading {
+        opacity: 0.7;
+        pointer-events: none;
+    }
+
+    .form-group .salary-hint {
+        font-size: 12px;
+        color: #3498db;
+        margin-top: 5px;
+        display: none;
+    }
+
     .alert-success {
         background-color: #d4edda;
         color: #155724;
@@ -1606,150 +1655,6 @@ $(document).ready(function() {
     }
 
     @keyframes fadeIn {
-        from { opacity: 0; }
-        to { opacity: 1; }
-    }
-</style>
-
-{% endblock %}
-
-{% block scripts %}
-<script>
-// Money Management Functions
-function updateSalary() {
-    const employeeId = document.getElementById('employee_id').value;
-    if (!employeeId) return;
-
-    fetch(`/admin/get_employee_salary/${employeeId}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('payroll-amount').value = data.salary;
-            }
-        })
-        .catch(error => console.error('Error fetching salary:', error));
-}
-
-function submitPayroll(event) {
-    event.preventDefault();
-    const form = event.target;
-    const formData = new FormData(form);
-
-    fetch('/admin/payroll', {
-        method: 'POST',
-        body: formData,
-        headers: {
-            'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Add new row to payroll table
-            const payroll = data.payroll;
-            const newRow = document.createElement('tr');
-            newRow.innerHTML = `
-                <td>${payroll.employee}</td>
-                <td>${payroll.amount}</td>
-                <td>${payroll.date}</td>
-                <td><span class="status ${payroll.status}">${payroll.status}</span></td>
-                <td>
-                    <button class="action-btn edit" onclick="editPayroll(${payroll.id})">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                    <button class="action-btn delete" onclick="deletePayroll(${payroll.id})">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </td>
-            `;
-            document.querySelector('#payroll-table tbody').insertBefore(newRow, document.querySelector('#payroll-table tbody').firstChild);
-            
-            // Close modal and show success message
-            closeModal('add-payroll-modal');
-            showAlert('success', 'Payroll record created successfully');
-            
-            // Clear form
-            form.reset();
-        } else {
-            showAlert('error', data.error || 'Error creating payroll record');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showAlert('error', 'An unexpected error occurred');
-    });
-}
-
-function submitDrawing(event) {
-    event.preventDefault();
-    const form = event.target;
-    const formData = new FormData(form);
-
-    fetch('/admin/add_drawing', {
-        method: 'POST',
-        body: formData,
-        headers: {
-            'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Add new row to drawings table
-            const drawing = data.drawing;
-            const newRow = document.createElement('tr');
-            newRow.innerHTML = `
-                <td>${drawing.amount}</td>
-                <td>${drawing.description}</td>
-                <td>${drawing.date}</td>
-                <td>
-                    <button class="action-btn edit" onclick="editDrawing(${drawing.id})">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                    <button class="action-btn delete" onclick="deleteDrawing(${drawing.id})">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </td>
-            `;
-            document.querySelector('#drawings-table tbody').insertBefore(newRow, document.querySelector('#drawings-table tbody').firstChild);
-            
-            // Hide form and show success message
-            hideDrawingForm();
-            showAlert('success', 'Drawing added successfully');
-            
-            // Clear form
-            form.reset();
-        } else {
-            showAlert('error', data.error || 'Error adding drawing');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showAlert('error', 'An unexpected error occurred');
-    });
-}
-
-// Initialize event listeners when document is ready
-document.addEventListener('DOMContentLoaded', function() {
-    // Initialize employee select change handler
-    const employeeSelect = document.getElementById('employee_id');
-    if (employeeSelect) {
-        employeeSelect.addEventListener('change', updateSalary);
-    }
-
-    // Initialize form submissions
-    const payrollForm = document.getElementById('add-payroll-form');
-    if (payrollForm) {
-        payrollForm.addEventListener('submit', submitPayroll);
-    }
-
-    const drawingForm = document.getElementById('drawingForm');
-    if (drawingForm) {
-        drawingForm.addEventListener('submit', submitDrawing);
-    }
-});
-</script>
-{% endblock %}
         from { opacity: 0; }
         to { opacity: 1; }
     }

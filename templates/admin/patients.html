@@ -3,6 +3,89 @@
 {% block content %}
 <!-- Add this to the head section of all your base templates -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+    .summary-box {
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin-bottom: 15px;
+        background-color: #f8f9fa;
+        transition: transform 0.2s;
+    }
+    
+    .summary-box:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .data-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        margin-bottom: 1rem;
+    }
+
+    .data-table th {
+        background-color: #f8f9fa;
+        padding: 12px;
+        font-weight: 600;
+        text-align: left;
+        border-bottom: 2px solid #dee2e6;
+    }
+
+    .data-table td {
+        padding: 12px;
+        border-bottom: 1px solid #dee2e6;
+        vertical-align: middle;
+    }
+
+    .data-table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+
+    .btn-view-details {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+
+    .btn-view-details:hover {
+        background-color: #0056b3;
+    }
+
+    .modal-content {
+        border-radius: 8px;
+    }
+
+    .modal-header {
+        background-color: #f8f9fa;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .modal-body h6 {
+        color: #495057;
+        margin-bottom: 1rem;
+        border-bottom: 2px solid #dee2e6;
+        padding-bottom: 0.5rem;
+    }
+
+    .detail-section {
+        margin-bottom: 1.5rem;
+    }
+
+    .detail-label {
+        font-weight: 600;
+        color: #495057;
+    }
+
+    .detail-value {
+        color: #212529;
+    }
+</style>
             
             <!-- Date Filter Form -->
             <div class="card mb-4">
@@ -32,25 +115,25 @@
                         <div class="col-md-3">
                             <div class="summary-box bg-light p-3">
                                 <h6>Total Lab Amount</h6>
-                                <p id="totalLabAmount">$0.00</p>
+                                <p id="totalLabAmount">Ksh.0.00</p>
                             </div>
                         </div>
                         <div class="col-md-3">
                             <div class="summary-box bg-light p-3">
                                 <h6>Total Service Amount</h6>
-                                <p id="totalServiceAmount">$0.00</p>
+                                <p id="totalServiceAmount">Ksh.0.00</p>
                             </div>
                         </div>
                         <div class="col-md-3">
                             <div class="summary-box bg-light p-3">
                                 <h6>Total Drug Amount</h6>
-                                <p id="totalDrugAmount">$0.00</p>
+                                <p id="totalDrugAmount">Ksh.0.00</p>
                             </div>
                         </div>
                         <div class="col-md-3">
                             <div class="summary-box bg-light p-3">
                                 <h6>Total Amount</h6>
-                                <p id="totalAmount">$0.00</p>
+                                <p id="totalAmount">Ksh.0.00</p>
                             </div>
                         </div>
                     </div>
@@ -62,7 +145,7 @@
                     <thead>
                         <tr>
                             <th>Patient No.</th>
-                            <th>Config.decrypt_data_staticName</th>
+                            <th>Name</th>
                             <th>Chief Complain</th>
                             <th>Diagnosis</th>
                             <th>Lab Done</th>
@@ -80,9 +163,9 @@
                         {% for patient in patients %}
                         <tr>
                             <td>{{ patient.op_number or patient.ip_number }}</td>
-                            <td>{{ patient.name }}</td>
-                            <td>{{ patient.chief_complaints|default('-', true)|truncate(30) }}</td>
-                            <td>{{ patient.diagnosis|default('-', true)|truncate(30) }}</td>
+                            <td>{{ patient.name|decrypt }}</td>
+                            <td>{{ patient.chief_complaint|default('-', true)|truncate(30) }}</td>
+                            <td>{{ patient.patient_Diagnosis[0].diagnosis if patient.patient_Diagnosis else '-' }}</td>
                             <td>
                                 {% if patient.labs %}
                                     {% for lab in patient.labs %}
@@ -93,10 +176,14 @@
                                 {% endif %}
                             </td>
                             <td>
+                                {% set lab_total = namespace(amount=0) %}
                                 {% if patient.labs %}
-                                    ${% for lab in patient.labs %}{{ lab.test.price }}{% if not loop.last %} + {% endif %}{% endfor %}
+                                    {% for lab in patient.labs %}
+                                        {% set lab_total.amount = lab_total.amount + lab.test.price %}
+                                    {% endfor %}
+                                    Ksh.{{ "%.2f"|format(lab_total.amount) }}
                                 {% else %}
-                                    $0.00
+                                    Ksh.0.00
                                 {% endif %}
                             </td>
                             <td>
@@ -109,16 +196,20 @@
                                 {% endif %}
                             </td>
                             <td>
+                                {% set service_total = namespace(amount=0) %}
                                 {% if patient.services %}
-                                    ${% for service in patient.services %}{{ service.service.price }}{% if not loop.last %} + {% endif %}{% endfor %}
+                                    {% for service in patient.services %}
+                                        {% set service_total.amount = service_total.amount + service.service.price %}
+                                    {% endfor %}
+                                    Ksh.{{ "%.2f"|format(service_total.amount) }}
                                 {% else %}
-                                    $0.00
+                                    Ksh.0.00
                                 {% endif %}
                             </td>
                             <td>
                                 {% if patient.prescriptions %}
                                     {% for prescription in patient.prescriptions %}
-                                        {% for item in prescription.items %}
+                                        {% for item in prescription.item %}
                                             {{ item.drug.name }}{% if not loop.last %}, {% endif %}
                                         {% endfor %}
                                     {% endfor %}
@@ -129,7 +220,7 @@
                             <td>
                                 {% if patient.prescriptions %}
                                     {% for prescription in patient.prescriptions %}
-                                        {% for item in prescription.items %}
+                                        {% for item in prescription.item %}
                                             {{ item.quantity }}{% if not loop.last %} + {% endif %}
                                         {% endfor %}
                                     {% endfor %}
@@ -140,12 +231,12 @@
                             <td>
                                 {% if patient.prescriptions %}
                                     ${% for prescription in patient.prescriptions %}
-                                        {% for item in prescription.items %}
+                                        {% for item in prescription.item %}
                                             {{ item.drug.selling_price * item.quantity }}{% if not loop.last %} + {% endif %}
                                         {% endfor %}
                                     {% endfor %}
                                 {% else %}
-                                    $0.00
+                                    Ksh.0.00
                                 {% endif %}
                             </td>
                             <td>
@@ -167,14 +258,11 @@
                                         {% endfor %}
                                     {% endfor %}
                                 {% endif %}
-                                ${{ "%.2f"|format(total_amount) }}
+                                Ksh.{{ "%.2f"|format(total_amount) }}
                             </td>
                             <td>
-                                <button class="btn btn-sm btn-view" data-id="{{ patient.id }}">
-                                    <i class="fas fa-eye"></i>
-                                </button>
-                                <button class="btn btn-sm btn-edit" data-id="{{ patient.id }}" data-toggle="modal" data-target="#editPatientModal">
-                                    <i class="fas fa-edit"></i>
+                                <button class="btn btn-sm btn-primary view-details" data-id="{{ patient.id }}" data-toggle="modal" data-target="#viewPatientModal">
+                                    <i class="fas fa-eye"></i> View Details
                                 </button>
                             </td>
                         </tr>
@@ -182,171 +270,6 @@
                     </tbody>
                 </table>
             </div>
-        </div>
-    </div>
-</div>
-
-<!-- Add Patient Modal -->
-<div class="modal fade" id="addPatientModal" tabindex="-1" role="dialog" aria-labelledby="addPatientModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="addPatientModalLabel">Add New Patient</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <form id="addPatientForm" method="POST" action="{{ url_for('manage_patients') }}">
-                <input type="hidden" name="action" value="add">
-                <div class="modal-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="patient_type">Patient Type</label>
-                                <select class="form-control" id="patient_type" name="patient_type" required>
-                                    <option value="OP">Outpatient (OP)</option>
-                                    <option value="IP">Inpatient (IP)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="name">Full Name</label>
-                                <input type="text" class="form-control" id="name" name="name" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="age">Age</label>
-                                <input type="number" class="form-control" id="age" name="age">
-                            </div>
-                            <div class="form-group">
-                                <label for="gender">Gender</label>
-                                <select class="form-control" id="gender" name="gender">
-                                    <option value="male">Male</option>
-                                    <option value="female">Female</option>
-                                    <option value="other">Other</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="address">Address</label>
-                                <textarea class="form-control" id="address" name="address" rows="2"></textarea>
-                            </div>
-                            <div class="form-group">
-                                <label for="phone">Phone Number</label>
-                                <input type="text" class="form-control" id="phone" name="phone">
-                            </div>
-                            <div class="form-group">
-                                <label for="nok_name">Next of Kin Name</label>
-                                <input type="text" class="form-control" id="nok_name" name="nok_name">
-                            </div>
-                            <div class="form-group">
-                                <label for="nok_contact">Next of Kin Contact</label>
-                                <input type="text" class="form-control" id="nok_contact" name="nok_contact">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="chief_complaints">Chief Complaints</label>
-                        <textarea class="form-control" id="chief_complaints" name="chief_complaints" rows="2"></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label for="diagnosis">Diagnosis</label>
-                        <textarea class="form-control" id="diagnosis" name="diagnosis" rows="2"></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label for="tca">To Come Again (TCA) Date</label>
-                        <input type="date" class="form-control" id="tca" name="tca">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Patient</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- Edit Patient Modal -->
-<div class="modal fade" id="editPatientModal" tabindex="-1" role="dialog" aria-labelledby="editPatientModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="editPatientModalLabel">Edit Patient</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <form id="editPatientForm" method="POST" action="{{ url_for('manage_patients') }}">
-                <input type="hidden" name="action" value="edit">
-                <input type="hidden" id="edit_patient_id" name="patient_id">
-                <div class="modal-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label>Patient Number</label>
-                                <p class="form-control-static" id="edit_patient_number"></p>
-                            </div>
-                            <div class="form-group">
-                                <label for="edit_name">Full Name</label>
-                                <input type="text" class="form-control" id="edit_name" name="name" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="edit_age">Age</label>
-                                <input type="number" class="form-control" id="edit_age" name="age">
-                            </div>
-                            <div class="form-group">
-                                <label for="edit_gender">Gender</label>
-                                <select class="form-control" id="edit_gender" name="gender">
-                                    <option value="male">Male</option>
-                                    <option value="female">Female</option>
-                                    <option value="other">Other</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="form-group">
-                                <label for="edit_address">Address</label>
-                                <textarea class="form-control" id="edit_address" name="address" rows="2"></textarea>
-                            </div>
-                            <div class="form-group">
-                                <label for="edit_phone">Phone Number</label>
-                                <input type="text" class="form-control" id="edit_phone" name="phone">
-                            </div>
-                            <div class="form-group">
-                                <label for="edit_nok_name">Next of Kin Name</label>
-                                <input type="text" class="form-control" id="edit_nok_name" name="nok_name">
-                            </div>
-                            <div class="form-group">
-                                <label for="edit_nok_contact">Next of Kin Contact</label>
-                                <input type="text" class="form-control" id="edit_nok_contact" name="nok_contact">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="edit_chief_complaints">Chief Complaints</label>
-                        <textarea class="form-control" id="edit_chief_complaints" name="chief_complaints" rows="2"></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label for="edit_diagnosis">Diagnosis</label>
-                        <textarea class="form-control" id="edit_diagnosis" name="diagnosis" rows="2"></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label for="edit_tca">To Come Again (TCA) Date</label>
-                        <input type="date" class="form-control" id="edit_tca" name="tca">
-                    </div>
-                    <div class="form-group">
-                        <label for="edit_status">Status</label>
-                        <select class="form-control" id="edit_status" name="status">
-                            <option value="active">Active</option>
-                            <option value="completed">Completed</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Update Patient</button>
-                </div>
-            </form>
         </div>
     </div>
 </div>
@@ -362,7 +285,155 @@
                 </button>
             </div>
             <div class="modal-body">
-                <div class="row">
+                <div class="container-fluid">
+                    <div class="row">
+                        <div class="col-md-6 detail-section">
+                            <h6>Patient Information</h6>
+                            <p><span class="detail-label">Patient No:</span> <span class="detail-value" id="modal-patient-no"></span></p>
+                            <p><span class="detail-label">Name:</span> <span class="detail-value" id="modal-patient-name"></span></p>
+                            <p><span class="detail-label">Chief Complaint:</span> <span class="detail-value" id="modal-chief-complaint"></span></p>
+                            <p><span class="detail-label">Diagnosis:</span> <span class="detail-value" id="modal-diagnosis"></span></p>
+                        </div>
+                        <div class="col-md-6 detail-section">
+                            <h6>Laboratory Tests</h6>
+                            <div id="modal-lab-tests" class="detail-value"></div>
+                            <p><span class="detail-label">Total Lab Amount:</span> <span class="detail-value" id="modal-lab-amount"></span></p>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 detail-section">
+                            <h6>Services Provided</h6>
+                            <div id="modal-services" class="detail-value"></div>
+                            <p><span class="detail-label">Total Services Amount:</span> <span class="detail-value" id="modal-services-amount"></span></p>
+                        </div>
+                        <div class="col-md-6 detail-section">
+                            <h6>Prescribed Medications</h6>
+                            <div id="modal-prescriptions" class="detail-value"></div>
+                            <p><span class="detail-label">Total Drug Amount:</span> <span class="detail-value" id="modal-drug-amount"></span></p>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-12 detail-section">
+                            <h6>Total Bill</h6>
+                            <p><span class="detail-label">Total Amount:</span> <span class="detail-value" id="modal-total-amount"></span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Function to format currency
+    function formatCurrency(amount) {
+        return 'Ksh.' + parseFloat(amount).toFixed(2);
+    }
+
+    // Handle view details button click
+    document.querySelectorAll('.view-details').forEach(button => {
+        button.addEventListener('click', function() {
+            const row = this.closest('tr');
+            
+            // Fill in patient information
+            document.getElementById('modal-patient-no').textContent = row.cells[0].textContent;
+            document.getElementById('modal-patient-name').textContent = row.cells[1].textContent;
+            document.getElementById('modal-chief-complaint').textContent = row.cells[2].textContent;
+            document.getElementById('modal-diagnosis').textContent = row.cells[3].textContent;
+            
+            // Fill in lab tests with formatting
+            const labTests = row.cells[4].textContent.trim();
+            const labAmount = row.cells[5].textContent.trim();
+            document.getElementById('modal-lab-tests').innerHTML = `<p>${labTests === '-' ? 'No lab tests' : labTests}</p>`;
+            document.getElementById('modal-lab-amount').textContent = labAmount;
+            
+            // Fill in services with formatting
+            const services = row.cells[6].textContent.trim();
+            const servicesAmount = row.cells[7].textContent.trim();
+            document.getElementById('modal-services').innerHTML = `<p>${services === '-' ? 'No services' : services}</p>`;
+            document.getElementById('modal-services-amount').textContent = servicesAmount;
+            
+            // Fill in prescriptions with formatting
+            const medications = row.cells[8].textContent.trim();
+            const quantities = row.cells[9].textContent.trim();
+            const drugAmount = row.cells[10].textContent.trim();
+            document.getElementById('modal-prescriptions').innerHTML = `
+                <p>${medications === '-' ? 'No prescriptions' : 'Medications: ' + medications}</p>
+                ${quantities !== '-' ? '<p>Quantities: ' + quantities + '</p>' : ''}
+            `;
+            document.getElementById('modal-drug-amount').textContent = drugAmount;
+            
+            // Fill in total amount
+            document.getElementById('modal-total-amount').textContent = row.cells[11].textContent.trim();
+        });
+    });
+
+    // Handle date filter form
+    const dateFilterForm = document.getElementById('dateFilterForm');
+    if (dateFilterForm) {
+        dateFilterForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            window.location.href = `/admin/patients?start_date=${startDate}&end_date=${endDate}`;
+        });
+
+        // Handle reset button
+        document.getElementById('resetFilter').addEventListener('click', function() {
+            window.location.href = '/admin/patients';
+        });
+    }
+
+    // Initialize DataTable with better formatting
+    if ($.fn.DataTable) {
+        $('.data-table').DataTable({
+            responsive: true,
+            order: [[0, 'desc']],
+            pageLength: 25,
+            language: {
+                search: "Search patients:",
+                lengthMenu: "Show _MENU_ patients per page",
+                info: "Showing _START_ to _END_ of _TOTAL_ patients"
+            }
+        });
+    }
+});
+</script>
+{% endblock %}
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Patient Information</h6>
+                            <p><strong>Patient No:</strong> <span id="modal-patient-no"></span></p>
+                            <p><strong>Name:</strong> <span id="modal-patient-name"></span></p>
+                            <p><strong>Chief Complaint:</strong> <span id="modal-chief-complaint"></span></p>
+                            <p><strong>Diagnosis:</strong> <span id="modal-diagnosis"></span></p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Laboratory Tests</h6>
+                            <div id="modal-lab-tests"></div>
+                            <p><strong>Total Lab Amount:</strong> <span id="modal-lab-amount"></span></p>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <h6>Services Provided</h6>
+                            <div id="modal-services"></div>
+                            <p><strong>Total Services Amount:</strong> <span id="modal-services-amount"></span></p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Prescribed Medications</h6>
+                            <div id="modal-prescriptions"></div>
+                            <p><strong>Total Drug Amount:</strong> <span id="modal-drug-amount"></span></p>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <h6>Total Bill</h6>
+                            <p><strong>Total Amount:</strong> <span id="modal-total-amount"></span></p>
+                        </div>
+                    </div>
+                </div>
                     <div class="col-md-6">
                         <h5>Basic Information</h5>
                         <table class="table table-bordered">

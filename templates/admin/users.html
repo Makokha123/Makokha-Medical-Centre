@@ -3,6 +3,53 @@
 {% block content %}
 <!-- Add this to the head section of all your base templates -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+    .input-group .toggle-password {
+        cursor: pointer;
+        border-color: #ced4da;
+    }
+    
+    .input-group .toggle-password:hover {
+        background-color: #e9ecef;
+    }
+    
+    .input-group .toggle-password:focus {
+        box-shadow: none;
+    }
+    
+    .password-strength-meter .progress-bar {
+        transition: width 0.3s ease-in-out, background-color 0.3s ease-in-out;
+    }
+    
+    .password-requirements li {
+        margin-bottom: 0.25rem;
+    }
+    
+    .password-requirements .fa-circle {
+        font-size: 0.5rem;
+        margin-right: 0.5rem;
+    }
+    
+    .password-requirements .text-success {
+        color: #28a745 !important;
+    }
+    
+    .password-requirements .text-muted {
+        color: #6c757d !important;
+    }
+    
+    .password-strength-text {
+        display: block;
+        margin-top: 0.25rem;
+    }
+    
+    .progress {
+        background-color: #e9ecef;
+        border-radius: 0.25rem;
+        margin: 0.5rem 0;
+    }
+</style>
         <div class="content">
             <div class="page-header">
                 <h2><i class="fas fa-users"></i> User Management</h2>
@@ -93,17 +140,43 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="phone">Phone</label>
-                        <input type="text" class="form-control" id="phone" name="phone">
-                    </div>
-                    <div class="form-group">
                         <label for="password">Password</label>
-                        <input type="password" class="form-control" id="password" name="password" required>
-                        <small class="form-text text-muted">Password must be at least 8 characters with uppercase, lowercase, number and symbol</small>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="password" name="password" required>
+                            <div class="input-group-append">
+                                <button type="button" class="btn btn-outline-secondary toggle-password" tabindex="-1">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="password-strength-meter mt-2">
+                            <div class="progress" style="height: 5px;">
+                                <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <small class="password-strength-text text-muted">Password strength: <span>None</span></small>
+                        </div>
+                        <div class="password-requirements mt-2">
+                            <small class="form-text">Password requirements:</small>
+                            <ul class="list-unstyled">
+                                <li><small><i class="fas fa-circle text-muted"></i> At least 8 characters</small></li>
+                                <li><small><i class="fas fa-circle text-muted"></i> At least one uppercase letter</small></li>
+                                <li><small><i class="fas fa-circle text-muted"></i> At least one lowercase letter</small></li>
+                                <li><small><i class="fas fa-circle text-muted"></i> At least one number</small></li>
+                                <li><small><i class="fas fa-circle text-muted"></i> At least one special character</small></li>
+                            </ul>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="confirm_password">Confirm Password</label>
-                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                            <div class="input-group-append">
+                                <button type="button" class="btn btn-outline-secondary toggle-password" tabindex="-1">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <small class="password-match-text text-muted"></small>
                     </div>
                     <div class="form-group form-check">
                         <input type="checkbox" class="form-check-input" id="is_active" name="is_active" checked>
@@ -151,13 +224,31 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="edit_phone">Phone</label>
-                        <input type="text" class="form-control" id="edit_phone" name="phone">
-                    </div>
-                    <div class="form-group">
                         <label for="edit_password">New Password (leave blank to keep current)</label>
-                        <input type="password" class="form-control" id="edit_password" name="password">
-                        <small class="form-text text-muted">Password must be at least 8 characters with uppercase, lowercase, number and symbol</small>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="edit_password" name="password">
+                            <div class="input-group-append">
+                                <button type="button" class="btn btn-outline-secondary toggle-password" tabindex="-1">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="password-strength-meter mt-2">
+                            <div class="progress" style="height: 5px;">
+                                <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <small class="password-strength-text text-muted">Password strength: <span>None</span></small>
+                        </div>
+                        <div class="password-requirements mt-2">
+                            <small class="form-text">Password requirements:</small>
+                            <ul class="list-unstyled">
+                                <li><small><i class="fas fa-circle text-muted"></i> At least 8 characters</small></li>
+                                <li><small><i class="fas fa-circle text-muted"></i> At least one uppercase letter</small></li>
+                                <li><small><i class="fas fa-circle text-muted"></i> At least one lowercase letter</small></li>
+                                <li><small><i class="fas fa-circle text-muted"></i> At least one number</small></li>
+                                <li><small><i class="fas fa-circle text-muted"></i> At least one special character</small></li>
+                            </ul>
+                        </div>
                     </div>
                     <div class="form-group form-check">
                         <input type="checkbox" class="form-check-input" id="edit_is_active" name="is_active">
@@ -474,5 +565,144 @@ $(document).ready(function() {
         color: white !important;
         border: 1px solid #007bff;
     }
+
+    /* Password toggle styling */
+    .input-group .toggle-password {
+        cursor: pointer;
+        padding: 0.375rem 0.75rem;
+    }
+
+    .input-group .toggle-password:hover {
+        background-color: #e9ecef;
+    }
+
+    .input-group .toggle-password:focus {
+        outline: none;
+        box-shadow: none;
+    }
 </style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    function setupPasswordFeatures(prefix) {
+        const passwordField = document.getElementById(prefix + 'password');
+        const confirmPasswordField = document.getElementById(prefix + 'confirm_password');
+        const form = document.getElementById(prefix + 'UserForm');
+        const modal = form.closest('.modal-content');
+        const strengthMeter = modal.querySelector('.password-strength-meter .progress-bar');
+        const strengthText = modal.querySelector('.password-strength-text span');
+        const requirements = {
+            length: { regex: /.{8,}/, element: modal.querySelector('.password-requirements li:nth-child(1) i') },
+            uppercase: { regex: /[A-Z]/, element: modal.querySelector('.password-requirements li:nth-child(2) i') },
+            lowercase: { regex: /[a-z]/, element: modal.querySelector('.password-requirements li:nth-child(3) i') },
+            number: { regex: /[0-9]/, element: modal.querySelector('.password-requirements li:nth-child(4) i') },
+            special: { regex: /[^A-Za-z0-9]/, element: modal.querySelector('.password-requirements li:nth-child(5) i') }
+        };
+
+        // Password toggle functionality
+        modal.querySelectorAll('.toggle-password').forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                const input = this.closest('.input-group').querySelector('input');
+                const icon = this.querySelector('i');
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    icon.classList.remove('fa-eye');
+                    icon.classList.add('fa-eye-slash');
+                } else {
+                    input.type = 'password';
+                    icon.classList.remove('fa-eye-slash');
+                    icon.classList.add('fa-eye');
+                }
+            });
+        });
+
+        // Password strength checker
+        function checkPasswordStrength(password) {
+            let strength = 0;
+            let metRequirements = 0;
+            Object.keys(requirements).forEach(req => {
+                const isValid = requirements[req].regex.test(password);
+                const element = requirements[req].element;
+                if (isValid) {
+                    strength += 20;
+                    metRequirements++;
+                    element.classList.remove('text-muted');
+                    element.classList.add('text-success');
+                } else {
+                    element.classList.remove('text-success');
+                    element.classList.add('text-muted');
+                }
+            });
+            strengthMeter.style.width = strength + '%';
+            if (strength <= 40) {
+                strengthMeter.className = 'progress-bar bg-danger';
+                strengthText.textContent = 'Weak';
+                strengthText.className = 'text-danger';
+            } else if (strength <= 80) {
+                strengthMeter.className = 'progress-bar bg-warning';
+                strengthText.textContent = 'Medium';
+                strengthText.className = 'text-warning';
+            } else {
+                strengthMeter.className = 'progress-bar bg-success';
+                strengthText.textContent = 'Strong';
+                strengthText.className = 'text-success';
+            }
+            return metRequirements === 5;
+        }
+
+        // Password match (only for add user)
+        function checkPasswordMatch() {
+            const matchText = modal.querySelector('.password-match-text');
+            if (confirmPasswordField && matchText) {
+                if (confirmPasswordField.value) {
+                    if (passwordField.value === confirmPasswordField.value) {
+                        matchText.textContent = 'Passwords match';
+                        matchText.className = 'password-match-text text-success';
+                        return true;
+                    } else {
+                        matchText.textContent = 'Passwords do not match';
+                        matchText.className = 'password-match-text text-danger';
+                        return false;
+                    }
+                }
+            }
+            return false;
+        }
+
+        if (passwordField) {
+            passwordField.addEventListener('input', function() {
+                checkPasswordStrength(this.value);
+                if (confirmPasswordField) checkPasswordMatch();
+            });
+        }
+        if (confirmPasswordField) {
+            confirmPasswordField.addEventListener('input', checkPasswordMatch);
+        }
+
+        // Form submission
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                const isPasswordValid = checkPasswordStrength(passwordField.value);
+                let isPasswordMatching = true;
+                if (confirmPasswordField) {
+                    isPasswordMatching = checkPasswordMatch();
+                }
+                if (!isPasswordValid || !isPasswordMatching) {
+                    e.preventDefault();
+                    if (!isPasswordValid) {
+                        alert('Please meet all password requirements');
+                    } else {
+                        alert('Passwords do not match');
+                    }
+                }
+            });
+        }
+    }
+    // Setup for Add User
+    setupPasswordFeatures('');
+    // Setup for Edit User
+    setupPasswordFeatures('edit_');
+});
+</script>
 {% endblock %}

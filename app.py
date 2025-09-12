@@ -145,7 +145,7 @@ class User(db.Model, UserMixin):
 
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     backup_id = db.Column(db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     timestamp = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
@@ -2236,11 +2236,11 @@ def manage_users():
                     flash('Email already exists', 'danger')
                     return redirect(url_for('manage_users'))
                 
+                # Create new user
                 user = User(
                     username=request.form.get('username'),
                     email=request.form.get('email'),
                     role=request.form.get('role'),
-                    phone=request.form.get('phone'),
                     is_active=True if request.form.get('is_active') else False,
                     last_login=None  # Initialize last_login as None for new users
                 )
@@ -2252,7 +2252,6 @@ def manage_users():
                     'username': user.username,
                     'email': user.email,
                     'role': user.role,
-                    'phone': user.phone,
                     'is_active': user.is_active,
                     'last_login': user.last_login
                 })
@@ -2271,7 +2270,6 @@ def manage_users():
                         'username': user.username,
                         'email': user.email,
                         'role': user.role,
-                        'phone': user.phone,
                         'is_active': user.is_active,
                         'last_login': user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else None
                     }
@@ -2279,7 +2277,6 @@ def manage_users():
                     user.username = request.form.get('username')
                     user.email = request.form.get('email')
                     user.role = request.form.get('role')
-                    user.phone = request.form.get('phone')
                     user.is_active = True if request.form.get('is_active') else False
                     
                     if request.form.get('password'):
@@ -2291,7 +2288,6 @@ def manage_users():
                         'username': user.username,
                         'email': user.email,
                         'role': user.role,
-                        'phone': user.phone,
                         'is_active': user.is_active,
                         'last_login': user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else None
                     })
@@ -2315,7 +2311,6 @@ def manage_users():
                             'username': user.username,
                             'email': user.email,
                             'role': user.role,
-                            'phone': user.phone,
                             'is_active': user.is_active,
                             'last_login': user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else None
                         }, None)
@@ -3529,7 +3524,8 @@ if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
 @login_required
 def manage_money():
     if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
     
     return render_template('admin/money.html',
                         drawings=Transaction.query.filter_by(transaction_type='drawing').order_by(Transaction.created_at.desc()).all(),
@@ -3540,122 +3536,6 @@ def manage_money():
                         employees=Employee.query.all(),
                         current_date=datetime.utcnow().date())
 
-# ================
-# PAYROLL ROUTES
-# ================
-
-@app.route('/admin/get_employee_salary/<int:employee_id>', methods=['GET'])
-@login_required
-def get_employee_salary(employee_id):
-    if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-        
-    employee = Employee.query.get_or_404(employee_id)
-    return jsonify({
-        'success': True,
-        'salary': employee.salary or 0
-    })
-
-@app.route('/admin/payroll', methods=['POST'])
-@login_required
-def add_payroll():
-    if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-
-    try:
-        employee_id = request.form.get('employee_id')
-        amount = float(request.form.get('amount'))
-        payment_date = request.form.get('payment_date')
-        is_paid = request.form.get('is_paid', 'false').lower() == 'true'
-        
-        payroll = Payroll(
-            payroll_number=generate_payroll_number(),
-            employee_id=employee_id,
-            amount=amount,
-            payment_date=datetime.strptime(payment_date, '%Y-%m-%d').date(),
-            status='paid' if is_paid else 'pending',
-            created_at=datetime.now(timezone.utc)
-        )
-        
-        db.session.add(payroll)
-        
-        # If payroll is marked as paid, create an expense record
-        if is_paid:
-            expense = Expense(
-                expense_number=generate_expense_number(),
-                expense_type='payroll',
-                amount=amount,
-                description=f'Payroll payment for employee ID: {employee_id}',
-                date=datetime.strptime(payment_date, '%Y-%m-%d').date(),
-                user_id=current_user.id,
-                reference_id=employee_id
-            )
-            db.session.add(expense)
-        
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Payroll record created successfully',
-            'payroll': {
-                'id': payroll.id,
-                'employee': payroll.employee.name,
-                'amount': payroll.amount,
-                'status': payroll.status,
-                'date': payroll.payment_date.strftime('%Y-%m-%d')
-            }
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 400
-
-@app.route('/admin/payroll/<int:payroll_id>/pay', methods=['POST'])
-@login_required
-def pay_payroll(payroll_id):
-    if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-
-    try:
-        payroll = Payroll.query.get_or_404(payroll_id)
-        if payroll.status == 'paid':
-            return jsonify({
-                'success': False,
-                'message': 'Payroll is already paid'
-            }), 400
-
-        payroll.status = 'paid'
-        
-        # Create expense record
-        expense = Expense(
-            expense_number=generate_expense_number(),
-            expense_type='payroll',
-            amount=payroll.amount,
-            description=f'Payroll payment for employee ID: {payroll.employee_id}',
-            date=datetime.now().date(),
-            user_id=current_user.id,
-            reference_id=payroll.employee_id
-        )
-        
-        db.session.add(expense)
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Payroll marked as paid and expense recorded',
-            'payroll': {
-                'id': payroll.id,
-                'status': payroll.status
-            }
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 400
-
 # ==============
 # DRAWING ROUTES
 # ==============
@@ -3664,7 +3544,7 @@ def pay_payroll(payroll_id):
 @login_required
 def add_drawing():
     if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'Unauthorized'}), 403
     
     try:
         amount = float(request.form.get('amount'))
@@ -3672,27 +3552,17 @@ def add_drawing():
         
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
-            transaction_type='drawing',
+            transaction_type='drawing',  # Changed from 'expense' to 'drawing'
             amount=amount,
             user_id=current_user.id,
             notes=f"Owner's drawing: {description}"
         )
         db.session.add(transaction)
         db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Drawing added successfully',
-            'drawing': {
-                'id': transaction.id,
-                'amount': transaction.amount,
-                'description': transaction.notes,
-                'date': transaction.created_at.strftime('%Y-%m-%d')
-            }
-        })
+        return jsonify({'success': True, 'message': 'Drawing added successfully'})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/admin/update_drawing/<int:id>', methods=['POST'])
 @login_required
@@ -3886,7 +3756,7 @@ def delete_purchase(id):
         db.session.rollback()
         return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 # ===============
-# PAYROLL ROUTES
+# PAYROLL ROUTES (Updated)
 # ===============
 
 @app.route('/admin/add_payroll', methods=['POST'])
@@ -3923,15 +3793,15 @@ def add_payroll():
         db.session.add(payroll)
         db.session.flush()
         
-        # Create transaction record
+        # Create transaction record (as expense)
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
-            transaction_type='payroll',
+            transaction_type='expense',  # Changed from 'payroll' to 'expense'
             amount=amount,
             user_id=current_user.id,
             reference_id=payroll.id,
             notes=f"Payroll payment for {employee.name}",
-            created_at=datetime.utcnow()  # Using created_at instead of date
+            created_at=datetime.utcnow()
         )
         db.session.add(transaction)
         
@@ -3940,7 +3810,7 @@ def add_payroll():
     except ValueError:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'Invalid data format'}), 400
-    except Exception:
+    except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
@@ -3971,7 +3841,7 @@ def update_payroll(id):
         payroll.notes = request.form.get('notes', payroll.notes)
         
         # Update associated transaction
-        transaction = Transaction.query.filter_by(transaction_type='payroll', reference_id=id).first()
+        transaction = Transaction.query.filter_by(reference_id=id).first()
         if transaction:
             transaction.amount = amount
             transaction.notes = f"Payroll payment for {employee.name}"
@@ -3986,24 +3856,15 @@ def update_payroll(id):
         db.session.rollback()
         return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
-@app.route('/admin/delete_payroll/<int:id>', methods=['POST'])
+# Add a new route to get employee salary
+@app.route('/admin/get_employee_salary/<int:employee_id>')
 @login_required
-def delete_payroll(id):
+def get_employee_salary(employee_id):
     if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-
-    payroll = Payroll.query.get_or_404(id)
-    try:
-        # Delete associated transaction
-        Transaction.query.filter_by(transaction_type='payroll', reference_id=id).delete()
-        
-        # Delete payroll
-        db.session.delete(payroll)
-        db.session.commit()
-        return jsonify({'success': True, 'message': 'Payroll deleted successfully'})
-    except Exception:
-        db.session.rollback()
-        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    employee = Employee.query.get_or_404(employee_id)
+    return jsonify({'salary': employee.salary})
 
 # ================
 # DEBTOR ROUTES
@@ -4546,7 +4407,7 @@ def get_drug_dosage(drug_id):
     })
 
 # Admin Patient Management Routes
-@app.route('/admin/patients', methods=['GET', 'POST'])
+@app.route('/admin/patients', methods=['GET'])
 @login_required
 def manage_patients():
     if current_user.role != 'admin':
@@ -4557,7 +4418,18 @@ def manage_patients():
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     
-    query = Patient.query
+    # Build query with all necessary relationships
+    query = Patient.query\
+        .outerjoin(PatientLab)\
+        .outerjoin(PatientService)\
+        .outerjoin(Prescription)\
+        .outerjoin(PatientDiagnosis)\
+        .options(
+            db.joinedload(Patient.labs).joinedload(PatientLab.test),
+            db.joinedload(Patient.services).joinedload(PatientService.service),
+            db.joinedload(Patient.prescriptions).joinedload(Prescription.items),
+            db.joinedload(Patient.diagnosis)
+        )
     
     if start_date:
         try:
@@ -4573,7 +4445,7 @@ def manage_patients():
         except ValueError:
             flash('Invalid end date format', 'danger')
     
-    patients = query.order_by(Patient.created_at.desc()).all()
+    patients = query.order_by(Patient.created_at.desc()).distinct().all()
     
     # Calculate summary totals
     total_lab_amount = 0
@@ -7113,7 +6985,10 @@ def patient_medical_record(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
 
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        flash('Patient not found', 'danger')
+        return redirect(url_for('doctor_patients'))
     
     # Get all medical record components
     review_systems = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
@@ -7125,7 +7000,7 @@ def patient_medical_record(patient_id):
     # Get all related records
     lab_requests = LabRequest.query.filter_by(patient_id=patient.id).order_by(LabRequest.created_at.desc()).all()
     imaging_requests = ImagingRequest.query.filter_by(patient_id=patient.id).order_by(ImagingRequest.created_at.desc()).all()
-    prescriptions = Prescription.query.filter_by(patient_id=patient.id).order_by(Prescription.created_at.desc()).all()
+    prescriptions = Prescription.query.filter_by(patient_id=patient.id).options(db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)).order_by(Prescription.created_at.desc()).all()
     services = PatientService.query.filter_by(patient_id=patient.id).order_by(PatientService.created_at.desc()).all()
     
     return render_template('doctor/medical_record.html',
@@ -7239,7 +7114,7 @@ def handle_patient_sections():
             })
 
         elif section == 'chief_complaint':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7253,7 +7128,7 @@ def handle_patient_sections():
             })
 
         elif section == 'review_systems':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7277,7 +7152,7 @@ def handle_patient_sections():
             })
 
         elif section == 'hpi':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7290,7 +7165,7 @@ def handle_patient_sections():
             })
 
         elif section == 'smhx':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7313,7 +7188,7 @@ def handle_patient_sections():
             })
 
         elif section == 'examination':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7353,7 +7228,7 @@ def handle_patient_sections():
             })
 
         elif section == 'diagnosis':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
@@ -7397,7 +7272,7 @@ def handle_patient_sections():
             })
 
         elif section == 'management':
-            patient = Patient.query.get(patient_id)
+            patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
             
