@@ -1,4 +1,3 @@
-# Route to return user details as JSON for modals
 
 from sqlalchemy import MetaData, Table
 from sqlalchemy import MetaData, Table
@@ -5422,40 +5421,52 @@ def pharmacist_sales():
     sales = Sale.query.order_by(Sale.created_at.desc()).limit(50).all()
     return render_template('pharmacist/sales.html', sales=sales)
 
+
 @app.route('/pharmacist/sale', methods=['POST'])
 @login_required
 def process_sale():
     if current_user.role != 'pharmacist':
+        app.logger.warning(f"Unauthorized access attempt by user {current_user.id}")
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
         # Check if request contains JSON data
         if not request.is_json:
+            app.logger.error("Invalid content type: Expected application/json")
             return jsonify({'success': False, 'error': 'Content-Type must be application/json'}), 400
             
         data = request.get_json()
         if not data:
+            app.logger.error("No JSON data received in request")
             return jsonify({'success': False, 'error': 'No JSON data received'}), 400
             
         if 'items' not in data:
+            app.logger.error("Missing 'items' field in request data")
             return jsonify({'success': False, 'error': 'Missing required field: items'}), 400
 
         items = data.get('items', [])
         payment_method = data.get('payment_method', 'cash')
         patient_id = data.get('patient_id')
         
+        app.logger.info(f"Processing sale with {len(items)} items, payment method: {payment_method}")
+        
         if not items:
+            app.logger.warning("Sale attempted with empty items list")
             return jsonify({'success': False, 'error': 'No items in cart'}), 400
             
         # Validate each item
-        for item in items:
+        for index, item in enumerate(items):
             if not isinstance(item, dict):
+                app.logger.error(f"Invalid item format at index {index}: {item}")
                 return jsonify({'success': False, 'error': 'Invalid item format'}), 400
             if 'drug_id' not in item:
+                app.logger.error(f"Missing drug_id in item at index {index}: {item}")
                 return jsonify({'success': False, 'error': 'Missing drug_id in item'}), 400
             if 'quantity' not in item:
+                app.logger.error(f"Missing quantity in item at index {index}: {item}")
                 return jsonify({'success': False, 'error': 'Missing quantity in item'}), 400
             if 'unit_price' not in item:
+                app.logger.error(f"Missing unit_price in item at index {index}: {item}")
                 return jsonify({'success': False, 'error': 'Missing unit_price in item'}), 400
 
         try:
@@ -5465,6 +5476,8 @@ def process_sale():
                 bulk_sale_number = f"BULK-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
 
             total_amount = sum(float(item.get('unit_price', 0)) * int(item.get('quantity', 0)) for item in items)
+            
+            app.logger.info(f"Creating sale with total amount: {total_amount}")
             
             sale = Sale(
                 sale_number=generate_sale_number(),
@@ -5488,10 +5501,12 @@ def process_sale():
                 total_price = unit_price * quantity
                 
                 if not drug_id or quantity <= 0:
+                    app.logger.warning(f"Skipping invalid item: drug_id={drug_id}, quantity={quantity}")
                     continue
                 
                 drug = db.session.get(Drug, drug_id)
                 if not drug:
+                    app.logger.error(f"Drug with ID {drug_id} not found")
                     db.session.rollback()
                     return jsonify({
                         'success': False,
@@ -5499,6 +5514,7 @@ def process_sale():
                     }), 400
                 
                 if drug.remaining_quantity < quantity:
+                    app.logger.error(f"Insufficient stock for drug {drug.name}: requested {quantity}, available {drug.remaining_quantity}")
                     db.session.rollback()
                     return jsonify({
                         'success': False,
@@ -5538,6 +5554,8 @@ def process_sale():
             
             db.session.commit()
             
+            app.logger.info(f"Sale {sale.sale_number} processed successfully")
+            
             return jsonify({
                 'success': True,
                 'sale_id': sale.id,
@@ -5555,17 +5573,17 @@ def process_sale():
             
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Error processing sale items: {str(e)}", exc_info=True)
+            app.logger.error(f"Error processing sale items: {str(e)}", exc_info=True)
             raise e
             
     except Exception as e:
-        current_app.logger.error(f"Error processing sale: {str(e)}", exc_info=True)
+        app.logger.error(f"Error processing sale: {str(e)}", exc_info=True)
         return jsonify({
             'success': False, 
             'error': 'Failed to process sale',
             'details': str(e)
         }), 500
-
+        
 @app.route('/pharmacist/sale/<int:sale_id>/receipt')
 @login_required
 def generate_receipt(sale_id):

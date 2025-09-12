@@ -349,7 +349,7 @@ $(document).ready(function() {
         $('#dosageContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading dosage information...</div>');
         $('#dosageModal').modal('show');
         
-        $.get(`/pharmacist/drugs/${drugId}/dosage`, function(data) {
+        $.get(`/pharmacist/drugs/${drug_id}/dosage`, function(data) {
             if (data.dosage) {
                 let dosageHtml = `
                     <div class="dosage-info">
@@ -403,7 +403,7 @@ $(document).ready(function() {
                         <i class="fas fa-info-circle"></i> No dosage information available for this drug.
                     </div>
                     <div class="text-center">
-                        <button class="btn btn-primary" id="requestDosageBtn" data-id="${drugId}">
+                        <button class="btn btn-primary" id="requestDosageBtn" data-id="${drug_id}">
                             <i class="fas fa-plus"></i> Request Dosage Information
                         </button>
                     </div>
@@ -416,11 +416,10 @@ $(document).ready(function() {
 
     // Request dosage information (placeholder - would need backend implementation)
     $(document).on('click', '#requestDosageBtn', function() {
-        const drugId = $(this).data('id');
-        alert(`Dosage information request sent for drug ID: ${drugId}`);
+        const drug_id = $(this).data('id');
+        alert(`Dosage information request sent for drug ID: ${drug_id}`);
         $('#dosageModal').modal('hide');
     });
-
 
     // Cart Management Functions
     function getCart() {
@@ -438,7 +437,7 @@ $(document).ready(function() {
         let itemCount = 0;
         
         cart.items.forEach(item => {
-            total += item.price * item.quantity;
+            total += item.unit_price * item.quantity;
             itemCount += item.quantity;
         });
         
@@ -467,27 +466,27 @@ $(document).ready(function() {
         let html = '';
         cart.items.forEach(item => {
             html += `
-                <div class="cart-item" data-id="${item.drugId}">
+                <div class="cart-item" data-id="${item.drug_id}">
                     <div class="item-info">
-                        <h5>${item.drugName}</h5>
+                        <h5>${item.drug_name}</h5>
                         <div class="item-meta">
-                            <span class="item-price">Ksh ${item.price.toFixed(2)}</span>
+                            <span class="item-price">Ksh ${item.unit_price.toFixed(2)}</span>
                             <span class="item-stock">${item.currentStock} in stock</span>
                         </div>
                     </div>
                     <div class="item-controls">
-                        <button class="btn btn-sm btn-outline-secondary btn-decrease" data-id="${item.drugId}">
+                        <button class="btn btn-sm btn-outline-secondary btn-decrease" data-id="${item.drug_id}">
                             <i class="fas fa-minus"></i>
                         </button>
                         <input type="number" class="form-control form-control-sm item-quantity" 
                             value="${item.quantity}" min="1" max="${item.currentStock}"
-                            data-id="${item.drugId}">
-                        <button class="btn btn-sm btn-outline-secondary btn-increase" data-id="${item.drugId}">
+                            data-id="${item.drug_id}">
+                        <button class="btn btn-sm btn-outline-secondary btn-increase" data-id="${item.drug_id}">
                             <i class="fas fa-plus"></i>
                         </button>
                     </div>
-                    <div class="item-total">Ksh ${(item.price * item.quantity).toFixed(2)}</div>
-                    <button class="btn btn-sm btn-outline-danger btn-remove" data-id="${item.drugId}">
+                    <div class="item-total">Ksh ${(item.unit_price * item.quantity).toFixed(2)}</div>
+                    <button class="btn btn-sm btn-outline-danger btn-remove" data-id="${item.drug_id}">
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
@@ -499,9 +498,9 @@ $(document).ready(function() {
     // Event Handlers
     $(document).on('click', '.btn-add-to-cart', function() {
         const $btn = $(this);
-        const drugId = $btn.data('id');
-        const drugName = $btn.data('name');
-        const price = parseFloat($btn.data('price'));
+        const drug_id = $btn.data('id');
+        const drug_name = $btn.data('name');
+        const unit_price = parseFloat($btn.data('price'));
         const currentStock = parseInt($btn.data('stock'));
         
         if (currentStock <= 0) {
@@ -510,25 +509,25 @@ $(document).ready(function() {
         }
         
         let cart = getCart();
-        const existingItem = cart.items.find(item => item.drugId == drugId);
+        const existingItem = cart.items.find(item => item.drug_id == drug_id);
         
         if (existingItem) {
             if (existingItem.quantity < currentStock) {
                 existingItem.quantity++;
-                showAlert(`Increased quantity of ${drugName} to ${existingItem.quantity}`, 'success');
+                showAlert(`Increased quantity of ${drug_name} to ${existingItem.quantity}`, 'success');
             } else {
                 showAlert(`Cannot add more than available stock (${currentStock})`, 'warning');
                 return;
             }
         } else {
             cart.items.push({
-                drugId: drugId,
-                drugName: drugName,
-                price: price,
+                drug_id: drug_id,
+                drug_name: drug_name,
+                unit_price: unit_price,
                 quantity: 1,
                 currentStock: currentStock
             });
-            showAlert(`${drugName} added to cart`, 'success');
+            showAlert(`${drug_name} added to cart`, 'success');
         }
         
         saveCart(cart);
@@ -536,39 +535,40 @@ $(document).ready(function() {
         updateCartSummary();
     });
 
+
     $(document).on('click', '.btn-increase', function() {
-        const drugId = $(this).data('id');
+        const drug_id = $(this).data('id');
         const cart = getCart();
-        const item = cart.items.find(item => item.drugId == drugId);
+        const item = cart.items.find(item => item.drug_id == drug_id);
         
         if (item.quantity < item.currentStock) {
             item.quantity++;
             $(this).siblings('.item-quantity').val(item.quantity);
-            updateCartItem(drugId, item);
+            updateCartItem(drug_id, item);
         } else {
             showAlert(`Cannot add more than available stock (${item.currentStock})`, 'warning');
         }
     });
 
     $(document).on('click', '.btn-decrease', function() {
-        const drugId = $(this).data('id');
+        const drug_id = $(this).data('id');
         const cart = getCart();
-        const item = cart.items.find(item => item.drugId == drugId);
+        const item = cart.items.find(item => item.drug_id == drug_id);
         
         if (item.quantity > 1) {
             item.quantity--;
             $(this).siblings('.item-quantity').val(item.quantity);
-            updateCartItem(drugId, item);
+            updateCartItem(drug_id, item);
         }
     });
 
     $(document).on('change', '.item-quantity', function() {
-        const drugId = $(this).data('id');
+        const drug_id = $(this).data('id');
         const newQty = parseInt($(this).val()) || 1;
         const maxQty = parseInt($(this).attr('max')) || 100;
         
         const cart = getCart();
-        const item = cart.items.find(item => item.drugId == drugId);
+        const item = cart.items.find(item => item.drug_id == drug_id);
         
         if (newQty > maxQty) {
             $(this).val(maxQty);
@@ -582,13 +582,13 @@ $(document).ready(function() {
         }
         
         saveCart(cart);
-        updateCartItem(drugId, item);
+        updateCartItem(drug_id, item);
     });
 
     $(document).on('click', '.btn-remove', function() {
-        const drugId = $(this).data('id');
+        const drug_id = $(this).data('id');
         const cart = getCart();
-        const itemIndex = cart.items.findIndex(item => item.drugId == drugId);
+        const itemIndex = cart.items.findIndex(item => item.drug_id == drug_id);
         
         if (itemIndex !== -1) {
             const removedItem = cart.items[itemIndex];
@@ -596,7 +596,7 @@ $(document).ready(function() {
             saveCart(cart);
             renderCartItems();
             updateCartSummary();
-            showAlert(`${removedItem.drugName} removed from cart`, 'info');
+            showAlert(`${removedItem.drug_name} removed from cart`, 'info');
         }
     });
 
@@ -608,9 +608,9 @@ $(document).ready(function() {
     });
 
     // Helper Functions
-    function updateCartItem(drugId, item) {
-        const $itemElement = $(`.cart-item[data-id="${drugId}"]`);
-        $itemElement.find('.item-total').text('Ksh ' + (item.price * item.quantity).toFixed(2));
+    function updateCartItem(drug_id, item) {
+        const $itemElement = $(`.cart-item[data-id="${drug_id}"]`);
+        $itemElement.find('.item-total').text('Ksh ' + (item.unit_price * item.quantity).toFixed(2));
         saveCart(getCart());
         updateCartSummary();
     }
@@ -634,23 +634,25 @@ $(document).ready(function() {
         renderCartItems();
         updateCartSummary();
     });
-    
+        
     $('#confirmSaleBtn').click(function() {
         const cart = getCart();
         const paymentMethod = $('#paymentMethod').val();
+        
+        console.log('Cart contents:', cart); // Debug logging
         
         if (cart.items.length === 0) {
             alert('Your cart is empty. Add items before proceeding.');
             return;
         }
 
-        // Prepare items with all required fields
+        // Prepare items with all required fields - FIXED PROPERTY NAMES
         const items = cart.items.map(item => ({
-            drug_id: item.drugId,         // Must match backend expectation
-            drug_name: item.drugName,      // Additional identifier
+            drug_id: item.drug_id,         // Must match backend expectation
+            drug_name: item.drug_name,     // Additional identifier
             quantity: item.quantity,
-            unit_price: item.price,        // Critical for calculations
-            total_price: item.price * item.quantity
+            unit_price: item.unit_price,   // Critical for calculations
+            total: item.unit_price * item.quantity
         }));
 
         const saleData = {
@@ -658,6 +660,8 @@ $(document).ready(function() {
             payment_method: paymentMethod,
             is_quick_sale: true            // If your backend expects this
         };
+
+        console.log('Sending sale data:', saleData); // Debug logging
 
         // Show loading state
         $(this).prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Processing...');
@@ -668,6 +672,7 @@ $(document).ready(function() {
             contentType: 'application/json',
             data: JSON.stringify(saleData),
             success: function(response) {
+                console.log('Sale successful:', response); // Debug logging
                 if (response.success) {
                     // Clear cart on success
                     saveCart({ items: [] });
@@ -680,7 +685,8 @@ $(document).ready(function() {
                     alert('Error: ' + (response.error || 'Failed to process sale'));
                 }
             },
-            error: function(xhr) {
+            error: function(xhr, status, error) {
+                console.error('Sale error:', error, 'Status:', status, 'Response:', xhr.responseText); // Enhanced error logging
                 let errorMsg = 'An error occurred. Please try again.';
                 if (xhr.responseJSON) {
                     errorMsg = xhr.responseJSON.error || errorMsg;
@@ -696,16 +702,24 @@ $(document).ready(function() {
         });
     });
 
+    // Helper function to show receipt
     function showReceipt(saleId) {
         $('#receiptContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading receipt...</div>');
         $('#receiptModal').modal('show');
         
         $.get(`/pharmacist/sale/${saleId}/receipt`, function(data) {
             $('#receiptContent').html(data);
-        }).fail(function() {
+        }).fail(function(xhr, status, error) {
+            console.error('Error loading receipt:', error, 'Status:', status); // Error logging
             $('#receiptContent').html('<div class="alert alert-danger">Failed to load receipt</div>');
         });
     }
+
+    // Initialize cart on page load
+    $(document).ready(function() {
+        renderCartItems();
+        updateCartSummary();
+    });
 
     // Load sales
     function loadSales() {
