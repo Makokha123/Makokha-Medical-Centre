@@ -5852,7 +5852,7 @@ def pharmacist_dispense():
             return jsonify({'error': 'Prescription ID is required'}), 400
         
         # Get prescription with related data
-        prescription = Prescription.query.options(
+        prescription = db.session.query(Prescription).options(
             db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug),
             db.joinedload(Prescription.patient)
         ).get(prescription_id)

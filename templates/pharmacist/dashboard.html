@@ -529,7 +529,7 @@ $(document).ready(function() {
         $cartItems.html(html);
     }
 
-    // Event Handlers
+    // Update the cart item structure to match backend expectations
     $(document).on('click', '.btn-add-to-cart', function() {
         const $btn = $(this);
         const drug_id = $btn.data('id');
@@ -555,11 +555,11 @@ $(document).ready(function() {
             }
         } else {
             cart.items.push({
-                drug_id: drug_id,
-                drug_name: drug_name,
-                unit_price: unit_price,
-                quantity: 1,
-                currentStock: currentStock
+                drug_id: drug_id,           // Match backend expectation
+                drug_name: drug_name,       // For display purposes
+                unit_price: unit_price,     // Match backend expectation
+                quantity: 1,                // Match backend expectation
+                currentStock: currentStock  // For validation
             });
             showAlert(`${drug_name} added to cart`, 'success');
         }
@@ -568,7 +568,6 @@ $(document).ready(function() {
         renderCartItems();
         updateCartSummary();
     });
-
 
     $(document).on('click', '.btn-increase', function() {
         const drug_id = $(this).data('id');
@@ -1088,17 +1087,16 @@ $(document).ready(function() {
                 // Clear cart first
                 saveCart({items: []});
                 
-                // Add prescription items to cart
+                // Add prescription items to cart with proper structure
                 const cart = {items: []};
                 data.items.forEach(function(item) {
                     cart.items.push({
-                        drugId: item.drug_id,
-                        drugName: item.drug_name,
-                        price: item.drug.selling_price,
+                        drug_id: item.drug_id,           // Match backend expectation
+                        drug_name: item.drug.name,       // For display
+                        unit_price: item.drug.selling_price, // Match backend expectation
                         quantity: item.quantity,
-                        maxQuantity: item.quantity,
                         currentStock: item.drug.remaining_quantity,
-                        prescriptionItemId: item.id
+                        prescription_item_id: item.id    // For tracking
                     });
                 });
                 
@@ -1114,7 +1112,7 @@ $(document).ready(function() {
             }
         });
     });
-    
+
     // Dispense prescription
     $('#dispensePrescriptionBtn').click(function() {
         const prescriptionId = $(this).data('prescription-id');
@@ -1127,9 +1125,9 @@ $(document).ready(function() {
         }
         
         const itemsData = cart.items.map(item => ({
-            drug_id: item.drugId,
+            drug_id: item.drug_id,           // Match backend expectation
             quantity: item.quantity,
-            prescription_item_id: item.prescriptionItemId
+            prescription_item_id: item.prescription_item_id
         }));
         
         $.ajax({
@@ -1157,16 +1155,78 @@ $(document).ready(function() {
                     
                     // Refresh sales list
                     loadSales();
+                    
+                    // Show success message
+                    showAlert('Prescription dispensed successfully!', 'success');
                 } else {
                     alert('Error: ' + (response.error || 'Failed to dispense prescription'));
                 }
             },
             error: function(xhr) {
-                alert('Error: ' + (xhr.responseJSON?.error || 'Failed to dispense prescription'));
+                let errorMsg = 'Failed to dispense prescription';
+                if (xhr.responseJSON) {
+                    errorMsg = xhr.responseJSON.error || errorMsg;
+                    if (xhr.responseJSON.details) {
+                        errorMsg += '\n' + xhr.responseJSON.details;
+                    }
+                }
+                alert(errorMsg);
             }
         });
     });
-    
+
+    // Global error handler for AJAX requests
+    $(document).ajaxError(function(event, jqXHR, ajaxSettings, thrownError) {
+        console.error('AJAX Error:', {
+            url: ajaxSettings.url,
+            status: jqXHR.status,
+            error: thrownError,
+            response: jqXHR.responseText
+        });
+        
+        // Don't show alert for failed image requests, etc.
+        if (ajaxSettings.url.includes('/pharmacist/')) {
+            let errorMsg = 'An error occurred. Please try again.';
+            if (jqXHR.responseJSON && jqXHR.responseJSON.error) {
+                errorMsg = jqXHR.responseJSON.error;
+            }
+            showAlert(errorMsg, 'danger');
+        }
+    });
+
+    // Enhanced showAlert function
+    function showAlert(message, type = 'info', duration = 5000) {
+        const alertId = 'alert-' + Date.now();
+        const alert = $(`
+            <div id="${alertId}" class="alert alert-${type} alert-dismissible fade show" role="alert">
+                <i class="fas fa-${getAlertIcon(type)} mr-2"></i>
+                ${message}
+                <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+        `);
+        
+        $('#alertsContainer').append(alert);
+        
+        // Auto-dismiss after duration
+        setTimeout(() => {
+            $(`#${alertId}`).alert('close');
+        }, duration);
+        
+        return alertId;
+    }
+
+    function getAlertIcon(type) {
+        const icons = {
+            'success': 'check-circle',
+            'danger': 'exclamation-circle',
+            'warning': 'exclamation-triangle',
+            'info': 'info-circle'
+        };
+        return icons[type] || 'info-circle';
+    }
+
     $('#confirmSaleBtn').click(function() {
         const $btn = $(this);
         const cart = getCart();
