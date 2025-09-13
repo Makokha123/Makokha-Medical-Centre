@@ -5790,11 +5790,8 @@ def get_prescription_details(prescription_id):
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
-        prescription = Prescription.query.options(
-            db.joinedload(Prescription.patient),
-            db.joinedload(Prescription.doctor),
-            db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)
-        ).get(prescription_id)
+        # Replace the legacy Query.get() with Session.get()
+        prescription = db.session.get(Prescription, prescription_id)
         
         if not prescription:
             return jsonify({'error': 'Prescription not found'}), 404
@@ -5994,6 +5991,7 @@ def get_sale_receipt(sale_id):
     
     except Exception as e:
         current_app.logger.error(f"Error generating receipt: {str(e)}")
+        
         return jsonify({'error': 'Failed to generate receipt'}), 500
     
 # Doctor Routes
