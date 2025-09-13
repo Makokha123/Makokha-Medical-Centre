@@ -5334,83 +5334,6 @@ def export_drugs():
     
     return response
 
-@app.route('/pharmacist/dispense', methods=['GET', 'POST'])
-@login_required
-def pharmacist_dispense():
-    if request.method == 'GET':
-        return render_template('pharmacist/dispense.html')
-    
-    try:
-        data = request.get_json()
-        prescription_id = data.get('prescription_id')
-        
-        if not prescription_id:
-            return jsonify({'error': 'Prescription ID is required'}), 400
-        
-        prescription = Prescription.query.options(
-            db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)
-        ).get(prescription_id)
-        
-        if not prescription:
-            return jsonify({'error': 'Prescription not found'}), 404
-        
-        if prescription.status != 'pending':
-            return jsonify({'error': 'Prescription has already been processed'}), 400
-        
-        # Verify all items are available
-        for item in prescription.items:
-            if item.drug.remaining_quantity < item.quantity:
-                return jsonify({
-                    'error': f'Insufficient stock for {item.drug.name}',
-                    'details': f'Requested: {item.quantity}, Available: {item.drug.remaining_quantity}',
-                    'drug_id': item.drug.id
-                }), 400
-        
-        total_amount = sum(item.drug.selling_price * item.quantity for item in prescription.items)
-        
-        sale = Sale(
-            sale_number=generate_sale_number(),
-            prescription_id=prescription.id,
-            patient_id=prescription.patient_id,
-            total_amount=total_amount,
-            payment_method=data.get('payment_method', 'cash'),
-            pharmacist_id=current_user.id
-        )
-        db.session.add(sale)
-        
-        for item in prescription.items:
-            sale_item = SaleItem(
-                sale=sale,
-                drug_id=item.drug_id,
-                quantity=item.quantity,
-                unit_price=item.drug.selling_price,
-                prescription_item_id=item.id
-            )
-            db.session.add(sale_item)
-            item.drug.remaining_quantity -= item.quantity
-        
-        prescription.status = 'dispensed'
-        prescription.dispensed_at = datetime.utcnow()
-        prescription.pharmacist_id = current_user.id
-        
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'sale_id': sale.id,
-            'sale_number': sale.sale_number,
-            'total_amount': total_amount,
-            'message': 'Prescription dispensed successfully'
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Error dispensing prescription: {str(e)}", exc_info=True)
-        return jsonify({
-            'error': 'Failed to process prescription',
-            'details': str(e)
-        }), 500
-
 @app.route('/pharmacist/sales')
 @login_required
 def pharmacist_sales():
@@ -5823,16 +5746,53 @@ def refund_receipt(refund_id):
     
     return render_template('pharmacist/refund_receipt.html', refund=refund)
 
+    
+# Pharmacist Prescription Routes
+@app.route('/pharmacist/prescriptions')
+@login_required
+def patient_prescriptions():
+    """Get all pending prescriptions for pharmacist"""
+    if current_user.role != 'pharmacist':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        # Get pending prescriptions with related data
+        prescriptions = Prescription.query.filter_by(status='pending').options(
+            db.joinedload(Prescription.patient),
+            db.joinedload(Prescription.doctor),
+            db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)
+        ).order_by(Prescription.created_at.asc()).all()
+        
+        prescription_data = []
+        for prescription in prescriptions:
+            prescription_data.append({
+                'id': prescription.id,
+                'patient_name': prescription.patient.decrypted_name,
+                'patient_number': prescription.patient.op_number or prescription.patient.ip_number,
+                'doctor_name': prescription.doctor.username,
+                'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M'),
+                'items_count': len(prescription.items),
+                'status': prescription.status
+            })
+        
+        return jsonify(prescription_data)
+    
+    except Exception as e:
+        current_app.logger.error(f"Error fetching prescriptions: {str(e)}")
+        return jsonify({'error': 'Failed to fetch prescriptions'}), 500
 
 
 @app.route('/pharmacist/prescription/<int:prescription_id>')
 @login_required
 def get_prescription_details(prescription_id):
+    """Get detailed information about a specific prescription"""
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
         prescription = Prescription.query.options(
+            db.joinedload(Prescription.patient),
+            db.joinedload(Prescription.doctor),
             db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)
         ).get(prescription_id)
         
@@ -5845,11 +5805,15 @@ def get_prescription_details(prescription_id):
                 'id': item.id,
                 'drug_id': item.drug_id,
                 'drug_name': item.drug.name,
+                'drug_number': item.drug.drug_number,
+                'dosage': item.dosage,
+                'frequency': item.frequency,
+                'duration': item.duration,
                 'quantity': item.quantity,
+                'notes': item.notes,
                 'drug': {
                     'id': item.drug.id,
                     'name': item.drug.name,
-                    'selling_price': float(item.drug.selling_price),
                     'remaining_quantity': item.drug.remaining_quantity
                 }
             })
@@ -5858,33 +5822,42 @@ def get_prescription_details(prescription_id):
             'id': prescription.id,
             'patient_id': prescription.patient_id,
             'patient_name': prescription.patient.decrypted_name,
-            'doctor_name': prescription.doctor.decrypted_name,
+            'patient_number': prescription.patient.op_number or prescription.patient.ip_number,
+            'doctor_id': prescription.doctor_id,
+            'doctor_name': prescription.doctor.username,
+            'notes': prescription.notes,
+            'status': prescription.status,
             'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M'),
-            'items': items_data,
-            'items_count': len(items_data)
+            'items': items_data
         })
     
     except Exception as e:
         current_app.logger.error(f"Error fetching prescription details: {str(e)}")
         return jsonify({'error': 'Failed to fetch prescription details'}), 500
 
+
 @app.route('/pharmacist/dispense', methods=['POST'])
 @login_required
-def dispense_prescription():
+def pharmacist_dispense():
+    """Dispense a prescription and update inventory"""
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
         prescription_id = data.get('prescription_id')
+        payment_method = data.get('payment_method', 'cash')
         
         if not prescription_id:
             return jsonify({'error': 'Prescription ID is required'}), 400
         
+        # Get prescription with related data
         prescription = Prescription.query.options(
             db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug),
-            db.joinedload(Prescription.patient),
-            db.joinedload(Prescription.doctor)
+            db.joinedload(Prescription.patient)
         ).get(prescription_id)
         
         if not prescription:
@@ -5893,6 +5866,7 @@ def dispense_prescription():
         if prescription.status != 'pending':
             return jsonify({'error': 'Prescription has already been processed'}), 400
         
+        # Verify all items are available
         for item in prescription.items:
             if item.drug.remaining_quantity < item.quantity:
                 return jsonify({
@@ -5901,34 +5875,67 @@ def dispense_prescription():
                     'drug_id': item.drug.id
                 }), 400
         
+        # Calculate total amount
         total_amount = sum(item.drug.selling_price * item.quantity for item in prescription.items)
         
+        # Create sale record
         sale = Sale(
             sale_number=generate_sale_number(),
-            prescription_id=prescription.id,
             patient_id=prescription.patient_id,
+            user_id=current_user.id,
             total_amount=total_amount,
-            payment_method=data.get('payment_method', 'cash'),
-            pharmacist_id=current_user.id
+            payment_method=payment_method,
+            status='completed'
         )
         db.session.add(sale)
+        db.session.flush()  # Get sale ID
         
+        # Create sale items and update drug inventory
         for item in prescription.items:
             sale_item = SaleItem(
-                sale=sale,
+                sale_id=sale.id,
                 drug_id=item.drug_id,
+                drug_name=item.drug.name,
+                drug_specification=item.drug.specification,
+                description=f"Prescription: {item.drug.name}",
                 quantity=item.quantity,
                 unit_price=item.drug.selling_price,
-                prescription_item_id=item.id
+                total_price=item.drug.selling_price * item.quantity
             )
             db.session.add(sale_item)
-            item.drug.remaining_quantity -= item.quantity
+            
+            # Update drug inventory
+            item.drug.sold_quantity += item.quantity
         
+        # Update prescription status
         prescription.status = 'dispensed'
-        prescription.dispensed_at = datetime.utcnow()
-        prescription.pharmacist_id = current_user.id
+        
+        # Create transaction record
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='sale',
+            amount=total_amount,
+            user_id=current_user.id,
+            reference_id=sale.id,
+            notes=f"Prescription dispense: {prescription.id}"
+        )
+        db.session.add(transaction)
         
         db.session.commit()
+        
+        # Log the action
+        log_audit(
+            'dispense_prescription',
+            'Prescription',
+            prescription.id,
+            None,
+            {
+                'sale_id': sale.id,
+                'sale_number': sale.sale_number,
+                'total_amount': total_amount,
+                'payment_method': payment_method
+            }
+        )
         
         return jsonify({
             'success': True,
@@ -5945,23 +5952,50 @@ def dispense_prescription():
             'error': 'Failed to process prescription',
             'details': str(e)
         }), 500
-    
-    
-@app.route('/pharmacist/prescriptions')
+@app.route('/pharmacist/sale/<int:sale_id>/receipt')
 @login_required
-def pharmacist_prescriptions():
+def get_sale_receipt(sale_id):
+    """Get receipt for a completed sale"""
     if current_user.role != 'pharmacist':
-        flash('Unauthorized access', 'danger')
-        return redirect(url_for('home'))
+        return jsonify({'error': 'Unauthorized'}), 403
     
-    # Get all completed prescriptions that haven't been dispensed yet
-    prescriptions = Prescription.query.filter(
-        Prescription.status == 'completed',
-    ).order_by(Prescription.created_at.asc()).all()
+    try:
+        sale = Sale.query.options(
+            db.joinedload(Sale.patient),
+            db.joinedload(Sale.items),
+            db.joinedload(Sale.user)
+        ).get(sale_id)
+        
+        if not sale:
+            return jsonify({'error': 'Sale not found'}), 404
+        
+        receipt_data = {
+            'sale_id': sale.id,
+            'sale_number': sale.sale_number,
+            'date': sale.created_at.strftime('%Y-%m-%d %H:%M'),
+            'patient_name': sale.patient.decrypted_name if sale.patient else 'Walk-in Customer',
+            'patient_number': sale.patient.op_number or sale.patient.ip_number if sale.patient else 'N/A',
+            'pharmacist_name': sale.user.username,
+            'payment_method': sale.payment_method,
+            'total_amount': sale.total_amount,
+            'items': []
+        }
+        
+        for item in sale.items:
+            receipt_data['items'].append({
+                'name': item.drug_name,
+                'specification': item.drug_specification,
+                'quantity': item.quantity,
+                'unit_price': item.unit_price,
+                'total_price': item.total_price
+            })
+        
+        return jsonify(receipt_data)
     
-    return render_template('pharmacist/prescriptions.html',
-        prescriptions=prescriptions
-    )
+    except Exception as e:
+        current_app.logger.error(f"Error generating receipt: {str(e)}")
+        return jsonify({'error': 'Failed to generate receipt'}), 500
+    
 # Doctor Routes
 @app.route('/doctor')
 @login_required
@@ -8100,46 +8134,6 @@ def receptionist_billing():
         services=services,
         lab_tests=lab_tests
     )
-
-@app.route('/api/patient/<int:patient_id>/prescriptions')
-@login_required
-def patient_prescriptions(patient_id):
-    if current_user.role not in ['receptionist', 'doctor']:
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    prescriptions = Prescription.query.filter_by(
-        patient_id=patient_id,
-        status='pending'
-    ).all()
-    
-    prescriptions_data = []
-    for prescription in prescriptions:
-        items_data = []
-        for item in prescription.items:
-            if item.status == 'pending' and item.drug:
-                items_data.append({
-                    'id': item.id,
-                    'drug_id': item.drug_id,
-                    'drug_name': item.drug.name,
-                    'drug_number': item.drug.drug_number,
-                    'quantity': item.quantity,
-                    'unit_price': item.drug.selling_price,
-                    'dosage': item.dosage,
-                    'frequency': item.frequency,
-                    'duration': item.duration
-                })
-        
-        if items_data:  # Only include prescriptions with pending items
-            prescriptions_data.append({
-                'id': prescription.id,
-                'patient_id': prescription.patient_id,
-                'doctor_id': prescription.doctor_id,
-                'doctor_name': prescription.doctor.username,
-                'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M'),
-                'items': items_data
-            })
-    
-    return jsonify(prescriptions_data)
 
 @app.route('/api/lab-tests')
 @login_required
