@@ -1,8 +1,9 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+{% extends "base.html" %}
+
+{% block content %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+            
     <title>Pharmacist Dashboard</title>
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -257,36 +258,6 @@
     </style>
 </head>
 <body>
-    <!-- Header -->
-    <div class="header">
-        <h4 class="mb-0">Pharmacist Dashboard</h4>
-        <div class="d-flex align-items-center">
-            <span class="me-3">Welcome, Pharmacist</span>
-            <div class="dropdown">
-                <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="userDropdown" data-bs-toggle="dropdown">
-                    <i class="bi bi-person-circle"></i>
-                </button>
-                <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="#"><i class="bi bi-person me-2"></i>Profile</a></li>
-                    <li><a class="dropdown-item" href="#"><i class="bi bi-gear me-2"></i>Settings</a></li>
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
-                </ul>
-            </div>
-        </div>
-    </div>
-
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <ul class="sidebar-menu">
-            <li><a href="#" class="active"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
-            <li><a href="#"><i class="bi bi-capsule"></i> Drugs Inventory</a></li>
-            <li><a href="#"><i class="bi bi-cart"></i> Sales</a></li>
-            <li><a href="#"><i class="bi bi-arrow-left-right"></i> Refunds</a></li>
-            <li><a href="#"><i class="bi bi-prescription2"></i> Prescriptions</a></li>
-            <li><a href="#"><i class="bi bi-clipboard-data"></i> Reports</a></li>
-        </ul>
-    </div>
 
     <!-- Main Content -->
     <div class="main-content">
@@ -591,7 +562,8 @@
             let currentPrescription = null;
             let drugsData = []; // Store drugs data for cart operations
             let currentRefundItems = []; // Store refund items
-            
+            let currentRefundSaleId = null;
+
             // Initialize toasts
             const successToast = new bootstrap.Toast(document.getElementById('successToast'));
             const errorToast = new bootstrap.Toast(document.getElementById('errorToast'));
@@ -932,6 +904,42 @@
                 });
             }
             
+            // Show receipt - Opens your receipt template in new window
+            function showReceipt(saleId) {
+                // Open receipt in a new window with your template
+                const receiptWindow = window.open(`/pharmacist/sale/${saleId}/receipt`, '_blank');
+                
+                // Focus on the new window if possible
+                if (receiptWindow) {
+                    receiptWindow.focus();
+                }
+                
+                // Clear cart and update UI after successful sale
+                cart = [];
+                updateCartDisplay();
+                loadDashboardStats(); // Refresh stats
+                
+                showSuccessToast('Sale processed successfully!');
+            }
+            
+            // Show refund receipt - Opens your refund template in new window
+            function showRefundReceipt(refundId) {
+                // Open refund receipt in a new window with your template
+                const refundWindow = window.open(`/pharmacist/refund/${refundId}/receipt`, '_blank');
+                
+                // Focus on the new window if possible
+                if (refundWindow) {
+                    refundWindow.focus();
+                }
+                
+                showSuccessToast('Refund processed successfully!');
+                
+                // Clear the refund search form
+                $('#refund-search').val('');
+                $('#sale-details').addClass('d-none');
+                $('#refund-results').empty();
+            }
+            
             // Confirm sale - REAL BACKEND
             function confirmSale() {
                 if (cart.length === 0) {
@@ -940,7 +948,7 @@
                 }
                 
                 // Ask for payment method
-                const paymentMethod = prompt('Enter payment method (cash, card, mobile):', 'cash');
+                const paymentMethod = prompt('Enter payment method (cash, card, mobile, insurance):', 'cash');
                 
                 if (!paymentMethod) {
                     return;
@@ -960,10 +968,7 @@
                     success: function(response) {
                         if (response.success) {
                             currentSale = response;
-                            showReceipt(response.sale_id);
-                            cart = [];
-                            updateCartDisplay();
-                            loadDashboardStats(); // Refresh stats
+                            showReceipt(response.sale_id); // This will open your receipt template
                         } else {
                             showErrorToast(response.error || 'Failed to process sale');
                         }
@@ -971,85 +976,6 @@
                     error: function(xhr) {
                         const error = xhr.responseJSON?.error || 'Failed to process sale';
                         showErrorToast(error);
-                    }
-                });
-            }
-            
-            // Show receipt
-            function showReceipt(saleId) {
-                // Get receipt data from backend
-                $.ajax({
-                    url: `/pharmacist/sale/${saleId}/receipt`,
-                    method: 'GET',
-                    success: function(response) {
-                        let itemsHTML = '';
-                        response.items.forEach(item => {
-                            itemsHTML += `
-                                <tr>
-                                    <td>${item.name}</td>
-                                    <td>${item.quantity}</td>
-                                    <td>Ksh ${item.unit_price.toFixed(2)}</td>
-                                    <td>Ksh ${item.total_price.toFixed(2)}</td>
-                                </tr>
-                            `;
-                        });
-                        
-                        const receiptHTML = `
-                            <div class="receipt">
-                                <div class="text-center mb-4">
-                                    <h4>Medical Pharmacy</h4>
-                                    <p>123 Health Street, Medical Town</p>
-                                    <p>Tel: 0123-456-789</p>
-                                </div>
-                                <hr>
-                                <div class="d-flex justify-content-between mb-3">
-                                    <div>
-                                        <strong>Sale #:</strong> ${response.sale_number}
-                                    </div>
-                                    <div>
-                                        <strong>Date:</strong> ${response.date}
-                                    </div>
-                                </div>
-                                <div class="mb-3">
-                                    <strong>Patient:</strong> ${response.patient_name}
-                                </div>
-                                <div class="mb-3">
-                                    <strong>Pharmacist:</strong> ${response.pharmacist_name}
-                                </div>
-                                <table class="table table-sm">
-                                    <thead>
-                                        <tr>
-                                            <th>Item</th>
-                                            <th>Qty</th>
-                                            <th>Price</th>
-                                            <th>Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${itemsHTML}
-                                    </tbody>
-                                    <tfoot>
-                                        <tr>
-                                            <td colspan="3" class="text-end"><strong>Total:</strong></td>
-                                            <td><strong>Ksh ${response.total_amount.toFixed(2)}</strong></td>
-                                        </tr>
-                                    </tfoot>
-                                </table>
-                                <div class="mb-3">
-                                    <strong>Payment Method:</strong> ${response.payment_method}
-                                </div>
-                                <hr>
-                                <div class="text-center mt-4">
-                                    <p>Thank you for your purchase!</p>
-                                </div>
-                            </div>
-                        `;
-                        
-                        $('#receipt-content').html(receiptHTML);
-                        $('#receiptModal').modal('show');
-                    },
-                    error: function() {
-                        showErrorToast('Failed to load receipt');
                     }
                 });
             }
@@ -1167,7 +1093,7 @@
             
             // Dispense prescription
             function dispensePrescription(prescriptionId) {
-                const paymentMethod = prompt('Enter payment method (cash, card, mobile):', 'cash');
+                const paymentMethod = prompt('Enter payment method (cash, card, mobile, insurance):', 'cash');
                 
                 if (!paymentMethod) {
                     return;
@@ -1229,6 +1155,8 @@
                             return;
                         }
                         
+                        // Store the sale_id and items for later use
+                        currentRefundSaleId = response.sale_id; // Store the sale_id
                         currentRefundItems = response.items;
                         
                         // Display sale details for refund
@@ -1259,6 +1187,7 @@
                                     <h5>Sale Details: ${response.sale_number}</h5>
                                 </div>
                                 <div class="card-body">
+                                    <p><strong>Sale ID:</strong> ${response.sale_id}</p>
                                     <p><strong>Patient:</strong> ${response.patient_name}</p>
                                     <p><strong>Date:</strong> ${response.created_at}</p>
                                     <p><strong>Total Amount:</strong> Ksh ${response.total_amount.toFixed(2)}</p>
@@ -1291,13 +1220,18 @@
                     }
                 });
             }
-            
+
             // Process refund
             function processRefund() {
                 const reason = $('#refund-reason').val().trim();
                 
                 if (!reason) {
                     alert('Please provide a reason for the refund');
+                    return;
+                }
+                
+                if (!currentRefundSaleId) {
+                    showErrorToast('Sale ID is missing. Please search for the sale again.');
                     return;
                 }
                 
@@ -1324,7 +1258,7 @@
                 }
                 
                 const refundData = {
-                    sale_id: currentRefundItems[0]?.sale_id,
+                    sale_id: currentRefundSaleId, // Include the sale_id
                     items: refundItems,
                     reason: reason,
                     csrf_token: csrfToken
@@ -1337,11 +1271,7 @@
                     data: JSON.stringify(refundData),
                     success: function(response) {
                         if (response.success) {
-                            showSuccessToast('Refund processed successfully');
-                            $('#sale-details').addClass('d-none');
-                            
-                            // Show refund receipt
-                            showRefundReceipt(response.refund_id);
+                            showRefundReceipt(response.refund_id); // This will open your refund receipt template
                         } else {
                             showErrorToast(response.error || 'Failed to process refund');
                         }
@@ -1349,84 +1279,6 @@
                     error: function(xhr) {
                         const error = xhr.responseJSON?.error || 'Failed to process refund';
                         showErrorToast(error);
-                    }
-                });
-            }
-            
-            // Show refund receipt
-            function showRefundReceipt(refundId) {
-                $.ajax({
-                    url: `/pharmacist/refund/${refundId}/receipt`,
-                    method: 'GET',
-                    success: function(response) {
-                        let itemsHTML = '';
-                        response.items.forEach(item => {
-                            itemsHTML += `
-                                <tr>
-                                    <td>${item.drug_name}</td>
-                                    <td>${item.quantity}</td>
-                                    <td>Ksh ${item.unit_price.toFixed(2)}</td>
-                                    <td>Ksh ${item.total_price.toFixed(2)}</td>
-                                </tr>
-                            `;
-                        });
-                        
-                        const receiptHTML = `
-                            <div class="receipt">
-                                <div class="text-center mb-4">
-                                    <h4>Medical Pharmacy</h4>
-                                    <p>123 Health Street, Medical Town</p>
-                                    <p>Tel: 0123-456-789</p>
-                                </div>
-                                <hr>
-                                <div class="d-flex justify-content-between mb-3">
-                                    <div>
-                                        <strong>Refund #:</strong> ${response.refund_number}
-                                    </div>
-                                    <div>
-                                        <strong>Date:</strong> ${new Date().toLocaleDateString()}
-                                    </div>
-                                </div>
-                                <div class="mb-3">
-                                    <strong>Original Sale #:</strong> ${response.sale_number}
-                                </div>
-                                <div class="mb-3">
-                                    <strong>Patient:</strong> ${response.patient_name}
-                                </div>
-                                <div class="mb-3">
-                                    <strong>Reason:</strong> ${response.reason}
-                                </div>
-                                <table class="table table-sm">
-                                    <thead>
-                                        <tr>
-                                            <th>Item</th>
-                                            <th>Qty</th>
-                                            <th>Price</th>
-                                            <th>Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${itemsHTML}
-                                    </tbody>
-                                    <tfoot>
-                                        <tr>
-                                            <td colspan="3" class="text-end"><strong>Refund Total:</strong></td>
-                                            <td><strong>Ksh ${response.total_amount.toFixed(2)}</strong></td>
-                                        </tr>
-                                    </tfoot>
-                                </table>
-                                <hr>
-                                <div class="text-center mt-4">
-                                    <p>Refund processed successfully</p>
-                                </div>
-                            </div>
-                        `;
-                        
-                        $('#refund-receipt-content').html(receiptHTML);
-                        $('#refundReceiptModal').modal('show');
-                    },
-                    error: function() {
-                        showErrorToast('Failed to load refund receipt');
                     }
                 });
             }
@@ -1478,5 +1330,4 @@
             loadPrescriptions();
         });
     </script>
-</body>
-</html>
+{% endblock %}

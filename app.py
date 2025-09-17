@@ -5609,7 +5609,7 @@ def generate_receipt(sale_id):
             db.joinedload(Sale.items).joinedload(SaleItem.drug)
         ).all()
     
-    return render_template('receipt.html', 
+    return render_template('pharmacist/receipt.html', 
                          sale=sale,
                          related_sales=related_sales,
                          now=datetime.now())
