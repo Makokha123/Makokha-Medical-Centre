@@ -1,2090 +1,1482 @@
-{% extends "base.html" %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pharmacist Dashboard</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <!-- DataTables CSS -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+    <style>
+        :root {
+            --sidebar-width: 250px;
+            --header-height: 60px;
+            --primary-color: #3498db;
+            --secondary-color: #2c3e50;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --info-color: #17a2b8;
+            --light-color: #f8f9fa;
+            --dark-color: #343a40;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f7fa;
+            margin: 0;
+            padding: 0;
+            color: #333;
+        }
+        
+        .main-content {
+            margin-left: var(--sidebar-width);
+            padding: 20px;
+            min-height: calc(100vh - var(--header-height));
+        }
+        
+        .header {
+            background-color: white;
+            height: var(--header-height);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            position: sticky;
+            top: 0;
+            z-index: 999;
+        }
+        
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: var(--sidebar-width);
+            background-color: var(--secondary-color);
+            color: white;
+            padding-top: var(--header-height);
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+        
+        .sidebar-menu {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .sidebar-menu li {
+            padding: 0;
+        }
+        
+        .sidebar-menu a {
+            display: block;
+            padding: 12px 20px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        
+        .sidebar-menu a:hover,
+        .sidebar-menu a.active {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        .sidebar-menu i {
+            margin-right: 10px;
+            width: 20px;
+            text-align: center;
+        }
+        
+        .card {
+            border: none;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            margin-bottom: 1.5rem;
+            height: 100%;
+        }
+        
+        .card-header {
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            padding: 1rem 1.25rem;
+            font-weight: 600;
+        }
+        
+        .badge {
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+        
+        .table th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }
+        
+        .nav-tabs .nav-link {
+            color: #495057;
+            background-color: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            padding: 12px 20px;
+            font-weight: 500;
+        }
+        
+        .nav-tabs .nav-link:hover {
+            border-color: transparent;
+            color: var(--primary-color);
+        }
+        
+        .nav-tabs .nav-link.active {
+            color: var(--primary-color);
+            background-color: transparent;
+            border-bottom: 3px solid #0d6efd;
+        }
+        
+        .tab-content {
+            background: white;
+            border-radius: 0 0 8px 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .cart-item {
+            border-bottom: 1px solid #eee;
+            padding: 10px 0;
+        }
+        
+        .cart-total {
+            font-weight: bold;
+            font-size: 1.2em;
+            border-top: 2px solid #eee;
+            padding-top: 10px;
+        }
+        
+        .drug-card {
+            transition: all 0.3s ease;
+            height: 100%;
+        }
+        
+        .drug-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .stock-low {
+            color: #ffc107;
+        }
+        
+        .stock-out {
+            color: #dc3545;
+        }
+        
+        .stock-ok {
+            color: #28a745;
+        }
+        
+        .toast {
+            min-width: 300px;
+        }
+        
+        .price-value {
+            font-family: 'Courier New', monospace;
+            font-weight: 600;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .btn-action {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        }
+        
+        /* New styles for side-by-side layout */
+        .inventory-container {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .drugs-column {
+            flex: 3;
+        }
+        
+        .cart-column {
+            flex: 2;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            height: fit-content;
+            position: sticky;
+            top: 90px;
+        }
+        
+        .cart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        @media (max-width: 992px) {
+            .inventory-container {
+                flex-direction: column;
+            }
+            
+            .cart-column {
+                position: static;
+            }
+        }
+        
+        /* Animation for cart updates */
+        @keyframes highlight {
+            0% { background-color: rgba(40, 167, 69, 0.2); }
+            100% { background-color: transparent; }
+        }
+        
+        .highlight {
+            animation: highlight 1s ease;
+        }
+        
+        .refund-quantity {
+            max-width: 100px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <h4 class="mb-0">Pharmacist Dashboard</h4>
+        <div class="d-flex align-items-center">
+            <span class="me-3">Welcome, Pharmacist</span>
+            <div class="dropdown">
+                <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="userDropdown" data-bs-toggle="dropdown">
+                    <i class="bi bi-person-circle"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="#"><i class="bi bi-person me-2"></i>Profile</a></li>
+                    <li><a class="dropdown-item" href="#"><i class="bi bi-gear me-2"></i>Settings</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
 
-{% block content %}
-<!-- Add this to the head section of all your base templates -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-        
-<div class="content">
-    <h2>Pharmacist Dashboard</h2>
-    
-    <div class="pharmacist-tabs">
-        <div class="tab active" id="dispenseTab">
-            <div class="tab-header">
-                <h3><i class="fas fa-prescription-bottle-alt"></i> Dispense Drugs</h3>
-                <div class="tab-actions">
-                    <button class="btn btn-sm btn-outline" id="viewPrescriptionsBtn">
-                        <i class="fas fa-prescription"></i> View Prescriptions
-                    </button>
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <ul class="sidebar-menu">
+            <li><a href="#" class="active"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="#"><i class="bi bi-capsule"></i> Drugs Inventory</a></li>
+            <li><a href="#"><i class="bi bi-cart"></i> Sales</a></li>
+            <li><a href="#"><i class="bi bi-arrow-left-right"></i> Refunds</a></li>
+            <li><a href="#"><i class="bi bi-prescription2"></i> Prescriptions</a></li>
+            <li><a href="#"><i class="bi bi-clipboard-data"></i> Reports</a></li>
+        </ul>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Dashboard Stats -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-capsule text-primary"></i></h5>
+                        <h3 id="total-drugs">0</h3>
+                        <p class="card-text">Total Drugs</p>
+                    </div>
                 </div>
             </div>
-            
-            <div class="dispense-container">
-                <div class="drug-selection">
-                    <div class="search-box">
-                        <input type="text" id="pharmaDrugSearch" placeholder="Search drugs...">
-                        <i class="fas fa-search"></i>
-                    </div>
-                    <div class="drug-list" id="pharmaDrugList">
-                        <!-- Drugs will be loaded here via AJAX -->
-                        <div class="loading-spinner">
-                            <i class="fas fa-spinner fa-spin"></i> Loading drugs...
-                        </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-exclamation-triangle text-warning"></i></h5>
+                        <h3 id="low-stock">0</h3>
+                        <p class="card-text">Low Stock</p>
                     </div>
                 </div>
-                
-                <div class="cart-container">
-                    <div class="cart-header">
-                        <h4><i class="fas fa-shopping-cart"></i> Cart</h4>
-                        <div class="cart-actions">
-                            <button class="btn btn-sm btn-outline" id="clearCartBtn">
-                                <i class="fas fa-trash"></i> Clear
-                            </button>
-                        </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-calendar-x text-danger"></i></h5>
+                        <h3 id="expiring-soon">0</h3>
+                        <p class="card-text">Expiring Soon</p>
                     </div>
-                    <div class="cart-items" id="cartItems">
-                        <!-- Cart items will be added here -->
-                        <div class="empty-cart">
-                            <i class="fas fa-cart-arrow-down"></i>
-                            <p>Your cart is empty</p>
-                        </div>
-                    </div>
-                    <div class="cart-footer">
-                        <div class="payment-method">
-                            <label for="paymentMethod">Payment Method:</label>
-                            <select id="paymentMethod" class="form-control">
-                                <option value="cash">Cash</option>
-                                <option value="insurance">Insurance</option>
-                                <option value="mpesa">M-Pesa</option>
-                                <option value="card">Credit Card</option>
-                            </select>
-                        </div>
-                        <div class="cart-total">
-                            <span>Total:</span>
-                            <span id="cartTotal">Ksh 0.00</span>
-                        </div>
-                        <div class="cart-buttons">
-                            <button class="btn btn-primary" id="confirmSaleBtn">
-                                <i class="fas fa-check"></i> Confirm Sale
-                            </button>
-                            <button class="btn btn-success" id="dispensePrescriptionBtn" style="display: none;">
-                                <i class="fas fa-pills"></i> Dispense Prescription
-                            </button>
-                        </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-prescription2 text-success"></i></h5>
+                        <h3 id="pending-prescriptions">0</h3>
+                        <p class="card-text">Pending Prescriptions</p>
                     </div>
                 </div>
             </div>
         </div>
+
+        <!-- Tab Navigation -->
+        <ul class="nav nav-tabs" id="pharmacistTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="drugs-tab" data-bs-toggle="tab" data-bs-target="#drugs" type="button" role="tab">
+                    <i class="bi bi-capsule me-1"></i> Drugs Inventory
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="prescriptions-tab" data-bs-toggle="tab" data-bs-target="#prescriptions" type="button" role="tab">
+                    <i class="bi bi-prescription2 me-1"></i> Prescriptions
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="refunds-tab" data-bs-toggle="tab" data-bs-target="#refunds" type="button" role="tab">
+                    <i class="bi bi-arrow-left-right me-1"></i> Refunds
+                </button>
+            </li>
+        </ul>
         
-        <div class="tab" id="salesTab">
-            <div class="tab-header">
-                <h3><i class="fas fa-cash-register"></i> Sales</h3>
-                <div class="tab-actions">
-                    <button class="btn btn-sm btn-outline" id="refreshSalesBtn">
-                        <i class="fas fa-sync"></i> Refresh
-                    </button>
-                </div>
-            </div>
-            
-            <div class="sales-table-container">
-                <table class="data-table" id="salesTable">
-                    <thead>
-                        <tr>
-                            <th>Sale No.</th>
-                            <th>Date</th>
-                            <th>Patient</th>
-                            <th>Items</th>
-                            <th>Total (Ksh)</th>
-                            <th>Payment</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- Sales will be loaded here via AJAX -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        
-        <div class="tab" id="refundTab">
-            <div class="tab-header">
-                <h3><i class="fas fa-undo"></i> Refunds</h3>
-            </div>
-            
-            <div class="refund-container">
-                <div class="refund-search">
-                    <div class="form-group">
-                        <label for="refundSaleNumber">Enter Sale Number:</label>
-                        <div class="input-group">
-                            <input type="text" id="refundSaleNumber" class="form-control" placeholder="SALE-YYYYMMDD-XXXX">
-                            <div class="input-group-append">
-                                <button class="btn btn-primary" id="searchSaleBtn">
-                                    <i class="fas fa-search"></i> Search
-                                </button>
+        <!-- Tab Content -->
+        <div class="tab-content p-3 border border-top-0 rounded-bottom" id="pharmacistTabContent">
+            <!-- Drugs Inventory Tab -->
+            <div class="tab-pane fade show active" id="drugs" role="tabpanel">
+                <div class="inventory-container">
+                    <!-- Left Column - Drugs -->
+                    <div class="drugs-column">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">Drugs Inventory</h5>
+                                <div class="d-flex">
+                                    <input type="text" id="drug-search" class="form-control form-control-sm me-2" placeholder="Search drugs...">
+                                    <select id="drug-filter" class="form-select form-select-sm">
+                                        <option value="all">All Drugs</option>
+                                        <option value="low">Low Stock</option>
+                                        <option value="out">Out of Stock</option>
+                                        <option value="expiring">Expiring Soon</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div class="row" id="drugs-container">
+                                    <!-- Drugs will be loaded here dynamically -->
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-                
-                <div class="refund-results" id="refundResults" style="display: none;">
-                    <div class="sale-details">
-                        <h5>Sale Details</h5>
-                        <div class="details-row">
-                            <span class="detail-label">Sale Number:</span>
-                            <span class="detail-value" id="refundSaleNo"></span>
-                        </div>
-                        <div class="details-row">
-                            <span class="detail-label">Date:</span>
-                            <span class="detail-value" id="refundSaleDate"></span>
-                        </div>
-                        <div class="details-row">
-                            <span class="detail-label">Patient:</span>
-                            <span class="detail-value" id="refundPatient"></span>
-                        </div>
-                        <div class="details-row">
-                            <span class="detail-label">Total Amount:</span>
-                            <span class="detail-value" id="refundTotal">Ksh 0.00</span>
-                        </div>
-                    </div>
                     
-                    <div class="refund-items">
-                        <h5>Items</h5>
-                        <table class="refund-items-table">
-                            <thead>
-                                <tr>
-                                    <th>Item</th>
-                                    <th>Price (Ksh)</th>
-                                    <th>Sold</th>
-                                    <th>Available</th>
-                                    <th>Refund Qty</th>
-                                    <th>Action</th>
-                                </tr>
-                            </thead>
-                            <tbody id="refundItemsList">
-                                <!-- Items will be added here -->
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <div class="refund-summary">
-                        <div class="refund-total">
-                            <span>Refund Total:</span>
-                            <span id="refundAmountTotal">Ksh 0.00</span>
+                    <!-- Right Column - Shopping Cart -->
+                    <div class="cart-column">
+                        <div class="cart-header">
+                            <h5 class="mb-0">Shopping Cart</h5>
+                            <span class="badge bg-primary" id="cart-count">0 items</span>
                         </div>
-                        <div class="refund-actions">
-                            <button class="btn btn-danger" id="processRefundBtn" disabled>
-                                <i class="fas fa-undo"></i> Process Refund
+                        
+                        <div id="cart-items">
+                            <!-- Cart items will be loaded here -->
+                            <div class="text-center py-4 text-muted" id="empty-cart-message">
+                                <i class="bi bi-cart-x" style="font-size: 3rem;"></i>
+                                <p>Your cart is empty</p>
+                            </div>
+                        </div>
+                        
+                        <div class="cart-total mt-3">
+                            Total: Ksh <span id="cart-total">0.00</span>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-danger" id="clear-cart-btn">
+                                <i class="bi bi-trash"></i> Clear Cart
+                            </button>
+                            <button class="btn btn-success" id="confirm-sale-btn" disabled>
+                                <i class="bi bi-check-circle"></i> Confirm Sale
                             </button>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
-    </div>   
-</div>
-<!-- Prescriptions Modal -->
-<div class="modal fade" id="prescriptionsModal" tabindex="-1" role="dialog" aria-labelledby="prescriptionsModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="prescriptionsModalLabel">Pending Prescriptions</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
+            
+            <!-- Prescriptions Tab -->
+            <div class="tab-pane fade" id="prescriptions" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Manage Prescriptions</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover" id="prescriptions-table">
+                                <thead>
+                                    <tr>
+                                        <th>Prescription ID</th>
+                                        <th>Patient Name</th>
+                                        <th>Doctor</th>
+                                        <th>Date</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Prescriptions will be loaded here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="modal-body">
-                <table class="table" id="prescriptionsTable">
-                    <thead>
-                        <tr>
-                            <th>Prescription ID</th>
-                            <th>Patient</th>
-                            <th>Doctor</th>
-                            <th>Date</th>
-                            <th>Items</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- Prescriptions will be loaded here via AJAX -->
-                    </tbody>
-                </table>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Drug Dosage Modal -->
-<div class="modal fade" id="dosageModal" tabindex="-1" role="dialog" aria-labelledby="dosageModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="dosageModalLabel">Drug Dosage Information</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body" id="dosageContent">
-                <div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading dosage information...</div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Receipt Modal -->
-<div class="modal fade" id="receiptModal" tabindex="-1" role="dialog" aria-labelledby="receiptModalLabel" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="receiptModalLabel">Sales Receipt</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body" id="receiptContent">
-                <!-- Receipt content will be loaded here -->
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-                <button type="button" class="btn btn-primary" id="printReceiptBtn">
-                    <i class="fas fa-print"></i> Print
-                </button>
+            
+            <!-- Refunds Tab -->
+            <div class="tab-pane fade" id="refunds" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Process Refunds</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="refund-search" placeholder="Enter sale number...">
+                                    <button class="btn btn-primary" id="search-sale-btn">
+                                        <i class="bi bi-search"></i> Search
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="sale-details" class="d-none">
+                            <!-- Sale details will be shown here -->
+                        </div>
+                        <div id="refund-results" class="mt-3">
+                            <!-- Refund results will be shown here -->
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
-</div>
 
-<!-- Refund Receipt Modal -->
-<div class="modal fade" id="refundReceiptModal" tabindex="-1" role="dialog" aria-labelledby="refundReceiptModalLabel" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="refundReceiptModalLabel">Refund Receipt</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body" id="refundReceiptContent">
-                <!-- Refund receipt content will be loaded here -->
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-                <button type="button" class="btn btn-primary" id="printRefundReceiptBtn">
-                    <i class="fas fa-print"></i> Print
-                </button>
+    <!-- Drug Info Modal -->
+    <div class="modal fade" id="drugInfoModal" tabindex="-1" aria-labelledby="drugInfoModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="drugInfoModalLabel">Drug Information</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="drug-info-content">
+                    <!-- Drug info will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
             </div>
         </div>
     </div>
-</div>
 
-<!-- DataTables and other JS libraries -->
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <!-- Receipt Modal -->
+    <div class="modal fade" id="receiptModal" tabindex="-1" aria-labelledby="receiptModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="receiptModalLabel">Sale Receipt</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="receipt-content">
+                    <!-- Receipt content will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="print-receipt-btn">
+                        <i class="bi bi-printer"></i> Print
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
-<script>
-// Function to get CSRF token from cookies
-function getCookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            // Does this cookie string begin with the name we want?
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
+    <!-- Refund Receipt Modal -->
+    <div class="modal fade" id="refundReceiptModal" tabindex="-1" aria-labelledby="refundReceiptModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="refundReceiptModalLabel">Refund Receipt</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="refund-receipt-content">
+                    <!-- Refund receipt content will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="print-refund-receipt-btn">
+                        <i class="bi bi-printer"></i> Print
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Prescription Modal -->
+    <div class="modal fade" id="viewPrescriptionModal" tabindex="-1" aria-labelledby="viewPrescriptionModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="viewPrescriptionModalLabel">Prescription Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="prescription-details-content">
+                    <!-- Prescription details will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-success" id="dispense-prescription-btn">
+                        <i class="bi bi-capsule"></i> Dispense
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Toast -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div id="successToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header bg-success text-white">
+                <strong class="me-auto">Success</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                Item added to cart successfully!
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Toast -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div id="errorToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header bg-danger text-white">
+                <strong class="me-auto">Error</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                Error adding item to cart. Please try again.
+            </div>
+        </div>
+    </div>
+
+    <!-- CSRF Token -->
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <!-- DataTables -->
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+
+    <script>
+        $(document).ready(function() {
+            // Initialize variables
+            let cart = [];
+            let currentSale = null;
+            let currentPrescription = null;
+            let drugsData = []; // Store drugs data for cart operations
+            let currentRefundItems = []; // Store refund items
+            
+            // Initialize toasts
+            const successToast = new bootstrap.Toast(document.getElementById('successToast'));
+            const errorToast = new bootstrap.Toast(document.getElementById('errorToast'));
+            
+            // Initialize DataTables
+            const prescriptionsDT = $('#prescriptions-table').DataTable({
+                responsive: true,
+                language: {
+                    emptyTable: "No prescriptions found"
+                }
+            });
+            
+            // CSRF token setup
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            $.ajaxSetup({
+                beforeSend: function(xhr, settings) {
+                    if (!/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type)) {
+                        xhr.setRequestHeader("X-CSRFToken", csrfToken);
+                    }
+                }
+            });
+            
+            // Load dashboard stats - REAL DATA
+            function loadDashboardStats() {
+                $.ajax({
+                    url: '/pharmacist/api/dashboard-stats',
+                    method: 'GET',
+                    success: function(response) {
+                        if (response.success) {
+                            $('#total-drugs').text(response.data.total_drugs || '0');
+                            $('#low-stock').text(response.data.low_stock || '0');
+                            $('#expiring-soon').text(response.data.expiring_soon || '0');
+                            $('#pending-prescriptions').text(response.data.pending_prescriptions || '0');
+                        }
+                    },
+                    error: function() {
+                        console.error('Failed to load dashboard stats');
+                    }
+                });
             }
-        }
-    }
-    return cookieValue;
-}
-
-// Function to setup CSRF token for AJAX requests
-function setupCSRF() {
-    const csrftoken = getCookie('csrftoken');
-    
-    // Set up AJAX to send the CSRF token in the header
-    $.ajaxSetup({
-        beforeSend: function(xhr, settings) {
-            if (!this.crossDomain) {
-                xhr.setRequestHeader("X-CSRFToken", csrftoken);
-            }
-        }
-    });
-}
-
-$(document).ready(function() {
-    // Setup CSRF protection
-    setupCSRF();
-    
-    // Tab switching
-    $('.pharmacist-tabs .tab').removeClass('active');
-    $('#dispenseTab').addClass('active');
-    
-    // Load drugs for dispensing
-    function loadDrugs() {
-        $('#pharmaDrugList').html('<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Loading drugs...</div>');
-        
-        $.ajax({
-            url: '/pharmacist/drugs',
-            type: 'GET',
-            success: function(data) {
-                if (data && data.length > 0) {
-                    let html = '';
-                    data.forEach(function(drug) {
-                        html += `
-                            <div class="drug-card" data-id="${drug.id}">
-                                <div class="drug-info">
-                                    <h5>${drug.name}</h5>
-                                    <p>${drug.specification || 'No specification'}</p>
-                                    <div class="drug-meta">
-                                        <span class="price">Ksh ${drug.selling_price.toFixed(2)}</span>
-                                        <span class="stock">${drug.remaining_quantity} in stock</span>
+            
+            // Load drugs inventory - REAL DATA
+            function loadDrugs(filter = 'all', search = '') {
+                $.ajax({
+                    url: '/pharmacist/drugs',
+                    method: 'GET',
+                    data: {
+                        filter: filter,
+                        search: search
+                    },
+                    success: function(response) {
+                        const drugsContainer = $('#drugs-container');
+                        drugsContainer.empty();
+                        
+                        if (response.length === 0) {
+                            drugsContainer.html(`
+                                <div class="col-12 text-center py-4">
+                                    <i class="bi bi-search" style="font-size: 3rem;"></i>
+                                    <p class="text-muted">No drugs found</p>
+                                </div>
+                            `);
+                            return;
+                        }
+                        
+                        // Store drugs data for cart operations
+                        drugsData = response;
+                        
+                        response.forEach(drug => {
+                            let stockClass = 'stock-ok';
+                            let stockText = 'In Stock';
+                            
+                            if (drug.remaining_quantity === 0) {
+                                stockClass = 'stock-out';
+                                stockText = 'Out of Stock';
+                            } else if (drug.remaining_quantity < 10) {
+                                stockClass = 'stock-low';
+                                stockText = 'Low Stock';
+                            }
+                            
+                            const drugCard = `
+                                <div class="col-md-6 col-lg-4 mb-4">
+                                    <div class="card drug-card h-100">
+                                        <div class="card-body">
+                                            <h5 class="card-title">${drug.name}</h5>
+                                            <h6 class="card-subtitle mb-2 text-muted">${drug.drug_number}</h6>
+                                            <p class="card-text">${drug.specification || 'No specification'}</p>
+                                            <p class="card-text">
+                                                <span class="price-value">Ksh ${drug.selling_price.toFixed(2)}</span>
+                                            </p>
+                                            <p class="card-text ${stockClass}">
+                                                <i class="bi bi-box"></i> ${drug.remaining_quantity} units - ${stockText}
+                                            </p>
+                                            ${drug.expiry_date ? `
+                                                <p class="card-text">
+                                                    <small class="text-muted">Expires: ${new Date(drug.expiry_date).toLocaleDateString()}</small>
+                                                </p>
+                                            ` : ''}
+                                        </div>
+                                        <div class="card-footer bg-transparent">
+                                            <div class="action-buttons">
+                                                <button class="btn btn-primary btn-sm add-to-cart-btn" data-drug-id="${drug.id}" 
+                                                    ${drug.remaining_quantity === 0 ? 'disabled' : ''}>
+                                                    <i class="bi bi-cart-plus"></i> Add to Cart
+                                                </button>
+                                                <button class="btn btn-info btn-sm view-info-btn" data-drug-id="${drug.id}">
+                                                    <i class="bi bi-info-circle"></i> Info
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="drug-actions">
-                                    <button class="btn btn-sm btn-info btn-drug-info" data-id="${drug.id}">
-                                        <i class="fas fa-info-circle"></i> Info
-                                    </button>
-                                    <button class="btn btn-sm btn-add-to-cart" 
-                                        data-id="${drug.id}" 
-                                        data-name="${drug.name.replace(/"/g, '&quot;')}"
-                                        data-price="${drug.selling_price}"
-                                        data-stock="${drug.remaining_quantity}"
-                                        data-max="100">
-                                        <i class="fas fa-cart-plus"></i> Add
-                                    </button>
+                            `;
+                            
+                            drugsContainer.append(drugCard);
+                        });
+                        
+                        // Add event listeners to the new buttons
+                        $('.add-to-cart-btn').click(function() {
+                            const drugId = $(this).data('drug-id');
+                            addToCart(drugId);
+                        });
+                        
+                        $('.view-info-btn').click(function() {
+                            const drugId = $(this).data('drug-id');
+                            showDrugInfo(drugId);
+                        });
+                    },
+                    error: function() {
+                        console.error('Failed to load drugs');
+                        $('#drugs-container').html(`
+                            <div class="col-12 text-center py-4">
+                                <i class="bi bi-exclamation-triangle" style="font-size: 3rem;"></i>
+                                <p class="text-muted">Failed to load drugs</p>
+                            </div>
+                        `);
+                    }
+                });
+            }
+            
+            // Add drug to cart
+            function addToCart(drugId) {
+                // Find drug in our stored data
+                const drug = drugsData.find(d => d.id === drugId);
+                
+                if (!drug) {
+                    showErrorToast('Drug not found');
+                    return;
+                }
+                
+                // Check if drug is already in cart
+                const existingItem = cart.find(item => item.drug_id === drugId);
+                
+                if (existingItem) {
+                    // Increase quantity
+                    existingItem.quantity += 1;
+                    existingItem.total_price = existingItem.unit_price * existingItem.quantity;
+                    updateCartDisplay();
+                    showSuccessToast(`${existingItem.drug_name} quantity updated`);
+                } else {
+                    // Add new item to cart
+                    cart.push({
+                        drug_id: drug.id,
+                        drug_name: drug.name,
+                        drug_number: drug.drug_number,
+                        specification: drug.specification,
+                        unit_price: drug.selling_price,
+                        quantity: 1,
+                        total_price: drug.selling_price
+                    });
+                    updateCartDisplay();
+                    showSuccessToast(`${drug.name} added to cart`);
+                }
+            }
+            
+            // Show success toast
+            function showSuccessToast(message) {
+                $('#successToast .toast-body').text(message);
+                successToast.show();
+            }
+            
+            // Show error toast
+            function showErrorToast(message) {
+                $('#errorToast .toast-body').text(message);
+                errorToast.show();
+            }
+            
+            // Update cart display
+            function updateCartDisplay() {
+                const cartItems = $('#cart-items');
+                const cartCount = $('#cart-count');
+                const cartTotal = $('#cart-total');
+                const confirmSaleBtn = $('#confirm-sale-btn');
+                const emptyCartMessage = $('#empty-cart-message');
+                
+                if (cart.length === 0) {
+                    cartItems.html(`
+                        <div class="text-center py-4 text-muted" id="empty-cart-message">
+                            <i class="bi bi-cart-x" style="font-size: 3rem;"></i>
+                            <p>Your cart is empty</p>
+                        </div>
+                    `);
+                    cartCount.text('0 items');
+                    cartTotal.text('0.00');
+                    confirmSaleBtn.prop('disabled', true);
+                    return;
+                }
+                
+                // Enable confirm sale button
+                confirmSaleBtn.prop('disabled', false);
+                
+                // Update cart count
+                const totalItems = cart.reduce((total, item) => total + item.quantity, 0);
+                cartCount.text(`${totalItems} ${totalItems === 1 ? 'item' : 'items'}`);
+                
+                // Calculate total
+                const total = cart.reduce((sum, item) => sum + item.total_price, 0);
+                cartTotal.text(total.toFixed(2));
+                
+                // Build cart items HTML
+                let cartHTML = '';
+                
+                cart.forEach((item, index) => {
+                    cartHTML += `
+                        <div class="cart-item" data-index="${index}">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1">
+                                    <h6 class="mb-0">${item.drug_name}</h6>
+                                    <small class="text-muted">${item.drug_number}</small>
+                                    <div class="mt-1">
+                                        <span class="price-value">Ksh ${item.unit_price.toFixed(2)}</span> ×
+                                        <div class="btn-group btn-group-sm ms-2">
+                                            <button class="btn btn-outline-secondary decrease-qty" data-index="${index}">-</button>
+                                            <span class="btn btn-outline-secondary disabled">${item.quantity}</span>
+                                            <button class="btn btn-outline-secondary increase-qty" data-index="${index}">+</button>
+                                        </div>
+                                        = <span class="price-value">Ksh ${item.total_price.toFixed(2)}</span>
+                                    </div>
+                                </div>
+                                <button class="btn btn-sm btn-link text-danger remove-item" data-index="${index}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                cartItems.html(cartHTML);
+                
+                // Add event listeners to cart item buttons
+                $('.decrease-qty').click(function() {
+                    const index = $(this).data('index');
+                    if (cart[index].quantity > 1) {
+                        cart[index].quantity -= 1;
+                        cart[index].total_price = cart[index].unit_price * cart[index].quantity;
+                        updateCartDisplay();
+                        showSuccessToast(`${cart[index].drug_name} quantity updated`);
+                    }
+                });
+                
+                $('.increase-qty').click(function() {
+                    const index = $(this).data('index');
+                    cart[index].quantity += 1;
+                    cart[index].total_price = cart[index].unit_price * cart[index].quantity;
+                    updateCartDisplay();
+                    showSuccessToast(`${cart[index].drug_name} quantity updated`);
+                });
+                
+                $('.remove-item').click(function() {
+                    const index = $(this).data('index');
+                    const drugName = cart[index].drug_name;
+                    cart.splice(index, 1);
+                    updateCartDisplay();
+                    showSuccessToast(`${drugName} removed from cart`);
+                });
+            }
+            
+            // Show drug information
+            function showDrugInfo(drugId) {
+                // Find drug in our stored data
+                const drug = drugsData.find(d => d.id === drugId);
+                
+                if (!drug) {
+                    showErrorToast('Drug information not available');
+                    return;
+                }
+                
+                // Get dosage information from backend
+                $.ajax({
+                    url: `/pharmacist/drugs/${drugId}/dosage`,
+                    method: 'GET',
+                    success: function(response) {
+                        const modalContent = $('#drug-info-content');
+                        
+                        if (response.dosage) {
+                            modalContent.html(`
+                                <h4>${drug.name} (${drug.drug_number})</h4>
+                                <p><strong>Specification:</strong> ${drug.specification || 'Not specified'}</p>
+                                <p><strong>Price:</strong> Ksh ${drug.selling_price.toFixed(2)}</p>
+                                <p><strong>Stock:</strong> ${drug.remaining_quantity} units</p>
+                                <hr>
+                                <h5>Dosage Information</h5>
+                                ${response.dosage.indication ? `<p><strong>Indication:</strong> ${response.dosage.indication}</p>` : ''}
+                                ${response.dosage.dosage_adults ? `<p><strong>Adult Dosage:</strong> ${response.dosage.dosage_adults}</p>` : ''}
+                                ${response.dosage.dosage_peds ? `<p><strong>Pediatric Dosage:</strong> ${response.dosage.dosage_peds}</p>` : ''}
+                                ${response.dosage.contraindication ? `<p><strong>Contraindications:</strong> ${response.dosage.contraindication}</p>` : ''}
+                                ${response.dosage.side_effects ? `<p><strong>Side Effects:</strong> ${response.dosage.side_effects}</p>` : ''}
+                                ${response.dosage.important_notes ? `<p><strong>Important Notes:</strong> ${response.dosage.important_notes}</p>` : ''}
+                            `);
+                        } else {
+                            modalContent.html(`
+                                <h4>${drug.name} (${drug.drug_number})</h4>
+                                <p><strong>Specification:</strong> ${drug.specification || 'Not specified'}</p>
+                                <p><strong>Price:</strong> Ksh ${drug.selling_price.toFixed(2)}</p>
+                                <p><strong>Stock:</strong> ${drug.remaining_quantity} units</p>
+                                <hr>
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle"></i> No dosage information available for this drug.
+                                </div>
+                            `);
+                        }
+                        
+                        $('#drugInfoModal').modal('show');
+                    },
+                    error: function() {
+                        const modalContent = $('#drug-info-content');
+                        modalContent.html(`
+                            <h4>${drug.name} (${drug.drug_number})</h4>
+                            <p><strong>Specification:</strong> ${drug.specification || 'Not specified'}</p>
+                            <p><strong>Price:</strong> Ksh ${drug.selling_price.toFixed(2)}</p>
+                            <p><strong>Stock:</strong> ${drug.remaining_quantity} units</p>
+                            <hr>
+                            <div class="alert alert-warning">
+                                <i class="bi bi-exclamation-triangle"></i> Failed to load dosage information.
+                            </div>
+                        `);
+                        $('#drugInfoModal').modal('show');
+                    }
+                });
+            }
+            
+            // Confirm sale - REAL BACKEND
+            function confirmSale() {
+                if (cart.length === 0) {
+                    alert('Cart is empty');
+                    return;
+                }
+                
+                // Ask for payment method
+                const paymentMethod = prompt('Enter payment method (cash, card, mobile):', 'cash');
+                
+                if (!paymentMethod) {
+                    return;
+                }
+                
+                const saleData = {
+                    items: cart,
+                    payment_method: paymentMethod,
+                    csrf_token: csrfToken
+                };
+                
+                $.ajax({
+                    url: '/pharmacist/cart_sale',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(saleData),
+                    success: function(response) {
+                        if (response.success) {
+                            currentSale = response;
+                            showReceipt(response.sale_id);
+                            cart = [];
+                            updateCartDisplay();
+                            loadDashboardStats(); // Refresh stats
+                        } else {
+                            showErrorToast(response.error || 'Failed to process sale');
+                        }
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON?.error || 'Failed to process sale';
+                        showErrorToast(error);
+                    }
+                });
+            }
+            
+            // Show receipt
+            function showReceipt(saleId) {
+                // Get receipt data from backend
+                $.ajax({
+                    url: `/pharmacist/sale/${saleId}/receipt`,
+                    method: 'GET',
+                    success: function(response) {
+                        let itemsHTML = '';
+                        response.items.forEach(item => {
+                            itemsHTML += `
+                                <tr>
+                                    <td>${item.name}</td>
+                                    <td>${item.quantity}</td>
+                                    <td>Ksh ${item.unit_price.toFixed(2)}</td>
+                                    <td>Ksh ${item.total_price.toFixed(2)}</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        const receiptHTML = `
+                            <div class="receipt">
+                                <div class="text-center mb-4">
+                                    <h4>Medical Pharmacy</h4>
+                                    <p>123 Health Street, Medical Town</p>
+                                    <p>Tel: 0123-456-789</p>
+                                </div>
+                                <hr>
+                                <div class="d-flex justify-content-between mb-3">
+                                    <div>
+                                        <strong>Sale #:</strong> ${response.sale_number}
+                                    </div>
+                                    <div>
+                                        <strong>Date:</strong> ${response.date}
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <strong>Patient:</strong> ${response.patient_name}
+                                </div>
+                                <div class="mb-3">
+                                    <strong>Pharmacist:</strong> ${response.pharmacist_name}
+                                </div>
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Item</th>
+                                            <th>Qty</th>
+                                            <th>Price</th>
+                                            <th>Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${itemsHTML}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td colspan="3" class="text-end"><strong>Total:</strong></td>
+                                            <td><strong>Ksh ${response.total_amount.toFixed(2)}</strong></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                                <div class="mb-3">
+                                    <strong>Payment Method:</strong> ${response.payment_method}
+                                </div>
+                                <hr>
+                                <div class="text-center mt-4">
+                                    <p>Thank you for your purchase!</p>
                                 </div>
                             </div>
                         `;
-                    });
-                    $('#pharmaDrugList').html(html);
-                } else {
-                    $('#pharmaDrugList').html('<div class="empty-list"><i class="fas fa-box-open"></i> No drugs available</div>');
-                }
-            },
-            error: function(xhr, status, error) {
-                console.error('Error loading drugs:', error);
-                $('#pharmaDrugList').html('<div class="error-loading"><i class="fas fa-exclamation-circle"></i> Failed to load drugs. Please try again.</div>');
-            }
-        });
-    }
-
-    // Show drug dosage information
-    $(document).on('click', '.btn-drug-info', function() {
-        const drugId = $(this).data('id');
-        $('#dosageContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading dosage information...</div>');
-        $('#dosageModal').modal('show');
-        
-        $.get(`/pharmacist/drugs/${drug_id}/dosage`, function(data) {
-            if (data.dosage) {
-                let dosageHtml = `
-                    <div class="dosage-info">
-                        <h4>${data.drug.name} (${data.drug.drug_number})</h4>
-                        <div class="dosage-section">
-                            <h5><i class="fas fa-info-circle"></i> Indications</h5>
-                            <p>${data.dosage.indication || 'Not specified'}</p>
-                        </div>
-                        <div class="dosage-section">
-                            <h5><i class="fas fa-ban"></i> Contraindications</h5>
-                            <p>${data.dosage.contraindication || 'Not specified'}</p>
-                        </div>
-                        <div class="dosage-section">
-                            <h5><i class="fas fa-random"></i> Interactions</h5>
-                            <p>${data.dosage.interaction || 'Not specified'}</p>
-                        </div>
-                        <div class="dosage-section">
-                            <h5><i class="fas fa-exclamation-triangle"></i> Side Effects</h5>
-                            <p>${data.dosage.side_effects || 'Not specified'}</p>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="dosage-section">
-                                    <h5><i class="fas fa-child"></i> Pediatric Dosage</h5>
-                                    <p>${data.dosage.dosage_peds || 'Not specified'}</p>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="dosage-section">
-                                    <h5><i class="fas fa-user"></i> Adult Dosage</h5>
-                                    <p>${data.dosage.dosage_adults || 'Not specified'}</p>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="dosage-section">
-                                    <h5><i class="fas fa-wheelchair"></i> Geriatric Dosage</h5>
-                                    <p>${data.dosage.dosage_geriatrics || 'Not specified'}</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="dosage-section">
-                            <h5><i class="fas fa-sticky-note"></i> Important Notes</h5>
-                            <p>${data.dosage.important_notes || 'Not specified'}</p>
-                        </div>
-                    </div>
-                `;
-                $('#dosageContent').html(dosageHtml);
-            } else {
-                $('#dosageContent').html(`
-                    <div class="alert alert-info">
-                        <i class="fas fa-info-circle"></i> No dosage information available for this drug.
-                    </div>
-                    <div class="text-center">
-                        <button class="btn btn-primary" id="requestDosageBtn" data-id="${drug_id}">
-                            <i class="fas fa-plus"></i> Request Dosage Information
-                        </button>
-                    </div>
-                `);
-            }
-        }).fail(function() {
-            $('#dosageContent').html('<div class="alert alert-danger">Failed to load dosage information</div>');
-        });
-    });
-
-    // Request dosage information (placeholder - would need backend implementation)
-    $(document).on('click', '#requestDosageBtn', function() {
-        const drug_id = $(this).data('id');
-        alert(`Dosage information request sent for drug ID: ${drug_id}`);
-        $('#dosageModal').modal('hide');
-    });
-
-    // Cart Management Functions
-    function getCart() {
-        const cart = localStorage.getItem('pharmacistCart');
-        return cart ? JSON.parse(cart) : { items: [] };
-    }
-
-    function saveCart(cart) {
-        localStorage.setItem('pharmacistCart', JSON.stringify(cart));
-    }
-
-    function updateCartSummary() {
-        const cart = getCart();
-        let total = 0;
-        let itemCount = 0;
-        
-        cart.items.forEach(item => {
-            total += item.unit_price * item.quantity;
-            itemCount += item.quantity;
-        });
-        
-        $('#cartTotal').text('Ksh ' + total.toFixed(2));
-        $('#cartItemCount').text(itemCount);
-        return total;
-    }
-
-    function renderCartItems() {
-        const cart = getCart();
-        const $cartItems = $('#cartItems');
-        
-        if (cart.items.length === 0) {
-            $cartItems.html(`
-                <div class="empty-cart">
-                    <i class="fas fa-cart-arrow-down"></i>
-                    <p>Your cart is empty</p>
-                </div>
-            `);
-            $('#confirmSaleBtn').prop('disabled', true);
-            return;
-        }
-        
-        $('#confirmSaleBtn').prop('disabled', false);
-        
-        let html = '';
-        cart.items.forEach(item => {
-            html += `
-                <div class="cart-item" data-id="${item.drug_id}">
-                    <div class="item-info">
-                        <h5>${item.drug_name}</h5>
-                        <div class="item-meta">
-                            <span class="item-price">Ksh ${item.unit_price.toFixed(2)}</span>
-                            <span class="item-stock">${item.currentStock} in stock</span>
-                        </div>
-                    </div>
-                    <div class="item-controls">
-                        <button class="btn btn-sm btn-outline-secondary btn-decrease" data-id="${item.drug_id}">
-                            <i class="fas fa-minus"></i>
-                        </button>
-                        <input type="number" class="form-control form-control-sm item-quantity" 
-                            value="${item.quantity}" min="1" max="${item.currentStock}"
-                            data-id="${item.drug_id}">
-                        <button class="btn btn-sm btn-outline-secondary btn-increase" data-id="${item.drug_id}">
-                            <i class="fas fa-plus"></i>
-                        </button>
-                    </div>
-                    <div class="item-total">Ksh ${(item.unit_price * item.quantity).toFixed(2)}</div>
-                    <button class="btn btn-sm btn-outline-danger btn-remove" data-id="${item.drug_id}">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </div>
-            `;
-        });
-        $cartItems.html(html);
-    }
-
-    // Update the cart item structure to match backend expectations
-    $(document).on('click', '.btn-add-to-cart', function() {
-        const $btn = $(this);
-        const drug_id = $btn.data('id');
-        const drug_name = $btn.data('name');
-        const unit_price = parseFloat($btn.data('price'));
-        const currentStock = parseInt($btn.data('stock'));
-        
-        if (currentStock <= 0) {
-            showAlert('This item is out of stock', 'danger');
-            return;
-        }
-        
-        let cart = getCart();
-        const existingItem = cart.items.find(item => item.drug_id == drug_id);
-        
-        if (existingItem) {
-            if (existingItem.quantity < currentStock) {
-                existingItem.quantity++;
-                showAlert(`Increased quantity of ${drug_name} to ${existingItem.quantity}`, 'success');
-            } else {
-                showAlert(`Cannot add more than available stock (${currentStock})`, 'warning');
-                return;
-            }
-        } else {
-            cart.items.push({
-                drug_id: drug_id,           // Match backend expectation
-                drug_name: drug_name,       // For display only
-                unit_price: unit_price,     // Match backend expectation
-                quantity: 1,                // Match backend expectation
-                currentStock: currentStock  // For validation only
-            });
-            showAlert(`${drug_name} added to cart`, 'success');
-        }
-        
-        saveCart(cart);
-        renderCartItems();
-        updateCartSummary();
-    });
-
-    $(document).on('click', '.btn-increase', function() {
-        const drug_id = $(this).data('id');
-        const cart = getCart();
-        const item = cart.items.find(item => item.drug_id == drug_id);
-        
-        if (item.quantity < item.currentStock) {
-            item.quantity++;
-            $(this).siblings('.item-quantity').val(item.quantity);
-            updateCartItem(drug_id, item);
-        } else {
-            showAlert(`Cannot add more than available stock (${item.currentStock})`, 'warning');
-        }
-    });
-
-    $(document).on('click', '.btn-decrease', function() {
-        const drug_id = $(this).data('id');
-        const cart = getCart();
-        const item = cart.items.find(item => item.drug_id == drug_id);
-        
-        if (item.quantity > 1) {
-            item.quantity--;
-            $(this).siblings('.item-quantity').val(item.quantity);
-            updateCartItem(drug_id, item);
-        }
-    });
-
-    $(document).on('change', '.item-quantity', function() {
-        const drug_id = $(this).data('id');
-        const newQty = parseInt($(this).val()) || 1;
-        const maxQty = parseInt($(this).attr('max')) || 100;
-        
-        const cart = getCart();
-        const item = cart.items.find(item => item.drug_id == drug_id);
-        
-        if (newQty > maxQty) {
-            $(this).val(maxQty);
-            item.quantity = maxQty;
-            showAlert(`Cannot add more than available stock (${maxQty})`, 'warning');
-        } else if (newQty < 1) {
-            $(this).val(1);
-            item.quantity = 1;
-        } else {
-            item.quantity = newQty;
-        }
-        
-        saveCart(cart);
-        updateCartItem(drug_id, item);
-    });
-
-    $(document).on('click', '.btn-remove', function() {
-        const drug_id = $(this).data('id');
-        const cart = getCart();
-        const itemIndex = cart.items.findIndex(item => item.drug_id == drug_id);
-        
-        if (itemIndex !== -1) {
-            const removedItem = cart.items[itemIndex];
-            cart.items.splice(itemIndex, 1);
-            saveCart(cart);
-            renderCartItems();
-            updateCartSummary();
-            showAlert(`${removedItem.drug_name} removed from cart`, 'info');
-        }
-    });
-
-    $('#clearCartBtn').click(function() {
-        saveCart({ items: [] });
-        renderCartItems();
-        updateCartSummary();
-        showAlert('Cart cleared', 'info');
-    });
-
-    // Helper Functions
-    function updateCartItem(drug_id, item) {
-        const $itemElement = $(`.cart-item[data-id="${drug_id}"]`);
-        $itemElement.find('.item-total').text('Ksh ' + (item.unit_price * item.quantity).toFixed(2));
-        saveCart(getCart());
-        updateCartSummary();
-    }
-
-    function showAlert(message, type = 'info') {
-        const alert = $(`
-            <div class="alert alert-${type} alert-dismissible fade show" role="alert">
-                ${message}
-                <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-        `);
-        
-        $('#alertsContainer').append(alert);
-        setTimeout(() => alert.alert('close'), 3000);
-    }
-
-    // Initialize cart on page load
-    $(document).ready(function() {
-        renderCartItems();
-        updateCartSummary();
-    });
-        
-    $('#confirmSaleBtn').click(function() {
-        const $btn = $(this);
-        const cart = getCart();
-        const paymentMethod = $('#paymentMethod').val();
-        
-        console.log('Cart contents:', cart); // Debug logging
-        
-        // Prepare items with all required fields - FIXED PROPERTY NAMES
-        const items = cart.items.map(item => ({
-            drug_id: item.drug_id,         // Must match backend expectation
-            quantity: item.quantity,
-            unit_price: item.unit_price    // Critical for calculations
-        }));
-
-        const saleData = {
-            items: items,
-            payment_method: paymentMethod
-        };
-
-        console.log('Sending sale data:', saleData); // Debug logging
-
-        // Show loading state
-        $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Processing...');
-
-        $.ajax({
-            url: '/pharmacist/cart_sale',
-            methods: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify(saleData),
-            success: function(response) {
-                console.log('Sale response:', response); // Debug logging
-                if (response.success) {
-                    // Clear cart on success
-                    saveCart({ items: [] });
-                    renderCartItems();
-                    updateCartSummary();
-                    
-                    // Show success message
-                    showAlert(`Sale processed successfully! Sale #: ${response.sale_number}`, 'success');
-                    
-                    // Show receipt
-                    showReceipt(response.sale_id);
-
-            },
-            error: function(xhr, status, error) {
-                console.error('Sale error:', error, 'Status:', status, 'Response:', xhr.responseText);
-                
-                let errorMsg = 'An error occurred while processing the sale. Please try again.';
-                try {
-                    const response = JSON.parse(xhr.responseText);
-                    errorMsg = response.error || errorMsg;
-                    if (response.details) {
-                        errorMsg += ' Details: ' + response.details;
-                    }
-                    if (response.available !== undefined) {
-                        errorMsg += ` Only ${response.available} available.`;
-                    }
-                } catch (e) {
-                    // If we can't parse JSON, use the raw response
-                    errorMsg = xhr.responseText || errorMsg;
-                }
-                
-                showAlert(errorMsg, 'danger');
-            },
-            complete: function() {
-                $btn.prop('disabled', false).html('<i class="fas fa-check"></i> Confirm Sale');
-            }
-        });
-    });
-
-    // Helper function to show receipt
-    function showReceipt(saleId) {
-        $('#receiptContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading receipt...</div>');
-        $('#receiptModal').modal('show');
-        
-        $.get(`/pharmacist/cart_sale/${saleId}/receipt`, function(data) {
-            $('#receiptContent').html(data);
-        }).fail(function(xhr, status, error) {
-            console.error('Error loading receipt:', error, 'Status:', status); // Error logging
-            $('#receiptContent').html('<div class="alert alert-danger">Failed to load receipt</div>');
-        });
-    }
-
-    // Initialize cart on page load
-    $(document).ready(function() {
-        renderCartItems();
-        updateCartSummary();
-    });
-
-    // Load sales
-    function loadSales() {
-        $('#salesTable tbody').html('<tr><td colspan="7" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading sales...</td></tr>');
-        
-        $.get('/pharmacist/sales', function(data) {
-            if (data.length > 0) {
-                let html = '';
-                data.forEach(function(sale) {
-                    html += `
-                        <tr>
-                            <td>${sale.sale_number}</td>
-                            <td>${new Date(sale.created_at).toLocaleString()}</td>
-                            <td>${sale.patient ? sale.patient.name : 'Walk-in'}</td>
-                            <td>${sale.items.length}</td>
-                            <td>Ksh ${sale.total_amount.toFixed(2)}</td>
-                            <td>${sale.payment_method}</td>
-                            <td>
-                                <button class="btn btn-sm btn-view-receipt" data-id="${sale.id}">
-                                    <i class="fas fa-receipt"></i> Receipt
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                });
-                $('#salesTable tbody').html(html);
-            } else {
-                $('#salesTable tbody').html('<tr><td colspan="7" class="text-center"><i class="fas fa-info-circle"></i> No sales found</td></tr>');
-            }
-        });
-    }
-        
-    // Load inventory with filters
-    function loadInventory() {
-        const filter = $('#inventoryFilter').val();
-        const search = $('#inventorySearch').val();
-        const sort = $('#inventorySort').val();
-        
-        $('#inventoryTable tbody').html('<tr><td colspan="9" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading inventory...</td></tr>');
-        
-        $.get('/pharmacist/drugs', { filter, search, sort }, function(data) {
-            if (data && data.length > 0) {
-                let html = '';
-                let totalDrugs = 0;
-                let inStock = 0;
-                let lowStock = 0;
-                let expiringSoon = 0;
-                
-                data.forEach(function(drug) {
-                    // Calculate status
-                    let statusClass = '';
-                    let statusText = '';
-                    let isExpiring = false;
-                    
-                    if (drug.expiry_date) {
-                        const expiryDate = new Date(drug.expiry_date);
-                        const today = new Date();
-                        const diffTime = expiryDate - today;
-                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                         
-                        if (diffDays <= 30) {
-                            isExpiring = true;
-                            expiringSoon++;
+                        $('#receipt-content').html(receiptHTML);
+                        $('#receiptModal').modal('show');
+                    },
+                    error: function() {
+                        showErrorToast('Failed to load receipt');
+                    }
+                });
+            }
+            
+            // Load prescriptions - REAL DATA
+            function loadPrescriptions() {
+                $.ajax({
+                    url: '/pharmacist/prescriptions',
+                    method: 'GET',
+                    success: function(response) {
+                        prescriptionsDT.clear();
+                        
+                        response.forEach(prescription => {
+                            prescriptionsDT.row.add([
+                                prescription.id,
+                                prescription.patient_name,
+                                prescription.doctor_name,
+                                new Date(prescription.created_at).toLocaleDateString(),
+                                `<span class="badge bg-${prescription.status === 'pending' ? 'warning' : 'success'}">${prescription.status}</span>`,
+                                `
+                                    <button class="btn btn-sm btn-info view-prescription-btn" data-prescription-id="${prescription.id}">
+                                        <i class="bi bi-eye"></i> View
+                                    </button>
+                                    ${prescription.status === 'pending' ? `
+                                        <button class="btn btn-sm btn-success dispense-prescription-btn" data-prescription-id="${prescription.id}">
+                                            <i class="bi bi-capsule"></i> Dispense
+                                        </button>
+                                    ` : ''}
+                                `
+                            ]);
+                        });
+                        
+                        prescriptionsDT.draw();
+                        
+                        // Add event listeners to prescription buttons
+                        $('.view-prescription-btn').click(function() {
+                            const prescriptionId = $(this).data('prescription-id');
+                            viewPrescription(prescriptionId);
+                        });
+                        
+                        $('.dispense-prescription-btn').click(function() {
+                            const prescriptionId = $(this).data('prescription-id');
+                            dispensePrescription(prescriptionId);
+                        });
+                    },
+                    error: function() {
+                        console.error('Failed to load prescriptions');
+                    }
+                });
+            }
+            
+            // View prescription details
+            function viewPrescription(prescriptionId) {
+                $.ajax({
+                    url: `/pharmacist/prescription/${prescriptionId}`,
+                    method: 'GET',
+                    success: function(response) {
+                        currentPrescription = response;
+                        
+                        let itemsHTML = '';
+                        response.items.forEach(item => {
+                            itemsHTML += `
+                                <tr>
+                                    <td>${item.drug_name}</td>
+                                    <td>${item.quantity}</td>
+                                    <td>${item.dosage || '-'}</td>
+                                    <td>${item.frequency || '-'}</td>
+                                    <td>${item.duration || '-'}</td>
+                                    <td>${item.notes || '-'}</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        $('#prescription-details-content').html(`
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <p><strong>Patient:</strong> ${response.patient_name} (${response.patient_number})</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Doctor:</strong> ${response.doctor_name}</p>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <p><strong>Notes:</strong> ${response.notes || 'No notes'}</p>
+                                </div>
+                            </div>
+                            <h5>Prescription Items</h5>
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>Drug</th>
+                                            <th>Quantity</th>
+                                            <th>Dosage</th>
+                                            <th>Frequency</th>
+                                            <th>Duration</th>
+                                            <th>Notes</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${itemsHTML}
+                                    </tbody>
+                                </table>
+                            </div>
+                        `);
+                        
+                        $('#viewPrescriptionModal').modal('show');
+                    },
+                    error: function() {
+                        showErrorToast('Failed to load prescription details');
+                    }
+                });
+            }
+            
+            // Dispense prescription
+            function dispensePrescription(prescriptionId) {
+                const paymentMethod = prompt('Enter payment method (cash, card, mobile):', 'cash');
+                
+                if (!paymentMethod) {
+                    return;
+                }
+                
+                $.ajax({
+                    url: '/pharmacist/dispense',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        prescription_id: prescriptionId,
+                        payment_method: paymentMethod,
+                        csrf_token: csrfToken
+                    }),
+                    success: function(response) {
+                        if (response.success) {
+                            showSuccessToast('Prescription dispensed successfully');
+                            loadPrescriptions(); // Refresh prescriptions list
+                            loadDashboardStats(); // Refresh stats
+                            $('#viewPrescriptionModal').modal('hide');
+                            
+                            // Show receipt
+                            currentSale = response;
+                            showReceipt(response.sale_id);
+                        } else {
+                            showErrorToast(response.error || 'Failed to dispense prescription');
                         }
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON?.error || 'Failed to dispense prescription';
+                        showErrorToast(error);
                     }
-                    
-                    if (drug.remaining_quantity === 0) {
-                        statusClass = 'out-of-stock';
-                        statusText = 'Out of Stock';
-                    } else if (drug.remaining_quantity < 10) {
-                        statusClass = 'low-stock';
-                        statusText = 'Low Stock';
-                        lowStock++;
-                    } else {
-                        statusClass = 'in-stock';
-                        statusText = 'In Stock';
-                        inStock++;
-                    }
-                    
-                    totalDrugs++;
-                    
-                    html += `
-                        <tr>
-                            <td>${drug.drug_number}</td>
-                            <td>${drug.name}</td>
-                            <td>${drug.category || '-'}</td>
-                            <td>${drug.batch_number || '-'}</td>
-                            <td>${drug.expiry_date ? new Date(drug.expiry_date).toLocaleDateString() : '-'}</td>
-                            <td>Ksh ${drug.selling_price.toFixed(2)}</td>
-                            <td>${drug.remaining_quantity}</td>
-                            <td>
-                                <span class="status-badge ${statusClass}">
-                                    ${statusText}${isExpiring ? ' / Expiring Soon' : ''}
-                                </span>
-                            </td>
-                            <td>
-                                <button class="btn btn-sm btn-info btn-view-drug" data-id="${drug.id}">
-                                    <i class="fas fa-eye"></i> Details
-                                </button>
-                            </td>
-                        </tr>
-                    `;
                 });
-                
-                $('#inventoryTable tbody').html(html);
-                $('#totalDrugsCount').text(totalDrugs);
-                $('#inStockCount').text(inStock);
-                $('#lowStockCount').text(lowStock);
-                $('#expiringSoonCount').text(expiringSoon);
-                
-                // Initialize DataTable
-                $('#inventoryTable').DataTable({
-                    responsive: true,
-                    dom: '<"top"f>rt<"bottom"lip><"clear">',
-                    pageLength: 25
-                });
-            } else {
-                $('#inventoryTable tbody').html('<tr><td colspan="9" class="text-center"><i class="fas fa-info-circle"></i> No inventory found</td></tr>');
-                $('#totalDrugsCount').text('0');
-                $('#inStockCount').text('0');
-                $('#lowStockCount').text('0');
-                $('#expiringSoonCount').text('0');
             }
-        }).fail(function() {
-            $('#inventoryTable tbody').html('<tr><td colspan="9" class="text-center text-danger"><i class="fas fa-exclamation-circle"></i> Failed to load inventory</td></tr>');
-        });
-    }
-
-    // View drug details
-    $(document).on('click', '.btn-view-drug', function() {
-        const drugId = $(this).data('id');
-        $('#drugDetailsContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading drug information...</div>');
-        $('#drugDetailsModal').modal('show');
-        
-        $.get(`/pharmacist/drug/${drugId}`, function(data) {
-            if (data) {
-                let html = `
-                    <div class="drug-details">
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="detail-group">
-                                    <label>Drug Number:</label>
-                                    <p>${data.drug_number}</p>
+            
+            // Search sale for refund - REAL BACKEND
+            function searchSale() {
+                const saleNumber = $('#refund-search').val().trim();
+                
+                if (!saleNumber) {
+                    alert('Please enter a sale number');
+                    return;
+                }
+                
+                $.ajax({
+                    url: '/pharmacist/refund/search',
+                    method: 'GET',
+                    data: {
+                        sale_number: saleNumber
+                    },
+                    success: function(response) {
+                        if (response.error) {
+                            $('#refund-results').html(`
+                                <div class="alert alert-danger">
+                                    <i class="bi bi-exclamation-triangle"></i> 
+                                    ${response.error}
                                 </div>
-                            </div>
-                            <div class="col-md-8">
-                                <div class="detail-group">
-                                    <label>Drug Name:</label>
-                                    <p>${data.name}</p>
-                                </div>
-                            </div>
-                        </div>
+                            `);
+                            return;
+                        }
                         
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="detail-group">
-                                    <label>Category:</label>
-                                    <p>${data.category || 'Not specified'}</p>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="detail-group">
-                                    <label>Batch Number:</label>
-                                    <p>${data.batch_number || 'Not specified'}</p>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="detail-group">
-                                    <label>Expiry Date:</label>
-                                    <p>${data.expiry_date ? new Date(data.expiry_date).toLocaleDateString() : 'Not specified'}</p>
-                                </div>
-                            </div>
-                        </div>
+                        currentRefundItems = response.items;
                         
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="detail-group">
-                                    <label>Selling Price:</label>
-                                    <p>Ksh ${data.selling_price.toFixed(2)}</p>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="detail-group">
-                                    <label>Current Stock:</label>
-                                    <p>${data.remaining_quantity}</p>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="detail-group">
-                                    <label>Status:</label>
-                                    <p>
-                                        <span class="status-badge ${data.remaining_quantity === 0 ? 'out-of-stock' : (data.remaining_quantity < 10 ? 'low-stock' : 'in-stock')}">
-                                            ${data.remaining_quantity === 0 ? 'Out of Stock' : (data.remaining_quantity < 10 ? 'Low Stock' : 'In Stock')}
-                                        </span>
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="detail-group">
-                            <label>Specification:</label>
-                            <p>${data.specification || 'No specification provided'}</p>
-                        </div>
-                        
-                        <hr>
-                        <h5><i class="fas fa-prescription"></i> Dosage Information</h5>
-                        
-                        <div class="dosage-info">
-                            ${data.dosage ? `
-                                <div class="dosage-section">
-                                    <h6><i class="fas fa-info-circle"></i> Indications</h6>
-                                    <p>${data.dosage.indication || 'Not specified'}</p>
-                                </div>
-                                
-                                <div class="dosage-section">
-                                    <h6><i class="fas fa-ban"></i> Contraindications</h6>
-                                    <p>${data.dosage.contraindication || 'Not specified'}</p>
-                                </div>
-                                
-                                <div class="dosage-section">
-                                    <h6><i class="fas fa-random"></i> Interactions</h6>
-                                    <p>${data.dosage.interaction || 'Not specified'}</p>
-                                </div>
-                                
-                                <div class="dosage-section">
-                                    <h6><i class="fas fa-exclamation-triangle"></i> Side Effects</h6>
-                                    <p>${data.dosage.side_effects || 'Not specified'}</p>
-                                </div>
-                                
-                                <div class="row">
-                                    <div class="col-md-4">
-                                        <div class="dosage-section">
-                                            <h6><i class="fas fa-child"></i> Pediatric Dosage</h6>
-                                            <p>${data.dosage.dosage_peds || 'Not specified'}</p>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="dosage-section">
-                                            <h6><i class="fas fa-user"></i> Adult Dosage</h6>
-                                            <p>${data.dosage.dosage_adults || 'Not specified'}</p>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <div class="dosage-section">
-                                            <h6><i class="fas fa-wheelchair"></i> Geriatric Dosage</h6>
-                                            <p>${data.dosage.dosage_geriatrics || 'Not specified'}</p>
+                        // Display sale details for refund
+                        let itemsHTML = '';
+                        response.items.forEach(item => {
+                            itemsHTML += `
+                                <div class="card mb-2">
+                                    <div class="card-body">
+                                        <h6>${item.drug_name}</h6>
+                                        <p>Quantity Sold: ${item.quantity_sold} | Available for Refund: ${item.quantity_remaining}</p>
+                                        <p>Price: Ksh ${item.unit_price.toFixed(2)}</p>
+                                        <div class="form-group">
+                                            <label>Quantity to Refund:</label>
+                                            <input type="number" class="form-control refund-quantity" 
+                                                min="1" max="${item.quantity_remaining}" 
+                                                value="${item.quantity_remaining}" 
+                                                data-sale-item-id="${item.sale_item_id}" 
+                                                data-unit-price="${item.unit_price}">
                                         </div>
                                     </div>
                                 </div>
-                                
-                                <div class="dosage-section">
-                                    <h6><i class="fas fa-sticky-note"></i> Important Notes</h6>
-                                    <p>${data.dosage.important_notes || 'Not specified'}</p>
+                            `;
+                        });
+                        
+                        $('#sale-details').removeClass('d-none').html(`
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>Sale Details: ${response.sale_number}</h5>
                                 </div>
-                            ` : `
-                                <div class="alert alert-info">
-                                    <i class="fas fa-info-circle"></i> No dosage information available for this drug.
+                                <div class="card-body">
+                                    <p><strong>Patient:</strong> ${response.patient_name}</p>
+                                    <p><strong>Date:</strong> ${response.created_at}</p>
+                                    <p><strong>Total Amount:</strong> Ksh ${response.total_amount.toFixed(2)}</p>
+                                    
+                                    <h6>Items Available for Refund:</h6>
+                                    ${itemsHTML}
+                                    
+                                    <div class="mt-3">
+                                        <label for="refund-reason" class="form-label">Reason for Refund:</label>
+                                        <textarea class="form-control" id="refund-reason" placeholder="Reason for refund"></textarea>
+                                    </div>
+                                    
+                                    <button class="btn btn-primary mt-3" id="process-refund-btn">
+                                        Process Refund
+                                    </button>
                                 </div>
-                            `}
-                        </div>
-                    </div>
-                `;
-                
-                $('#drugDetailsContent').html(html);
-            } else {
-                $('#drugDetailsContent').html('<div class="alert alert-danger">Failed to load drug details</div>');
-            }
-        }).fail(function() {
-            $('#drugDetailsContent').html('<div class="alert alert-danger">Failed to load drug details</div>');
-        });
-    });
-
-    // Refresh inventory
-    $('#refreshInventoryBtn').click(function() {
-        loadInventory();
-    });
-
-    // Export inventory (limited to viewable data)
-    $('#exportInventoryBtn').click(function() {
-        const filter = $('#inventoryFilter').val();
-        const search = $('#inventorySearch').val();
-        const sort = $('#inventorySort').val();
-        
-        window.location.href = `/pharmacist/drugs/export?filter=${filter}&search=${search}&sort=${sort}`;
-    });
-
-    // Initialize inventory on page load
-    loadInventory();
-
-    // Load prescriptions
-    function loadPrescriptions() {
-        $('#prescriptionsTable tbody').html('<tr><td colspan="6" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading prescriptions...</td></tr>');
-        
-        $.get('/pharmacist/prescriptions', function(data) {
-            if (data.length > 0) {
-                let html = '';
-                data.forEach(function(prescription) {
-                    html += `
-                        <tr>
-                            <td>PR-${prescription.id.toString().padStart(4, '0')}</td>
-                            <td>${prescription.patient_number} - ${prescription.patient_name}</td>
-                            <td>Dr. ${prescription.doctor_name}</td>
-                            <td>${prescription.created_at}</td>
-                            <td>${prescription.items_count} items</td>
-                            <td>
-                                <button class="btn btn-sm btn-primary btn-dispense-prescription" data-id="${prescription.id}">
-                                    <i class="fas fa-pills"></i> Dispense
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                });
-                $('#prescriptionsTable tbody').html(html);
-            } else {
-                $('#prescriptionsTable tbody').html('<tr><td colspan="6" class="text-center"><i class="fas fa-info-circle"></i> No pending prescriptions</td></tr>');
-            }
-        });
-    }
-    
-    // View prescriptions button
-    $('#viewPrescriptionsBtn').click(function() {
-        loadPrescriptions();
-        $('#prescriptionsModal').modal('show');
-    });
-    
-    // Dispense prescription button
-    $(document).on('click', '.btn-dispense-prescription', function() {
-        const prescriptionId = $(this).data('id');
-        
-        $.get(`/pharmacist/prescription/${prescriptionId}`, function(data) {
-            if (data.items && data.items.length > 0) {
-                // Clear cart first
-                saveCart({items: []});
-                
-                // Add prescription items to cart with proper structure
-                const cart = {items: []};
-                data.items.forEach(function(item) {
-                    cart.items.push({
-                        drug_id: item.drug_id,           // Match backend expectation
-                        drug_name: item.drug.name,       // For display
-                        unit_price: item.drug.selling_price, // Match backend expectation
-                        quantity: item.quantity,
-                        currentStock: item.drug.remaining_quantity,
-                        prescription_item_id: item.id    // For tracking
-                    });
-                });
-                
-                saveCart(cart);
-                renderCartItems();
-                updateCartSummary();
-                
-                // Show dispense button
-                $('#dispensePrescriptionBtn').data('prescription-id', prescriptionId).show();
-                $('#confirmSaleBtn').hide();
-                
-                $('#prescriptionsModal').modal('hide');
-            }
-        });
-    });
-
-    // Dispense prescription
-    $('#dispensePrescriptionBtn').click(function() {
-        const prescriptionId = $(this).data('prescription-id');
-        const cart = getCart();
-        const paymentMethod = $('#paymentMethod').val();
-        
-        if (cart.items.length === 0) {
-            alert('Cart is empty');
-            return;
-        }
-        
-        const itemsData = cart.items.map(item => ({
-            drug_id: item.drug_id,           // Match backend expectation
-            quantity: item.quantity,
-            prescription_item_id: item.prescription_item_id
-        }));
-        
-        $.ajax({
-            url: '/pharmacist/dispense',
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({
-                prescription_id: prescriptionId,
-                items: itemsData,
-                payment_method: paymentMethod
-            }),
-            success: function(response) {
-                if (response.success) {
-                    // Show receipt
-                    showReceipt(response.sale_id);
-                    
-                    // Clear cart
-                    saveCart({items: []});
-                    renderCartItems();
-                    updateCartSummary();
-                    
-                    // Reset buttons
-                    $('#dispensePrescriptionBtn').hide().removeData('prescription-id');
-                    $('#confirmSaleBtn').show();
-                    
-                    // Refresh sales list
-                    loadSales();
-                    
-                    // Show success message
-                    showAlert('Prescription dispensed successfully!', 'success');
-                } else {
-                    alert('Error: ' + (response.error || 'Failed to dispense prescription'));
-                }
-            },
-            error: function(xhr) {
-                let errorMsg = 'Failed to dispense prescription';
-                if (xhr.responseJSON) {
-                    errorMsg = xhr.responseJSON.error || errorMsg;
-                    if (xhr.responseJSON.details) {
-                        errorMsg += '\n' + xhr.responseJSON.details;
+                            </div>
+                        `);
+                        
+                        $('#process-refund-btn').click(processRefund);
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON?.error || 'Failed to search sale';
+                        $('#refund-results').html(`
+                            <div class="alert alert-danger">
+                                <i class="bi bi-exclamation-triangle"></i> 
+                                ${error}
+                            </div>
+                        `);
                     }
-                }
-                alert(errorMsg);
-            }
-        });
-    });
-
-    // Global error handler for AJAX requests
-    $(document).ajaxError(function(event, jqXHR, ajaxSettings, thrownError) {
-        console.error('AJAX Error:', {
-            url: ajaxSettings.url,
-            status: jqXHR.status,
-            error: thrownError,
-            response: jqXHR.responseText
-        });
-        
-        // Don't show alert for failed image requests, etc.
-        if (ajaxSettings.url.includes('/pharmacist/')) {
-            let errorMsg = 'An error occurred. Please try again.';
-            if (jqXHR.responseJSON && jqXHR.responseJSON.error) {
-                errorMsg = jqXHR.responseJSON.error;
-            }
-            showAlert(errorMsg, 'danger');
-        }
-    });
-
-    // Enhanced showAlert function
-    function showAlert(message, type = 'info', duration = 5000) {
-        const alertId = 'alert-' + Date.now();
-        const alert = $(`
-            <div id="${alertId}" class="alert alert-${type} alert-dismissible fade show" role="alert">
-                <i class="fas fa-${getAlertIcon(type)} mr-2"></i>
-                ${message}
-                <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-        `);
-        
-        $('#alertsContainer').append(alert);
-        
-        // Auto-dismiss after duration
-        setTimeout(() => {
-            $(`#${alertId}`).alert('close');
-        }, duration);
-        
-        return alertId;
-    }
-
-    function getAlertIcon(type) {
-        const icons = {
-            'success': 'check-circle',
-            'danger': 'exclamation-circle',
-            'warning': 'exclamation-triangle',
-            'info': 'info-circle'
-        };
-        return icons[type] || 'info-circle';
-    }
-
-    $('#confirmSaleBtn').click(function() {
-        const $btn = $(this);
-        const cart = getCart();
-        const paymentMethod = $('#paymentMethod').val();
-        
-        // Prepare sale data
-        const saleData = {
-            items: cart.items.map(item => ({
-                drug_id: item.drugId,
-                quantity: item.quantity
-            })),
-            payment_method: paymentMethod
-        };
-        
-        // Show loading state
-        $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Processing...');
-        
-        $.ajax({
-            url: '/pharmacist/cart_sale',
-            methods: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify(saleData),
-            success: function(response) {
-                if (response.success) {
-                    // Clear cart on success
-                    saveCart({ items: [] });
-                    renderCartItems();
-                    updateCartSummary();
-                    
-                    // Show success with details
-                    const itemCount = response.items.reduce((sum, item) => sum + item.quantity, 0);
-                    alert(`Success! Processed ${itemCount} items\nSale #: ${response.sale_number}\nTotal: Ksh ${response.total_amount.toFixed(2)}`);
-                    
-                    // Show receipt
-                    showReceipt(response.sale_id);
-                }
-            },
-            error: function(xhr) {
-                let errorMsg = 'Failed to process sale';
-                if (xhr.responseJSON) {
-                    if (xhr.responseJSON.error) {
-                        errorMsg = xhr.responseJSON.error;
-                    }
-                    if (xhr.responseJSON.details) {
-                        errorMsg += `\n${xhr.responseJSON.details}`;
-                    }
-                    if (xhr.responseJSON.available !== undefined) {
-                        errorMsg += `\nAvailable stock: ${xhr.responseJSON.available}`;
-                    }
-                }
-                alert(errorMsg);
-            },
-            complete: function() {
-                $btn.prop('disabled', false).html('<i class="fas fa-check"></i> Confirm Sale');
-            }
-        });
-    });
-    
-    // Show receipt
-    function showReceipt(saleId) {
-        $('#receiptContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading receipt...</div>');
-        
-        $.get(`/pharmacist/cart_sale/${saleId}/receipt`, function(data) {
-            $('#receiptContent').html(data);
-            $('#receiptModal').modal('show');
-        });
-    }
-    
-    // Print receipt
-    $('#printReceiptBtn').click(function() {
-        const printContent = $('#receiptContent').html();
-        const originalContent = $('body').html();
-        
-        $('body').html(printContent);
-        window.print();
-        $('body').html(originalContent);
-    });
-    
-    // Search sale for refund
-    $('#searchSaleBtn').click(function() {
-        const saleNumber = $('#refundSaleNumber').val().trim();
-        
-        if (!saleNumber) {
-            alert('Please enter a sale number');
-            return;
-        }
-        
-        $.get(`/pharmacist/sales/search?sale_number=${saleNumber}`, function(sale) {
-            if (sale) {
-                $('#refundSaleNo').text(sale.sale_number);
-                $('#refundSaleDate').text(sale.created_at);
-                $('#refundPatient').text(sale.patient_name || 'Walk-in');
-                $('#refundTotal').text('Ksh ' + sale.total_amount.toFixed(2));
-                
-                // Load items
-                let html = '';
-                sale.items.forEach(function(item) {
-                    html += `
-                        <tr>
-                            <td>${item.drug_name}</td>
-                            <td>Ksh ${item.unit_price.toFixed(2)}</td>
-                            <td>${item.quantity_sold}</td>
-                            <td>${item.quantity_remaining}</td>
-                            <td>
-                                <input type="number" class="form-control form-control-sm refund-quantity" 
-                                       value="0" min="0" max="${item.quantity_remaining}"
-                                       data-item-id="${item.id}" data-unit-price="${item.unit_price}">
-                            </td>
-                            <td>
-                                <button class="btn btn-sm btn-select-refund" data-item-id="${item.id}">
-                                    <i class="fas fa-undo"></i> Refund
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                });
-                $('#refundItemsList').html(html);
-                
-                $('#refundResults').show();
-            } else {
-                alert('Sale not found');
-            }
-        }).fail(function() {
-            alert('Error searching for sale');
-        });
-    });
-    
-    // Update refund total when quantities change
-    $(document).on('change', '.refund-quantity', function() {
-        updateRefundTotal();
-    });
-    
-    function updateRefundTotal() {
-        let total = 0;
-        
-        $('.refund-quantity').each(function() {
-            const quantity = parseInt($(this).val()) || 0;
-            const unitPrice = parseFloat($(this).data('unit-price'));
-            total += quantity * unitPrice;
-        });
-        
-        $('#refundAmountTotal').text('Ksh ' + total.toFixed(2));
-        
-        // Enable/disable refund button based on whether there are items to refund
-        $('#processRefundBtn').prop('disabled', total <= 0);
-    }
-    
-    // Process refund
-    $('#processRefundBtn').click(function() {
-        const saleNumber = $('#refundSaleNo').text();
-        const items = [];
-        
-        $('.refund-quantity').each(function() {
-            const quantity = parseInt($(this).val()) || 0;
-            if (quantity > 0) {
-                items.push({
-                    sale_item_id: $(this).data('item-id'),
-                    quantity: quantity
                 });
             }
-        });
-        
-        if (items.length === 0) {
-            alert('Please select items to refund');
-            return;
-        }
-        
-        if (!confirm(`Are you sure you want to refund ${items.length} items from sale ${saleNumber}?`)) {
-            return;
-        }
-        
-        $.ajax({
-            url: '/pharmacist/refund',
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({
-                sale_id: $('#refundSaleNo').text(),
-                items: items
-            }),
-            success: function(response) {
-                if (response.success) {
-                    alert('Refund processed successfully');
-                    
-                    // Show refund receipt
-                    showRefundReceipt(response.refund_id);
-                    
-                    // Reset form
-                    $('#refundResults').hide();
-                    $('#refundSaleNumber').val('');
-                    
-                    // Refresh sales list
-                    loadSales();
-                } else {
-                    alert('Error: ' + (response.error || 'Failed to process refund'));
+            
+            // Process refund
+            function processRefund() {
+                const reason = $('#refund-reason').val().trim();
+                
+                if (!reason) {
+                    alert('Please provide a reason for the refund');
+                    return;
                 }
-            },
-            error: function(xhr) {
-                alert('Error: ' + (xhr.responseJSON?.error || 'Failed to process refund'));
+                
+                // Collect refund items
+                const refundItems = [];
+                $('.refund-quantity').each(function() {
+                    const quantity = parseInt($(this).val());
+                    const saleItemId = $(this).data('sale-item-id');
+                    const unitPrice = $(this).data('unit-price');
+                    
+                    if (quantity > 0) {
+                        refundItems.push({
+                            sale_item_id: saleItemId,
+                            quantity: quantity,
+                            unit_price: unitPrice,
+                            total_price: unitPrice * quantity
+                        });
+                    }
+                });
+                
+                if (refundItems.length === 0) {
+                    alert('Please select at least one item to refund');
+                    return;
+                }
+                
+                const refundData = {
+                    sale_id: currentRefundItems[0]?.sale_id,
+                    items: refundItems,
+                    reason: reason,
+                    csrf_token: csrfToken
+                };
+                
+                $.ajax({
+                    url: '/pharmacist/refund',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(refundData),
+                    success: function(response) {
+                        if (response.success) {
+                            showSuccessToast('Refund processed successfully');
+                            $('#sale-details').addClass('d-none');
+                            
+                            // Show refund receipt
+                            showRefundReceipt(response.refund_id);
+                        } else {
+                            showErrorToast(response.error || 'Failed to process refund');
+                        }
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON?.error || 'Failed to process refund';
+                        showErrorToast(error);
+                    }
+                });
             }
+            
+            // Show refund receipt
+            function showRefundReceipt(refundId) {
+                $.ajax({
+                    url: `/pharmacist/refund/${refundId}/receipt`,
+                    method: 'GET',
+                    success: function(response) {
+                        let itemsHTML = '';
+                        response.items.forEach(item => {
+                            itemsHTML += `
+                                <tr>
+                                    <td>${item.drug_name}</td>
+                                    <td>${item.quantity}</td>
+                                    <td>Ksh ${item.unit_price.toFixed(2)}</td>
+                                    <td>Ksh ${item.total_price.toFixed(2)}</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        const receiptHTML = `
+                            <div class="receipt">
+                                <div class="text-center mb-4">
+                                    <h4>Medical Pharmacy</h4>
+                                    <p>123 Health Street, Medical Town</p>
+                                    <p>Tel: 0123-456-789</p>
+                                </div>
+                                <hr>
+                                <div class="d-flex justify-content-between mb-3">
+                                    <div>
+                                        <strong>Refund #:</strong> ${response.refund_number}
+                                    </div>
+                                    <div>
+                                        <strong>Date:</strong> ${new Date().toLocaleDateString()}
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <strong>Original Sale #:</strong> ${response.sale_number}
+                                </div>
+                                <div class="mb-3">
+                                    <strong>Patient:</strong> ${response.patient_name}
+                                </div>
+                                <div class="mb-3">
+                                    <strong>Reason:</strong> ${response.reason}
+                                </div>
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Item</th>
+                                            <th>Qty</th>
+                                            <th>Price</th>
+                                            <th>Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${itemsHTML}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td colspan="3" class="text-end"><strong>Refund Total:</strong></td>
+                                            <td><strong>Ksh ${response.total_amount.toFixed(2)}</strong></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                                <hr>
+                                <div class="text-center mt-4">
+                                    <p>Refund processed successfully</p>
+                                </div>
+                            </div>
+                        `;
+                        
+                        $('#refund-receipt-content').html(receiptHTML);
+                        $('#refundReceiptModal').modal('show');
+                    },
+                    error: function() {
+                        showErrorToast('Failed to load refund receipt');
+                    }
+                });
+            }
+            
+            // Clear cart
+            function clearCart() {
+                if (cart.length === 0) {
+                    return;
+                }
+                
+                if (confirm('Are you sure you want to clear the cart?')) {
+                    cart = [];
+                    updateCartDisplay();
+                    showSuccessToast('Cart cleared');
+                }
+            }
+            
+            // Event listeners
+            $('#drug-filter').change(function() {
+                const filter = $(this).val();
+                const search = $('#drug-search').val();
+                loadDrugs(filter, search);
+            });
+            
+            $('#drug-search').on('input', function() {
+                const search = $(this).val();
+                const filter = $('#drug-filter').val();
+                loadDrugs(filter, search);
+            });
+            
+            $('#confirm-sale-btn').click(confirmSale);
+            $('#clear-cart-btn').click(clearCart);
+            $('#search-sale-btn').click(searchSale);
+            $('#print-receipt-btn').click(function() {
+                window.print();
+            });
+            $('#print-refund-receipt-btn').click(function() {
+                window.print();
+            });
+            $('#dispense-prescription-btn').click(function() {
+                if (currentPrescription) {
+                    dispensePrescription(currentPrescription.id);
+                }
+            });
+            
+            // Initialize the page
+            loadDashboardStats();
+            loadDrugs();
+            loadPrescriptions();
         });
-    });
-    
-    // Show refund receipt
-    function showRefundReceipt(refundId) {
-        $('#refundReceiptContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading receipt...</div>');
-        
-        $.get(`/pharmacist/refund/${refundId}/receipt`, function(data) {
-            $('#refundReceiptContent').html(data);
-            $('#refundReceiptModal').modal('show');
-        });
-    }
-    
-    // Print refund receipt
-    $('#printRefundReceiptBtn').click(function() {
-        const printContent = $('#refundReceiptContent').html();
-        const originalContent = $('body').html();
-        
-        $('body').html(printContent);
-        window.print();
-        $('body').html(originalContent);
-    });
-    
-    // Refresh buttons
-    $('#refreshSalesBtn').click(function() {
-        loadSales();
-    });
-    
-    $('#refreshInventoryBtn').click(function() {
-        loadInventory();
-    });
-    
-    // Export inventory
-    $('#exportInventoryBtn').click(function() {
-        // This would typically export to CSV or Excel
-        alert('Export functionality would be implemented here');
-    });
-    
-    // Filter inventory
-    $('#inventoryFilter').change(function() {
-        const filter = $(this).val();
-        // Implement filtering logic
-        alert('Filtering by: ' + filter);
-    });
-    
-    // View receipt from sales table
-    $(document).on('click', '.btn-view-receipt', function() {
-        const saleId = $(this).data('id');
-        showReceipt(saleId);
-    });
-    
-    // Initialize on page load
-    loadDrugs();
-    loadSales();
-    renderCartItems();
-    updateCartSummary();
-});
-</script>
-
-<style>
-/* Pharmacist Dashboard Styles */
-.pharmacist-tabs {
-    margin-top: 20px;
-}
-/* Inventory Container Styles */
-.inventory-container {
-    background-color: #f8f9fa;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-    margin-bottom: 30px;
-}
-
-/* Filter Controls Styles */
-.inventory-filters {
-    background-color: white;
-    padding: 15px;
-    border-radius: 6px;
-    margin-bottom: 20px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.inventory-filters .form-group {
-    margin-bottom: 0;
-}
-
-.inventory-filters label {
-    font-weight: 600;
-    color: #495057;
-    font-size: 14px;
-}
-
-/* Summary Cards Styles */
-.inventory-summary-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 15px;
-    margin-bottom: 20px;
-}
-
-.summary-card {
-    background: white;
-    border-radius: 8px;
-    padding: 15px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    display: flex;
-    align-items: center;
-    transition: transform 0.2s ease;
-}
-
-.summary-card:hover {
-    transform: translateY(-3px);
-}
-
-.summary-card .card-icon {
-    width: 50px;
-    height: 50px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-right: 15px;
-    color: white;
-    font-size: 20px;
-}
-
-.summary-card .card-icon.bg-primary { background-color: #4e73df; }
-.summary-card .card-icon.bg-success { background-color: #1cc88a; }
-.summary-card .card-icon.bg-warning { background-color: #f6c23e; }
-.summary-card .card-icon.bg-danger { background-color: #e74a3b; }
-
-.summary-card .card-content h5 {
-    margin: 0;
-    font-size: 14px;
-    color: #5a5c69;
-    font-weight: 600;
-}
-
-.summary-card .card-content p {
-    margin: 5px 0 0 0;
-    font-size: 24px;
-    font-weight: 700;
-    color: #2e2f37;
-}
-
-/* Inventory Table Styles */
-.inventory-table-container {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    padding: 20px;
-    overflow-x: auto;
-}
-
-.data-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-.data-table th {
-    background: #f8f9fc;
-    padding: 12px 15px;
-    text-align: left;
-    font-weight: 600;
-    color: #5a5c69;
-    border-bottom: 2px solid #e3e6f0;
-    font-size: 14px;
-    text-transform: uppercase;
-}
-
-.data-table td {
-    padding: 15px;
-    border-bottom: 1px solid #e3e6f0;
-    vertical-align: middle;
-    color: #5a5c69;
-    font-size: 14px;
-}
-
-.data-table tr:hover td {
-    background-color: #f8f9fc;
-    cursor: pointer;
-}
-
-/* Status Badge Styles */
-.status-badge {
-    padding: 5px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: bold;
-    display: inline-block;
-    min-width: 80px;
-    text-align: center;
-}
-
-.status-badge.in-stock {
-    background-color: #d1e7dd;
-    color: #0f5132;
-}
-
-.status-badge.low-stock {
-    background-color: #fff3cd;
-    color: #664d03;
-}
-
-.status-badge.out-of-stock {
-    background-color: #f8d7da;
-    color: #842029;
-}
-
-/* Action Buttons Styles */
-.btn-view-drug {
-    background-color: #4e73df;
-    color: white;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 13px;
-    transition: all 0.2s;
-}
-
-.btn-view-drug:hover {
-    background-color: #2e59d9;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-}
-
-.btn-view-drug i {
-    margin-right: 5px;
-}
-
-/* Responsive Adjustments */
-@media (max-width: 992px) {
-    .inventory-filters .form-row {
-        flex-direction: column;
-    }
-    
-    .inventory-filters .form-group {
-        margin-bottom: 15px;
-    }
-    
-    .inventory-summary-cards {
-        grid-template-columns: 1fr 1fr;
-    }
-}
-
-@media (max-width: 768px) {
-    .inventory-summary-cards {
-        grid-template-columns: 1fr;
-    }
-    
-    .data-table th, 
-    .data-table td {
-        padding: 10px 8px;
-        font-size: 13px;
-    }
-    
-    .status-badge {
-        min-width: 70px;
-        font-size: 11px;
-    }
-}
-
-@media (max-width: 576px) {
-    .inventory-container {
-        padding: 15px;
-    }
-    
-    .data-table {
-        display: block;
-        overflow-x: auto;
-        white-space: nowrap;
-    }
-    
-    .summary-card {
-        flex-direction: column;
-        text-align: center;
-    }
-    
-    .summary-card .card-icon {
-        margin-right: 0;
-        margin-bottom: 10px;
-    }
-}
-.tab {
-    display: none;
-}
-
-.tab.active {
-    display: block;
-}
-
-.tab-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #eee;
-}
-
-.dispense-container {
-    display: flex;
-    gap: 20px;
-}
-
-.drug-selection {
-    flex: 1;
-    background: #fff;
-    border-radius: 5px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    overflow: hidden;
-}
-
-.search-box {
-    position: relative;
-    padding: 15px;
-    border-bottom: 1px solid #eee;
-}
-
-.search-box input {
-    padding-left: 35px;
-    width: 100%;
-}
-
-.search-box i {
-    position: absolute;
-    left: 25px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: #999;
-}
-
-.cart-container {
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
-.cart-header {
-    padding: 15px;
-    border-bottom: 1px solid 'eee';
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.cart-items {
-    flex: 1;
-    padding: 15px;
-    overflow-y: auto;
-    min-height: 200px;
-}
-
-.empty-cart {
-    text-align: center;
-    padding: 40px 0;
-    color: #999;
-}
-
-.empty-cart i {
-    font-size: 40px;
-    margin-bottom: 10px;
-    display: block;
-}
-
-.cart-item {
-    display: flex;
-    align-items: center;
-    padding: 10px 0;
-    border-bottom: 1px solid #f5f5f5;
-}
-
-.cart-item:last-child {
-    border-bottom: none;
-}
-
-.item-info {
-    flex: 1;
-}
-
-.item-info h5 {
-    margin: 0;
-    font-size: 14px;
-}
-
-.item-price {
-    font-size: 13px;
-    color: #666;
-}
-
-.item-controls {
-    display: flex;
-    align-items: center;
-    margin: 0 10px;
-}
-
-.item-controls .form-control {
-    width: 50px;
-    text-align: center;
-    margin: 0 5px;
-}
-
-.item-total {
-    font-weight: bold;
-    margin: 0 10px;
-    min-width: 70px;
-    text-align: right;
-}
-
-.cart-footer {
-    padding: 15px;
-    border-top: 1px solid #eee;
-}
-
-.payment-method {
-    margin-bottom: 10px;
-}
-
-.cart-total {
-    display: flex;
-    justify-content: space-between;
-    font-weight: bold;
-    font-size: 18px;
-    margin: 10px 0;
-}
-
-.cart-buttons .btn {
-    width: 100%;
-}
-
-/* Drug List Styles */
-.drug-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 15px;
-    padding: 15px;
-}
-
-.drug-card {
-    background: white;
-    border-radius: 5px;
-    padding: 15px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    display: flex;
-    flex-direction: column;
-}
-
-.drug-info h5 {
-    margin: 0 0 5px 0;
-    color: #333;
-}
-
-.drug-info p {
-    margin: 0 0 10px 0;
-    color: #666;
-    font-size: 14px;
-}
-
-.drug-meta {
-    display: flex;
-    justify-content: space-between;
-    margin-top: auto;
-}
-
-.price {
-    font-weight: bold;
-    color: #28a745;
-}
-
-.stock {
-    color: #6c757d;
-    font-size: 13px;
-}
-
-.drug-actions {
-    margin-top: 10px;
-}
-
-.btn-add-to-cart {
-    width: 100%;
-}
-
-.loading-spinner, .empty-list, .error-loading {
-    text-align: center;
-    padding: 20px;
-    grid-column: 1 / -1;
-}
-
-.empty-list i, .error-loading i {
-    font-size: 24px;
-    margin-bottom: 10px;
-    display: block;
-}
-
-.error-loading {
-    color: #dc3545;
-}
-
-/* Refund Styles */
-.refund-container {
-    background: #fff;
-    padding: 20px;
-    border-radius: 5px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-}
-
-.refund-search {
-    margin-bottom: 20px;
-}
-
-.refund-results {
-    margin-top: 20px;
-}
-
-.sale-details {
-    background: #f8f9fa;
-    padding: 15px;
-    border-radius: 5px;
-    margin-bottom: 20px;
-}
-
-.details-row {
-    display: flex;
-    margin-bottom: 8px;
-}
-
-.detail-label {
-    font-weight: bold;
-    width: 120px;
-}
-
-.refund-items-table {
-    width: 100%;
-    margin-bottom: 20px;
-}
-
-.refund-items-table th, 
-.refund-items-table td {
-    padding: 10px;
-    text-align: left;
-    border-bottom: 1px solid #eee;
-}
-
-.refund-summary {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 20px;
-}
-
-.refund-total {
-    font-weight: bold;
-    font-size: 18px;
-}
-
-/* Status Badges */
-.status-badge {
-    padding: 5px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: bold;
-}
-
-.status-badge.in-stock {
-    background-color: #d4edda;
-    color: #155724;
-}
-
-.status-badge.low-stock {
-    background-color: #fff3cd;
-    color: #856404;
-}
-
-.status-badge.out-of-stock {
-    background-color: #f8d7da;
-    color: #721c24;
-}
-
-/* Drug Dosage Information Styles */
-.dosage-info {
-    padding: 15px;
-}
-
-.dosage-info h4 {
-    color: #2c3e50;
-    margin-bottom: 20px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #eee;
-}
-
-.dosage-section {
-    margin-bottom: 20px;
-    background: #f9f9f9;
-    padding: 15px;
-    border-radius: 5px;
-    border-left: 4px solid #3498db;
-}
-
-.dosage-section h5 {
-    color: #2980b9;
-    margin-bottom: 10px;
-    display: flex;
-    align-items: center;
-}
-
-.dosage-section h5 i {
-    margin-right: 10px;
-    font-size: 18px;
-}
-
-.dosage-section p {
-    margin: 0;
-    color: #555;
-    line-height: 1.6;
-}
-
-/* Responsive adjustments */
-@media (max-width: 992px) {
-    .dispense-container {
-        flex-direction: column;
-    }
-    
-    .cart-container {
-        width: 100%;
-    }
-}
-
-@media (max-width: 768px) {
-    .drug-list {
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    }
-    
-    .cart-item {
-        flex-wrap: wrap;
-    }
-    
-    .item-controls {
-        order: 1;
-        width: 100%;
-        margin-top: 10px;
-        justify-content: center;
-    }
-    
-    .item-total {
-        order: 2;
-        width: 100%;
-        text-align: center;
-        margin-top: 10px;
-    }
-
-    .dosage-section {
-        padding: 10px;
-    }
-}
-</style>
-{% endblock %}
+    </script>
+</body>
+</html>

@@ -2193,11 +2193,8 @@ def manage_drugs():
                          today=datetime.now().date())
 
 @app.route('/admin/drugs/<int:drug_id>')
-@login_required
 def get_drug(drug_id):
-    if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
+
     drug = db.session.get(Drug, drug_id)  # Updated to use session.get()
     if not drug:
         return jsonify({'error': 'Drug not found'}), 404
@@ -5089,6 +5086,119 @@ def pharmacist_dashboard():
         flash('An error occurred while loading the dashboard', 'danger')
         return redirect(url_for('home'))
 
+# Pharmacist API routes
+@app.route('/pharmacist/api/dashboard-stats')
+@login_required
+def pharmacist_dashboard_stats():
+    if current_user.role != 'pharmacist':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    # Calculate real stats
+    total_drugs = Drug.query.count()
+    low_stock = Drug.query.filter(Drug.remaining_quantity < 10, Drug.remaining_quantity > 0).count()
+    expiring_soon = Drug.query.filter(
+        Drug.expiry_date <= date.today() + timedelta(days=30),
+        Drug.expiry_date >= date.today()
+    ).count()
+    pending_prescriptions = Prescription.query.filter_by(status='pending').count()
+    
+    return jsonify({
+        'success': True,
+        'data': {
+            'total_drugs': total_drugs,
+            'low_stock': low_stock,
+            'expiring_soon': expiring_soon,
+            'pending_prescriptions': pending_prescriptions
+        }
+    })
+
+@app.route('/pharmacist/sale/<int:sale_id>/receipt-data')
+@login_required
+def sale_receipt_data(sale_id):
+    if current_user.role != 'pharmacist':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    sale = Sale.query.options(
+        db.joinedload(Sale.user),
+        db.joinedload(Sale.items),
+        db.joinedload(Sale.patient)
+    ).get(sale_id)
+    
+    if not sale:
+        return jsonify({'error': 'Sale not found'}), 404
+    
+    receipt_data = {
+        'sale_id': sale.id,
+        'sale_number': sale.sale_number,
+        'date': sale.created_at.strftime('%Y-%m-%d %H:%M'),
+        'patient_name': sale.patient.decrypted_name if sale.patient else 'Walk-in Customer',
+        'patient_number': sale.patient.op_number or sale.patient.ip_number if sale.patient else 'N/A',
+        'pharmacist_name': sale.user.username,
+        'payment_method': sale.payment_method,
+        'total_amount': sale.total_amount,
+        'items': []
+    }
+    
+    for item in sale.items:
+        receipt_data['items'].append({
+            'name': item.drug_name,
+            'specification': item.drug_specification,
+            'quantity': item.quantity,
+            'unit_price': item.unit_price,
+            'total_price': item.total_price
+        })
+    
+    return jsonify(receipt_data)
+
+@app.route('/pharmacist/refund/<int:refund_id>/receipt-data')
+@login_required
+def refund_receipt_data(refund_id):
+    if current_user.role != 'pharmacist':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    refund = Refund.query.options(
+        db.joinedload(Refund.sale).joinedload(Sale.patient),
+        db.joinedload(Refund.user),
+        db.joinedload(Refund.items).joinedload(RefundItem.sale_item)
+    ).get(refund_id)
+    
+    if not refund:
+        return jsonify({'error': 'Refund not found'}), 404
+    
+    receipt_data = {
+        'refund_id': refund.id,
+        'refund_number': refund.refund_number,
+        'sale_number': refund.sale.sale_number,
+        'date': refund.created_at.strftime('%Y-%m-%d %H:%M'),
+        'patient_name': refund.sale.patient.decrypted_name if refund.sale.patient else 'Walk-in Customer',
+        'reason': refund.reason,
+        'total_amount': refund.total_amount,
+        'items': []
+    }
+    
+    for item in refund.items:
+        receipt_data['items'].append({
+            'drug_name': item.sale_item.drug_name,
+            'quantity': item.quantity,
+            'unit_price': item.unit_price,
+            'total_price': item.total_price
+        })
+    
+    return jsonify(receipt_data)
+
+# Add decrypt_data to Jinja context
+@app.context_processor
+def utility_processor():
+    def decrypt_data(encrypted_data):
+        if not encrypted_data:
+            return ""
+        try:
+            return Config.decrypt_data_static(encrypted_data)
+        except:
+            return "[Decryption Error]"
+    
+    return dict(decrypt_data=decrypt_data)
+
 @app.route('/pharmacist/drugs')
 @login_required
 def pharmacist_drugs():
@@ -5499,7 +5609,7 @@ def generate_receipt(sale_id):
             db.joinedload(Sale.items).joinedload(SaleItem.drug)
         ).all()
     
-    return render_template('pharmacist/receipt.html', 
+    return render_template('receipt.html', 
                          sale=sale,
                          related_sales=related_sales,
                          now=datetime.now())
