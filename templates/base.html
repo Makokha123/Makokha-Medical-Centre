@@ -37,6 +37,8 @@
             --header-height: 60px;
             --transition-speed: 0.3s;
             --border-color: rgba(255, 255, 255, 0.1);
+            --table-blue: #0d6efd;
+            --table-white: #ffffff;
         }
 
         /* Sidebar Styles */
@@ -48,17 +50,17 @@
             width: var(--sidebar-width);
             background: var(--primary-color);
             color: white;
-            transition: width var(--transition-speed) ease;
+            transition: transform var(--transition-speed) ease, width var(--transition-speed) ease;
             z-index: 1000;
             overflow-x: hidden;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
 
         .sidebar.collapsed {
-            width: 0;
+            width: var(--sidebar-collapsed-width);
         }
 
-        /* Toggle Button */
+        /* Toggle Button - Always visible on mobile */
         .toggle-nav {
             position: fixed;
             left: 1rem;
@@ -83,7 +85,7 @@
         }
 
         .toggle-nav:hover {
-            background: var(--dark-blue);
+            background: #0a58ca;
         }
 
         /* Sidebar Header */
@@ -129,12 +131,14 @@
             display: flex;
             align-items: center;
             padding: 0.75rem 1rem;
-            color: rgba(13, 30, 223, 0.85) !important;
+            color: var(--table-white) !important;
             text-decoration: none;
             border-radius: 0.5rem;
             transition: all var(--transition-speed);
             white-space: nowrap;
             overflow: hidden;
+            background-color: var(--table-blue);
+            border: 1px solid var(--table-blue);
         }
 
         .nav-link i {
@@ -152,7 +156,7 @@
         }
 
         .nav-link:hover {
-            background: rgba(206, 14, 14, 0.1);
+            background: rgba(255, 255, 255, 0.2);
             color: white !important;
         }
 
@@ -204,19 +208,29 @@
             object-fit: cover;
         }
 
-        /* Responsive Design */
-        @media (max-width: 768px) {
+        /* Responsive Design - Improved for mobile */
+        @media (max-width: 992px) {
             .sidebar {
                 transform: translateX(-100%);
-                position: fixed;
+                width: var(--sidebar-width);
             }
 
             .sidebar.show {
                 transform: translateX(0);
             }
 
+            .sidebar.collapsed {
+                transform: translateX(-100%);
+                width: var(--sidebar-width);
+            }
+
             main.container-fluid {
                 margin-left: 0 !important;
+                width: 100%;
+            }
+
+            .toggle-nav {
+                display: flex !important;
             }
 
             .overlay {
@@ -232,6 +246,25 @@
 
             .overlay.show {
                 display: block;
+            }
+            
+            /* Mobile menu button always visible */
+            .mobile-menu-btn {
+                display: block !important;
+                position: fixed;
+                top: 1rem;
+                left: 1rem;
+                z-index: 1070;
+            }
+        }
+
+        @media (min-width: 993px) {
+            .mobile-menu-btn {
+                display: none !important;
+            }
+            
+            .sidebar {
+                transform: translateX(0) !important;
             }
         }
         
@@ -261,20 +294,21 @@
         
         .sidebar-nav .nav-link {
             padding: 0.8rem 1.5rem;
-            color: rgba(29, 34, 185, 0.85);
+            color: var(--table-white);
             transition: all 0.3s ease;
             border-left: 3px solid transparent;
+            background-color: var(--table-blue);
         }
         
         .sidebar-nav .nav-link:hover {
             color: white;
-            background-color: rgba(183, 12, 12, 0.1);
+            background-color: rgba(255, 255, 255, 0.2);
             border-left-color: white;
         }
         
         .sidebar-nav .nav-link.active {
             color: white;
-            background-color: rgba(18, 193, 64, 0.1);
+            background-color: rgba(255, 255, 255, 0.3);
             border-left-color: white;
         }
         
@@ -379,7 +413,7 @@
                 left: -100%;
                 width: var(--sidebar-width);
                 height: calc(100vh - var(--header-height));
-                background-color: var(--primary-blue);
+                background-color: var(--primary-color);
                 transition: left 0.3s ease-in-out;
                 overflow-y: auto;
                 z-index: 1040;
@@ -446,11 +480,30 @@
                 font-size: 16px !important;
             }
         }
+        
+        /* Table styling updates - blue background, white text, blue borders */
+        table th {
+            background-color: var(--table-blue) !important;
+            color: var(--table-white) !important;
+        }
+        
+        table, table th, table td {
+            border: 1px solid var(--table-blue) !important;
+        }
+        
+        table {
+            border-collapse: collapse;
+        }
     </style>
     
     {% block extra_css %}{% endblock %}
 </head>
 <body class="d-flex flex-column min-vh-100">
+    <!-- Mobile Menu Button (Always visible on mobile) -->
+    <button class="mobile-menu-btn toggle-nav" id="mobileMenuBtn">
+        <i class="fas fa-bars"></i>
+    </button>
+
     <!-- Sidebar Navigation -->
     <div class="sidebar" id="sidebar">
         <!-- Sidebar Header -->
@@ -656,6 +709,9 @@
         </div>
     </div>
 
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="overlay"></div>
+
     <!-- Main Content -->
     <main class="container-fluid flex-grow-1 py-3" style="margin-top: 60px;">
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -694,63 +750,73 @@
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
     
-    <!-- Sidebar Behavior -->
+    <!-- Sidebar Behavior - Updated for mobile compatibility -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
         const toggleNav = document.getElementById('toggleNav');
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const overlay = document.getElementById('overlay');
         const mainContent = document.querySelector('main.container-fluid');
-        let overlay = document.createElement('div');
-        overlay.className = 'overlay';
-        document.body.appendChild(overlay);
         
-        // Move toggle button outside sidebar when collapsed
-        function updateTogglePosition() {
-            if (sidebar.classList.contains('collapsed')) {
-                document.body.appendChild(toggleNav);
+        // Function to toggle sidebar
+        function toggleSidebar() {
+            if (window.innerWidth <= 992) {
+                // Mobile view - use show/hide
+                sidebar.classList.toggle('show');
+                overlay.classList.toggle('show');
             } else {
-                sidebar.querySelector('.sidebar-header').appendChild(toggleNav);
+                // Desktop view - use collapse/expand
+                sidebar.classList.toggle('collapsed');
+                mainContent.classList.toggle('expanded');
+                
+                // Store the state
+                localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
             }
         }
-
-        // Toggle sidebar
-        toggleNav.addEventListener('click', function() {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
-            updateTogglePosition();
-            
-            // Store the state
-            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
-        });
-
-        // Mobile handling
-        function handleMobileView() {
-            if (window.innerWidth <= 768) {
-                sidebar.classList.remove('collapsed');
-                mainContent.classList.remove('expanded');
-                
-                toggleNav.addEventListener('click', function() {
-                    sidebar.classList.toggle('show');
-                    overlay.classList.toggle('show');
-                });
-
-                overlay.addEventListener('click', function() {
+        
+        // Toggle sidebar when buttons are clicked
+        if (toggleNav) {
+            toggleNav.addEventListener('click', toggleSidebar);
+        }
+        
+        if (mobileMenuBtn) {
+            mobileMenuBtn.addEventListener('click', toggleSidebar);
+        }
+        
+        // Close sidebar when overlay is clicked (mobile only)
+        if (overlay) {
+            overlay.addEventListener('click', function() {
+                if (window.innerWidth <= 992) {
                     sidebar.classList.remove('show');
                     overlay.classList.remove('show');
-                });
+                }
+            });
+        }
+        
+        // Restore sidebar state for desktop
+        if (window.innerWidth > 992) {
+            const sidebarCollapsed = localStorage.getItem('sidebarCollapsed');
+            if (sidebarCollapsed === 'true') {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.add('expanded');
             }
         }
-
-        // Restore sidebar state
-        const sidebarCollapsed = localStorage.getItem('sidebarCollapsed');
-        if (sidebarCollapsed === 'true') {
-            sidebar.classList.add('collapsed');
-            mainContent.classList.add('expanded');
-        }
-
-        // Handle resize
-        window.addEventListener('resize', handleMobileView);
-        handleMobileView();
+        
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 992) {
+                // Desktop view - ensure sidebar is visible
+                sidebar.classList.remove('show');
+                overlay.classList.remove('show');
+                sidebar.style.transform = 'translateX(0)';
+            } else {
+                // Mobile view - ensure sidebar is hidden by default
+                sidebar.classList.remove('collapsed');
+                mainContent.classList.remove('expanded');
+                sidebar.style.transform = 'translateX(-100%)';
+            }
+        });
     });
     </script>
     
@@ -1060,7 +1126,7 @@
         border-collapse: separate;
         border-spacing: 0;
         background: #fff;
-        border: 1px solid rgba(173, 15, 205, 0.06);
+        border: 1px solid var(--table-blue);
         border-radius: 12px;
         overflow: hidden;
         box-shadow: 0 2px 10px rgba(0,0,0,0.04);
@@ -1068,17 +1134,17 @@
     .table-enhanced thead th {
         position: sticky;
         top: 0;
-        background: linear-gradient(180deg, var(--primary-blue), var(--dark-blue));
-        color: #fff;
+        background: linear-gradient(180deg, var(--table-blue), #0a58ca) !important;
+        color: var(--table-white) !important;
         z-index: 2;
         padding: 0.75rem 1rem;
         font-weight: 600;
         white-space: nowrap;
-        border-bottom: 1px solid rgba(255,255,255,0.2);
+        border-bottom: 1px solid var(--table-blue);
     }
     .table-enhanced tbody td {
         padding: 0.75rem 1rem;
-        border-bottom: 1px solid rgba(0,0,0,0.06);
+        border-bottom: 1px solid var(--table-blue);
         vertical-align: middle;
         background: #fff;
     }
@@ -1133,7 +1199,7 @@
         .table-enhanced tbody tr {
             display: block;
             margin: 0.6rem 0;
-            border: 1px solid rgba(0,0,0,0.08);
+            border: 1px solid var(--table-blue);
             border-radius: 10px;
             overflow: hidden;
             box-shadow: 0 2px 6px rgba(0,0,0,0.05);
@@ -1144,7 +1210,7 @@
             align-items: center;
             gap: 0.75rem;
             padding: 0.6rem 0.9rem;
-            border-bottom: 1px dashed rgba(0,0,0,0.06);
+            border-bottom: 1px dashed var(--table-blue);
         }
         .table-enhanced tbody td:last-child {
             border-bottom: none;
@@ -1165,7 +1231,7 @@
     <style>
         /* Navbar styling */
         .navbar {
-            background-color: var(--primary-blue) !important;
+            background-color: var(--table-blue) !important;
             transition: all 0.3s ease;
             padding-top: 0.5rem;
             padding-bottom: 0.5rem;
@@ -1210,13 +1276,19 @@
         .table {
             width: 100%;
             margin-bottom: 0;
+            border: 1px solid var(--table-blue);
         }
         
         .table th {
-            background-color: var(--primary-blue);
-            color: white;
+            background-color: var(--table-blue) !important;
+            color: var(--table-white) !important;
             position: sticky;
             top: 0;
+            border: 1px solid var(--table-blue);
+        }
+        
+        .table td {
+            border: 1px solid var(--table-blue);
         }
         
         /* Responsive adjustments */
