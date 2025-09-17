@@ -5345,162 +5345,130 @@ def pharmacist_sales():
     return render_template('pharmacist/sales.html', sales=sales)
 
 
-@app.route('/pharmacist/sale', methods=['POST'])
+@app.route('/pharmacist/cart_sale', methods=['POST'])
 @login_required
-def process_sale():
+def process__cart_sale():
     if current_user.role != 'pharmacist':
-        app.logger.warning(f"Unauthorized access attempt by user {current_user.id}")
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     try:
-        # Check if request contains JSON data
-        if not request.is_json:
-            app.logger.error("Invalid content type: Expected application/json")
-            return jsonify({'success': False, 'error': 'Content-Type must be application/json'}), 400
-            
         data = request.get_json()
         if not data:
-            app.logger.error("No JSON data received in request")
-            return jsonify({'success': False, 'error': 'No JSON data received'}), 400
-            
+            return jsonify({'success': False, 'error': 'No data received'}), 400
+        
+        # Validate required fields
         if 'items' not in data:
-            app.logger.error("Missing 'items' field in request data")
-            return jsonify({'success': False, 'error': 'Missing required field: items'}), 400
-
+            return jsonify({'success': False, 'error': 'Missing items field'}), 400
+        
         items = data.get('items', [])
         payment_method = data.get('payment_method', 'cash')
-        patient_id = data.get('patient_id')
-        
-        app.logger.info(f"Processing sale with {len(items)} items, payment method: {payment_method}")
         
         if not items:
-            app.logger.warning("Sale attempted with empty items list")
             return jsonify({'success': False, 'error': 'No items in cart'}), 400
-            
+        
         # Validate each item
-        for index, item in enumerate(items):
-            if not isinstance(item, dict):
-                app.logger.error(f"Invalid item format at index {index}: {item}")
-                return jsonify({'success': False, 'error': 'Invalid item format'}), 400
+        for i, item in enumerate(items):
             if 'drug_id' not in item:
-                app.logger.error(f"Missing drug_id in item at index {index}: {item}")
-                return jsonify({'success': False, 'error': 'Missing drug_id in item'}), 400
+                return jsonify({'success': False, 'error': f'Missing drug_id in item {i+1}'}), 400
             if 'quantity' not in item:
-                app.logger.error(f"Missing quantity in item at index {index}: {item}")
-                return jsonify({'success': False, 'error': 'Missing quantity in item'}), 400
+                return jsonify({'success': False, 'error': f'Missing quantity in item {i+1}'}), 400
             if 'unit_price' not in item:
-                app.logger.error(f"Missing unit_price in item at index {index}: {item}")
-                return jsonify({'success': False, 'error': 'Missing unit_price in item'}), 400
-
-        try:
-            # Generate bulk sale number if multiple items
-            bulk_sale_number = None
-            if len(items) > 1:
-                bulk_sale_number = f"BULK-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
-
-            total_amount = sum(float(item.get('unit_price', 0)) * int(item.get('quantity', 0)) for item in items)
+                return jsonify({'success': False, 'error': f'Missing unit_price in item {i+1}'}), 400
+        
+        # Generate sale numbers
+        sale_number = f"SALE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+        
+        # Calculate total amount
+        total_amount = sum(float(item.get('unit_price', 0)) * int(item.get('quantity', 0)) for item in items)
+        
+        # Create sale record
+        sale = Sale(
+            sale_number=sale_number,
+            patient_id=None,  # Walk-in sale
+            user_id=current_user.id,
+            pharmacist_name=f"{current_user.username}",
+            total_amount=total_amount,
+            payment_method=payment_method,
+            status='completed',
+            created_at=datetime.now(timezone.utc)
+        )
+        db.session.add(sale)
+        db.session.flush()
+        
+        # Process each item
+        for item_index, item_data in enumerate(items):
+            drug_id = item_data.get('drug_id')
+            quantity = int(item_data.get('quantity', 1))
+            unit_price = float(item_data.get('unit_price', 0))
             
-            app.logger.info(f"Creating sale with total amount: {total_amount}")
+            if not drug_id or quantity <= 0:
+                continue
             
-            sale = Sale(
-                sale_number=generate_sale_number(),
-                bulk_sale_number=bulk_sale_number,
-                patient_id=patient_id,
-                user_id=current_user.id,
-                pharmacist_name=f"{current_user.username} ({current_user.role})",
-                total_amount=total_amount,
-                payment_method=payment_method,
-                status='completed',
+            # Get drug from database
+            drug = db.session.get(Drug, drug_id)
+            if not drug:
+                db.session.rollback()
+                return jsonify({
+                    'success': False,
+                    'error': f'Drug with ID {drug_id} not found'
+                }), 400
+            
+            # Check stock availability
+            if drug.remaining_quantity < quantity:
+                db.session.rollback()
+                return jsonify({
+                    'success': False,
+                    'error': f'Insufficient stock for {drug.name}',
+                    'available': drug.remaining_quantity,
+                    'requested': quantity,
+                    'drug_id': drug.id
+                }), 400
+            
+            # Create sale item
+            sale_item = SaleItem(
+                sale_id=sale.id,
+                drug_id=drug_id,
+                drug_name=drug.name,
+                drug_specification=drug.specification,
+                individual_sale_number=f"{sale_number}-{item_index+1:02d}",
+                description=f"Sale of {drug.name}",
+                quantity=quantity,
+                unit_price=unit_price,
+                total_price=unit_price * quantity,
                 created_at=datetime.now(timezone.utc)
             )
+            db.session.add(sale_item)
             
-            db.session.add(sale)
-            db.session.flush()
-            
-            for item in items:
-                drug_id = item.get('drug_id')
-                quantity = int(item.get('quantity', 1))
-                unit_price = float(item.get('unit_price', 0))
-                total_price = unit_price * quantity
-                
-                if not drug_id or quantity <= 0:
-                    app.logger.warning(f"Skipping invalid item: drug_id={drug_id}, quantity={quantity}")
-                    continue
-                
-                drug = db.session.get(Drug, drug_id)
-                if not drug:
-                    app.logger.error(f"Drug with ID {drug_id} not found")
-                    db.session.rollback()
-                    return jsonify({
-                        'success': False,
-                        'error': f'Drug with ID {drug_id} not found'
-                    }), 400
-                
-                if drug.remaining_quantity < quantity:
-                    app.logger.error(f"Insufficient stock for drug {drug.name}: requested {quantity}, available {drug.remaining_quantity}")
-                    db.session.rollback()
-                    return jsonify({
-                        'success': False,
-                        'error': f'Insufficient stock for {drug.name}',
-                        'available': drug.remaining_quantity,
-                        'requested': quantity,
-                        'drug_id': drug.id
-                    }), 400
-                
-                sale_item = SaleItem(
-                    sale_id=sale.id,
-                    drug_id=drug_id,
-                    drug_name=drug.name,
-                    drug_specification=drug.specification,
-                    individual_sale_number=generate_individual_sale_number(),
-                    description=f"Sale of {drug.name}",
-                    quantity=quantity,
-                    unit_price=unit_price,
-                    total_price=total_price,
-                    created_at=datetime.now(timezone.utc)
-                )
-                
-                db.session.add(sale_item)
-                drug.sold_quantity += quantity
-                db.session.add(drug)
-            
-            transaction = Transaction(
-                transaction_number=generate_transaction_number(),
-                transaction_type='sale',
-                amount=total_amount,
-                user_id=current_user.id,
-                reference_id=sale.id,
-                notes=f"Sale #{sale.sale_number}",
-                created_at=datetime.now(timezone.utc)
-            )
-            db.session.add(transaction)
-            
-            db.session.commit()
-            
-            app.logger.info(f"Sale {sale.sale_number} processed successfully")
-            
-            return jsonify({
-                'success': True,
-                'sale_id': sale.id,
-                'sale_number': sale.sale_number,
-                'bulk_sale_number': sale.bulk_sale_number,
-                'total_amount': sale.total_amount,
-                'items': [{
-                    'drug_id': item.drug_id,
-                    'quantity': item.quantity,
-                    'unit_price': item.unit_price,
-                    'total_price': item.total_price
-                } for item in sale.items],
-                'message': 'Sale processed successfully'
-            })
-            
-        except Exception as e:
-            db.session.rollback()
-            app.logger.error(f"Error processing sale items: {str(e)}", exc_info=True)
-            raise e
-            
+            # Update drug stock
+            drug.sold_quantity += quantity
+            db.session.add(drug)
+        
+        # Create transaction record
+        transaction = Transaction(
+            transaction_number=f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}",
+            transaction_type='sale',
+            amount=total_amount,
+            user_id=current_user.id,
+            reference_id=sale.id,
+            notes=f"Sale #{sale.sale_number}",
+            created_at=datetime.now(timezone.utc)
+        )
+        db.session.add(transaction)
+        
+        # Commit all changes
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'sale_id': sale.id,
+            'sale_number': sale.sale_number,
+            'total_amount': sale.total_amount,
+            'message': 'Sale processed successfully'
+        })
+        
     except Exception as e:
-        app.logger.error(f"Error processing sale: {str(e)}", exc_info=True)
+        db.session.rollback()
+        current_app.logger.error(f"Error processing sale: {str(e)}", exc_info=True)
         return jsonify({
             'success': False, 
             'error': 'Failed to process sale',

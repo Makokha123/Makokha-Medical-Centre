@@ -556,10 +556,10 @@ $(document).ready(function() {
         } else {
             cart.items.push({
                 drug_id: drug_id,           // Match backend expectation
-                drug_name: drug_name,       // For display purposes
+                drug_name: drug_name,       // For display only
                 unit_price: unit_price,     // Match backend expectation
                 quantity: 1,                // Match backend expectation
-                currentStock: currentStock  // For validation
+                currentStock: currentStock  // For validation only
             });
             showAlert(`${drug_name} added to cart`, 'success');
         }
@@ -669,68 +669,71 @@ $(document).ready(function() {
     });
         
     $('#confirmSaleBtn').click(function() {
+        const $btn = $(this);
         const cart = getCart();
         const paymentMethod = $('#paymentMethod').val();
         
         console.log('Cart contents:', cart); // Debug logging
         
-        if (cart.items.length === 0) {
-            alert('Your cart is empty. Add items before proceeding.');
-            return;
-        }
-
         // Prepare items with all required fields - FIXED PROPERTY NAMES
         const items = cart.items.map(item => ({
             drug_id: item.drug_id,         // Must match backend expectation
-            drug_name: item.drug_name,     // Additional identifier
             quantity: item.quantity,
-            unit_price: item.unit_price,   // Critical for calculations
-            total: item.unit_price * item.quantity
+            unit_price: item.unit_price    // Critical for calculations
         }));
 
         const saleData = {
             items: items,
-            payment_method: paymentMethod,
-            is_quick_sale: true            // If your backend expects this
+            payment_method: paymentMethod
         };
 
         console.log('Sending sale data:', saleData); // Debug logging
 
         // Show loading state
-        $(this).prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Processing...');
+        $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Processing...');
 
         $.ajax({
-            url: '/pharmacist/sale',
-            method: 'POST',
+            url: '/pharmacist/cart_sale',
+            methods: 'POST',
             contentType: 'application/json',
             data: JSON.stringify(saleData),
             success: function(response) {
-                console.log('Sale successful:', response); // Debug logging
+                console.log('Sale response:', response); // Debug logging
                 if (response.success) {
                     // Clear cart on success
                     saveCart({ items: [] });
                     renderCartItems();
                     updateCartSummary();
                     
+                    // Show success message
+                    showAlert(`Sale processed successfully! Sale #: ${response.sale_number}`, 'success');
+                    
                     // Show receipt
                     showReceipt(response.sale_id);
-                } else {
-                    alert('Error: ' + (response.error || 'Failed to process sale'));
-                }
+
             },
             error: function(xhr, status, error) {
-                console.error('Sale error:', error, 'Status:', status, 'Response:', xhr.responseText); // Enhanced error logging
-                let errorMsg = 'An error occurred. Please try again.';
-                if (xhr.responseJSON) {
-                    errorMsg = xhr.responseJSON.error || errorMsg;
-                    if (xhr.responseJSON.details) {
-                        errorMsg += '\nDetails: ' + xhr.responseJSON.details;
+                console.error('Sale error:', error, 'Status:', status, 'Response:', xhr.responseText);
+                
+                let errorMsg = 'An error occurred while processing the sale. Please try again.';
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    errorMsg = response.error || errorMsg;
+                    if (response.details) {
+                        errorMsg += ' Details: ' + response.details;
                     }
+                    if (response.available !== undefined) {
+                        errorMsg += ` Only ${response.available} available.`;
+                    }
+                } catch (e) {
+                    // If we can't parse JSON, use the raw response
+                    errorMsg = xhr.responseText || errorMsg;
                 }
-                alert(errorMsg);
+                
+                showAlert(errorMsg, 'danger');
             },
             complete: function() {
-                $('#confirmSaleBtn').prop('disabled', false).html('<i class="fas fa-check"></i> Confirm Sale');
+                $btn.prop('disabled', false).html('<i class="fas fa-check"></i> Confirm Sale');
             }
         });
     });
@@ -740,7 +743,7 @@ $(document).ready(function() {
         $('#receiptContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading receipt...</div>');
         $('#receiptModal').modal('show');
         
-        $.get(`/pharmacist/sale/${saleId}/receipt`, function(data) {
+        $.get(`/pharmacist/cart_sale/${saleId}/receipt`, function(data) {
             $('#receiptContent').html(data);
         }).fail(function(xhr, status, error) {
             console.error('Error loading receipt:', error, 'Status:', status); // Error logging
@@ -1250,8 +1253,8 @@ $(document).ready(function() {
         $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Processing...');
         
         $.ajax({
-            url: '/pharmacist/sale',
-            method: 'POST',
+            url: '/pharmacist/cart_sale',
+            methods: 'POST',
             contentType: 'application/json',
             data: JSON.stringify(saleData),
             success: function(response) {
@@ -1296,7 +1299,7 @@ $(document).ready(function() {
     function showReceipt(saleId) {
         $('#receiptContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading receipt...</div>');
         
-        $.get(`/pharmacist/sale/${saleId}/receipt`, function(data) {
+        $.get(`/pharmacist/car_sale/${saleId}/receipt`, function(data) {
             $('#receiptContent').html(data);
             $('#receiptModal').modal('show');
         });
