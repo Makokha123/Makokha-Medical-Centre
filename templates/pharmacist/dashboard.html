@@ -1235,11 +1235,6 @@ $(document).ready(function() {
         const cart = getCart();
         const paymentMethod = $('#paymentMethod').val();
         
-        if (cart.items.length === 0) {
-            alert('Your cart is empty');
-            return;
-        }
-        
         // Prepare sale data
         const saleData = {
             items: cart.items.map(item => ({
@@ -1270,8 +1265,6 @@ $(document).ready(function() {
                     
                     // Show receipt
                     showReceipt(response.sale_id);
-                } else {
-                    alert('Error: ' + (response.error || 'Failed to process sale'));
                 }
             },
             error: function(xhr) {
@@ -1299,7 +1292,7 @@ $(document).ready(function() {
     function showReceipt(saleId) {
         $('#receiptContent').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading receipt...</div>');
         
-        $.get(`/pharmacist/car_sale/${saleId}/receipt`, function(data) {
+        $.get(`/pharmacist/cart_sale/${saleId}/receipt`, function(data) {
             $('#receiptContent').html(data);
             $('#receiptModal').modal('show');
         });
