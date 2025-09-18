@@ -124,18 +124,6 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
         
-        .stock-low {
-            color: #ffc107;
-        }
-        
-        .stock-out {
-            color: #dc3545;
-        }
-        
-        .stock-ok {
-            color: #28a745;
-        }
-        
         .toast {
             min-width: 300px;
         }
@@ -212,199 +200,206 @@
             .cart-column {
                 position: static;
             }
+            
         }
         
-        /* Phone-specific styles */
         @media (max-width: 768px) {
-            .main-content {
-                margin-left: 0;
-                padding: 15px;
-            }
             
-            .sidebar {
-                transform: translateX(-100%);
-                width: 80%;
-                max-width: 300px;
-            }
-            
-            .sidebar.active {
-                transform: translateX(0);
-            }
-            
-            /* Stats cards - horizontal layout on phones */
-            .stats-container {
-                display: flex;
-                overflow-x: auto;
-                gap: 10px;
-                margin-bottom: 15px;
-                padding-bottom: 5px;
-            }
-            
-            .stats-container .card {
-                min-width: 150px;
-                margin-bottom: 0;
-            }
-            
-            .stats-container .card-body {
-                padding: 10px;
-            }
-            
-            .stats-container h3 {
-                font-size: 1.5rem;
-            }
-            
-            .stats-container .card-title {
+            .drug-card .card-title {
                 font-size: 1rem;
-                margin-bottom: 5px;
             }
             
-            /* Drug cards - smaller and scrollable */
+            .drug-card .card-subtitle {
+                font-size: 0.85rem;
+            }
+            
+            .drug-card .card-text {
+                font-size: 0.8rem;
+            }
+            
             .drugs-scroll-container {
                 max-height: 300px;
                 overflow-y: auto;
             }
             
-            .drug-card .card-title {
-                font-size: 0.9rem;
+            .drugs-container .col-md-6 {
+                flex: 0 0 100%;
+                max-width: 100%;
             }
             
-            .drug-card .card-subtitle {
-                font-size: 0.8rem;
-            }
-            
-            .drug-card .card-text {
-                font-size: 0.85rem;
-                margin-bottom: 5px;
-            }
-            
-            .drug-card .card-footer {
-                padding: 8px;
-            }
-            
-            .drug-card .btn {
-                font-size: 0.8rem;
-                padding: 4px 8px;
-            }
-            
-            /* Cart at bottom on portrait */
-            .cart-column {
+            .mobile-cart {
                 position: fixed;
                 bottom: 0;
                 left: 0;
                 right: 0;
-                z-index: 1000;
-                border-radius: 12px 12px 0 0;
-                max-height: 40vh;
-                overflow-y: auto;
+                background: white;
                 box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-                transition: transform 0.3s ease;
+                padding: 10px;
+                z-index: 1000;
             }
             
-            .cart-column.collapsed {
-                transform: translateY(calc(100% - 50px));
-            }
-            
-            .cart-toggle {
-                position: absolute;
-                top: -40px;
-                left: 50%;
-                transform: translateX(-50%);
-                width: 100px;
-                border-radius: 8px 8px 0 0;
+            .desktop-cart {
+                display: none;
             }
         }
         
-        /* Landscape orientation for phones */
-        @media (max-width: 768px) and (orientation: landscape) {
-            .inventory-container {
-                flex-direction: row;
+        @media (min-width: 769px) and (max-width: 992px) {
+            /* Tablet styles */
+            .drugs-container .col-md-6 {
+                flex: 0 0 50%;
+                max-width: 50%;
             }
             
-            .cart-column {
-                position: sticky;
-                top: 70px;
-                max-height: calc(100vh - 100px);
+            .drugs-scroll-container {
+                max-height: 400px;
                 overflow-y: auto;
-                border-radius: 8px;
             }
             
-            .drugs-scroll-container {
-                max-height: calc(100vh - 200px);
+            .mobile-cart {
+                display: none;
             }
         }
         
-        /* Tablet and PC styles */
-        @media (min-width: 769px) {
+        @media (min-width: 993px) {
+            /* Desktop styles */
+            .drugs-container .col-md-6 {
+                flex: 0 0 33.333%;
+                max-width: 33.333%;
+            }
+            
             .drugs-scroll-container {
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 15px;
                 max-height: 500px;
                 overflow-y: auto;
             }
             
-            /* Two rows of drug cards (6 total) with scrolling if more */
-            .drugs-scroll-container::after {
-                content: "";
-                display: block;
-                height: 1px;
-                grid-column: 1 / -1;
+            .mobile-cart {
+                display: none;
             }
         }
         
-        /* Toggle button for sidebar on mobile */
-        .sidebar-toggle {
+        @media (max-width: 576px) {
+            .header h4 {
+                font-size: 1.2rem;
+            }
+            
+            .nav-tabs .nav-link {
+                padding: 8px 12px;
+                font-size: 0.85rem;
+            }
+            
+            .nav-tabs .nav-link i {
+                margin-right: 4px;
+            }
+        }
+        
+        /* Landscape mode for phones */
+        @media (max-height: 576px) and (orientation: landscape) {
+            .drugs-scroll-container {
+                max-height: 200px;
+            }
+        }
+        
+        @media (max-width: 992px) {
+            .sidebar-toggle {
+                display: flex;
+            }
+        }
+        
+        /* Mobile cart button */
+        .cart-toggle {
             display: none;
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            z-index: 1100;
-            background: var(--secondary-color);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 5px 10px;
         }
         
         @media (max-width: 768px) {
-            .sidebar-toggle {
+            .cart-toggle {
+                display: block;
+                position: fixed;
+                bottom: 80px;
+                right: 20px;
+                z-index: 1000;
+                width: 60px;
+                height: 60px;
+                border-radius: 50%;
+                background: var(--primary-color);
+                color: white;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            }
+            
+            .cart-badge {
+                position: absolute;
+                top: -5px;
+                right: -5px;
+                background: var(--danger-color);
+                color: white;
+                border-radius: 50%;
+                width: 24px;
+                height: 24px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.75rem;
+            }
+        }
+        
+        /* Landscape orientation for mobile */
+        @media (max-width: 992px) and (orientation: landscape) {
+            .inventory-container {
+                flex-direction: row;
+            }
+            
+            .drugs-column {
+                flex: 2;
+            }
+            
+            .cart-column {
+                flex: 1;
+                position: sticky;
+                top: 90px;
+            }
+            
+            .mobile-cart {
+                display: none;
+            }
+            
+            .desktop-cart {
+                display: block;
+            }
+        }
+        
+        /* Portrait orientation for mobile */
+        @media (max-width: 768px) and (orientation: portrait) {
+            .inventory-container {
+                flex-direction: column;
+            }
+            
+            .desktop-cart {
+                display: none;
+            }
+            
+            .mobile-cart {
                 display: block;
             }
         }
     </style>
 </head>
 <body>
-        <!-- Dashboard Stats -->
-        <div class="stats-container" id="statsContainer">
-            <div class="card text-center">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="bi bi-capsule text-primary"></i></h5>
-                    <h3 id="total-drugs">0</h3>
-                    <p class="card-text">Total Drugs</p>
-                </div>
-            </div>
-            <div class="card text-center">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="bi bi-exclamation-triangle text-warning"></i></h5>
-                    <h3 id="low-stock">0</h3>
-                    <p class="card-text">Low Stock</p>
-                </div>
-            </div>
-            <div class="card text-center">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="bi bi-calendar-x text-danger"></i></h5>
-                    <h3 id="expiring-soon">0</h3>
-                    <p class="card-text">Expiring Soon</p>
-                </div>
-            </div>
-            <div class="card text-center">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="bi bi-prescription2 text-success"></i></h5>
-                    <h3 id="pending-prescriptions">0</h3>
-                    <p class="card-text">Pending Prescriptions</p>
-                </div>
+    <!-- Header -->
+    <div class="header">
+        <h4 class="mb-0">Pharmacist Dashboard</h4>
+        <div class="d-flex align-items-center">
+            <span class="me-3 d-none d-md-block">Welcome, Pharmacist</span>
+            <div class="dropdown">
+                <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="userDropdown" data-bs-toggle="dropdown">
+                    <i class="bi bi-person-circle"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="#"><i class="bi bi-person me-2"></i>Profile</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+                </ul>
             </div>
         </div>
+    </div>
 
         <!-- Tab Navigation -->
         <ul class="nav nav-tabs" id="pharmacistTab" role="tablist">
@@ -446,18 +441,17 @@
                                 </div>
                             </div>
                             <div class="card-body">
-                                <div class="drugs-scroll-container" id="drugs-container">
-                                    <!-- Drugs will be loaded here dynamically -->
+                                <div class="drugs-scroll-container">
+                                    <div class="row" id="drugs-container">
+                                        <!-- Drugs will be loaded here dynamically -->
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                     
-                    <!-- Right Column - Shopping Cart -->
-                    <div class="cart-column" id="cartColumn">
-                        <button class="btn btn-primary cart-toggle d-md-none" id="cartToggle">
-                            <i class="bi bi-cart"></i> Cart
-                        </button>
+                    <!-- Right Column - Shopping Cart (Desktop/Tablet) -->
+                    <div class="cart-column desktop-cart">
                         <div class="cart-header">
                             <h5 class="mb-0">Shopping Cart</h5>
                             <span class="badge bg-primary" id="cart-count">0 items</span>
@@ -477,10 +471,28 @@
                         
                         <div class="d-flex justify-content-between mt-3">
                             <button class="btn btn-outline-danger" id="clear-cart-btn">
-                                <i class="bi bi-trash"></i> Clear
+                                <i class="bi bi-trash"></i> Clear Cart
                             </button>
                             <button class="btn btn-success" id="confirm-sale-btn" disabled>
-                                <i class="bi bi-check-circle"></i> Confirm
+                                <i class="bi bi-check-circle"></i> Confirm Sale
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Mobile Cart (Bottom of screen on portrait phones) -->
+                <div class="mobile-cart">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="mb-0">Cart: <span id="mobile-cart-count">0</span> items</h6>
+                            <small>Total: Ksh <span id="mobile-cart-total">0.00</span></small>
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-danger me-2" id="mobile-clear-cart-btn">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            <button class="btn btn-sm btn-success" id="mobile-confirm-sale-btn" disabled>
+                                <i class="bi bi-check-circle"></i> Checkout
                             </button>
                         </div>
                     </div>
@@ -543,6 +555,12 @@
             </div>
         </div>
     </div>
+
+    <!-- Floating Cart Button (Mobile) -->
+    <button class="btn btn-primary cart-toggle" id="cartToggleBtn">
+        <i class="bi bi-cart3"></i>
+        <span class="cart-badge" id="cart-badge">0</span>
+    </button>
 
     <!-- Drug Info Modal -->
     <div class="modal fade" id="drugInfoModal" tabindex="-1" aria-labelledby="drugInfoModalLabel" aria-hidden="true">
@@ -650,6 +668,19 @@
             </div>
         </div>
     </div>
+    <!-- Footer -->
+    <footer class="bg-light py-3 mt-auto">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-md-6 text-center text-md-start">
+                    <p class="mb-0">&copy; 2025 Makokha Medical Centre (MMC)</p>
+                </div>
+                <div class="col-md-6 text-center text-md-end">
+                    <p class="mb-0">Version 1.0.0</p>
+                </div>
+            </div>
+        </div>
+    </footer>
 
     <!-- CSRF Token -->
     <meta name="csrf-token" content="{{ csrf_token() }}">
@@ -671,16 +702,6 @@
             let drugsData = []; // Store drugs data for cart operations
             let currentRefundItems = []; // Store refund items
             let currentRefundSaleId = null;
-            
-            // Mobile sidebar toggle
-            $('#sidebarToggle').click(function() {
-                $('#sidebar').toggleClass('active');
-            });
-            
-            // Mobile cart toggle
-            $('#cartToggle').click(function() {
-                $('#cartColumn').toggleClass('collapsed');
-            });
 
             // Initialize toasts
             const successToast = new bootstrap.Toast(document.getElementById('successToast'));
@@ -702,6 +723,16 @@
                         xhr.setRequestHeader("X-CSRFToken", csrfToken);
                     }
                 }
+            });
+            
+            // Toggle sidebar on mobile
+            $('#sidebarToggle').click(function() {
+                $('#sidebar').toggleClass('active');
+            });
+            
+            // Toggle cart view on mobile
+            $('#cartToggleBtn').click(function() {
+                $('.mobile-cart').toggle();
             });
             
             // Load dashboard stats - REAL DATA
@@ -875,6 +906,10 @@
                 const cartTotal = $('#cart-total');
                 const confirmSaleBtn = $('#confirm-sale-btn');
                 const emptyCartMessage = $('#empty-cart-message');
+                const mobileCartCount = $('#mobile-cart-count');
+                const mobileCartTotal = $('#mobile-cart-total');
+                const mobileConfirmSaleBtn = $('#mobile-confirm-sale-btn');
+                const cartBadge = $('#cart-badge');
                 
                 if (cart.length === 0) {
                     cartItems.html(`
@@ -886,19 +921,27 @@
                     cartCount.text('0 items');
                     cartTotal.text('0.00');
                     confirmSaleBtn.prop('disabled', true);
+                    mobileCartCount.text('0');
+                    mobileCartTotal.text('0.00');
+                    mobileConfirmSaleBtn.prop('disabled', true);
+                    cartBadge.text('0');
                     return;
                 }
                 
                 // Enable confirm sale button
                 confirmSaleBtn.prop('disabled', false);
+                mobileConfirmSaleBtn.prop('disabled', false);
                 
                 // Update cart count
                 const totalItems = cart.reduce((total, item) => total + item.quantity, 0);
                 cartCount.text(`${totalItems} ${totalItems === 1 ? 'item' : 'items'}`);
+                mobileCartCount.text(totalItems);
+                cartBadge.text(totalItems);
                 
                 // Calculate total
                 const total = cart.reduce((sum, item) => sum + item.total_price, 0);
                 cartTotal.text(total.toFixed(2));
+                mobileCartTotal.text(total.toFixed(2));
                 
                 // Build cart items HTML
                 let cartHTML = '';
@@ -1429,6 +1472,8 @@
             
             $('#confirm-sale-btn').click(confirmSale);
             $('#clear-cart-btn').click(clearCart);
+            $('#mobile-confirm-sale-btn').click(confirmSale);
+            $('#mobile-clear-cart-btn').click(clearCart);
             $('#search-sale-btn').click(searchSale);
             $('#print-receipt-btn').click(function() {
                 window.print();
@@ -1442,20 +1487,32 @@
                 }
             });
             
+            // Handle window resize for responsive behavior
+            $(window).resize(function() {
+                // Check if we need to show/hide cart based on orientation
+                if ($(window).width() <= 992) {
+                    if ($(window).width() > $(window).height()) {
+                        // Landscape mode on mobile/tablet
+                        $('.desktop-cart').show();
+                        $('.mobile-cart').hide();
+                    } else {
+                        // Portrait mode on mobile
+                        $('.desktop-cart').hide();
+                    }
+                } else {
+                    // Desktop
+                    $('.desktop-cart').show();
+                    $('.mobile-cart').hide();
+                }
+            });
+            
             // Initialize the page
             loadDashboardStats();
             loadDrugs();
             loadPrescriptions();
             
-            // Handle window resize for responsive behavior
-            $(window).resize(function() {
-                // Adjust cart position based on orientation
-                if ($(window).width() <= 768) {
-                    if (window.matchMedia("(orientation: landscape)").matches) {
-                        $('#cartColumn').removeClass('collapsed');
-                    }
-                }
-            });
+            // Trigger initial resize to set correct layout
+            $(window).trigger('resize');
         });
     </script>
 </body>
