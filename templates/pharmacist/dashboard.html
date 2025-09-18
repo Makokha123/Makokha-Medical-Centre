@@ -51,48 +51,6 @@
             z-index: 999;
         }
         
-        .sidebar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            height: 100%;
-            width: var(--sidebar-width);
-            background-color: var(--secondary-color);
-            color: white;
-            padding-top: var(--header-height);
-            z-index: 1000;
-            transition: all 0.3s ease;
-        }
-        
-        .sidebar-menu {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-        
-        .sidebar-menu li {
-            padding: 0;
-        }
-        
-        .sidebar-menu a {
-            display: block;
-            padding: 12px 20px;
-            color: #fff;
-            text-decoration: none;
-            transition: all 0.3s;
-        }
-        
-        .sidebar-menu a:hover,
-        .sidebar-menu a.active {
-            background-color: rgba(255, 255, 255, 0.1);
-        }
-        
-        .sidebar-menu i {
-            margin-right: 10px;
-            width: 20px;
-            text-align: center;
-        }
-        
         .card {
             border: none;
             box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
@@ -416,45 +374,6 @@
     </style>
 </head>
 <body>
-    <!-- Sidebar Toggle Button for Mobile -->
-    <button class="sidebar-toggle" id="sidebarToggle">
-        <i class="bi bi-list"></i>
-    </button>
-
-    <!-- Header -->
-    <div class="header">
-        <h4 class="mb-0">Pharmacist Dashboard</h4>
-        <div class="d-flex align-items-center">
-            <span class="me-3 d-none d-md-block">Welcome, Pharmacist</span>
-            <div class="dropdown">
-                <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="userDropdown" data-bs-toggle="dropdown">
-                    <i class="bi bi-person-circle"></i>
-                </button>
-                <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="#"><i class="bi bi-person me-2"></i>Profile</a></li>
-                    <li><a class="dropdown-item" href="#"><i class="bi bi-gear me-2"></i>Settings</a></li>
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="/logout"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
-                </ul>
-            </div>
-        </div>
-    </div>
-
-    <!-- Sidebar -->
-    <div class="sidebar" id="sidebar">
-        <ul class="sidebar-menu">
-            <li><a href="#" class="active"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
-            <li><a href="#"><i class="bi bi-capsule"></i> Inventory</a></li>
-            <li><a href="#"><i class="bi bi-prescription2"></i> Prescriptions</a></li>
-            <li><a href="#"><i class="bi bi-people"></i> Patients</a></li>
-            <li><a href="#"><i class="bi bi-graph-up"></i> Reports</a></li>
-            <li><a href="#"><i class="bi bi-cash"></i> Sales</a></li>
-            <li><a href="#"><i class="bi bi-gear"></i> Settings</a></li>
-        </ul>
-    </div>
-
-    <!-- Main Content -->
-    <div class="main-content">
         <!-- Dashboard Stats -->
         <div class="stats-container" id="statsContainer">
             <div class="card text-center">
