@@ -31,14 +31,12 @@
     <style>
         :root {
             --sidebar-width: 260px;
-            --sidebar-collapsed-width: 0px;
+            --sidebar-collapsed-width: 70px;
             --primary-color: #0d6efd;
             --secondary-color: #6c757d;
             --header-height: 60px;
             --transition-speed: 0.3s;
             --border-color: rgba(255, 255, 255, 0.1);
-            --table-blue: #0d6efd;
-            --table-white: #ffffff;
         }
 
         /* Sidebar Styles */
@@ -50,18 +48,17 @@
             width: var(--sidebar-width);
             background: var(--primary-color);
             color: white;
-            transition: transform var(--transition-speed) ease;
+            transition: width var(--transition-speed) ease;
             z-index: 1000;
             overflow-x: hidden;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
 
         .sidebar.collapsed {
-            transform: translateX(-100%);
             width: 0;
         }
 
-        /* Toggle Button - Always visible on mobile */
+        /* Toggle Button */
         .toggle-nav {
             position: fixed;
             left: 1rem;
@@ -81,8 +78,12 @@
             transition: all var(--transition-speed);
         }
 
+        .sidebar.collapsed ~ main .toggle-nav {
+            left: 1rem;
+        }
+
         .toggle-nav:hover {
-            background: #0a58ca;
+            background: var(--dark-blue);
         }
 
         /* Sidebar Header */
@@ -104,21 +105,20 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            transition: transform var(--transition-speed);
         }
 
-        /* Navigation Menu - Hide scrollbars but allow scrolling */
+        .sidebar.collapsed .toggle-nav {
+            transform: rotate(180deg);
+        }
+
+        /* Navigation Menu */
         .sidebar-nav {
             padding: 1rem 0;
             height: calc(100vh - var(--header-height));
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            -ms-overflow-style: none;  /* IE and Edge */
-            scrollbar-width: none;  /* Firefox */
-        }
-
-        .sidebar-nav::-webkit-scrollbar {
-            display: none; /* Chrome, Safari and Opera */
         }
 
         .nav-item {
@@ -129,14 +129,12 @@
             display: flex;
             align-items: center;
             padding: 0.75rem 1rem;
-            color: var(--table-white) !important;
+            color: rgba(255, 255, 255, 0.85) !important;
             text-decoration: none;
             border-radius: 0.5rem;
             transition: all var(--transition-speed);
             white-space: nowrap;
             overflow: hidden;
-            background-color: var(--table-blue);
-            border: 1px solid var(--table-blue);
         }
 
         .nav-link i {
@@ -154,7 +152,7 @@
         }
 
         .nav-link:hover {
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
             color: white !important;
         }
 
@@ -172,11 +170,14 @@
 
         /* Main Content Adjustment */
         main.container-fluid {
-            margin-left: 0;
+            margin-left: var(--sidebar-width);
             transition: margin var(--transition-speed) ease;
             min-height: 100vh;
             padding: 1rem;
-            width: 100%;
+        }
+
+        main.container-fluid.expanded {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         /* Profile Section */
@@ -190,7 +191,7 @@
             display: flex;
             align-items: center;
             gap: 10px;
-            color: blue;
+            color: white;
             text-decoration: none;
             padding: 0.5rem;
             border-radius: 0.5rem;
@@ -203,31 +204,19 @@
             object-fit: cover;
         }
 
-        /* Responsive Design - Improved for mobile */
-        @media (max-width: 992px) {
+        /* Responsive Design */
+        @media (max-width: 768px) {
             .sidebar {
                 transform: translateX(-100%);
-                width: var(--sidebar-width);
-                z-index: 1050;
+                position: fixed;
             }
 
             .sidebar.show {
                 transform: translateX(0);
             }
 
-            .sidebar.collapsed {
-                transform: translateX(-100%);
-                width: var(--sidebar-width);
-            }
-
             main.container-fluid {
                 margin-left: 0 !important;
-                width: 100%;
-            }
-
-            .toggle-nav {
-                display: flex !important;
-                z-index: 1060;
             }
 
             .overlay {
@@ -238,40 +227,11 @@
                 right: 0;
                 bottom: 0;
                 background: rgba(0, 0, 0, 0.5);
-                z-index: 1040;
+                z-index: 999;
             }
 
             .overlay.show {
                 display: block;
-            }
-            
-            /* Mobile menu button always visible */
-            .mobile-menu-btn {
-                display: block !important;
-                position: fixed;
-                top: 1rem;
-                left: 1rem;
-                z-index: 1070;
-            }
-        }
-
-        @media (min-width: 993px) {
-            .mobile-menu-btn {
-                display: none !important;
-            }
-            
-            .sidebar {
-                transform: translateX(0) !important;
-            }
-            
-            main.container-fluid {
-                margin-left: var(--sidebar-width) !important;
-                width: calc(100% - var(--sidebar-width)) !important;
-            }
-            
-            .sidebar.collapsed ~ main.container-fluid {
-                margin-left: 0 !important;
-                width: 100% !important;
             }
         }
         
@@ -281,6 +241,12 @@
             width: var(--sidebar-width);
             height: 100vh;
             z-index: 1040;
+        }
+        
+        .hamburger-menu {
+            position: relative;
+            z-index: 1050;
+            padding: 10px;
         }
         
         .navbar-brand {
@@ -295,28 +261,77 @@
         
         .sidebar-nav .nav-link {
             padding: 0.8rem 1.5rem;
-            color: var(--table-white);
+            color: rgba(255, 255, 255, 0.85);
             transition: all 0.3s ease;
             border-left: 3px solid transparent;
-            background-color: var(--table-blue);
         }
         
         .sidebar-nav .nav-link:hover {
             color: white;
-            background-color: rgba(255, 255, 255, 0.2);
+            background-color: rgba(255, 255, 255, 0.1);
             border-left-color: white;
         }
         
         .sidebar-nav .nav-link.active {
             color: white;
-            background-color: rgba(255, 255, 255, 0.3);
+            background-color: rgba(255, 255, 255, 0.1);
             border-left-color: white;
+        }
+        
+        .hamburger-icon {
+            width: 24px;
+            height: 18px;
+            position: relative;
+            transform: rotate(0deg);
+            transition: .5s ease-in-out;
+            cursor: pointer;
+        }
+        
+        .hamburger-icon span {
+            display: block;
+            position: absolute;
+            height: 2px;
+            width: 100%;
+            background: #fff;
+            border-radius: 2px;
+            opacity: 1;
+            left: 0;
+            transform: rotate(0deg);
+            transition: .25s ease-in-out;
+        }
+        
+        .hamburger-icon span:nth-child(1) {
+            top: 0px;
+        }
+        
+        .hamburger-icon span:nth-child(2) {
+            top: 8px;
+        }
+        
+        .hamburger-icon span:nth-child(3) {
+            top: 16px;
+        }
+        
+        .navbar-toggler[aria-expanded="true"] .hamburger-icon span:nth-child(1) {
+            top: 8px;
+            transform: rotate(135deg);
+        }
+        
+        .navbar-toggler[aria-expanded="true"] .hamburger-icon span:nth-child(2) {
+            opacity: 0;
+            left: -60px;
+        }
+        
+        .navbar-toggler[aria-expanded="true"] .hamburger-icon span:nth-child(3) {
+            top: 8px;
+            transform: rotate(-135deg);
         }
 
         @media (min-width: 992px) {
             #mainNavbar {
                 width: var(--sidebar-width);
                 height: 100vh;
+                padding-top: var(--header-height);
             }
             
             .navbar-collapse {
@@ -328,6 +343,11 @@
             
             .sidebar-nav {
                 width: 100%;
+            }
+            
+            main.container-fluid {
+                margin-left: var(--sidebar-width);
+                width: calc(100% - var(--sidebar-width));
             }
             
             .navbar-nav .nav-link {
@@ -359,7 +379,7 @@
                 left: -100%;
                 width: var(--sidebar-width);
                 height: calc(100vh - var(--header-height));
-                background-color: var(--primary-color);
+                background-color: var(--primary-blue);
                 transition: left 0.3s ease-in-out;
                 overflow-y: auto;
                 z-index: 1040;
@@ -393,8 +413,8 @@
         .btn, .nav-link, .dropdown-item, 
         input[type="checkbox"] + label, 
         .table .actions-column .btn {
-            min-height: 44px;
-            min-width: 44px;
+            min-height: var(--tap-min-size);
+            min-width: var(--tap-min-size);
             padding: 12px 16px;
         }
         
@@ -426,40 +446,21 @@
                 font-size: 16px !important;
             }
         }
-        
-        /* Table styling updates - blue background, white text, blue borders */
-        table th {
-            background-color: var(--table-blue) !important;
-            color: var(--table-white) !important;
-        }
-        
-        table, table th, table td {
-            border: 1px solid var(--table-blue) !important;
-        }
-        
-        table {
-            border-collapse: collapse;
-        }
     </style>
     
     {% block extra_css %}{% endblock %}
 </head>
 <body class="d-flex flex-column min-vh-100">
-    <!-- Mobile Menu Button (Always visible on mobile) -->
-    <button class="mobile-menu-btn toggle-nav" id="mobileMenuBtn">
-        <i class="fas fa-bars"></i>
-    </button>
-
     <!-- Sidebar Navigation -->
     <div class="sidebar" id="sidebar">
         <!-- Sidebar Header -->
         <div class="sidebar-header">
             <button class="toggle-nav" id="toggleNav">
-                <i class="fas fa-times"></i>
+                <i class="fas fa-bars"></i>
             </button>
         </div>
             
-        <div class="navbar-collapse flex-column h-100" id="navbarNav">
+        <div class="collapse navbar-collapse flex-column h-100" id="navbarNav">
             <!-- Home/Brand Link at Top -->
             <a class="navbar-brand fs-5 py-3 px-3 mb-3 w-100 border-bottom border-light" href="{{ url_for('home') }}">
                 <i class="bi bi-hospital me-2"></i>MMC
@@ -595,6 +596,7 @@
                             </a>
                         </div>
                         <!-- NEW: Prescriptions Link -->
+                        <!-- NEW: Prescriptions Link -->
                         <div class="nav-item">
                             <a href="{{ url_for('patient_prescriptions') }}" class="nav-link">
                                 <i class="bi bi-prescription2"></i>
@@ -654,11 +656,8 @@
         </div>
     </div>
 
-    <!-- Overlay for mobile -->
-    <div class="overlay" id="overlay"></div>
-
     <!-- Main Content -->
-    <main class="container-fluid flex-grow-1 py-3">
+    <main class="container-fluid flex-grow-1 py-3" style="margin-top: 60px;">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -695,71 +694,63 @@
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
     
-    <!-- Sidebar Behavior - Updated for mobile compatibility -->
+    <!-- Sidebar Behavior -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
         const toggleNav = document.getElementById('toggleNav');
-        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
-        const overlay = document.getElementById('overlay');
         const mainContent = document.querySelector('main.container-fluid');
+        let overlay = document.createElement('div');
+        overlay.className = 'overlay';
+        document.body.appendChild(overlay);
         
-        // Function to show sidebar
-        function showSidebar() {
-            sidebar.classList.remove('collapsed');
-            sidebar.classList.add('show');
-            overlay.classList.add('show');
-            document.body.style.overflow = 'hidden';
-        }
-        
-        // Function to hide sidebar
-        function hideSidebar() {
-            sidebar.classList.remove('show');
-            sidebar.classList.add('collapsed');
-            overlay.classList.remove('show');
-            document.body.style.overflow = 'auto';
-        }
-        
-        // Toggle sidebar when buttons are clicked
-        if (mobileMenuBtn) {
-            mobileMenuBtn.addEventListener('click', showSidebar);
-        }
-        
-        if (toggleNav) {
-            toggleNav.addEventListener('click', hideSidebar);
-        }
-        
-        // Close sidebar when overlay is clicked (mobile only)
-        if (overlay) {
-            overlay.addEventListener('click', hideSidebar);
-        }
-        
-        // Close sidebar when ESC key is pressed
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                hideSidebar();
-            }
-        });
-        
-        // Handle window resize
-        window.addEventListener('resize', function() {
-            if (window.innerWidth > 992) {
-                // Desktop view - ensure sidebar is visible
-                sidebar.classList.remove('collapsed', 'show');
-                overlay.classList.remove('show');
-                document.body.style.overflow = 'auto';
+        // Move toggle button outside sidebar when collapsed
+        function updateTogglePosition() {
+            if (sidebar.classList.contains('collapsed')) {
+                document.body.appendChild(toggleNav);
             } else {
-                // Mobile view - ensure sidebar is hidden by default
-                if (!sidebar.classList.contains('show')) {
-                    sidebar.classList.add('collapsed');
-                }
+                sidebar.querySelector('.sidebar-header').appendChild(toggleNav);
             }
-        });
-        
-        // Initialize for current screen size
-        if (window.innerWidth <= 992) {
-            sidebar.classList.add('collapsed');
         }
+
+        // Toggle sidebar
+        toggleNav.addEventListener('click', function() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+            updateTogglePosition();
+            
+            // Store the state
+            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+        });
+
+        // Mobile handling
+        function handleMobileView() {
+            if (window.innerWidth <= 768) {
+                sidebar.classList.remove('collapsed');
+                mainContent.classList.remove('expanded');
+                
+                toggleNav.addEventListener('click', function() {
+                    sidebar.classList.toggle('show');
+                    overlay.classList.toggle('show');
+                });
+
+                overlay.addEventListener('click', function() {
+                    sidebar.classList.remove('show');
+                    overlay.classList.remove('show');
+                });
+            }
+        }
+
+        // Restore sidebar state
+        const sidebarCollapsed = localStorage.getItem('sidebarCollapsed');
+        if (sidebarCollapsed === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('expanded');
+        }
+
+        // Handle resize
+        window.addEventListener('resize', handleMobileView);
+        handleMobileView();
     });
     </script>
     
@@ -1069,7 +1060,7 @@
         border-collapse: separate;
         border-spacing: 0;
         background: #fff;
-        border: 1px solid var(--table-blue);
+        border: 1px solid rgba(0,0,0,0.06);
         border-radius: 12px;
         overflow: hidden;
         box-shadow: 0 2px 10px rgba(0,0,0,0.04);
@@ -1077,17 +1068,17 @@
     .table-enhanced thead th {
         position: sticky;
         top: 0;
-        background: linear-gradient(180deg, var(--table-blue), #0a58ca) !important;
-        color: var(--table-white) !important;
+        background: linear-gradient(180deg, var(--primary-blue), var(--dark-blue));
+        color: #fff;
         z-index: 2;
         padding: 0.75rem 1rem;
         font-weight: 600;
         white-space: nowrap;
-        border-bottom: 1px solid var(--table-blue);
+        border-bottom: 1px solid rgba(255,255,255,0.2);
     }
     .table-enhanced tbody td {
         padding: 0.75rem 1rem;
-        border-bottom: 1px solid var(--table-blue);
+        border-bottom: 1px solid rgba(0,0,0,0.06);
         vertical-align: middle;
         background: #fff;
     }
@@ -1142,7 +1133,7 @@
         .table-enhanced tbody tr {
             display: block;
             margin: 0.6rem 0;
-            border: 1px solid var(--table-blue);
+            border: 1px solid rgba(0,0,0,0.08);
             border-radius: 10px;
             overflow: hidden;
             box-shadow: 0 2px 6px rgba(0,0,0,0.05);
@@ -1153,7 +1144,7 @@
             align-items: center;
             gap: 0.75rem;
             padding: 0.6rem 0.9rem;
-            border-bottom: 1px dashed var(--table-blue);
+            border-bottom: 1px dashed rgba(0,0,0,0.06);
         }
         .table-enhanced tbody td:last-child {
             border-bottom: none;
@@ -1174,7 +1165,7 @@
     <style>
         /* Navbar styling */
         .navbar {
-            background-color: var(--table-blue) !important;
+            background-color: var(--primary-blue) !important;
             transition: all 0.3s ease;
             padding-top: 0.5rem;
             padding-bottom: 0.5rem;
@@ -1219,19 +1210,13 @@
         .table {
             width: 100%;
             margin-bottom: 0;
-            border: 1px solid var(--table-blue);
         }
         
         .table th {
-            background-color: var(--table-blue) !important;
-            color: var(--table-white) !important;
+            background-color: var(--primary-blue);
+            color: white;
             position: sticky;
             top: 0;
-            border: 1px solid var(--table-blue);
-        }
-        
-        .table td {
-            border: 1px solid var(--table-blue);
         }
         
         /* Responsive adjustments */

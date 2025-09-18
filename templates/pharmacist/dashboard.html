@@ -402,6 +402,24 @@
             width: 60px;
             text-align: center;
         }
+        
+        /* Prescription cart modal */
+        .prescription-cart-modal .modal-dialog {
+            max-width: 900px;
+        }
+        
+        .prescription-items {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .prescription-origin {
+            background-color: #f8f9fa;
+            border-left: 4px solid #0d6efd;
+            padding: 8px 12px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -422,6 +440,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
         <!-- Tab Navigation -->
         <ul class="nav nav-tabs" id="pharmacistTab" role="tablist">
             <li class="nav-item" role="presentation">
@@ -706,6 +727,50 @@
         </div>
     </div>
 
+    <!-- Prescription Cart Modal -->
+    <div class="modal fade prescription-cart-modal" id="prescriptionCartModal" tabindex="-1" aria-labelledby="prescriptionCartModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="prescriptionCartModalLabel">Confirm Prescription Dispensing</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="prescription-origin">
+                        <h6>Prescription Items</h6>
+                        <p class="mb-0">Patient: <span id="prescription-patient-name"></span></p>
+                        <p class="mb-0">Doctor: <span id="prescription-doctor-name"></span></p>
+                    </div>
+                    
+                    <div class="prescription-items mb-3" id="prescription-cart-items">
+                        <!-- Prescription items will be loaded here -->
+                    </div>
+                    
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5>Add Additional Drugs</h5>
+                        <button class="btn btn-sm btn-outline-primary" id="browse-drugs-btn">
+                            <i class="bi bi-search"></i> Browse Drugs
+                        </button>
+                    </div>
+                    
+                    <div class="additional-drugs" id="additional-drugs-container">
+                        <!-- Additional drugs will be shown here -->
+                    </div>
+                    
+                    <div class="cart-total mt-3">
+                        Total: Ksh <span id="prescription-cart-total">0.00</span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success" id="confirm-dispense-btn">
+                        <i class="bi bi-capsule"></i> Confirm Dispensing
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Success Toast -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3">
         <div id="successToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
@@ -752,10 +817,14 @@
             let drugsData = []; // Store drugs data for cart operations
             let currentRefundItems = []; // Store refund items
             let currentRefundSaleId = null;
+            let prescriptionCart = []; // Store prescription items for dispensing
 
             // Initialize toasts
             const successToast = new bootstrap.Toast(document.getElementById('successToast'));
             const errorToast = new bootstrap.Toast(document.getElementById('errorToast'));
+            
+            // Initialize modals
+            const prescriptionCartModal = new bootstrap.Modal(document.getElementById('prescriptionCartModal'));
             
             // Initialize DataTables
             const prescriptionsDT = $('#prescriptions-table').DataTable({
@@ -870,6 +939,10 @@
                                                 <button class="btn btn-info btn-sm view-info-btn" data-drug-id="${drug.id}">
                                                     <i class="bi bi-info-circle"></i> Info
                                                 </button>
+                                                <button class="btn btn-warning btn-sm add-to-prescription-cart-btn" data-drug-id="${drug.id}" 
+                                                    ${drug.remaining_quantity === 0 ? 'disabled' : ''}>
+                                                    <i class="bi bi-prescription"></i> Add to Rx
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -888,6 +961,11 @@
                         $('.view-info-btn').click(function() {
                             const drugId = $(this).data('drug-id');
                             showDrugInfo(drugId);
+                        });
+                        
+                        $('.add-to-prescription-cart-btn').click(function() {
+                            const drugId = $(this).data('drug-id');
+                            addToPrescriptionCart(drugId);
                         });
                     },
                     error: function() {
@@ -934,6 +1012,42 @@
                     });
                     updateCartDisplay();
                     showSuccessToast(`${drug.name} added to cart`);
+                }
+            }
+            
+            // Add drug to prescription cart
+            function addToPrescriptionCart(drugId) {
+                // Find drug in our stored data
+                const drug = drugsData.find(d => d.id === drugId);
+                
+                if (!drug) {
+                    showErrorToast('Drug not found');
+                    return;
+                }
+                
+                // Check if drug is already in prescription cart
+                const existingItem = prescriptionCart.find(item => item.drug_id === drugId);
+                
+                if (existingItem) {
+                    // Increase quantity
+                    existingItem.quantity += 1;
+                    existingItem.total_price = existingItem.unit_price * existingItem.quantity;
+                    updatePrescriptionCartDisplay();
+                    showSuccessToast(`${existingItem.drug_name} quantity updated`);
+                } else {
+                    // Add new item to prescription cart
+                    prescriptionCart.push({
+                        drug_id: drug.id,
+                        drug_name: drug.name,
+                        drug_number: drug.drug_number,
+                        specification: drug.specification,
+                        unit_price: drug.selling_price,
+                        quantity: 1,
+                        total_price: drug.selling_price,
+                        is_prescription_item: false // Mark as additional drug
+                    });
+                    updatePrescriptionCartDisplay();
+                    showSuccessToast(`${drug.name} added to prescription cart`);
                 }
             }
             
@@ -1076,6 +1190,83 @@
                         showSuccessToast(`${cart[index].drug_name} quantity updated`);
                     } else {
                         $(this).val(cart[index].quantity);
+                    }
+                });
+            }
+            
+            // Update prescription cart display
+            function updatePrescriptionCartDisplay() {
+                const prescriptionCartItems = $('#prescription-cart-items');
+                const prescriptionCartTotal = $('#prescription-cart-total');
+                
+                if (prescriptionCart.length === 0) {
+                    prescriptionCartItems.html(`
+                        <div class="text-center py-4 text-muted">
+                            <i class="bi bi-cart-x" style="font-size: 3rem;"></i>
+                            <p>Your prescription cart is empty</p>
+                        </div>
+                    `);
+                    prescriptionCartTotal.text('0.00');
+                    return;
+                }
+                
+                // Calculate total
+                const total = prescriptionCart.reduce((sum, item) => sum + item.total_price, 0);
+                prescriptionCartTotal.text(total.toFixed(2));
+                
+                // Build prescription cart items HTML
+                let prescriptionCartHTML = '';
+                
+                prescriptionCart.forEach((item, index) => {
+                    const isPrescriptionItem = item.is_prescription_item;
+                    
+                    prescriptionCartHTML += `
+                        <div class="cart-item" data-index="${index}">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1">
+                                    <h6 class="mb-0">${item.drug_name} ${isPrescriptionItem ? '<span class="badge bg-info">Prescribed</span>' : '<span class="badge bg-warning">Additional</span>'}</h6>
+                                    <small class="text-muted">${item.drug_number}</small>
+                                    <div class="mt-1">
+                                        <span class="price-value">Ksh ${item.unit_price.toFixed(2)}</span> ×
+                                        <input type="number" class="form-control form-control-sm quantity-input d-inline-block ms-2" 
+                                            value="${item.quantity}" min="1" data-index="${index}" data-is-prescription="${isPrescriptionItem}">
+                                        = <span class="price-value">Ksh ${item.total_price.toFixed(2)}</span>
+                                    </div>
+                                </div>
+                                ${!isPrescriptionItem ? `
+                                <button class="btn btn-sm btn-link text-danger remove-prescription-item" data-index="${index}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                prescriptionCartItems.html(prescriptionCartHTML);
+                
+                // Add event listeners to prescription cart item buttons
+                $('.remove-prescription-item').click(function() {
+                    const index = $(this).data('index');
+                    const drugName = prescriptionCart[index].drug_name;
+                    prescriptionCart.splice(index, 1);
+                    updatePrescriptionCartDisplay();
+                    showSuccessToast(`${drugName} removed from prescription cart`);
+                });
+                
+                // Add event listeners to prescription cart quantity inputs
+                $('.quantity-input').on('change', function() {
+                    const index = $(this).data('index');
+                    const isPrescriptionItem = $(this).data('is-prescription');
+                    const newQuantity = parseInt($(this).val());
+                    
+                    if (newQuantity > 0) {
+                        prescriptionCart[index].quantity = newQuantity;
+                        prescriptionCart[index].total_price = prescriptionCart[index].unit_price * newQuantity;
+                        updatePrescriptionCartDisplay();
+                        showSuccessToast(`${prescriptionCart[index].drug_name} quantity updated`);
+                    } else {
+                        $(this).val(prescriptionCart[index].quantity);
                     }
                 });
             }
@@ -1331,33 +1522,94 @@
                 });
             }
             
-            // Dispense prescription
+            // Dispense prescription - Show prescription cart modal
             function dispensePrescription(prescriptionId) {
+                // First get the prescription details
+                $.ajax({
+                    url: `/pharmacist/prescription/${prescriptionId}`,
+                    method: 'GET',
+                    success: function(response) {
+                        currentPrescription = response;
+                        
+                        // Clear the prescription cart
+                        prescriptionCart = [];
+                        
+                        // Add prescription items to the cart
+                        response.items.forEach(item => {
+                            // Find the drug in our stored data to get current price
+                            const drug = drugsData.find(d => d.name === item.drug_name);
+                            const unitPrice = drug ? drug.selling_price : 0;
+                            
+                            prescriptionCart.push({
+                                drug_id: item.drug_id,
+                                drug_name: item.drug_name,
+                                drug_number: drug ? drug.drug_number : 'N/A',
+                                specification: drug ? drug.specification : 'N/A',
+                                unit_price: unitPrice,
+                                quantity: item.quantity,
+                                total_price: unitPrice * item.quantity,
+                                is_prescription_item: true, // Mark as prescription item
+                                dosage: item.dosage,
+                                frequency: item.frequency,
+                                duration: item.duration
+                            });
+                        });
+                        
+                        // Update the prescription cart display
+                        updatePrescriptionCartDisplay();
+                        
+                        // Set patient and doctor information
+                        $('#prescription-patient-name').text(response.patient_name);
+                        $('#prescription-doctor-name').text(response.doctor_name);
+                        
+                        // Show the prescription cart modal
+                        prescriptionCartModal.show();
+                    },
+                    error: function() {
+                        showErrorToast('Failed to load prescription details');
+                    }
+                });
+            }
+            
+            // Confirm dispensing from prescription cart
+            function confirmDispensing() {
+                if (prescriptionCart.length === 0) {
+                    alert('Prescription cart is empty');
+                    return;
+                }
+                
                 const paymentMethod = prompt('Enter payment method (cash, card, mobile, insurance):', 'cash');
                 
                 if (!paymentMethod) {
                     return;
                 }
                 
+                const dispenseData = {
+                    prescription_id: currentPrescription.id,
+                    items: prescriptionCart,
+                    payment_method: paymentMethod,
+                    csrf_token: csrfToken
+                };
+                
                 $.ajax({
                     url: '/pharmacist/dispense',
                     method: 'POST',
                     contentType: 'application/json',
-                    data: JSON.stringify({
-                        prescription_id: prescriptionId,
-                        payment_method: paymentMethod,
-                        csrf_token: csrfToken
-                    }),
+                    data: JSON.stringify(dispenseData),
                     success: function(response) {
                         if (response.success) {
                             showSuccessToast('Prescription dispensed successfully');
                             loadPrescriptions(); // Refresh prescriptions list
                             loadDashboardStats(); // Refresh stats
+                            prescriptionCartModal.hide();
                             $('#viewPrescriptionModal').modal('hide');
                             
                             // Show receipt
                             currentSale = response;
                             showReceipt(response.sale_id);
+                            
+                            // Clear the prescription cart
+                            prescriptionCart = [];
                         } else {
                             showErrorToast(response.error || 'Failed to dispense prescription');
                         }
@@ -1567,6 +1819,17 @@
                     dispensePrescription(currentPrescription.id);
                 }
             });
+            
+            // Browse drugs button in prescription cart modal
+            $('#browse-drugs-btn').click(function() {
+                // Switch to drugs tab
+                $('#drugs-tab').tab('show');
+                // Hide the modal
+                prescriptionCartModal.hide();
+            });
+            
+            // Confirm dispensing button
+            $('#confirm-dispense-btn').click(confirmDispensing);
             
             // Handle window resize for responsive behavior
             $(window).resize(function() {
