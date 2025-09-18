@@ -391,6 +391,17 @@
                 display: block;
             }
         }
+
+        /* Expiry date color */
+        .expiry-date {
+            color: #00008b; /* Dark blue */
+        }
+        
+        /* Quantity input styling */
+        .quantity-input {
+            width: 60px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -411,7 +422,6 @@
             </div>
         </div>
     </div>
-
         <!-- Tab Navigation -->
         <ul class="nav nav-tabs" id="pharmacistTab" role="tablist">
             <li class="nav-item" role="presentation">
@@ -567,6 +577,48 @@
         </div>
     </div>
 
+    <!-- Cart Container for Phone Display -->
+    <div class="d-block d-md-none mt-3">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Shopping Cart</h5>
+            </div>
+            <div class="card-body">
+                <div id="phone-cart-items">
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-cart-x" style="font-size: 3rem;"></i>
+                        <p>Your cart is empty</p>
+                    </div>
+                </div>
+                <div class="cart-total mt-3">
+                    Total: Ksh <span id="phone-cart-total">0.00</span>
+                </div>
+                <div class="d-flex justify-content-between mt-3">
+                    <button class="btn btn-outline-danger" id="phone-clear-cart-btn">
+                        <i class="bi bi-trash"></i> Clear Cart
+                    </button>
+                    <button class="btn btn-success" id="phone-confirm-sale-btn" disabled>
+                        <i class="bi bi-check-circle"></i> Confirm Sale
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-light py-3 mt-auto">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-md-6 text-center text-md-start">
+                    <p class="mb-0">&copy; 2025 Makokha Medical Centre (MMC)</p>
+                </div>
+                <div class="col-md-6 text-center text-md-end">
+                    <p class="mb-0">Version 1.0.0</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
     <!-- Floating Cart Button (Mobile) -->
     <button class="btn btn-primary cart-toggle" id="cartToggleBtn">
         <i class="bi bi-cart3"></i>
@@ -679,19 +731,6 @@
             </div>
         </div>
     </div>
-    <!-- Footer -->
-    <footer class="bg-light py-3 mt-auto">
-        <div class="container-fluid">
-            <div class="row">
-                <div class="col-md-6 text-center text-md-start">
-                    <p class="mb-0">&copy; 2025 Makokha Medical Centre (MMC)</p>
-                </div>
-                <div class="col-md-6 text-center text-md-end">
-                    <p class="mb-0">Version 1.0.0</p>
-                </div>
-            </div>
-        </div>
-    </footer>
 
     <!-- CSRF Token -->
     <meta name="csrf-token" content="{{ csrf_token() }}">
@@ -818,7 +857,7 @@
                                             </p>
                                             ${drug.expiry_date ? `
                                                 <p class="card-text">
-                                                    <small class="text-muted">Expires: ${new Date(drug.expiry_date).toLocaleDateString()}</small>
+                                                    <small class="text-muted expiry-date">Expires: ${new Date(drug.expiry_date).toLocaleDateString()}</small>
                                                 </p>
                                             ` : ''}
                                         </div>
@@ -921,6 +960,9 @@
                 const mobileCartTotal = $('#mobile-cart-total');
                 const mobileConfirmSaleBtn = $('#mobile-confirm-sale-btn');
                 const cartBadge = $('#cart-badge');
+                const phoneCartItems = $('#phone-cart-items');
+                const phoneCartTotal = $('#phone-cart-total');
+                const phoneConfirmSaleBtn = $('#phone-confirm-sale-btn');
                 
                 if (cart.length === 0) {
                     cartItems.html(`
@@ -936,12 +978,21 @@
                     mobileCartTotal.text('0.00');
                     mobileConfirmSaleBtn.prop('disabled', true);
                     cartBadge.text('0');
+                    phoneCartItems.html(`
+                        <div class="text-center py-4 text-muted">
+                            <i class="bi bi-cart-x" style="font-size: 3rem;"></i>
+                            <p>Your cart is empty</p>
+                        </div>
+                    `);
+                    phoneCartTotal.text('0.00');
+                    phoneConfirmSaleBtn.prop('disabled', true);
                     return;
                 }
                 
                 // Enable confirm sale button
                 confirmSaleBtn.prop('disabled', false);
                 mobileConfirmSaleBtn.prop('disabled', false);
+                phoneConfirmSaleBtn.prop('disabled', false);
                 
                 // Update cart count
                 const totalItems = cart.reduce((total, item) => total + item.quantity, 0);
@@ -953,9 +1004,11 @@
                 const total = cart.reduce((sum, item) => sum + item.total_price, 0);
                 cartTotal.text(total.toFixed(2));
                 mobileCartTotal.text(total.toFixed(2));
+                phoneCartTotal.text(total.toFixed(2));
                 
                 // Build cart items HTML
                 let cartHTML = '';
+                let phoneCartHTML = '';
                 
                 cart.forEach((item, index) => {
                     cartHTML += `
@@ -966,11 +1019,28 @@
                                     <small class="text-muted">${item.drug_number}</small>
                                     <div class="mt-1">
                                         <span class="price-value">Ksh ${item.unit_price.toFixed(2)}</span> ×
-                                        <div class="btn-group btn-group-sm ms-2">
-                                            <button class="btn btn-outline-secondary decrease-qty" data-index="${index}">-</button>
-                                            <span class="btn btn-outline-secondary disabled">${item.quantity}</span>
-                                            <button class="btn btn-outline-secondary increase-qty" data-index="${index}">+</button>
-                                        </div>
+                                        <input type="number" class="form-control form-control-sm quantity-input d-inline-block ms-2" 
+                                            value="${item.quantity}" min="1" data-index="${index}">
+                                        = <span class="price-value">Ksh ${item.total_price.toFixed(2)}</span>
+                                    </div>
+                                </div>
+                                <button class="btn btn-sm btn-link text-danger remove-item" data-index="${index}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    
+                    phoneCartHTML += `
+                        <div class="cart-item" data-index="${index}">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1">
+                                    <h6 class="mb-0">${item.drug_name}</h6>
+                                    <small class="text-muted">${item.drug_number}</small>
+                                    <div class="mt-1">
+                                        <span class="price-value">Ksh ${item.unit_price.toFixed(2)}</span> ×
+                                        <input type="number" class="form-control form-control-sm quantity-input d-inline-block ms-2" 
+                                            value="${item.quantity}" min="1" data-index="${index}">
                                         = <span class="price-value">Ksh ${item.total_price.toFixed(2)}</span>
                                     </div>
                                 </div>
@@ -983,32 +1053,30 @@
                 });
                 
                 cartItems.html(cartHTML);
+                phoneCartItems.html(phoneCartHTML);
                 
                 // Add event listeners to cart item buttons
-                $('.decrease-qty').click(function() {
-                    const index = $(this).data('index');
-                    if (cart[index].quantity > 1) {
-                        cart[index].quantity -= 1;
-                        cart[index].total_price = cart[index].unit_price * cart[index].quantity;
-                        updateCartDisplay();
-                        showSuccessToast(`${cart[index].drug_name} quantity updated`);
-                    }
-                });
-                
-                $('.increase-qty').click(function() {
-                    const index = $(this).data('index');
-                    cart[index].quantity += 1;
-                    cart[index].total_price = cart[index].unit_price * cart[index].quantity;
-                    updateCartDisplay();
-                    showSuccessToast(`${cart[index].drug_name} quantity updated`);
-                });
-                
                 $('.remove-item').click(function() {
                     const index = $(this).data('index');
                     const drugName = cart[index].drug_name;
                     cart.splice(index, 1);
                     updateCartDisplay();
                     showSuccessToast(`${drugName} removed from cart`);
+                });
+                
+                // Add event listeners to quantity inputs
+                $('.quantity-input').on('change', function() {
+                    const index = $(this).data('index');
+                    const newQuantity = parseInt($(this).val());
+                    
+                    if (newQuantity > 0) {
+                        cart[index].quantity = newQuantity;
+                        cart[index].total_price = cart[index].unit_price * newQuantity;
+                        updateCartDisplay();
+                        showSuccessToast(`${cart[index].drug_name} quantity updated`);
+                    } else {
+                        $(this).val(cart[index].quantity);
+                    }
                 });
             }
             
@@ -1485,6 +1553,8 @@
             $('#clear-cart-btn').click(clearCart);
             $('#mobile-confirm-sale-btn').click(confirmSale);
             $('#mobile-clear-cart-btn').click(clearCart);
+            $('#phone-confirm-sale-btn').click(confirmSale);
+            $('#phone-clear-cart-btn').click(clearCart);
             $('#search-sale-btn').click(searchSale);
             $('#print-receipt-btn').click(function() {
                 window.print();
