@@ -373,6 +373,25 @@
             .header-title {
                 font-size: 1.1rem;
             }
+            
+            /* Mobile sidebar specific styles */
+            .sidebar-nav {
+                padding: 0.5rem 0;
+            }
+            
+            .nav-item {
+                margin: 0.15rem 0.5rem;
+            }
+            
+            .nav-link {
+                padding: 0.6rem 0.8rem;
+                font-size: 0.9rem;
+            }
+            
+            .nav-link i {
+                font-size: 1rem;
+                margin-right: 0.8rem;
+            }
         }
         
         /* Sidebar and Navigation Styles */
@@ -676,6 +695,12 @@
                                 <span class="nav-text">Lab Tests</span>
                             </a>
                         </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('doctor_prescriptions') }}" class="nav-link">
+                                <i class="bi bi-prescription2"></i>
+                                <span class="nav-text">Prescriptions</span>
+                            </a>
+                        </div>
                     {% elif current_user.role == 'pharmacist' %}
                         <!-- Pharmacist Navigation -->
                         <div class="nav-item">
@@ -708,7 +733,6 @@
                                 <span class="nav-text">Refunds</span>
                             </a>
                         </div>
-                        <!-- NEW: Prescriptions Link -->
                         <div class="nav-item">
                             <a href="{{ url_for('patient_prescriptions') }}" class="nav-link">
                                 <i class="bi bi-prescription2"></i>
@@ -735,7 +759,93 @@
                                 <span class="nav-text">Billing</span>
                             </a>
                         </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('receptionist_appointments') }}" class="nav-link">
+                                <i class="bi bi-calendar-check"></i>
+                                <span class="nav-text">Appointments</span>
+                            </a>
+                        </div>
+                    {% elif current_user.role == 'nurse' %}
+                        <!-- Nurse Navigation -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('nurse_dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('nurse_patients') }}" class="nav-link">
+                                <i class="bi bi-person-lines-fill"></i>
+                                <span class="nav-text">Patients</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('nurse_vitals') }}" class="nav-link">
+                                <i class="bi bi-heart-pulse"></i>
+                                <span class="nav-text">Vital Signs</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('nurse_medication') }}" class="nav-link">
+                                <i class="bi bi-capsule"></i>
+                                <span class="nav-text">Medication</span>
+                            </a>
+                        </div>
+                    {% elif current_user.role == 'lab_technician' %}
+                        <!-- Lab Technician Navigation -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('lab_dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('lab_tests') }}" class="nav-link">
+                                <i class="bi bi-clipboard2-pulse"></i>
+                                <span class="nav-text">Tests</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('lab_results') }}" class="nav-link">
+                                <i class="bi bi-file-earmark-medical"></i>
+                                <span class="nav-text">Results</span>
+                            </a>
+                        </div>
+                    {% else %}
+                        <!-- Default Navigation for authenticated users without specific role -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('profile') }}" class="nav-link">
+                                <i class="bi bi-person"></i>
+                                <span class="nav-text">Profile</span>
+                            </a>
+                        </div>
                     {% endif %}
+                {% else %}
+                    <!-- Navigation for non-authenticated users -->
+                    <div class="nav-item">
+                        <a href="{{ url_for('auth.login') }}" class="nav-link">
+                            <i class="bi bi-box-arrow-in-right"></i>
+                            <span class="nav-text">Login</span>
+                        </a>
+                    </div>
+                    <div class="nav-item">
+                        <a href="{{ url_for('auth.register') }}" class="nav-link">
+                            <i class="bi bi-person-plus"></i>
+                            <span class="nav-text">Register</span>
+                        </a>
+                    </div>
+                    <div class="nav-item">
+                        <a href="{{ url_for('home') }}" class="nav-link">
+                            <i class="bi bi-house"></i>
+                            <span class="nav-text">Home</span>
+                        </a>
+                    </div>
                 {% endif %}
             </nav>
             
@@ -817,7 +927,6 @@
         const headerToggle = document.getElementById('headerToggle');
         const closeSidebar = document.getElementById('closeSidebar');
         const overlay = document.getElementById('overlay');
-        const mainContent = document.querySelector('main.container-fluid');
         
         // Check if we're on a desktop (PC) or mobile/tablet
         function isDesktop() {
@@ -978,7 +1087,7 @@
                             if (node.nodeType === 1) { // ELEMENT_NODE
                                 if (node.tagName === 'FORM') {
                                     injectCsrfIntoForms(node);
-                                else if (node.querySelectorAll) {
+                                } else if (node.querySelectorAll) {
                                     var nestedForms = node.querySelectorAll('form');
                                     if (nestedForms.length) injectCsrfIntoForms(node);
                                 }
@@ -1182,7 +1291,7 @@
             tooltipTriggerList.map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
 
             const popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
-            popoverTriggerList.map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl));
+            popoverTriggerList.map(popoverTriggerEl => new bootstrap.Topover(popoverTriggerEl));
 
             // Table row selection
             document.querySelectorAll('.table tbody tr').forEach(row => {
