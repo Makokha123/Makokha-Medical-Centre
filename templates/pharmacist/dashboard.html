@@ -231,16 +231,6 @@
             border-bottom: 1px solid #dee2e6;
         }
         
-        @media (max-width: 992px) {
-            .inventory-container {
-                flex-direction: column;
-            }
-            
-            .cart-column {
-                position: static;
-            }
-        }
-        
         /* Animation for cart updates */
         @keyframes highlight {
             0% { background-color: rgba(40, 167, 69, 0.2); }
@@ -254,14 +244,188 @@
         .refund-quantity {
             max-width: 100px;
         }
+        
+        /* Responsive styles */
+        @media (max-width: 992px) {
+            .inventory-container {
+                flex-direction: column;
+            }
+            
+            .cart-column {
+                position: static;
+            }
+        }
+        
+        /* Phone-specific styles */
+        @media (max-width: 768px) {
+            .main-content {
+                margin-left: 0;
+                padding: 15px;
+            }
+            
+            .sidebar {
+                transform: translateX(-100%);
+                width: 80%;
+                max-width: 300px;
+            }
+            
+            .sidebar.active {
+                transform: translateX(0);
+            }
+            
+            /* Stats cards - horizontal layout on phones */
+            .stats-container {
+                display: flex;
+                overflow-x: auto;
+                gap: 10px;
+                margin-bottom: 15px;
+                padding-bottom: 5px;
+            }
+            
+            .stats-container .card {
+                min-width: 150px;
+                margin-bottom: 0;
+            }
+            
+            .stats-container .card-body {
+                padding: 10px;
+            }
+            
+            .stats-container h3 {
+                font-size: 1.5rem;
+            }
+            
+            .stats-container .card-title {
+                font-size: 1rem;
+                margin-bottom: 5px;
+            }
+            
+            /* Drug cards - smaller and scrollable */
+            .drugs-scroll-container {
+                max-height: 300px;
+                overflow-y: auto;
+            }
+            
+            .drug-card .card-title {
+                font-size: 0.9rem;
+            }
+            
+            .drug-card .card-subtitle {
+                font-size: 0.8rem;
+            }
+            
+            .drug-card .card-text {
+                font-size: 0.85rem;
+                margin-bottom: 5px;
+            }
+            
+            .drug-card .card-footer {
+                padding: 8px;
+            }
+            
+            .drug-card .btn {
+                font-size: 0.8rem;
+                padding: 4px 8px;
+            }
+            
+            /* Cart at bottom on portrait */
+            .cart-column {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                z-index: 1000;
+                border-radius: 12px 12px 0 0;
+                max-height: 40vh;
+                overflow-y: auto;
+                box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+                transition: transform 0.3s ease;
+            }
+            
+            .cart-column.collapsed {
+                transform: translateY(calc(100% - 50px));
+            }
+            
+            .cart-toggle {
+                position: absolute;
+                top: -40px;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 100px;
+                border-radius: 8px 8px 0 0;
+            }
+        }
+        
+        /* Landscape orientation for phones */
+        @media (max-width: 768px) and (orientation: landscape) {
+            .inventory-container {
+                flex-direction: row;
+            }
+            
+            .cart-column {
+                position: sticky;
+                top: 70px;
+                max-height: calc(100vh - 100px);
+                overflow-y: auto;
+                border-radius: 8px;
+            }
+            
+            .drugs-scroll-container {
+                max-height: calc(100vh - 200px);
+            }
+        }
+        
+        /* Tablet and PC styles */
+        @media (min-width: 769px) {
+            .drugs-scroll-container {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 15px;
+                max-height: 500px;
+                overflow-y: auto;
+            }
+            
+            /* Two rows of drug cards (6 total) with scrolling if more */
+            .drugs-scroll-container::after {
+                content: "";
+                display: block;
+                height: 1px;
+                grid-column: 1 / -1;
+            }
+        }
+        
+        /* Toggle button for sidebar on mobile */
+        .sidebar-toggle {
+            display: none;
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 1100;
+            background: var(--secondary-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 5px 10px;
+        }
+        
+        @media (max-width: 768px) {
+            .sidebar-toggle {
+                display: block;
+            }
+        }
     </style>
 </head>
 <body>
+    <!-- Sidebar Toggle Button for Mobile -->
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <i class="bi bi-list"></i>
+    </button>
+
     <!-- Header -->
     <div class="header">
         <h4 class="mb-0">Pharmacist Dashboard</h4>
         <div class="d-flex align-items-center">
-            <span class="me-3">Welcome, Pharmacist</span>
+            <span class="me-3 d-none d-md-block">Welcome, Pharmacist</span>
             <div class="dropdown">
                 <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="userDropdown" data-bs-toggle="dropdown">
                     <i class="bi bi-person-circle"></i>
@@ -276,42 +440,49 @@
         </div>
     </div>
 
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <ul class="sidebar-menu">
+            <li><a href="#" class="active"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="#"><i class="bi bi-capsule"></i> Inventory</a></li>
+            <li><a href="#"><i class="bi bi-prescription2"></i> Prescriptions</a></li>
+            <li><a href="#"><i class="bi bi-people"></i> Patients</a></li>
+            <li><a href="#"><i class="bi bi-graph-up"></i> Reports</a></li>
+            <li><a href="#"><i class="bi bi-cash"></i> Sales</a></li>
+            <li><a href="#"><i class="bi bi-gear"></i> Settings</a></li>
+        </ul>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
         <!-- Dashboard Stats -->
-        <div class="row mb-4">
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-capsule text-primary"></i></h5>
-                        <h3 id="total-drugs">0</h3>
-                        <p class="card-text">Total Drugs</p>
-                    </div>
+        <div class="stats-container" id="statsContainer">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-capsule text-primary"></i></h5>
+                    <h3 id="total-drugs">0</h3>
+                    <p class="card-text">Total Drugs</p>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-exclamation-triangle text-warning"></i></h5>
-                        <h3 id="low-stock">0</h3>
-                        <p class="card-text">Low Stock</p>
-                    </div>
+            <div class="card text-center">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-exclamation-triangle text-warning"></i></h5>
+                    <h3 id="low-stock">0</h3>
+                    <p class="card-text">Low Stock</p>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-calendar-x text-danger"></i></h5>
-                        <h3 id="expiring-soon">0</h3>
-                        <p class="card-text">Expiring Soon</p>
-                    </div>
+            <div class="card text-center">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-calendar-x text-danger"></i></h5>
+                    <h3 id="expiring-soon">0</h3>
+                    <p class="card-text">Expiring Soon</p>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="bi bi-prescription2 text-success"></i></h5>
-                        <h3 id="pending-prescriptions">0</h3>
-                        <p class="card-text">Pending Prescriptions</p>
-                    </div>
+            <div class="card text-center">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-prescription2 text-success"></i></h5>
+                    <h3 id="pending-prescriptions">0</h3>
+                    <p class="card-text">Pending Prescriptions</p>
                 </div>
             </div>
         </div>
@@ -320,17 +491,17 @@
         <ul class="nav nav-tabs" id="pharmacistTab" role="tablist">
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="drugs-tab" data-bs-toggle="tab" data-bs-target="#drugs" type="button" role="tab">
-                    <i class="bi bi-capsule me-1"></i> Drugs Inventory
+                    <i class="bi bi-capsule me-1"></i> <span class="d-none d-md-inline">Drugs Inventory</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="prescriptions-tab" data-bs-toggle="tab" data-bs-target="#prescriptions" type="button" role="tab">
-                    <i class="bi bi-prescription2 me-1"></i> Prescriptions
+                    <i class="bi bi-prescription2 me-1"></i> <span class="d-none d-md-inline">Prescriptions</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="refunds-tab" data-bs-toggle="tab" data-bs-target="#refunds" type="button" role="tab">
-                    <i class="bi bi-arrow-left-right me-1"></i> Refunds
+                    <i class="bi bi-arrow-left-right me-1"></i> <span class="d-none d-md-inline">Refunds</span>
                 </button>
             </li>
         </ul>
@@ -356,7 +527,7 @@
                                 </div>
                             </div>
                             <div class="card-body">
-                                <div class="row" id="drugs-container">
+                                <div class="drugs-scroll-container" id="drugs-container">
                                     <!-- Drugs will be loaded here dynamically -->
                                 </div>
                             </div>
@@ -364,7 +535,10 @@
                     </div>
                     
                     <!-- Right Column - Shopping Cart -->
-                    <div class="cart-column">
+                    <div class="cart-column" id="cartColumn">
+                        <button class="btn btn-primary cart-toggle d-md-none" id="cartToggle">
+                            <i class="bi bi-cart"></i> Cart
+                        </button>
                         <div class="cart-header">
                             <h5 class="mb-0">Shopping Cart</h5>
                             <span class="badge bg-primary" id="cart-count">0 items</span>
@@ -384,10 +558,10 @@
                         
                         <div class="d-flex justify-content-between mt-3">
                             <button class="btn btn-outline-danger" id="clear-cart-btn">
-                                <i class="bi bi-trash"></i> Clear Cart
+                                <i class="bi bi-trash"></i> Clear
                             </button>
                             <button class="btn btn-success" id="confirm-sale-btn" disabled>
-                                <i class="bi bi-check-circle"></i> Confirm Sale
+                                <i class="bi bi-check-circle"></i> Confirm
                             </button>
                         </div>
                     </div>
@@ -578,6 +752,16 @@
             let drugsData = []; // Store drugs data for cart operations
             let currentRefundItems = []; // Store refund items
             let currentRefundSaleId = null;
+            
+            // Mobile sidebar toggle
+            $('#sidebarToggle').click(function() {
+                $('#sidebar').toggleClass('active');
+            });
+            
+            // Mobile cart toggle
+            $('#cartToggle').click(function() {
+                $('#cartColumn').toggleClass('collapsed');
+            });
 
             // Initialize toasts
             const successToast = new bootstrap.Toast(document.getElementById('successToast'));
@@ -1343,6 +1527,16 @@
             loadDashboardStats();
             loadDrugs();
             loadPrescriptions();
+            
+            // Handle window resize for responsive behavior
+            $(window).resize(function() {
+                // Adjust cart position based on orientation
+                if ($(window).width() <= 768) {
+                    if (window.matchMedia("(orientation: landscape)").matches) {
+                        $('#cartColumn').removeClass('collapsed');
+                    }
+                }
+            });
         });
     </script>
 </body>
