@@ -39,6 +39,7 @@
             --border-color: rgba(255, 255, 255, 0.1);
             --table-blue: #0d6efd;
             --table-white: #ffffff;
+            --hamburger-red: #dc3545;
         }
 
         /* Sidebar Styles */
@@ -70,7 +71,7 @@
             width: 40px;
             height: 40px;
             border-radius: 8px;
-            background: var(--primary-color);
+            background: var(--hamburger-red);
             border: none;
             color: white;
             display: flex;
@@ -82,7 +83,7 @@
         }
 
         .toggle-nav:hover {
-            background: #0a58ca;
+            background: #c82333;
         }
 
         /* Sidebar Header */
@@ -177,7 +178,7 @@
             min-height: 100vh;
             padding: 1rem;
             width: 100%;
-            padding-top: calc(1rem + 60px); /* Account for fixed toggle button */
+            padding-top: calc(1rem + 70px); /* Account for header */
         }
 
         /* Profile Section */
@@ -204,6 +205,45 @@
             object-fit: cover;
         }
 
+        /* Header with Toggle Button */
+        .main-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: white;
+            z-index: 1050;
+            display: flex;
+            align-items: center;
+            padding: 0 1rem;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .header-toggle {
+            background: var(--hamburger-red);
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            margin-right: 1rem;
+        }
+        
+        .header-toggle:hover {
+            background: #c82333;
+        }
+        
+        .header-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0;
+        }
+
         /* Responsive Design - Improved for all devices */
         /* Desktop (PC) */
         @media (min-width: 1200px) {
@@ -214,6 +254,7 @@
             main.container-fluid {
                 margin-left: var(--sidebar-width);
                 width: calc(100% - var(--sidebar-width));
+                padding-top: calc(1rem + 70px); /* Account for header */
             }
             
             .toggle-nav {
@@ -222,6 +263,25 @@
             
             .overlay {
                 display: none !important;
+            }
+            
+            .main-header {
+                left: var(--sidebar-width);
+                transition: left var(--transition-speed) ease;
+            }
+            
+            .sidebar.collapsed ~ .main-header {
+                left: 0;
+            }
+            
+            .sidebar.collapsed ~ main.container-fluid {
+                margin-left: 0;
+                width: 100%;
+            }
+            
+            /* Always show header toggle on desktop */
+            .header-toggle {
+                display: flex !important;
             }
         }
         
@@ -255,6 +315,15 @@
 
             .overlay.show {
                 display: block;
+            }
+            
+            main.container-fluid {
+                padding-top: calc(1rem + 70px); /* Account for header */
+            }
+            
+            /* Always show header toggle on tablet */
+            .header-toggle {
+                display: flex !important;
             }
         }
         
@@ -293,7 +362,16 @@
             }
             
             main.container-fluid {
-                padding-top: calc(1rem + 60px);
+                padding-top: calc(1rem + 70px); /* Account for header */
+            }
+            
+            /* Always show header toggle on mobile */
+            .header-toggle {
+                display: flex !important;
+            }
+            
+            .header-title {
+                font-size: 1.1rem;
             }
         }
         
@@ -463,11 +541,24 @@
         table {
             border-collapse: collapse;
         }
+        
+        /* Ensure hamburger button is always visible */
+        .header-toggle {
+            display: flex !important;
+        }
     </style>
     
     {% block extra_css %}{% endblock %}
 </head>
 <body class="d-flex flex-column min-vh-100">
+    <!-- Header with Toggle Button -->
+    <header class="main-header">
+        <button class="header-toggle" id="headerToggle">
+            <i class="fas fa-bars"></i>
+        </button>
+        <h1 class="header-title">Makokha Medical Centre</h1>
+    </header>
+
     <!-- Navigation Toggle Button (Always visible on mobile/tablet) -->
     <button class="toggle-nav" id="toggleNav">
         <i class="fas fa-bars"></i>
@@ -723,6 +814,7 @@
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
         const toggleNav = document.getElementById('toggleNav');
+        const headerToggle = document.getElementById('headerToggle');
         const closeSidebar = document.getElementById('closeSidebar');
         const overlay = document.getElementById('overlay');
         const mainContent = document.querySelector('main.container-fluid');
@@ -748,51 +840,85 @@
             document.body.style.overflow = 'auto';
         }
         
-        // Toggle sidebar when buttons are clicked
-        if (toggleNav) {
-            toggleNav.addEventListener('click', function() {
+        // Function to toggle sidebar
+        function toggleSidebar() {
+            if (sidebar.classList.contains('show') || (isDesktop() && !sidebar.classList.contains('collapsed'))) {
+                sidebar.classList.toggle('collapsed');
+                // Update header toggle icon
+                if (sidebar.classList.contains('collapsed')) {
+                    headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                } else {
+                    headerToggle.innerHTML = '<i class="fas fa-times"></i>';
+                }
+            } else {
                 if (sidebar.classList.contains('show')) {
                     hideSidebar();
                 } else {
                     showSidebar();
                 }
-            });
+            }
+        }
+        
+        // Toggle sidebar when buttons are clicked
+        if (toggleNav) {
+            toggleNav.addEventListener('click', toggleSidebar);
+        }
+        
+        if (headerToggle) {
+            headerToggle.addEventListener('click', toggleSidebar);
         }
         
         if (closeSidebar) {
-            closeSidebar.addEventListener('click', hideSidebar);
+            closeSidebar.addEventListener('click', function() {
+                hideSidebar();
+                // Update header toggle icon
+                headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
+            });
         }
         
         // Close sidebar when overlay is clicked (mobile/tablet only)
         if (overlay) {
-            overlay.addEventListener('click', hideSidebar);
+            overlay.addEventListener('click', function() {
+                hideSidebar();
+                // Update header toggle icon
+                headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
+            });
         }
         
         // Close sidebar when ESC key is pressed
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape' && !isDesktop()) {
                 hideSidebar();
+                // Update header toggle icon
+                headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
             }
         });
         
         // Handle window resize
         window.addEventListener('resize', function() {
             if (isDesktop()) {
-                // Desktop view - ensure sidebar is visible
+                // Desktop view - ensure sidebar is visible by default
                 sidebar.classList.remove('collapsed', 'show');
                 overlay.classList.remove('show');
                 document.body.style.overflow = 'auto';
+                // Update header toggle icon
+                headerToggle.innerHTML = '<i class="fas fa-times"></i>';
             } else {
                 // Mobile/tablet view - ensure sidebar is hidden by default
                 if (!sidebar.classList.contains('show')) {
                     sidebar.classList.add('collapsed');
                 }
+                // Update header toggle icon
+                headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
             }
         });
         
         // Initialize for current screen size
-        if (!isDesktop()) {
+        if (isDesktop()) {
+            headerToggle.innerHTML = '<i class="fas fa-times"></i>';
+        } else {
             sidebar.classList.add('collapsed');
+            headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
         }
     });
     </script>
@@ -852,7 +978,7 @@
                             if (node.nodeType === 1) { // ELEMENT_NODE
                                 if (node.tagName === 'FORM') {
                                     injectCsrfIntoForms(node);
-                                } else if (node.querySelectorAll) {
+                                else if (node.querySelectorAll) {
                                     var nestedForms = node.querySelectorAll('form');
                                     if (nestedForms.length) injectCsrfIntoForms(node);
                                 }
