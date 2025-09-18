@@ -33,10 +33,63 @@
             --sidebar-width: 260px;
             --sidebar-collapsed-width: 70px;
             --primary-color: #0d6efd;
-            --secondary-color: #6c757d;
+            --secondary-color: #0fc21eff;
             --header-height: 60px;
             --transition-speed: 0.3s;
-            --border-color: rgba(255, 255, 255, 0.1);
+            --border-color: rgba(3, 2, 66, 0.1);
+            --tap-min-size: 44px;
+        }
+
+        /* Mobile Top Navigation Bar */
+        .mobile-navbar {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: var(--header-height);
+            background: var(--primary-color);
+            color: white;
+            z-index: 1050;
+            padding: 0 1rem;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .mobile-navbar-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 100%;
+        }
+
+        .mobile-navbar-brand {
+            display: flex;
+            align-items: center;
+            color: white;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 1.2rem;
+        }
+
+        .mobile-navbar-brand i {
+            margin-right: 0.5rem;
+        }
+
+        .mobile-navbar-toggler {
+            background: transparent;
+            border: none;
+            color: white;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+
+        .mobile-navbar-toggler:hover {
+            background: rgba(255, 255, 255, 0.1);
         }
 
         /* Sidebar Styles */
@@ -48,14 +101,14 @@
             width: var(--sidebar-width);
             background: var(--primary-color);
             color: white;
-            transition: width var(--transition-speed) ease;
+            transition: transform var(--transition-speed) ease;
             z-index: 1000;
             overflow-x: hidden;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
 
         .sidebar.collapsed {
-            width: 0;
+            transform: translateX(-100%);
         }
 
         /* Toggle Button */
@@ -174,6 +227,7 @@
             transition: margin var(--transition-speed) ease;
             min-height: 100vh;
             padding: 1rem;
+            padding-top: calc(var(--header-height) + 1rem);
         }
 
         main.container-fluid.expanded {
@@ -205,10 +259,18 @@
         }
 
         /* Responsive Design */
-        @media (max-width: 768px) {
+        @media (max-width: 992px) {
+            .mobile-navbar {
+                display: flex;
+            }
+            
             .sidebar {
                 transform: translateX(-100%);
                 position: fixed;
+                top: var(--header-height);
+                height: calc(100vh - var(--header-height));
+                width: 280px;
+                z-index: 1040;
             }
 
             .sidebar.show {
@@ -217,21 +279,31 @@
 
             main.container-fluid {
                 margin-left: 0 !important;
+                padding-top: calc(var(--header-height) + 1rem);
             }
 
             .overlay {
                 display: none;
                 position: fixed;
-                top: 0;
+                top: var(--header-height);
                 left: 0;
                 right: 0;
                 bottom: 0;
                 background: rgba(0, 0, 0, 0.5);
-                z-index: 999;
+                z-index: 1039;
             }
 
             .overlay.show {
                 display: block;
+            }
+            
+            .toggle-nav {
+                display: none;
+            }
+            
+            /* Adjust content to account for mobile navbar */
+            body {
+                padding-top: var(--header-height);
             }
         }
         
@@ -327,7 +399,7 @@
             transform: rotate(-135deg);
         }
 
-        @media (min-width: 992px) {
+        @media (min-width: 993px) {
             #mainNavbar {
                 width: var(--sidebar-width);
                 height: 100vh;
@@ -348,6 +420,7 @@
             main.container-fluid {
                 margin-left: var(--sidebar-width);
                 width: calc(100% - var(--sidebar-width));
+                padding-top: 1rem;
             }
             
             .navbar-nav .nav-link {
@@ -368,7 +441,7 @@
             }
         }
         
-        @media (max-width: 991.98px) {
+        @media (max-width: 992px) {
             #mainNavbar {
                 padding: 0.5rem 1rem;
             }
@@ -451,8 +524,21 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body class="d-flex flex-column min-vh-100">
+    <!-- Mobile Top Navigation Bar -->
+    <nav class="mobile-navbar">
+        <div class="mobile-navbar-content">
+            <a class="mobile-navbar-brand" href="{{ url_for('home') }}">
+                <i class="bi bi-hospital"></i>
+                <span>MMC</span>
+            </a>
+            <button class="mobile-navbar-toggler" id="mobileNavToggler">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+    </nav>
+
     <!-- Sidebar Navigation -->
-    <div class="sidebar" id="sidebar">
+    <div class="sidebar collapsed" id="sidebar">
         <!-- Sidebar Header -->
         <div class="sidebar-header">
             <button class="toggle-nav" id="toggleNav">
@@ -656,8 +742,11 @@
         </div>
     </div>
 
+    <!-- Overlay for mobile sidebar -->
+    <div class="overlay" id="sidebarOverlay"></div>
+
     <!-- Main Content -->
-    <main class="container-fluid flex-grow-1 py-3" style="margin-top: 60px;">
+    <main class="container-fluid flex-grow-1 py-3">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -699,58 +788,72 @@
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
         const toggleNav = document.getElementById('toggleNav');
+        const mobileNavToggler = document.getElementById('mobileNavToggler');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
         const mainContent = document.querySelector('main.container-fluid');
-        let overlay = document.createElement('div');
-        overlay.className = 'overlay';
-        document.body.appendChild(overlay);
         
-        // Move toggle button outside sidebar when collapsed
-        function updateTogglePosition() {
-            if (sidebar.classList.contains('collapsed')) {
-                document.body.appendChild(toggleNav);
-            } else {
-                sidebar.querySelector('.sidebar-header').appendChild(toggleNav);
-            }
+        // Mobile sidebar toggle
+        function toggleMobileSidebar() {
+            sidebar.classList.toggle('show');
+            sidebarOverlay.classList.toggle('show');
+            document.body.classList.toggle('sidebar-open');
         }
-
-        // Toggle sidebar
-        toggleNav.addEventListener('click', function() {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
-            updateTogglePosition();
-            
-            // Store the state
-            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
-        });
-
-        // Mobile handling
-        function handleMobileView() {
-            if (window.innerWidth <= 768) {
-                sidebar.classList.remove('collapsed');
+        
+        // Initialize sidebar state
+        function initSidebar() {
+            // Check if we're on mobile
+            if (window.innerWidth <= 992) {
+                sidebar.classList.add('collapsed');
                 mainContent.classList.remove('expanded');
                 
-                toggleNav.addEventListener('click', function() {
-                    sidebar.classList.toggle('show');
-                    overlay.classList.toggle('show');
-                });
-
-                overlay.addEventListener('click', function() {
-                    sidebar.classList.remove('show');
-                    overlay.classList.remove('show');
-                });
+                // Set up mobile event listeners
+                mobileNavToggler.addEventListener('click', toggleMobileSidebar);
+                sidebarOverlay.addEventListener('click', toggleMobileSidebar);
+                
+                // Hide desktop toggle button on mobile
+                if (toggleNav) toggleNav.style.display = 'none';
+            } else {
+                // Desktop behavior
+                sidebar.classList.remove('collapsed');
+                
+                // Restore sidebar state
+                const sidebarCollapsed = localStorage.getItem('sidebarCollapsed');
+                if (sidebarCollapsed === 'true') {
+                    sidebar.classList.add('collapsed');
+                    mainContent.classList.add('expanded');
+                }
+                
+                // Set up desktop toggle
+                if (toggleNav) {
+                    toggleNav.style.display = 'flex';
+                    toggleNav.addEventListener('click', function() {
+                        sidebar.classList.toggle('collapsed');
+                        mainContent.classList.toggle('expanded');
+                        
+                        // Store the state
+                        localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+                    });
+                }
             }
         }
-
-        // Restore sidebar state
-        const sidebarCollapsed = localStorage.getItem('sidebarCollapsed');
-        if (sidebarCollapsed === 'true') {
-            sidebar.classList.add('collapsed');
-            mainContent.classList.add('expanded');
-        }
-
+        
         // Handle resize
-        window.addEventListener('resize', handleMobileView);
-        handleMobileView();
+        function handleResize() {
+            initSidebar();
+        }
+        
+        // Initialize
+        initSidebar();
+        window.addEventListener('resize', handleResize);
+        
+        // Close sidebar when a nav link is clicked on mobile
+        document.querySelectorAll('.sidebar-nav .nav-link').forEach(link => {
+            link.addEventListener('click', function() {
+                if (window.innerWidth <= 992) {
+                    toggleMobileSidebar();
+                }
+            });
+        });
     });
     </script>
     
@@ -1059,8 +1162,8 @@
         width: 100%;
         border-collapse: separate;
         border-spacing: 0;
-        background: #fff;
-        border: 1px solid rgba(0,0,0,0.06);
+        background: #153fa0ff;
+        border: 1px solid rgba(112, 5, 5, 0.06);
         border-radius: 12px;
         overflow: hidden;
         box-shadow: 0 2px 10px rgba(0,0,0,0.04);
@@ -1184,7 +1287,7 @@
             white-space: nowrap;
         }
         
-        @media (min-width: 992px) {
+        @media (min-width: 993px) {
             .icon-nav:hover .nav-text {
                 max-width: 200px;
                 margin-left: 0.25rem;
@@ -1220,7 +1323,7 @@
         }
         
         /* Responsive adjustments */
-        @media (max-width: 768px) {
+        @media (max-width: 992px) {
             .navbar-brand {
                 font-size: 1rem;
             }
