@@ -61,7 +61,7 @@
             width: 0;
         }
 
-        /* Toggle Button - Always visible on mobile */
+        /* Toggle Button - Always visible */
         .toggle-nav {
             position: fixed;
             left: 1rem;
@@ -95,7 +95,7 @@
             border-bottom: 1px solid var(--border-color);
         }
 
-        .toggle-nav {
+        .sidebar-header .toggle-nav {
             background: transparent;
             border: none;
             color: white;
@@ -177,6 +177,7 @@
             min-height: 100vh;
             padding: 1rem;
             width: 100%;
+            padding-top: calc(1rem + 60px); /* Account for fixed toggle button */
         }
 
         /* Profile Section */
@@ -203,8 +204,29 @@
             object-fit: cover;
         }
 
-        /* Responsive Design - Improved for mobile */
-        @media (max-width: 992px) {
+        /* Responsive Design - Improved for all devices */
+        /* Desktop (PC) */
+        @media (min-width: 1200px) {
+            .sidebar {
+                transform: translateX(0);
+            }
+            
+            main.container-fluid {
+                margin-left: var(--sidebar-width);
+                width: calc(100% - var(--sidebar-width));
+            }
+            
+            .toggle-nav {
+                display: none !important;
+            }
+            
+            .overlay {
+                display: none !important;
+            }
+        }
+        
+        /* Tablet and Landscape Phone */
+        @media (min-width: 768px) and (max-width: 1199px) {
             .sidebar {
                 transform: translateX(-100%);
                 width: var(--sidebar-width);
@@ -213,16 +235,6 @@
 
             .sidebar.show {
                 transform: translateX(0);
-            }
-
-            .sidebar.collapsed {
-                transform: translateX(-100%);
-                width: var(--sidebar-width);
-            }
-
-            main.container-fluid {
-                margin-left: 0 !important;
-                width: 100%;
             }
 
             .toggle-nav {
@@ -244,34 +256,44 @@
             .overlay.show {
                 display: block;
             }
-            
-            /* Mobile menu button always visible */
-            .mobile-menu-btn {
-                display: block !important;
-                position: fixed;
-                top: 1rem;
-                left: 1rem;
-                z-index: 1070;
-            }
         }
-
-        @media (min-width: 993px) {
-            .mobile-menu-btn {
-                display: none !important;
-            }
-            
+        
+        /* Phone Portrait */
+        @media (max-width: 767px) {
             .sidebar {
-                transform: translateX(0) !important;
+                transform: translateX(-100%);
+                width: 85%;
+                z-index: 1050;
+            }
+
+            .sidebar.show {
+                transform: translateX(0);
+            }
+
+            .toggle-nav {
+                display: flex !important;
+                z-index: 1060;
+                left: 1rem;
+                top: 1rem;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 1040;
+            }
+
+            .overlay.show {
+                display: block;
             }
             
             main.container-fluid {
-                margin-left: var(--sidebar-width) !important;
-                width: calc(100% - var(--sidebar-width)) !important;
-            }
-            
-            .sidebar.collapsed ~ main.container-fluid {
-                margin-left: 0 !important;
-                width: 100% !important;
+                padding-top: calc(1rem + 60px);
             }
         }
         
@@ -313,7 +335,7 @@
             border-left-color: white;
         }
 
-        @media (min-width: 992px) {
+        @media (min-width: 1200px) {
             #mainNavbar {
                 width: var(--sidebar-width);
                 height: 100vh;
@@ -348,21 +370,22 @@
             }
         }
         
-        @media (max-width: 991.98px) {
+        @media (max-width: 1199.98px) {
             #mainNavbar {
                 padding: 0.5rem 1rem;
             }
             
             .navbar-collapse {
                 position: fixed;
-                top: var(--header-height);
+                top: 0;
                 left: -100%;
                 width: var(--sidebar-width);
-                height: calc(100vh - var(--header-height));
+                height: 100vh;
                 background-color: var(--primary-color);
                 transition: left 0.3s ease-in-out;
                 overflow-y: auto;
                 z-index: 1040;
+                padding-top: var(--header-height);
             }
             
             .navbar-collapse.show {
@@ -405,7 +428,7 @@
         }
         
         /* Mobile navigation adjustments */
-        @media (max-width: 992px) {
+        @media (max-width: 1199px) {
             .navbar-collapse {
                 padding: 10px 0;
                 max-height: 80vh;
@@ -445,8 +468,8 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body class="d-flex flex-column min-vh-100">
-    <!-- Mobile Menu Button (Always visible on mobile) -->
-    <button class="mobile-menu-btn toggle-nav" id="mobileMenuBtn">
+    <!-- Navigation Toggle Button (Always visible on mobile/tablet) -->
+    <button class="toggle-nav" id="toggleNav">
         <i class="fas fa-bars"></i>
     </button>
 
@@ -454,7 +477,7 @@
     <div class="sidebar" id="sidebar">
         <!-- Sidebar Header -->
         <div class="sidebar-header">
-            <button class="toggle-nav" id="toggleNav">
+            <button class="toggle-nav" id="closeSidebar">
                 <i class="fas fa-times"></i>
             </button>
         </div>
@@ -695,14 +718,19 @@
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
     
-    <!-- Sidebar Behavior - Updated for mobile compatibility -->
+    <!-- Sidebar Behavior - Updated for all devices -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
         const toggleNav = document.getElementById('toggleNav');
-        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const closeSidebar = document.getElementById('closeSidebar');
         const overlay = document.getElementById('overlay');
         const mainContent = document.querySelector('main.container-fluid');
+        
+        // Check if we're on a desktop (PC) or mobile/tablet
+        function isDesktop() {
+            return window.innerWidth >= 1200;
+        }
         
         // Function to show sidebar
         function showSidebar() {
@@ -721,35 +749,41 @@
         }
         
         // Toggle sidebar when buttons are clicked
-        if (mobileMenuBtn) {
-            mobileMenuBtn.addEventListener('click', showSidebar);
-        }
-        
         if (toggleNav) {
-            toggleNav.addEventListener('click', hideSidebar);
+            toggleNav.addEventListener('click', function() {
+                if (sidebar.classList.contains('show')) {
+                    hideSidebar();
+                } else {
+                    showSidebar();
+                }
+            });
         }
         
-        // Close sidebar when overlay is clicked (mobile only)
+        if (closeSidebar) {
+            closeSidebar.addEventListener('click', hideSidebar);
+        }
+        
+        // Close sidebar when overlay is clicked (mobile/tablet only)
         if (overlay) {
             overlay.addEventListener('click', hideSidebar);
         }
         
         // Close sidebar when ESC key is pressed
         document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape' && !isDesktop()) {
                 hideSidebar();
             }
         });
         
         // Handle window resize
         window.addEventListener('resize', function() {
-            if (window.innerWidth > 992) {
+            if (isDesktop()) {
                 // Desktop view - ensure sidebar is visible
                 sidebar.classList.remove('collapsed', 'show');
                 overlay.classList.remove('show');
                 document.body.style.overflow = 'auto';
             } else {
-                // Mobile view - ensure sidebar is hidden by default
+                // Mobile/tablet view - ensure sidebar is hidden by default
                 if (!sidebar.classList.contains('show')) {
                     sidebar.classList.add('collapsed');
                 }
@@ -757,7 +791,7 @@
         });
         
         // Initialize for current screen size
-        if (window.innerWidth <= 992) {
+        if (!isDesktop()) {
             sidebar.classList.add('collapsed');
         }
     });
