@@ -156,7 +156,7 @@
         /* Navigation Menu */
         .sidebar-nav {
             padding: 1rem 0;
-            height: calc(100vh - var(--header-height));
+            height: calc(100vh - var(--header-height);
             overflow-y: auto;
             display: flex;
             flex-direction: column;
@@ -276,13 +276,19 @@
             border-radius: var(--radius) var(--radius) 0 0 !important;
         }
 
-        /* Table Improvements */
+        /* Enhanced Table Styling */
         .table-container {
-            overflow-x: auto;
+            overflow: auto;
             border-radius: var(--radius);
             box-shadow: var(--shadow);
             background: white;
             margin-bottom: 1.5rem;
+            border: 2px solid var(--table-blue);
+        }
+
+        .table-wrapper {
+            width: 100%;
+            position: relative;
         }
 
         .table {
@@ -290,6 +296,7 @@
             margin-bottom: 0;
             border-collapse: separate;
             border-spacing: 0;
+            min-width: 100%;
         }
 
         .table th {
@@ -297,21 +304,25 @@
             color: var(--table-white) !important;
             position: sticky;
             top: 0;
-            padding: 0.75rem;
+            padding: 0.5rem 0.75rem;
             font-weight: 600;
             white-space: nowrap;
             border: none;
+            height: 45px;
+            vertical-align: middle;
         }
 
         .table td {
-            padding: 0.75rem;
+            padding: 0.5rem 0.75rem;
             vertical-align: middle;
             border: none;
             border-bottom: 1px solid #dee2e6;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            max-width: 200px;
+            max-width: 300px;
+            height: 40px;
+            line-height: 1.4;
         }
 
         .table tr:last-child td {
@@ -324,6 +335,17 @@
 
         .table tbody tr:hover {
             background-color: rgba(13, 110, 253, 0.05);
+        }
+
+        /* Vertical scrolling for tables with more than 5 rows */
+        .table-scroll-vertical {
+            max-height: 320px;
+            overflow-y: auto;
+        }
+
+        /* Horizontal scrolling for wide tables */
+        .table-scroll-horizontal {
+            overflow-x: auto;
         }
 
         /* Form Styling */
@@ -477,6 +499,8 @@
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
+                height: auto;
+                white-space: normal;
             }
 
             .table-responsive td:before {
@@ -488,6 +512,10 @@
 
             .table-responsive td:last-child {
                 border-bottom: none;
+            }
+            
+            .table-container {
+                border: 1px solid var(--table-blue);
             }
         }
     </style>
@@ -720,6 +748,108 @@
             {% endif %}
         {% endwith %}
         
+        <!-- Example Table with new styling -->
+        <div class="table-container">
+            <div class="table-wrapper table-scroll-horizontal">
+                <div class="table-scroll-vertical">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Patient Name</th>
+                                <th>Age</th>
+                                <th>Gender</th>
+                                <th>Diagnosis</th>
+                                <th>Admission Date</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>PT001</td>
+                                <td>John Doe</td>
+                                <td>45</td>
+                                <td>Male</td>
+                                <td>Hypertension and type 2 diabetes mellitus</td>
+                                <td>2023-10-15</td>
+                                <td>Active</td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary">View</button>
+                                    <button class="btn btn-sm btn-secondary">Edit</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>PT002</td>
+                                <td>Jane Smith</td>
+                                <td>32</td>
+                                <td>Female</td>
+                                <td>Acute respiratory infection</td>
+                                <td>2023-10-18</td>
+                                <td>Discharged</td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary">View</button>
+                                    <button class="btn btn-sm btn-secondary">Edit</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>PT003</td>
+                                <td>Robert Johnson</td>
+                                <td>67</td>
+                                <td>Male</td>
+                                <td>Chronic obstructive pulmonary disease (COPD)</td>
+                                <td>2023-10-20</td>
+                                <td>Active</td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary">View</button>
+                                    <button class="btn btn-sm btn-secondary">Edit</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>PT004</td>
+                                <td>Sarah Williams</td>
+                                <td>29</td>
+                                <td>Female</td>
+                                <td>Pregnancy with routine prenatal care</td>
+                                <td>2023-10-22</td>
+                                <td>Active</td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary">View</button>
+                                    <button class="btn btn-sm btn-secondary">Edit</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>PT005</td>
+                                <td>Michael Brown</td>
+                                <td>53</td>
+                                <td>Male</td>
+                                <td>Coronary artery disease, stable angina</td>
+                                <td>2023-10-25</td>
+                                <td>Active</td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary">View</button>
+                                    <button class="btn btn-sm btn-secondary">Edit</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>PT006</td>
+                                <td>Emily Davis</td>
+                                <td>41</td>
+                                <td>Female</td>
+                                <td>Migraine headaches</td>
+                                <td>2023-10-26</td>
+                                <td>Discharged</td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary">View</button>
+                                    <button class="btn btn-sm btn-secondary">Edit</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
         {% block content %}{% endblock %}
     </main>
 
@@ -825,55 +955,43 @@
         sidebar.classList.remove('show');
         overlay.classList.remove('show');
         document.body.style.overflow = 'auto';
-    });
-    </script>
-    
-    <!-- Table Responsiveness Script -->
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Make tables responsive by adding data-labels
-        function makeTablesResponsive() {
-            document.querySelectorAll('table').forEach(table => {
-                if (!table.classList.contains('responsive-processed')) {
-                    // Get header texts
-                    const headers = [];
-                    if (table.tHead && table.tHead.rows.length > 0) {
-                        Array.from(table.tHead.rows[0].cells).forEach(cell => {
-                            headers.push(cell.textContent.trim());
-                        });
-                    }
+        
+        // Auto-adjust table column widths based on content
+        function autoAdjustTableColumns() {
+            document.querySelectorAll('.table').forEach(table => {
+                if (!table.hasAttribute('data-columns-adjusted')) {
+                    const headers = Array.from(table.querySelectorAll('th'));
+                    const rows = Array.from(table.querySelectorAll('tbody tr'));
                     
-                    // Add data-label attributes to cells
-                    if (table.tBodies.length > 0) {
-                        Array.from(table.tBodies[0].rows).forEach(row => {
-                            Array.from(row.cells).forEach((cell, index) => {
-                                if (headers[index]) {
-                                    cell.setAttribute('data-label', headers[index]);
-                                }
-                            });
+                    headers.forEach((header, index) => {
+                        // Get the maximum content width for this column
+                        const headerWidth = header.scrollWidth;
+                        const cellWidths = rows.map(row => {
+                            const cell = row.cells[index];
+                            return cell ? cell.scrollWidth : 0;
                         });
-                    }
+                        
+                        const maxWidth = Math.max(headerWidth, ...cellWidths);
+                        
+                        // Set the column width
+                        header.style.minWidth = `${maxWidth + 20}px`;
+                        rows.forEach(row => {
+                            if (row.cells[index]) {
+                                row.cells[index].style.minWidth = `${maxWidth + 20}px`;
+                            }
+                        });
+                    });
                     
-                    table.classList.add('responsive-processed');
+                    table.setAttribute('data-columns-adjusted', 'true');
                 }
             });
         }
         
-        makeTablesResponsive();
+        // Adjust table columns after page load
+        setTimeout(autoAdjustTableColumns, 100);
         
-        // Re-run when content changes (for dynamic content)
-        const observer = new MutationObserver(function(mutations) {
-            mutations.forEach(function(mutation) {
-                if (mutation.addedNodes.length) {
-                    makeTablesResponsive();
-                }
-            });
-        });
-        
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
+        // Re-adjust when window is resized
+        window.addEventListener('resize', autoAdjustTableColumns);
     });
     </script>
     
