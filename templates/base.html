@@ -156,7 +156,7 @@
         /* Navigation Menu */
         .sidebar-nav {
             padding: 1rem 0;
-            height: calc(100vh - var(--header-height);
+            height: calc(100vh - var(--header-height));
             overflow-y: auto;
             display: flex;
             flex-direction: column;
@@ -276,77 +276,61 @@
             border-radius: var(--radius) var(--radius) 0 0 !important;
         }
 
-        /* Enhanced Table Styling */
-        .table-container {
-            overflow: auto;
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            background: white;
-            margin-bottom: 1.5rem;
-            border: 2px solid var(--table-blue);
-        }
+/* Universal Table Wrapper */
+.table-container {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 250px; /* enforce scrolling after ~5 rows */
+    border: 2px solid var(--table-blue); /* Blue outer border */
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    background: white;
+    margin-bottom: 1.5rem;
+}
 
-        .table-wrapper {
-            width: 100%;
-            position: relative;
-        }
+/* Apply styling to ALL tables inside .table-container */
+.table-container table {
+    width: max-content; /* auto-adjust by content */
+    min-width: 100%;
+    margin-bottom: 0;
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: auto;
+}
 
-        .table {
-            width: 100%;
-            margin-bottom: 0;
-            border-collapse: separate;
-            border-spacing: 0;
-            min-width: 100%;
-        }
+/* Headers */
+.table-container th {
+    background-color: var(--table-blue) !important;
+    color: var(--table-white) !important;
+    position: sticky;
+    top: 0;
+    padding: 0.5rem 0.75rem; /* reduced height */
+    font-weight: 600;
+    white-space: nowrap;
+    border: none;
+    text-align: left;
+    z-index: 2;
+}
 
-        .table th {
-            background-color: var(--table-blue) !important;
-            color: var(--table-white) !important;
-            position: sticky;
-            top: 0;
-            padding: 0.5rem 0.75rem;
-            font-weight: 600;
-            white-space: nowrap;
-            border: none;
-            height: 45px;
-            vertical-align: middle;
-        }
+/* Cells */
+.table-container td {
+    padding: 0.5rem 0.75rem; /* compact rows */
+    vertical-align: middle;
+    border: none;
+    white-space: nowrap; /* single line */
+    overflow: hidden;
+    text-overflow: ellipsis; /* truncate with ... */
+    max-width: 250px; /* cap width */
+}
 
-        .table td {
-            padding: 0.5rem 0.75rem;
-            vertical-align: middle;
-            border: none;
-            border-bottom: 1px solid #dee2e6;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 300px;
-            height: 40px;
-            line-height: 1.4;
-        }
+/* Hover Effect */
+.table-container tbody tr {
+    transition: background-color 0.2s;
+}
+.table-container tbody tr:hover {
+    background-color: rgba(13, 110, 253, 0.05);
+}
 
-        .table tr:last-child td {
-            border-bottom: none;
-        }
-
-        .table tbody tr {
-            transition: background-color 0.2s;
-        }
-
-        .table tbody tr:hover {
-            background-color: rgba(13, 110, 253, 0.05);
-        }
-
-        /* Vertical scrolling for tables with more than 5 rows */
-        .table-scroll-vertical {
-            max-height: 320px;
-            overflow-y: auto;
-        }
-
-        /* Horizontal scrolling for wide tables */
-        .table-scroll-horizontal {
-            overflow-x: auto;
-        }
 
         /* Form Styling */
         .form-control, .form-select {
@@ -499,8 +483,6 @@
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                height: auto;
-                white-space: normal;
             }
 
             .table-responsive td:before {
@@ -513,17 +495,18 @@
             .table-responsive td:last-child {
                 border-bottom: none;
             }
-            
-            .table-container {
-                border: 1px solid var(--table-blue);
-            }
         }
     </style>
     
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <!-- Navigation Toggle Button (Always visible) -->
+    <!-- PC Hamburger Toggle (Green with white background) -->
+    <button class="pc-toggle-nav" id="pcToggleNav">
+        <i class="fas fa-bars"></i>
+    </button>
+
+    <!-- Mobile Navigation Toggle Button -->
     <button class="toggle-nav" id="toggleNav">
         <i class="fas fa-bars"></i>
     </button>
@@ -774,30 +757,23 @@
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
         const toggleNav = document.getElementById('toggleNav');
+        const pcToggleNav = document.getElementById('pcToggleNav');
         const closeSidebar = document.getElementById('closeSidebar');
         const overlay = document.getElementById('overlay');
         
         // Function to toggle sidebar
         function toggleSidebar() {
-            if (sidebar.classList.contains('show')) {
-                hideSidebar();
-            } else {
-                showSidebar();
+            sidebar.classList.toggle('show');
+            
+            if (window.innerWidth < 1200) {
+                overlay.classList.toggle('show');
             }
-        }
-        
-        // Function to show sidebar
-        function showSidebar() {
-            sidebar.classList.add('show');
-            overlay.classList.add('show');
-            document.body.style.overflow = 'hidden';
-        }
-        
-        // Function to hide sidebar
-        function hideSidebar() {
-            sidebar.classList.remove('show');
-            overlay.classList.remove('show');
-            document.body.style.overflow = 'auto';
+            
+            if (sidebar.classList.contains('show')) {
+                document.body.style.overflow = 'hidden';
+            } else {
+                document.body.style.overflow = 'auto';
+            }
         }
         
         // Toggle sidebar when buttons are clicked
@@ -805,44 +781,75 @@
             toggleNav.addEventListener('click', toggleSidebar);
         }
         
+        if (pcToggleNav) {
+            pcToggleNav.addEventListener('click', toggleSidebar);
+        }
+        
         if (closeSidebar) {
-            closeSidebar.addEventListener('click', hideSidebar);
+            closeSidebar.addEventListener('click', function() {
+                sidebar.classList.remove('show');
+                overlay.classList.remove('show');
+                document.body.style.overflow = 'auto';
+            });
         }
         
         // Close sidebar when overlay is clicked
         if (overlay) {
-            overlay.addEventListener('click', hideSidebar);
+            overlay.addEventListener('click', function() {
+                sidebar.classList.remove('show');
+                overlay.classList.remove('show');
+                document.body.style.overflow = 'auto';
+            });
         }
         
         // Close sidebar when ESC key is pressed
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                hideSidebar();
+                sidebar.classList.remove('show');
+                overlay.classList.remove('show');
+                document.body.style.overflow = 'auto';
             }
         });
         
         // Handle window resize
         window.addEventListener('resize', function() {
             if (window.innerWidth >= 1200) {
-                // Desktop view - ensure sidebar is visible
-                sidebar.classList.add('show');
+                // Desktop view - hide overlay
                 overlay.classList.remove('show');
                 document.body.style.overflow = 'auto';
             } else {
-                // Mobile/tablet view - ensure sidebar is hidden by default
-                hideSidebar();
+                // Mobile/tablet view - hide sidebar by default
+                if (sidebar.classList.contains('show')) {
+                    overlay.classList.add('show');
+                } else {
+                    overlay.classList.remove('show');
+                }
             }
         });
         
-        // Initialize for current screen size
-        if (window.innerWidth >= 1200) {
-            sidebar.classList.add('show');
-        } else {
-            hideSidebar();
-        }
+        // Initialize for current screen size - sidebar hidden by default on all devices
+        sidebar.classList.remove('show');
+        overlay.classList.remove('show');
+        document.body.style.overflow = 'auto';
     });
     </script>
     
+    <script>
+    document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll("table").forEach(table => {
+        // Skip if already wrapped
+        if (!table.parentElement.classList.contains("table-container")) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "table-container";
+
+        // Insert wrapper before table and move table inside
+        table.parentNode.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+        }
+    });
+    });
+    </script>
+
     <!-- Table Responsiveness Script -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
