@@ -850,6 +850,65 @@
     });
     </script>
 
+    <script>
+    document.addEventListener("DOMContentLoaded", () => {
+    // Function to wrap tables + add search
+    function wrapTable(table) {
+        if (!table.parentElement.classList.contains("table-container")) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "table-container";
+
+        // Create search input
+        const searchBox = document.createElement("input");
+        searchBox.type = "text";
+        searchBox.placeholder = "Search...";
+        searchBox.className = "table-search";
+        searchBox.style.cssText = `
+            width: 100%;
+            padding: 6px 10px;
+            margin-bottom: 8px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+        `;
+
+        // Search filter logic
+        searchBox.addEventListener("input", () => {
+            const filter = searchBox.value.toLowerCase();
+            const rows = table.querySelectorAll("tbody tr");
+            rows.forEach(row => {
+            const text = row.innerText.toLowerCase();
+            row.style.display = text.includes(filter) ? "" : "none";
+            });
+        });
+
+        // Insert wrapper + search + table
+        table.parentNode.insertBefore(wrapper, table);
+        wrapper.appendChild(searchBox);
+        wrapper.appendChild(table);
+        }
+    }
+
+    // Wrap existing tables on load
+    document.querySelectorAll("table").forEach(wrapTable);
+
+    // Watch for new tables dynamically added
+    const observer = new MutationObserver(mutations => {
+        mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(node => {
+            if (node.nodeName === "TABLE") {
+            wrapTable(node);
+            } else if (node.querySelectorAll) {
+            node.querySelectorAll("table").forEach(wrapTable);
+            }
+        });
+        });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    });
+    </script>
+
+
     <!-- Table Responsiveness Script -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
