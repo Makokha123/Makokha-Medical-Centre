@@ -523,12 +523,7 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <!-- PC Hamburger Toggle (Green with white background) -->
-    <button class="pc-toggle-nav" id="pcToggleNav">
-        <i class="fas fa-bars"></i>
-    </button>
-
-    <!-- Mobile Navigation Toggle Button -->
+    <!-- Navigation Toggle Button (Always visible) -->
     <button class="toggle-nav" id="toggleNav">
         <i class="fas fa-bars"></i>
     </button>
@@ -748,108 +743,6 @@
             {% endif %}
         {% endwith %}
         
-        <!-- Example Table with new styling -->
-        <div class="table-container">
-            <div class="table-wrapper table-scroll-horizontal">
-                <div class="table-scroll-vertical">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Patient Name</th>
-                                <th>Age</th>
-                                <th>Gender</th>
-                                <th>Diagnosis</th>
-                                <th>Admission Date</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>PT001</td>
-                                <td>John Doe</td>
-                                <td>45</td>
-                                <td>Male</td>
-                                <td>Hypertension and type 2 diabetes mellitus</td>
-                                <td>2023-10-15</td>
-                                <td>Active</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary">View</button>
-                                    <button class="btn btn-sm btn-secondary">Edit</button>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>PT002</td>
-                                <td>Jane Smith</td>
-                                <td>32</td>
-                                <td>Female</td>
-                                <td>Acute respiratory infection</td>
-                                <td>2023-10-18</td>
-                                <td>Discharged</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary">View</button>
-                                    <button class="btn btn-sm btn-secondary">Edit</button>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>PT003</td>
-                                <td>Robert Johnson</td>
-                                <td>67</td>
-                                <td>Male</td>
-                                <td>Chronic obstructive pulmonary disease (COPD)</td>
-                                <td>2023-10-20</td>
-                                <td>Active</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary">View</button>
-                                    <button class="btn btn-sm btn-secondary">Edit</button>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>PT004</td>
-                                <td>Sarah Williams</td>
-                                <td>29</td>
-                                <td>Female</td>
-                                <td>Pregnancy with routine prenatal care</td>
-                                <td>2023-10-22</td>
-                                <td>Active</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary">View</button>
-                                    <button class="btn btn-sm btn-secondary">Edit</button>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>PT005</td>
-                                <td>Michael Brown</td>
-                                <td>53</td>
-                                <td>Male</td>
-                                <td>Coronary artery disease, stable angina</td>
-                                <td>2023-10-25</td>
-                                <td>Active</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary">View</button>
-                                    <button class="btn btn-sm btn-secondary">Edit</button>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>PT006</td>
-                                <td>Emily Davis</td>
-                                <td>41</td>
-                                <td>Female</td>
-                                <td>Migraine headaches</td>
-                                <td>2023-10-26</td>
-                                <td>Discharged</td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary">View</button>
-                                    <button class="btn btn-sm btn-secondary">Edit</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        
         {% block content %}{% endblock %}
     </main>
 
@@ -881,23 +774,30 @@
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
         const toggleNav = document.getElementById('toggleNav');
-        const pcToggleNav = document.getElementById('pcToggleNav');
         const closeSidebar = document.getElementById('closeSidebar');
         const overlay = document.getElementById('overlay');
         
         // Function to toggle sidebar
         function toggleSidebar() {
-            sidebar.classList.toggle('show');
-            
-            if (window.innerWidth < 1200) {
-                overlay.classList.toggle('show');
-            }
-            
             if (sidebar.classList.contains('show')) {
-                document.body.style.overflow = 'hidden';
+                hideSidebar();
             } else {
-                document.body.style.overflow = 'auto';
+                showSidebar();
             }
+        }
+        
+        // Function to show sidebar
+        function showSidebar() {
+            sidebar.classList.add('show');
+            overlay.classList.add('show');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        // Function to hide sidebar
+        function hideSidebar() {
+            sidebar.classList.remove('show');
+            overlay.classList.remove('show');
+            document.body.style.overflow = 'auto';
         }
         
         // Toggle sidebar when buttons are clicked
@@ -905,93 +805,90 @@
             toggleNav.addEventListener('click', toggleSidebar);
         }
         
-        if (pcToggleNav) {
-            pcToggleNav.addEventListener('click', toggleSidebar);
-        }
-        
         if (closeSidebar) {
-            closeSidebar.addEventListener('click', function() {
-                sidebar.classList.remove('show');
-                overlay.classList.remove('show');
-                document.body.style.overflow = 'auto';
-            });
+            closeSidebar.addEventListener('click', hideSidebar);
         }
         
         // Close sidebar when overlay is clicked
         if (overlay) {
-            overlay.addEventListener('click', function() {
-                sidebar.classList.remove('show');
-                overlay.classList.remove('show');
-                document.body.style.overflow = 'auto';
-            });
+            overlay.addEventListener('click', hideSidebar);
         }
         
         // Close sidebar when ESC key is pressed
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                sidebar.classList.remove('show');
-                overlay.classList.remove('show');
-                document.body.style.overflow = 'auto';
+                hideSidebar();
             }
         });
         
         // Handle window resize
         window.addEventListener('resize', function() {
             if (window.innerWidth >= 1200) {
-                // Desktop view - hide overlay
+                // Desktop view - ensure sidebar is visible
+                sidebar.classList.add('show');
                 overlay.classList.remove('show');
                 document.body.style.overflow = 'auto';
             } else {
-                // Mobile/tablet view - hide sidebar by default
-                if (sidebar.classList.contains('show')) {
-                    overlay.classList.add('show');
-                } else {
-                    overlay.classList.remove('show');
-                }
+                // Mobile/tablet view - ensure sidebar is hidden by default
+                hideSidebar();
             }
         });
         
-        // Initialize for current screen size - sidebar hidden by default on all devices
-        sidebar.classList.remove('show');
-        overlay.classList.remove('show');
-        document.body.style.overflow = 'auto';
-        
-        // Auto-adjust table column widths based on content
-        function autoAdjustTableColumns() {
-            document.querySelectorAll('.table').forEach(table => {
-                if (!table.hasAttribute('data-columns-adjusted')) {
-                    const headers = Array.from(table.querySelectorAll('th'));
-                    const rows = Array.from(table.querySelectorAll('tbody tr'));
-                    
-                    headers.forEach((header, index) => {
-                        // Get the maximum content width for this column
-                        const headerWidth = header.scrollWidth;
-                        const cellWidths = rows.map(row => {
-                            const cell = row.cells[index];
-                            return cell ? cell.scrollWidth : 0;
+        // Initialize for current screen size
+        if (window.innerWidth >= 1200) {
+            sidebar.classList.add('show');
+        } else {
+            hideSidebar();
+        }
+    });
+    </script>
+    
+    <!-- Table Responsiveness Script -->
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Make tables responsive by adding data-labels
+        function makeTablesResponsive() {
+            document.querySelectorAll('table').forEach(table => {
+                if (!table.classList.contains('responsive-processed')) {
+                    // Get header texts
+                    const headers = [];
+                    if (table.tHead && table.tHead.rows.length > 0) {
+                        Array.from(table.tHead.rows[0].cells).forEach(cell => {
+                            headers.push(cell.textContent.trim());
                         });
-                        
-                        const maxWidth = Math.max(headerWidth, ...cellWidths);
-                        
-                        // Set the column width
-                        header.style.minWidth = `${maxWidth + 20}px`;
-                        rows.forEach(row => {
-                            if (row.cells[index]) {
-                                row.cells[index].style.minWidth = `${maxWidth + 20}px`;
-                            }
-                        });
-                    });
+                    }
                     
-                    table.setAttribute('data-columns-adjusted', 'true');
+                    // Add data-label attributes to cells
+                    if (table.tBodies.length > 0) {
+                        Array.from(table.tBodies[0].rows).forEach(row => {
+                            Array.from(row.cells).forEach((cell, index) => {
+                                if (headers[index]) {
+                                    cell.setAttribute('data-label', headers[index]);
+                                }
+                            });
+                        });
+                    }
+                    
+                    table.classList.add('responsive-processed');
                 }
             });
         }
         
-        // Adjust table columns after page load
-        setTimeout(autoAdjustTableColumns, 100);
+        makeTablesResponsive();
         
-        // Re-adjust when window is resized
-        window.addEventListener('resize', autoAdjustTableColumns);
+        // Re-run when content changes (for dynamic content)
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.addedNodes.length) {
+                    makeTablesResponsive();
+                }
+            });
+        });
+        
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
     });
     </script>
     
