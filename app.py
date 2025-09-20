@@ -4442,7 +4442,7 @@ def manage_patients():
             db.joinedload(Patient.labs).joinedload(PatientLab.test),
             db.joinedload(Patient.services).joinedload(PatientService.service),
             db.joinedload(Patient.prescriptions).joinedload(Prescription.items),
-            db.joinedload(Patient.diagnosis)
+            db.joinedload(Patient.diagnoses)
         )
     
     if start_date:
