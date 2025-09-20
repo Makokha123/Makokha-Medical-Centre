@@ -52,6 +52,7 @@
             background-color: var(--bg-light);
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             line-height: 1.6;
+            padding-top: 20px;
         }
 
         /* Sidebar Styles - Always present but hidden by default */
@@ -191,7 +192,6 @@
             min-height: 100vh;
             padding: 1rem;
             width: 100%;
-            padding-top: calc(var(--header-height) + 1rem);
         }
 
         /* Profile Section */
@@ -216,48 +216,6 @@
             height: 32px;
             border-radius: 50%;
             object-fit: cover;
-        }
-
-        /* Header with Toggle Button */
-        .main-header {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: var(--header-height);
-            background: white;
-            z-index: 1050;
-            display: flex;
-            align-items: center;
-            padding: 0 1rem;
-            box-shadow: var(--shadow);
-        }
-        
-        .header-toggle {
-            background: var(--hamburger-red);
-            border: none;
-            width: 40px;
-            height: 40px;
-            border-radius: var(--radius);
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            margin-right: 1rem;
-            transition: all var(--transition-speed);
-        }
-        
-        .header-toggle:hover {
-            background: #c82333;
-            transform: scale(1.05);
-        }
-        
-        .header-title {
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin: 0;
-            color: var(--text-dark);
         }
 
         /* Overlay for mobile */
@@ -406,22 +364,6 @@
             .overlay {
                 display: none !important;
             }
-            
-            .main-header {
-                left: var(--sidebar-width);
-                width: calc(100% - var(--sidebar-width));
-                transition: left var(--transition-speed) ease;
-            }
-            
-            .sidebar.collapsed ~ .main-header {
-                left: 0;
-                width: 100%;
-            }
-            
-            .sidebar.collapsed ~ main.container-fluid {
-                margin-left: 0;
-                width: 100%;
-            }
         }
         
         /* Tablet and Landscape Phone */
@@ -434,10 +376,6 @@
             .toggle-nav {
                 display: flex !important;
                 z-index: 1060;
-            }
-            
-            main.container-fluid {
-                padding-top: calc(var(--header-height) + 1rem);
             }
         }
         
@@ -457,11 +395,6 @@
             
             main.container-fluid {
                 padding: 0.5rem;
-                padding-top: calc(var(--header-height) + 0.5rem);
-            }
-            
-            .header-title {
-                font-size: 1.1rem;
             }
             
             /* Mobile-specific sidebar nav adjustments */
@@ -528,31 +461,12 @@
                 border-bottom: none;
             }
         }
-
-        /* Animation for sidebar */
-        @keyframes slideIn {
-            from { transform: translateX(-100%); }
-            to { transform: translateX(0); }
-        }
-
-        @keyframes slideOut {
-            from { transform: translateX(0); }
-            to { transform: translateX(-100%); }
-        }
     </style>
     
     {% block extra_css %}{% endblock %}
 </head>
-<body class="d-flex flex-column min-vh-100">
-    <!-- Header with Toggle Button -->
-    <header class="main-header">
-        <button class="header-toggle" id="headerToggle">
-            <i class="fas fa-bars"></i>
-        </button>
-        <h1 class="header-title">Makokha Medical Centre</h1>
-    </header>
-
-    <!-- Navigation Toggle Button (Always visible on mobile/tablet) -->
+<body>
+    <!-- Navigation Toggle Button (Always visible) -->
     <button class="toggle-nav" id="toggleNav">
         <i class="fas fa-bars"></i>
     </button>
@@ -803,9 +717,17 @@
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
         const toggleNav = document.getElementById('toggleNav');
-        const headerToggle = document.getElementById('headerToggle');
         const closeSidebar = document.getElementById('closeSidebar');
         const overlay = document.getElementById('overlay');
+        
+        // Function to toggle sidebar
+        function toggleSidebar() {
+            if (sidebar.classList.contains('show')) {
+                hideSidebar();
+            } else {
+                showSidebar();
+            }
+        }
         
         // Function to show sidebar
         function showSidebar() {
@@ -823,11 +745,7 @@
         
         // Toggle sidebar when buttons are clicked
         if (toggleNav) {
-            toggleNav.addEventListener('click', showSidebar);
-        }
-        
-        if (headerToggle) {
-            headerToggle.addEventListener('click', showSidebar);
+            toggleNav.addEventListener('click', toggleSidebar);
         }
         
         if (closeSidebar) {
@@ -855,15 +773,15 @@
                 document.body.style.overflow = 'auto';
             } else {
                 // Mobile/tablet view - ensure sidebar is hidden by default
-                if (!sidebar.classList.contains('show')) {
-                    sidebar.classList.remove('show');
-                }
+                hideSidebar();
             }
         });
         
         // Initialize for current screen size
         if (window.innerWidth >= 1200) {
             sidebar.classList.add('show');
+        } else {
+            hideSidebar();
         }
     });
     </script>
