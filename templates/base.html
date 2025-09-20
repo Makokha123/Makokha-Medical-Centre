@@ -352,11 +352,6 @@
                 transform: translateX(0);
             }
             
-            main.container-fluid {
-                margin-left: var(--sidebar-width);
-                width: calc(100% - var(--sidebar-width));
-            }
-            
             .toggle-nav {
                 display: none !important;
             }
@@ -722,25 +717,14 @@
         
         // Function to toggle sidebar
         function toggleSidebar() {
+            sidebar.classList.toggle('show');
+            overlay.classList.toggle('show');
+            
             if (sidebar.classList.contains('show')) {
-                hideSidebar();
+                document.body.style.overflow = 'hidden';
             } else {
-                showSidebar();
+                document.body.style.overflow = 'auto';
             }
-        }
-        
-        // Function to show sidebar
-        function showSidebar() {
-            sidebar.classList.add('show');
-            overlay.classList.add('show');
-            document.body.style.overflow = 'hidden';
-        }
-        
-        // Function to hide sidebar
-        function hideSidebar() {
-            sidebar.classList.remove('show');
-            overlay.classList.remove('show');
-            document.body.style.overflow = 'auto';
         }
         
         // Toggle sidebar when buttons are clicked
@@ -749,18 +733,28 @@
         }
         
         if (closeSidebar) {
-            closeSidebar.addEventListener('click', hideSidebar);
+            closeSidebar.addEventListener('click', function() {
+                sidebar.classList.remove('show');
+                overlay.classList.remove('show');
+                document.body.style.overflow = 'auto';
+            });
         }
         
         // Close sidebar when overlay is clicked
         if (overlay) {
-            overlay.addEventListener('click', hideSidebar);
+            overlay.addEventListener('click', function() {
+                sidebar.classList.remove('show');
+                overlay.classList.remove('show');
+                document.body.style.overflow = 'auto';
+            });
         }
         
         // Close sidebar when ESC key is pressed
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                hideSidebar();
+                sidebar.classList.remove('show');
+                overlay.classList.remove('show');
+                document.body.style.overflow = 'auto';
             }
         });
         
@@ -773,7 +767,9 @@
                 document.body.style.overflow = 'auto';
             } else {
                 // Mobile/tablet view - ensure sidebar is hidden by default
-                hideSidebar();
+                sidebar.classList.remove('show');
+                overlay.classList.remove('show');
+                document.body.style.overflow = 'auto';
             }
         });
         
@@ -781,7 +777,7 @@
         if (window.innerWidth >= 1200) {
             sidebar.classList.add('show');
         } else {
-            hideSidebar();
+            sidebar.classList.remove('show');
         }
     });
     </script>
