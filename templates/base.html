@@ -27,12 +27,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}">
     
-    <!-- Mobile-Specific Styles -->
+    <!-- Modern Design Styles -->
     <style>
         :root {
             --sidebar-width: 260px;
             --sidebar-collapsed-width: 0px;
             --primary-color: #0d6efd;
+            --primary-dark: #0a58ca;
             --secondary-color: #6c757d;
             --header-height: 60px;
             --transition-speed: 0.3s;
@@ -40,26 +41,37 @@
             --table-blue: #0d6efd;
             --table-white: #ffffff;
             --hamburger-red: #dc3545;
+            --bg-light: #f8f9fa;
+            --text-dark: #212529;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            --radius: 8px;
         }
 
-        /* Sidebar Styles */
+        /* Global Styles */
+        body {
+            background-color: var(--bg-light);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+        }
+
+        /* Sidebar Styles - Always present but hidden by default */
         .sidebar {
             position: fixed;
             top: 0;
             left: 0;
             height: 100vh;
             width: var(--sidebar-width);
-            background: var(--primary-color);
+            background: linear-gradient(180deg, var(--primary-color), var(--primary-dark));
             color: white;
             transition: transform var(--transition-speed) ease;
             z-index: 1000;
             overflow-x: hidden;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            box-shadow: var(--shadow);
+            transform: translateX(-100%);
         }
 
-        .sidebar.collapsed {
-            transform: translateX(-100%);
-            width: 0;
+        .sidebar.show {
+            transform: translateX(0);
         }
 
         /* Toggle Button - Always visible */
@@ -78,12 +90,13 @@
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            box-shadow: var(--shadow);
             transition: all var(--transition-speed);
         }
 
         .toggle-nav:hover {
             background: #c82333;
+            transform: scale(1.05);
         }
 
         /* Sidebar Header */
@@ -92,11 +105,17 @@
             padding: 0 1.5rem;
             display: flex;
             align-items: center;
-            justify-content: flex-end;
+            justify-content: space-between;
             border-bottom: 1px solid var(--border-color);
         }
 
-        .sidebar-header .toggle-nav {
+        .brand-text {
+            font-weight: 600;
+            font-size: 1.2rem;
+            white-space: nowrap;
+        }
+
+        .sidebar-header .close-sidebar {
             background: transparent;
             border: none;
             color: white;
@@ -107,7 +126,7 @@
             justify-content: center;
         }
 
-        /* Navigation Menu - Hide scrollbars but allow scrolling */
+        /* Navigation Menu */
         .sidebar-nav {
             padding: 1rem 0;
             height: calc(100vh - var(--header-height));
@@ -132,12 +151,12 @@
             padding: 0.75rem 1rem;
             color: var(--table-white) !important;
             text-decoration: none;
-            border-radius: 0.5rem;
+            border-radius: var(--radius);
             transition: all var(--transition-speed);
             white-space: nowrap;
             overflow: hidden;
-            background-color: var(--table-blue);
-            border: 1px solid var(--table-blue);
+            background-color: transparent;
+            border: none;
         }
 
         .nav-link i {
@@ -155,20 +174,14 @@
         }
 
         .nav-link:hover {
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.15);
             color: white !important;
+            transform: translateX(5px);
         }
 
-        .nav-link i {
-            width: 20px;
-            margin-right: 1rem;
-            font-size: 1.1rem;
-            text-align: center;
-        }
-
-        .sidebar.collapsed .nav-text,
-        .sidebar.collapsed .brand-text {
-            display: none;
+        .nav-link.active {
+            background: rgba(255, 255, 255, 0.2);
+            border-left: 4px solid white;
         }
 
         /* Main Content Adjustment */
@@ -178,7 +191,7 @@
             min-height: 100vh;
             padding: 1rem;
             width: 100%;
-            padding-top: calc(1rem + 70px); /* Account for header */
+            padding-top: calc(var(--header-height) + 1rem);
         }
 
         /* Profile Section */
@@ -192,10 +205,10 @@
             display: flex;
             align-items: center;
             gap: 10px;
-            color: blue;
+            color: white;
             text-decoration: none;
             padding: 0.5rem;
-            border-radius: 0.5rem;
+            border-radius: var(--radius);
         }
 
         .profile-picture {
@@ -211,13 +224,13 @@
             top: 0;
             left: 0;
             right: 0;
-            height: 60px;
+            height: var(--header-height);
             background: white;
             z-index: 1050;
             display: flex;
             align-items: center;
             padding: 0 1rem;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: var(--shadow);
         }
         
         .header-toggle {
@@ -225,26 +238,156 @@
             border: none;
             width: 40px;
             height: 40px;
-            border-radius: 8px;
+            border-radius: var(--radius);
             color: white;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             margin-right: 1rem;
+            transition: all var(--transition-speed);
         }
         
         .header-toggle:hover {
             background: #c82333;
+            transform: scale(1.05);
         }
         
         .header-title {
             font-size: 1.25rem;
             font-weight: 600;
             margin: 0;
+            color: var(--text-dark);
         }
 
-        /* Responsive Design - Improved for all devices */
+        /* Overlay for mobile */
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1040;
+        }
+
+        .overlay.show {
+            display: block;
+        }
+
+        /* Card Styling */
+        .card {
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: none;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            background-color: white;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+            font-weight: 600;
+            padding: 1rem 1.5rem;
+            border-radius: var(--radius) var(--radius) 0 0 !important;
+        }
+
+        /* Table Improvements */
+        .table-container {
+            overflow-x: auto;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            background: white;
+            margin-bottom: 1.5rem;
+        }
+
+        .table {
+            width: 100%;
+            margin-bottom: 0;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        .table th {
+            background-color: var(--table-blue) !important;
+            color: var(--table-white) !important;
+            position: sticky;
+            top: 0;
+            padding: 0.75rem;
+            font-weight: 600;
+            white-space: nowrap;
+            border: none;
+        }
+
+        .table td {
+            padding: 0.75rem;
+            vertical-align: middle;
+            border: none;
+            border-bottom: 1px solid #dee2e6;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+
+        .table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .table tbody tr {
+            transition: background-color 0.2s;
+        }
+
+        .table tbody tr:hover {
+            background-color: rgba(13, 110, 253, 0.05);
+        }
+
+        /* Form Styling */
+        .form-control, .form-select {
+            border-radius: var(--radius);
+            padding: 0.75rem 1rem;
+            border: 1px solid #ced4da;
+            transition: all 0.3s;
+        }
+
+        .form-control:focus, .form-select:focus {
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+            border-color: #86b7fe;
+        }
+
+        .btn {
+            border-radius: var(--radius);
+            padding: 0.75rem 1.5rem;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+            border-color: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+
+        /* Alert Styling */
+        .alert {
+            border-radius: var(--radius);
+            border: none;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Footer */
+        footer {
+            background: white;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+        }
+
+        /* Responsive Design */
         /* Desktop (PC) */
         @media (min-width: 1200px) {
             .sidebar {
@@ -254,7 +397,6 @@
             main.container-fluid {
                 margin-left: var(--sidebar-width);
                 width: calc(100% - var(--sidebar-width));
-                padding-top: calc(1rem + 70px); /* Account for header */
             }
             
             .toggle-nav {
@@ -267,78 +409,43 @@
             
             .main-header {
                 left: var(--sidebar-width);
+                width: calc(100% - var(--sidebar-width));
                 transition: left var(--transition-speed) ease;
             }
             
             .sidebar.collapsed ~ .main-header {
                 left: 0;
+                width: 100%;
             }
             
             .sidebar.collapsed ~ main.container-fluid {
                 margin-left: 0;
                 width: 100%;
             }
-            
-            /* Always show header toggle on desktop */
-            .header-toggle {
-                display: flex !important;
-            }
         }
         
         /* Tablet and Landscape Phone */
         @media (min-width: 768px) and (max-width: 1199px) {
             .sidebar {
-                transform: translateX(-100%);
                 width: var(--sidebar-width);
                 z-index: 1050;
-            }
-
-            .sidebar.show {
-                transform: translateX(0);
-                width: var(--sidebar-width);
             }
 
             .toggle-nav {
                 display: flex !important;
                 z-index: 1060;
             }
-
-            .overlay {
-                display: none;
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.5);
-                z-index: 1040;
-            }
-
-            .overlay.show {
-                display: block;
-            }
             
             main.container-fluid {
-                padding-top: calc(1rem + 70px); /* Account for header */
-            }
-            
-            /* Always show header toggle on tablet */
-            .header-toggle {
-                display: flex !important;
+                padding-top: calc(var(--header-height) + 1rem);
             }
         }
         
         /* Phone Portrait */
         @media (max-width: 767px) {
             .sidebar {
-                transform: translateX(-100%);
                 width: 85%;
                 z-index: 1050;
-            }
-
-            .sidebar.show {
-                transform: translateX(0);
-                width: 85%;
             }
 
             .toggle-nav {
@@ -347,29 +454,10 @@
                 left: 1rem;
                 top: 1rem;
             }
-
-            .overlay {
-                display: none;
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.5);
-                z-index: 1040;
-            }
-
-            .overlay.show {
-                display: block;
-            }
             
             main.container-fluid {
-                padding-top: calc(1rem + 70px); /* Account for header */
-            }
-            
-            /* Always show header toggle on mobile */
-            .header-toggle {
-                display: flex !important;
+                padding: 0.5rem;
+                padding-top: calc(var(--header-height) + 0.5rem);
             }
             
             .header-title {
@@ -394,178 +482,62 @@
                 margin-right: 0.8rem;
                 font-size: 1rem;
             }
-        }
-        
-        /* Sidebar and Navigation Styles */
-        #mainNavbar {
-            padding: 0;
-            width: var(--sidebar-width);
-            height: 100vh;
-            z-index: 1040;
-        }
-        
-        .navbar-brand {
-            margin: 0;
-            text-align: left;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .sidebar-nav .nav-item {
-            width: 100%;
-        }
-        
-        .sidebar-nav .nav-link {
-            padding: 0.8rem 1.5rem;
-            color: var(--table-white);
-            transition: all 0.3s ease;
-            border-left: 3px solid transparent;
-            background-color: var(--table-blue);
-        }
-        
-        .sidebar-nav .nav-link:hover {
-            color: white;
-            background-color: rgba(255, 255, 255, 0.2);
-            border-left-color: white;
-        }
-        
-        .sidebar-nav .nav-link.active {
-            color: white;
-            background-color: rgba(255, 255, 255, 0.3);
-            border-left-color: white;
-        }
 
-        @media (min-width: 1200px) {
-            #mainNavbar {
-                width: var(--sidebar-width);
-                height: 100vh;
-            }
-            
-            .navbar-collapse {
-                display: flex !important;
-                flex-direction: column;
-                height: calc(100vh - var(--header-height));
-                overflow-y: auto;
-            }
-            
-            .sidebar-nav {
+            /* Stack table on mobile */
+            .table-responsive table {
+                display: block;
                 width: 100%;
             }
-            
-            .navbar-nav .nav-link {
-                padding: 12px 16px;
+
+            .table-responsive thead {
+                display: none;
+            }
+
+            .table-responsive tbody, 
+            .table-responsive tr, 
+            .table-responsive td {
+                display: block;
                 width: 100%;
+            }
+
+            .table-responsive tr {
+                margin-bottom: 1rem;
+                border: 1px solid #dee2e6;
+                border-radius: var(--radius);
+                overflow: hidden;
+            }
+
+            .table-responsive td {
+                text-align: right;
+                padding: 0.5rem;
+                position: relative;
+                border-bottom: 1px solid #dee2e6;
                 display: flex;
+                justify-content: space-between;
                 align-items: center;
             }
-            
-            .nav-link i {
-                width: 24px;
-                text-align: center;
-                margin-right: 8px;
+
+            .table-responsive td:before {
+                content: attr(data-label);
+                font-weight: bold;
+                text-align: left;
+                margin-right: 1rem;
             }
-            
-            .nav-link .nav-text {
-                flex: 1;
-            }
-        }
-        
-        @media (max-width: 1199.98px) {
-            #mainNavbar {
-                padding: 0.5rem 1rem;
-            }
-            
-            .navbar-collapse {
-                position: fixed;
-                top: 0;
-                left: -100%;
-                width: var(--sidebar-width);
-                height: 100vh;
-                background-color: var(--primary-color);
-                transition: left 0.3s ease-in-out;
-                overflow-y: auto;
-                z-index: 1040;
-                padding-top: var(--header-height);
-            }
-            
-            .navbar-collapse.show {
-                left: 0;
-            }
-            
-            .nav-link {
-                padding: 12px 16px !important;
-                display: flex !important;
-                align-items: center !important;
-            }
-            
-            .nav-link i {
-                width: 24px;
-                text-align: center;
-                margin-right: 8px;
+
+            .table-responsive td:last-child {
+                border-bottom: none;
             }
         }
-        
-        /* Base mobile optimizations */
-        body {
-            -webkit-text-size-adjust: 100%;
-            -webkit-tap-highlight-color: transparent;
-            touch-action: manipulation;
+
+        /* Animation for sidebar */
+        @keyframes slideIn {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(0); }
         }
-        
-        /* Touch target sizing */
-        .btn, .nav-link, .dropdown-item, 
-        input[type="checkbox"] + label, 
-        .table .actions-column .btn {
-            min-height: 44px;
-            min-width: 44px;
-            padding: 12px 16px;
-        }
-        
-        /* Responsive tables */
-        .table-responsive {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }
-        
-        /* Mobile navigation adjustments */
-        @media (max-width: 1199px) {
-            .navbar-collapse {
-                padding: 10px 0;
-                max-height: 80vh;
-                overflow-y: auto;
-            }
-            .nav-item {
-                margin: 5px 0;
-            }
-            .dropdown-menu {
-                position: static !important;
-                transform: none !important;
-            }
-        }
-        
-        /* Prevent zoom on input focus in mobile */
-        @media screen and (max-width: 767px) {
-            input, select, textarea {
-                font-size: 16px !important;
-            }
-        }
-        
-        /* Table styling updates - blue background, white text, blue borders */
-        table th {
-            background-color: var(--table-blue) !important;
-            color: var(--table-white) !important;
-        }
-        
-        table, table th, table td {
-            border: 1px solid var(--table-blue) !important;
-        }
-        
-        table {
-            border-collapse: collapse;
-        }
-        
-        /* Ensure hamburger button is always visible */
-        .header-toggle {
-            display: flex !important;
+
+        @keyframes slideOut {
+            from { transform: translateX(0); }
+            to { transform: translateX(-100%); }
         }
     </style>
     
@@ -586,20 +558,16 @@
     </button>
 
     <!-- Sidebar Navigation -->
-    <div class="sidebar collapsed" id="sidebar">
+    <div class="sidebar" id="sidebar">
         <!-- Sidebar Header -->
         <div class="sidebar-header">
-            <button class="toggle-nav" id="closeSidebar">
+            <span class="brand-text">MMC System</span>
+            <button class="close-sidebar" id="closeSidebar">
                 <i class="fas fa-times"></i>
             </button>
         </div>
             
-        <div class="navbar-collapse flex-column h-100" id="navbarNav">
-            <!-- Home/Brand Link at Top -->
-            <a class="navbar-brand fs-5 py-3 px-3 mb-3 w-100 border-bottom border-light" href="{{ url_for('home') }}">
-                <i class="bi bi-hospital me-2"></i>MMC
-            </a>
-            
+        <div class="navbar-collapse flex-column h-100" id="navbarNav">               
             <!-- Navigation Menu -->
             <nav class="sidebar-nav">
                 {% if current_user.is_authenticated %}
@@ -830,7 +798,7 @@
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
     
-    <!-- Sidebar Behavior - Updated for all devices -->
+    <!-- Enhanced Sidebar Behavior -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');
@@ -838,16 +806,9 @@
         const headerToggle = document.getElementById('headerToggle');
         const closeSidebar = document.getElementById('closeSidebar');
         const overlay = document.getElementById('overlay');
-        const mainContent = document.querySelector('main.container-fluid');
-        
-        // Check if we're on a desktop (PC) or mobile/tablet
-        function isDesktop() {
-            return window.innerWidth >= 1200;
-        }
         
         // Function to show sidebar
         function showSidebar() {
-            sidebar.classList.remove('collapsed');
             sidebar.classList.add('show');
             overlay.classList.add('show');
             document.body.style.overflow = 'hidden';
@@ -856,582 +817,105 @@
         // Function to hide sidebar
         function hideSidebar() {
             sidebar.classList.remove('show');
-            sidebar.classList.add('collapsed');
             overlay.classList.remove('show');
             document.body.style.overflow = 'auto';
         }
         
-        // Function to toggle sidebar
-        function toggleSidebar() {
-            if (sidebar.classList.contains('show') || (isDesktop() && !sidebar.classList.contains('collapsed'))) {
-                sidebar.classList.toggle('collapsed');
-                // Update header toggle icon
-                if (sidebar.classList.contains('collapsed')) {
-                    headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
-                } else {
-                    headerToggle.innerHTML = '<i class="fas fa-times"></i>';
-                }
-            } else {
-                if (sidebar.classList.contains('show')) {
-                    hideSidebar();
-                } else {
-                    showSidebar();
-                }
-            }
-        }
-        
         // Toggle sidebar when buttons are clicked
         if (toggleNav) {
-            toggleNav.addEventListener('click', toggleSidebar);
+            toggleNav.addEventListener('click', showSidebar);
         }
         
         if (headerToggle) {
-            headerToggle.addEventListener('click', toggleSidebar);
+            headerToggle.addEventListener('click', showSidebar);
         }
         
         if (closeSidebar) {
-            closeSidebar.addEventListener('click', function() {
-                hideSidebar();
-                // Update header toggle icon
-                headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
-            });
+            closeSidebar.addEventListener('click', hideSidebar);
         }
         
-        // Close sidebar when overlay is clicked (mobile/tablet only)
+        // Close sidebar when overlay is clicked
         if (overlay) {
-            overlay.addEventListener('click', function() {
-                hideSidebar();
-                // Update header toggle icon
-                headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
-            });
+            overlay.addEventListener('click', hideSidebar);
         }
         
         // Close sidebar when ESC key is pressed
         document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && !isDesktop()) {
+            if (e.key === 'Escape') {
                 hideSidebar();
-                // Update header toggle icon
-                headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
             }
         });
         
         // Handle window resize
         window.addEventListener('resize', function() {
-            if (isDesktop()) {
-                // Desktop view - ensure sidebar is visible by default
-                sidebar.classList.remove('collapsed', 'show');
+            if (window.innerWidth >= 1200) {
+                // Desktop view - ensure sidebar is visible
+                sidebar.classList.add('show');
                 overlay.classList.remove('show');
                 document.body.style.overflow = 'auto';
-                // Update header toggle icon
-                headerToggle.innerHTML = '<i class="fas fa-times"></i>';
             } else {
                 // Mobile/tablet view - ensure sidebar is hidden by default
                 if (!sidebar.classList.contains('show')) {
-                    sidebar.classList.add('collapsed');
+                    sidebar.classList.remove('show');
                 }
-                // Update header toggle icon
-                headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
             }
         });
         
         // Initialize for current screen size
-        if (isDesktop()) {
-            headerToggle.innerHTML = '<i class="fas fa-times"></i>';
-        } else {
-            sidebar.classList.add('collapsed');
-            headerToggle.innerHTML = '<i class="fas fa-bars"></i>';
+        if (window.innerWidth >= 1200) {
+            sidebar.classList.add('show');
         }
     });
     </script>
     
-    <!-- Auto-inject CSRF token into all POST forms that don't include it -->
+    <!-- Table Responsiveness Script -->
     <script>
-        (function() {
-            function injectCsrfIntoForms(root) {
-                try {
-                    var tokenMeta = document.querySelector('meta[name="csrf-token"]');
-                    if (!tokenMeta) return;
-                    var token = tokenMeta.getAttribute('content');
-                    if (!token) return;
-                    var forms = (root || document).querySelectorAll('form[method="POST" i], form[method="post" i]');
-                    forms.forEach(function(form) {
-                        if (!form.querySelector('input[name="csrf_token"]')) {
-                            var input = document.createElement('input');
-                            input.type = 'hidden';
-                            input.name = 'csrf_token';
-                            input.value = token;
-                            form.appendChild(input);
-                        }
-                    });
-                } catch (e) {
-                    // fail silently
-                }
-            }
-
-            // Initial injection on DOM ready
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', function() { injectCsrfIntoForms(); });
-            } else {
-                injectCsrfIntoForms();
-            }
-
-            // Ensure dynamically created forms also get the token on submit
-            document.addEventListener('submit', function(ev) {
-                var form = ev.target;
-                if (form && form.tagName === 'FORM' && /post/i.test(form.method)) {
-                    var tokenMeta = document.querySelector('meta[name="csrf-token"]');
-                    if (!tokenMeta) return;
-                    if (!form.querySelector('input[name="csrf_token"]')) {
-                        var input = document.createElement('input');
-                        input.type = 'hidden';
-                        input.name = 'csrf_token';
-                        input.value = tokenMeta.getAttribute('content') || '';
-                        form.appendChild(input);
+    document.addEventListener('DOMContentLoaded', function() {
+        // Make tables responsive by adding data-labels
+        function makeTablesResponsive() {
+            document.querySelectorAll('table').forEach(table => {
+                if (!table.classList.contains('responsive-processed')) {
+                    // Get header texts
+                    const headers = [];
+                    if (table.tHead && table.tHead.rows.length > 0) {
+                        Array.from(table.tHead.rows[0].cells).forEach(cell => {
+                            headers.push(cell.textContent.trim());
+                        });
                     }
-                }
-            }, true);
-
-            // Optional: observe DOM for added forms and inject token lazily
-            if (window.MutationObserver) {
-                var obs = new MutationObserver(function(mutations) {
-                    mutations.forEach(function(m) {
-                        m.addedNodes && m.addedNodes.forEach(function(node) {
-                            if (node.nodeType === 1) { // ELEMENT_NODE
-                                if (node.tagName === 'FORM') {
-                                    injectCsrfIntoForms(node);
-                                else if (node.querySelectorAll) {
-                                    var nestedForms = node.querySelectorAll('form');
-                                    if (nestedForms.length) injectCsrfIntoForms(node);
+                    
+                    // Add data-label attributes to cells
+                    if (table.tBodies.length > 0) {
+                        Array.from(table.tBodies[0].rows).forEach(row => {
+                            Array.from(row.cells).forEach((cell, index) => {
+                                if (headers[index]) {
+                                    cell.setAttribute('data-label', headers[index]);
                                 }
-                            }
-                        });
-                    });
-                });
-                obs.observe(document.documentElement, { childList: true, subtree: true });
-            }
-        })();
-    </script>
-
-    <!-- Table Enhancement: auto-wrap, mobile labels, sortable headers -->
-    <script>
-    (function() {
-        function enhanceTables() {
-            var tables = Array.prototype.slice.call(document.querySelectorAll('table'));
-            tables.forEach(function(table) {
-                if (table.dataset.noEnhance === 'true' || table.classList.contains('no-enhance') || table.classList.contains('dataTable')) {
-                    return;
-                }
-                // Wrap in responsive container if needed
-                var parent = table.parentElement;
-                var needsWrap = !(parent && (parent.classList.contains('table-responsive') || parent.classList.contains('table-container')));
-                if (needsWrap) {
-                    var wrapper = document.createElement('div');
-                    wrapper.className = 'table-responsive table-container';
-                    parent.insertBefore(wrapper, table);
-                    wrapper.appendChild(table);
-                } else {
-                    // Ensure table-container exists for consistent styling
-                    parent.classList.add('table-container');
-                }
-
-                // Add enhanced class
-                table.classList.add('table-enhanced');
-
-                // Build header map
-                var headers = [];
-                var thead = table.tHead;
-                if (thead && thead.rows.length) {
-                    var ths = thead.rows[0].cells;
-                    for (var i = 0; i < ths.length; i++) {
-                        headers.push((ths[i].innerText || ths[i].textContent || '').trim());
-                        ths[i].classList.add('sortable');
-                        ths[i].setAttribute('role', 'columnheader');
-                        ths[i].setAttribute('aria-sort', 'none');
-                    }
-                }
-
-                // Assign data-label for mobile stacked view
-                if (headers.length) {
-                    var rows = table.tBodies.length ? table.tBodies[0].rows : [];
-                    for (var r = 0; r < rows.length; r++) {
-                        var cells = rows[r].cells;
-                        for (var c = 0; c < cells.length; c++) {
-                            if (!cells[c].getAttribute('data-label') && headers[c]) {
-                                cells[c].setAttribute('data-label', headers[c]);
-                            }
-                        }
-                    }
-                }
-
-                // Detect numeric columns
-                if (table.tBodies.length && table.tBodies[0].rows.length) {
-                    var sampleRow = table.tBodies[0].rows[0];
-                    var colCount = sampleRow ? sampleRow.cells.length : 0;
-                    for (var col = 0; col < colCount; col++) {
-                        var numericCount = 0, checked = 0;
-                        for (var rr = 0; rr < table.tBodies[0].rows.length && checked < 10; rr++, checked++) {
-                            var txt = (table.tBodies[0].rows[rr].cells[col].innerText || '').trim();
-                            if (/^-?[\d,.]+(\s*[A-Za-z%]+)?$/.test(txt)) numericCount++;
-                        }
-                        if (numericCount >= Math.max(3, Math.floor(checked * 0.6))) {
-                            // Mark numeric column
-                            if (thead && thead.rows.length && thead.rows[0].cells[col]) {
-                                thead.rows[0].cells[col].classList.add('num-col');
-                            }
-                            for (var rb = 0; rb < table.tBodies[0].rows.length; rb++) {
-                                var cell = table.tBodies[0].rows[rb].cells[col];
-                                if (cell) cell.classList.add('num-col');
-                            }
-                        }
-                    }
-                }
-
-                // Add sticky first column if table overflows horizontally
-                var wrapperEl = table.closest('.table-container') || table.parentElement;
-                if (wrapperEl && wrapperEl.scrollWidth > wrapperEl.clientWidth) {
-                    table.classList.add('sticky-first-col');
-                }
-
-                // Add sorting behavior
-                if (thead && thead.rows.length) {
-                    var thCells = thead.rows[0].cells;
-                    for (let idx = 0; idx < thCells.length; idx++) {
-                        thCells[idx].addEventListener('click', function() {
-                            sortTable(table, idx);
-                            // Update aria-sort
-                            for (var j = 0; j < thCells.length; j++) {
-                                thCells[j].setAttribute('aria-sort', 'none');
-                                thCells[j].classList.remove('sorted-asc', 'sorted-desc');
-                            }
-                            var dir = table.dataset.sortDir === 'asc' ? 'descending' : 'ascending';
-                            thCells[idx].setAttribute('aria-sort', dir);
-                            thCells[idx].classList.add(dir === 'ascending' ? 'sorted-asc' : 'sorted-desc');
+                            });
                         });
                     }
+                    
+                    table.classList.add('responsive-processed');
                 }
             });
         }
-
-        function sortTable(table, colIndex) {
-            var tbody = table.tBodies[0];
-            if (!tbody) return;
-            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-            var dir = table.dataset.sortDir === 'asc' ? 'desc' : 'asc';
-            table.dataset.sortDir = dir;
-
-            var extract = function(cell) {
-                var text = (cell.innerText || cell.textContent || '').trim();
-                // Try number
-                var num = text.replace(/[^0-9.+-]/g, '');
-                if (num && !isNaN(num)) return parseFloat(num);
-                // Try date
-                var d = Date.parse(text);
-                if (!isNaN(d)) return d;
-                return text.toLowerCase();
-            };
-
-            rows.sort(function(a, b) {
-                var A = extract(a.cells[colIndex] || { innerText: '' });
-                var B = extract(b.cells[colIndex] || { innerText: '' });
-                if (A < B) return dir === 'asc' ? -1 : 1;
-                if (A > B) return dir === 'asc' ? 1 : -1;
-                return 0;
-            });
-
-            // Re-append
-            rows.forEach(function(r) { tbody.appendChild(r); });
-        }
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', enhanceTables);
-            } else {
-            enhanceTables();
-        }
-        // Re-enhance on window resize to re-evaluate overflow
-        window.addEventListener('resize', function() {
-            document.querySelectorAll('table.table-enhanced').forEach(function(t) {
-                var wrapperEl = t.closest('.table-container') || t.parentElement;
-                if (wrapperEl) {
-                    if (wrapperEl.scrollWidth > wrapperEl.clientWidth) t.classList.add('sticky-first-col');
-                    else t.classList.remove('sticky-first-col');
+        
+        makeTablesResponsive();
+        
+        // Re-run when content changes (for dynamic content)
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.addedNodes.length) {
+                    makeTablesResponsive();
                 }
             });
         });
-    })();
+        
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    });
     </script>
-
-    <!-- Mobile Optimization Scripts -->
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Auto-close flash messages
-            const alerts = document.querySelectorAll('.alert-auto-close');
-            alerts.forEach(alert => {
-                setTimeout(() => {
-                    alert.style.transition = 'opacity 0.5s ease';
-                    alert.style.opacity = '0';
-                    setTimeout(() => alert.remove(), 500);
-                }, 5000);
-            });
-
-            // Active nav item highlighting
-            document.querySelectorAll('.navbar-nav .nav-link').forEach(link => {
-                if (link.getAttribute('href') === window.location.pathname) {
-                    link.classList.add('active');
-                }
-            });
-
-            // Mobile-specific enhancements
-            if (/Mobi|Android/i.test(navigator.userAgent)) {
-                // Prevent double-tap zoom
-                let lastTouch = 0;
-                document.addEventListener('touchend', function(event) {
-                    const now = Date.now();
-                    if (now - lastTouch <= 300) event.preventDefault();
-                    lastTouch = now;
-                }, { passive: false });
-
-                // Enhance form inputs
-                document.querySelectorAll('input, select, textarea').forEach(el => {
-                    el.addEventListener('focus', function() {
-                        this.style.fontSize = '16px';
-                    });
-                });
-            }
-
-            // Initialize Bootstrap components
-            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-            tooltipTriggerList.map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
-
-            const popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
-            popoverTriggerList.map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl));
-
-            // Table row selection
-            document.querySelectorAll('.table tbody tr').forEach(row => {
-                row.addEventListener('click', function() {
-                    this.closest('table').querySelectorAll('tr').forEach(r => {
-                        r.classList.remove('selected');
-                    });
-                    this.classList.add('selected');
-                });
-                row.setAttribute('tabindex', '0');
-            });
-
-            // Register Service Worker for PWA
-            if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => {
-                    navigator.serviceWorker.register('{{ url_for("static", filename="js/sw.js") }}')
-                        .then(reg => console.log('ServiceWorker registration successful'))
-                        .catch(err => console.log('ServiceWorker registration failed: ', err));
-                });
-            }
-        });
-
-        // Scroll behavior for navbar
-        window.addEventListener('scroll', function() {
-            const navbar = document.getElementById('mainNavbar');
-            if (window.scrollY > 50) {
-                navbar.classList.add('scrolled');
-            } else {
-                navbar.classList.remove('scrolled');
-            }
-        });
-    </script>
-
-    <!-- Table Enhancement Styles -->
-    <style>
-    /* Enhanced table styles */
-    .table-container {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        margin-bottom: 1.25rem;
-    }
-    table.table-enhanced {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 0;
-        background: #fff;
-        border: 1px solid var(--table-blue);
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.04);
-    }
-    .table-enhanced thead th {
-        position: sticky;
-        top: 0;
-        background: linear-gradient(180deg, var(--table-blue), #0a58ca) !important;
-        color: var(--table-white) !important;
-        z-index: 2;
-        padding: 0.75rem 1rem;
-        font-weight: 600;
-        white-space: nowrap;
-        border-bottom: 1px solid var(--table-blue);
-    }
-    .table-enhanced tbody td {
-        padding: 0.75rem 1rem;
-        border-bottom: 1px solid var(--table-blue);
-        vertical-align: middle;
-        background: #fff;
-    }
-    .table-enhanced tbody tr:nth-child(even) td {
-        background: #fafbff;
-    }
-    .table-enhanced tbody tr:hover td {
-        background: #eef5ff;
-    }
-    .table-enhanced tbody tr.selected td {
-        background: #dce9ff !important;
-    }
-    .table-enhanced .num-col {
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-    }
-    .table-enhanced.sticky-first-col thead th:first-child,
-    .table-enhanced.sticky-first-col tbody td:first-child {
-        position: sticky;
-        left: 0;
-        z-index: 1;
-        background-clip: padding-box;
-        box-shadow: 2px 0 0 rgba(0,0,0,0.04);
-    }
-    .table-enhanced thead th.sortable {
-        cursor: pointer;
-        position: relative;
-        padding-right: 1.5rem;
-    }
-    .table-enhanced thead th.sortable::after {
-        content: '\2195';
-        position: absolute;
-        right: 0.5rem;
-        top: 50%;
-        transform: translateY(-50%);
-        opacity: 0.6;
-        font-size: 0.85rem;
-    }
-    .table-enhanced thead th.sorted-asc::after {
-        content: '\2191';
-        opacity: 1;
-    }
-    .table-enhanced thead th.sorted-desc::after {
-        content: '\2193';
-        opacity: 1;
-    }
-    /* Mobile stacked view */
-    @media (max-width: 576px) {
-        .table-enhanced thead {
-            display: none;
-        }
-        .table-enhanced tbody tr {
-            display: block;
-            margin: 0.6rem 0;
-            border: 1px solid var(--table-blue);
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-        }
-        .table-enhanced tbody td {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.6rem 0.9rem;
-            border-bottom: 1px dashed var(--table-blue);
-        }
-        .table-enhanced tbody td:last-child {
-            border-bottom: none;
-        }
-        .table-enhanced tbody td::before {
-            content: attr(data-label);
-            font-weight: 600;
-            color: #555;
-            margin-right: 0.75rem;
-        }
-        .table-enhanced .num-col {
-            text-align: left;
-        }
-    }
-    </style>
-
-    <!-- Responsive Styles -->
-    <style>
-        /* Navbar styling */
-        .navbar {
-            background-color: var(--table-blue) !important;
-            transition: all 0.3s ease;
-            padding-top: 0.5rem;
-            padding-bottom: 0.5rem;
-        }
-        
-        .navbar.scrolled {
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-        
-        /* Icon navigation */
-        .icon-nav .nav-text {
-            display: inline-block;
-            max-width: 0;
-            overflow: hidden;
-            transition: max-width 0.3s ease;
-            white-space: nowrap;
-        }
-        
-        @media (min-width: 992px) {
-            .icon-nav:hover .nav-text {
-                max-width: 200px;
-                margin-left: 0.25rem;
-            }
-        }
-        
-        /* Profile picture */
-        .profile-picture {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            object-fit: cover;
-            border: 2px solid rgba(255, 255, 255, 0.5);
-        }
-        
-        /* Table enhancements */
-        .table-container {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-            margin-bottom: 1.5rem;
-        }
-        
-        .table {
-            width: 100%;
-            margin-bottom: 0;
-            border: 1px solid var(--table-blue);
-        }
-        
-        .table th {
-            background-color: var(--table-blue) !important;
-            color: var(--table-white) !important;
-            position: sticky;
-            top: 0;
-            border: 1px solid var(--table-blue);
-        }
-        
-        .table td {
-            border: 1px solid var(--table-blue);
-        }
-        
-        /* Responsive adjustments */
-        @media (max-width: 768px) {
-            .navbar-brand {
-                font-size: 1rem;
-            }
-            
-            .table th, .table td {
-                padding: 0.5rem;
-                font-size: 0.85rem;
-            }
-            
-            main {
-                padding-left: 0.5rem;
-                padding-right: 0.5rem;
-            }
-        }
-    </style>
     
     {% block extra_js %}{% endblock %}
 </body>
