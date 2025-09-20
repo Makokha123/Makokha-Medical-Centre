@@ -341,15 +341,7 @@
 
 <!-- JavaScript for handling modals -->
 <script>
-$(document).ready(function() {
-    // Initialize DataTable
-    $('#dosageTable').DataTable({
-        responsive: true,
-        dom: '<"top"lf>rt<"bottom"ip>',
-        pageLength: 25,
-        order: [[1, 'asc']]
-    });
-    
+$(document).ready(function() { 
     // Edit dosage modal handler
     $(document).on('click', '.btn-edit', function() {
         const dosageId = $(this).data('id');

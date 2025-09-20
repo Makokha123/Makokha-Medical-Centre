@@ -1,137 +1,89 @@
 {% extends "base.html" %}
 
 {% block content %}
-<!-- Add this to the head section of all your base templates -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
 
-<style>
-    .input-group .toggle-password {
-        cursor: pointer;
-        border-color: #ced4da;
-        border-left: 0;
-    }
-    
-    .input-group .toggle-password:hover {
-        background-color: #e9ecef;
-    }
-    
-    .input-group .toggle-password:focus {
-        box-shadow: none;
-    }
-    
-    .password-strength-meter .progress-bar {
-        transition: width 0.3s ease-in-out, background-color 0.3s ease-in-out;
-    }
-    
-    .password-requirements li {
-        margin-bottom: 0.25rem;
-    }
-    
-    .password-requirements .fa-circle {
-        font-size: 0.5rem;
-        margin-right: 0.5rem;
-    }
-    
-    .password-requirements .text-success {
-        color: #28a745 !important;
-    }
-    
-    .password-requirements .text-muted {
-        color: #6c757d !important;
-    }
-    
-    .password-strength-text {
-        display: block;
-        margin-top: 0.25rem;
-    }
-    
-    .progress {
-        background-color: #e9ecef;
-        border-radius: 0.25rem;
-        margin: 0.5rem 0;
-        height: 5px;
-    }
-    
-    /* Password toggle styling */
-    .input-group .toggle-password {
-        cursor: pointer;
-        padding: 0.375rem 0.75rem;
-    }
-
-    .input-group .toggle-password:hover {
-        background-color: #e9ecef;
-    }
-
-    .input-group .toggle-password:focus {
-        outline: none;
-        box-shadow: none;
-    }
-</style>
-        
-<div class="content">
-    <div class="page-header">
-        <h2><i class="fas fa-users"></i> User Management</h2>
-        <div class="page-actions">
-            <button class="btn btn-primary" data-toggle="modal" data-target="#addUserModal">
+<div class="user-management-container">
+    <div class="dashboard-header">
+        <div class="header-content">
+            <div class="header-title">
+                <h1><i class="fas fa-users"></i> User Management</h1>
+                <p>Manage system users and their permissions</p>
+            </div>
+            <button class="btn btn-primary btn-with-icon" data-toggle="modal" data-target="#addUserModal">
                 <i class="fas fa-plus"></i> Add New User
             </button>
         </div>
     </div>
-    
-    <div class="table-responsive">
-        <table class="data-table" id="usersTable">
-            <thead>
-                <tr>
-                    <th>Username</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Last Login</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for user in users %}
-                <tr>
-                    <td>{{ user.username }}</td>
-                    <td>{{ user.email }}</td>
-                    <td>{{ user.role }}</td>
-                    <td>
-                        <span class="status-badge {% if user.is_active %}active{% else %}inactive{% endif %}">
-                            {% if user.is_active %}Active{% else %}Inactive{% endif %}
-                        </span>
-                    </td>
-                    <td>
-                        {% if user.last_login %}
-                            {{ user.last_login.strftime('%Y-%m-%d %H:%M') }}
-                        {% else %}
-                            Never
-                        {% endif %}
-                    </td>
-                    <td>
-                        <button class="btn btn-sm btn-edit" data-id="{{ user.id }}" data-toggle="modal" data-target="#editUserModal">
+
+    <div id="alert-container"></div>
+
+    <table id="usersTable" class="modern-table">
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Last Login</th>
+                <th class="text-center">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in users %}
+            <tr>
+                <td>
+                    <div class="user-cell">
+                        <div class="user-avatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <div class="user-info">
+                            <div class="user-name">{{ user.username }}</div>
+                        </div>
+                    </div>
+                </td>
+                <td>{{ user.email }}</td>
+                <td><span class="badge badge-role">{{ user.role }}</span></td>
+                <td>
+                    <span class="status-badge {% if user.is_active %}status-active{% else %}status-inactive{% endif %}">
+                        {% if user.is_active %}Active{% else %}Inactive{% endif %}
+                    </span>
+                </td>
+                <td>
+                    {% if user.last_login %}
+                        {{ user.last_login.strftime('%Y-%m-%d %H:%M') }}
+                    {% else %}
+                        Never
+                    {% endif %}
+                </td>
+                <td class="action-btns">
+                    <div class="btn-group">
+                        <button class="action-btn btn-primary btn-edit" data-id="{{ user.id }}" data-toggle="modal" data-target="#editUserModal">
                             <i class="fas fa-edit"></i>
                         </button>
                         {% if user.id != current_user.id %}
-                        <button class="btn btn-sm btn-delete" data-id="{{ user.id }}">
+                        <button class="action-btn btn-danger btn-delete" data-id="{{ user.id }}" data-toggle="modal" data-target="#deleteUserModal">
                             <i class="fas fa-trash"></i>
                         </button>
                         {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 
 <!-- Add User Modal -->
 <div class="modal fade" id="addUserModal" tabindex="-1" role="dialog" aria-labelledby="addUserModalLabel" aria-hidden="true">
-    <div class="modal-dialog" role="document">
+    <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="addUserModalLabel">Add New User</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                <h2 class="modal-title" id="addUserModalLabel">Add New User</h2>
+                <button type="button" class="close-btn" data-dismiss="modal" aria-label="Close">
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
@@ -139,16 +91,18 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="action" value="add">
                 <div class="modal-body">
-                    <div class="form-group">
-                        <label for="username">Username</label>
-                        <input type="text" class="form-control" id="username" name="username" required>
+                    <div class="form-row">
+                        <div class="form-group col-md-6">
+                            <label for="username">Username *</label>
+                            <input type="text" class="form-control" id="username" name="username" required>
+                        </div>
+                        <div class="form-group col-md-6">
+                            <label for="email">Email *</label>
+                            <input type="email" class="form-control" id="email" name="email" required>
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label for="email">Email</label>
-                        <input type="email" class="form-control" id="email" name="email" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="role">Role</label>
+                        <label for="role">Role *</label>
                         <select class="form-control" id="role" name="role" required>
                             <option value="admin">Admin</option>
                             <option value="doctor">Doctor</option>
@@ -157,7 +111,7 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="password">Password</label>
+                        <label for="password">Password *</label>
                         <div class="input-group">
                             <input type="password" class="form-control" id="password" name="password" required>
                             <div class="input-group-append">
@@ -170,7 +124,7 @@
                             <div class="progress">
                                 <div class="progress-bar" role="progressbar" style="width: 0%"></div>
                             </div>
-                            <small class="password-strength-text text-muted">Password strength: <span id="passwordStrengthText">None</span></small>
+                            <small class="password-strength-text">Password strength: <span id="passwordStrengthText">None</span></small>
                         </div>
                         <div class="password-requirements mt-2">
                             <small class="form-text">Password requirements:</small>
@@ -184,7 +138,7 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="confirm_password">Confirm Password</label>
+                        <label for="confirm_password">Confirm Password *</label>
                         <div class="input-group">
                             <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
                             <div class="input-group-append">
@@ -193,11 +147,11 @@
                                 </button>
                             </div>
                         </div>
-                        <small class="password-match-text text-muted" id="passwordMatchText"></small>
+                        <small class="password-match-text" id="passwordMatchText"></small>
                     </div>
                     <div class="form-group form-check">
                         <input type="checkbox" class="form-check-input" id="is_active" name="is_active" checked>
-                        <label class="form-check-label" for="is_active">Active</label>
+                        <label class="form-check-label" for="is_active">Active User</label>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -211,11 +165,11 @@
 
 <!-- Edit User Modal -->
 <div class="modal fade" id="editUserModal" tabindex="-1" role="dialog" aria-labelledby="editUserModalLabel" aria-hidden="true">
-    <div class="modal-dialog" role="document">
+    <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="editUserModalLabel">Edit User</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                <h2 class="modal-title" id="editUserModalLabel">Edit User</h2>
+                <button type="button" class="close-btn" data-dismiss="modal" aria-label="Close">
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
@@ -224,16 +178,18 @@
                 <input type="hidden" name="action" value="edit">
                 <input type="hidden" id="edit_user_id" name="user_id">
                 <div class="modal-body">
-                    <div class="form-group">
-                        <label for="edit_username">Username</label>
-                        <input type="text" class="form-control" id="edit_username" name="username" required>
+                    <div class="form-row">
+                        <div class="form-group col-md-6">
+                            <label for="edit_username">Username *</label>
+                            <input type="text" class="form-control" id="edit_username" name="username" required>
+                        </div>
+                        <div class="form-group col-md-6">
+                            <label for="edit_email">Email *</label>
+                            <input type="email" class="form-control" id="edit_email" name="email" required>
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label for="edit_email">Email</label>
-                        <input type="email" class="form-control" id="edit_email" name="email" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="edit_role">Role</label>
+                        <label for="edit_role">Role *</label>
                         <select class="form-control" id="edit_role" name="role" required>
                             <option value="admin">Admin</option>
                             <option value="doctor">Doctor</option>
@@ -255,7 +211,7 @@
                             <div class="progress">
                                 <div class="progress-bar" role="progressbar" style="width: 0%"></div>
                             </div>
-                            <small class="password-strength-text text-muted">Password strength: <span id="editPasswordStrengthText">None</span></small>
+                            <small class="password-strength-text">Password strength: <span id="editPasswordStrengthText">None</span></small>
                         </div>
                         <div class="password-requirements mt-2">
                             <small class="form-text">Password requirements:</small>
@@ -270,7 +226,7 @@
                     </div>
                     <div class="form-group form-check">
                         <input type="checkbox" class="form-check-input" id="edit_is_active" name="is_active">
-                        <label class="form-check-label" for="edit_is_active">Active</label>
+                        <label class="form-check-label" for="edit_is_active">Active User</label>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -287,8 +243,8 @@
     <div class="modal-dialog" role="document">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="deleteUserModalLabel">Confirm Deletion</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                <h2 class="modal-title" id="deleteUserModalLabel">Confirm Deletion</h2>
+                <button type="button" class="close-btn" data-dismiss="modal" aria-label="Close">
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
@@ -308,46 +264,508 @@
     </div>
 </div>
 
-<!-- Simplified JS libraries -->
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/js/all.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
+
+<style>
+:root {
+    --primary: #4361ee;
+    --secondary: #6c757d;
+    --success: #28a745;
+    --danger: #dc3545;
+    --warning: #ffc107;
+    --info: #17a2b8;
+    --light: #f8f9fa;
+    --dark: #343a40;
+    --white: #ffffff;
+    --gray-100: #f8f9fa;
+    --gray-200: #e9ecef;
+    --gray-300: #dee2e6;
+    --gray-400: #ced4da;
+    --gray-500: #adb5bd;
+    --gray-600: #6c757d;
+    --gray-700: #495057;
+    --gray-800: #343a40;
+    --gray-900: #212529;
+    --border-radius: 8px;
+    --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --transition: all 0.3s ease;
+}
+
+.user-management-container {
+    padding: 20px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f5f7f9;
+    min-height: 100vh;
+}
+
+.dashboard-header {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    padding: 20px;
+    margin-bottom: 24px;
+    box-shadow: var(--box-shadow);
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-title h1 {
+    margin: 0;
+    color: var(--gray-800);
+    font-size: 28px;
+    font-weight: 600;
+}
+
+.header-title p {
+    margin: 5px 0 0;
+    color: var(--gray-600);
+    font-size: 16px;
+}
+
+.btn {
+    padding: 10px 20px;
+    border-radius: var(--border-radius);
+    border: none;
+    cursor: pointer;
+    font-weight: 500;
+    transition: var(--transition);
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: var(--white);
+}
+
+.btn-primary:hover {
+    background: #3651d3;
+    transform: translateY(-2px);
+}
+
+.btn-secondary {
+    background: var(--secondary);
+    color: var(--white);
+}
+
+.btn-danger {
+    background: var(--danger);
+    color: var(--white);
+}
+
+.btn-outline {
+    background: transparent;
+    border: 1px solid var(--gray-300);
+    color: var(--gray-600);
+}
+
+.btn-outline:hover {
+    background: var(--gray-100);
+}
+
+.btn-with-icon {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.modern-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--white);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    margin-bottom: 24px;
+    overflow: hidden;
+}
+
+.modern-table th {
+    background-color: #f8f9fa;
+    padding: 16px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--gray-700);
+    border-bottom: 1px solid var(--gray-300);
+}
+
+.modern-table td {
+    padding: 16px;
+    border-bottom: 1px solid var(--gray-200);
+}
+
+.modern-table tr:last-child td {
+    border-bottom: none;
+}
+
+.modern-table tr:hover {
+    background-color: #f8f9fa;
+}
+
+.status-badge {
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-active {
+    background: #e6f4ea;
+    color: #137333;
+}
+
+.status-inactive {
+    background: #fce8e6;
+    color: #c5221f;
+}
+
+.badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.badge-role {
+    background: #e8f0fe;
+    color: #1a73e8;
+}
+
+.action-btns {
+    white-space: nowrap;
+}
+
+.btn-group {
+    display: flex;
+    gap: 8px;
+}
+
+.action-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.action-btn:hover {
+    transform: scale(1.1);
+}
+
+.text-center {
+    text-align: center;
+}
+
+.user-cell {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--gray-200);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--gray-600);
+}
+
+.user-name {
+    font-weight: 500;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    width: 100%;
+    max-width: 800px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--gray-200);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 20px;
+    color: var(--gray-800);
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--gray-500);
+}
+
+.modal-body {
+    padding: 24px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: var(--gray-700);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--border-radius);
+    font-size: 16px;
+    transition: var(--transition);
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
+}
+
+.form-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.form-row .form-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 24px;
+}
+
+.input-group {
+    display: flex;
+}
+
+.input-group .form-control {
+    flex: 1;
+}
+
+.input-group-append {
+    margin-left: -1px;
+}
+
+.toggle-password {
+    cursor: pointer;
+    border-color: var(--gray-300);
+    border-left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 12px;
+    background: var(--gray-100);
+    border-radius: 0 var(--border-radius) var(--border-radius) 0;
+}
+
+.toggle-password:hover {
+    background-color: var(--gray-200);
+}
+
+.password-strength-meter {
+    margin-top: 8px;
+}
+
+.progress {
+    background-color: var(--gray-200);
+    border-radius: 4px;
+    height: 6px;
+    margin: 8px 0;
+}
+
+.progress-bar {
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.password-strength-text {
+    font-size: 12px;
+    color: var(--gray-600);
+}
+
+.password-requirements {
+    margin-top: 12px;
+}
+
+.password-requirements ul {
+    margin: 8px 0 0;
+    padding-left: 20px;
+}
+
+.password-requirements li {
+    margin-bottom: 4px;
+    font-size: 12px;
+}
+
+.password-requirements .fa-circle {
+    font-size: 6px;
+    margin-right: 8px;
+}
+
+.password-match-text {
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.form-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.form-check-input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+}
+
+.form-check-label {
+    margin: 0;
+}
+
+.alert {
+    padding: 12px 16px;
+    border-radius: var(--border-radius);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.alert-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.alert-danger {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.alert-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.close-alert {
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    color: inherit;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .user-management-container {
+        padding: 16px;
+    }
+    
+    .header-content {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+    }
+    
+    .modern-table {
+        display: block;
+        overflow-x: auto;
+    }
+    
+    .modal-content {
+        width: 95%;
+        margin: 20px auto;
+    }
+    
+    .action-btns .btn-group {
+        flex-direction: column;
+    }
+    
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+}
+</style>
 
 <script>
 $(document).ready(function() {
     // Initialize DataTable
-    $('#usersTable').DataTable({
-        responsive: true,
-        dom: '<"top"lf>rt<"bottom"ip>',
-        pageLength: 25
-    });
-        
+
     $('.btn-edit').click(function() {
         const userId = $(this).data('id');
         // Find the table row and extract data
         const row = $(this).closest('tr');
         const user = {
             id: userId,
-            username: row.find('td:eq(0)').text(),
+            username: row.find('.user-name').text(),
             email: row.find('td:eq(1)').text(),
-            role: row.find('td:eq(2)').text(),
-            is_active: row.find('.status-badge').hasClass('active')
+            role: row.find('.badge-role').text().toLowerCase(),
+            is_active: row.find('.status-badge').hasClass('status-active')
         };
         
         // Populate the edit form
         $('#edit_user_id').val(user.id);
         $('#edit_username').val(user.username);
         $('#edit_email').val(user.email);
-        $('#edit_role').val(user.role.toLowerCase());
+        $('#edit_role').val(user.role);
         $('#edit_is_active').prop('checked', user.is_active);
-        $('#editUserModal').modal('show');
     });
         
     // Delete user modal handler
     $('.btn-delete').click(function() {
         const userId = $(this).data('id');
         $('#delete_user_id').val(userId);
-        $('#deleteUserModal').modal('show');
     });
     
     // Password toggle functionality
@@ -460,7 +878,7 @@ $(document).ready(function() {
         $(this).find('.progress-bar').css('width', '0%').removeClass('bg-danger bg-warning bg-success');
         $(this).find('.password-strength-text span').text('None').removeClass('text-danger text-warning text-success');
         $(this).find('.password-requirements i').removeClass('text-success').addClass('text-muted');
-        $(this).find('.password-match-text').text('');
+        $(this).find('.password-match-text').text('').removeClass('text-danger text-success');
     });
     
     // Form validation
@@ -470,13 +888,13 @@ $(document).ready(function() {
         
         if (password && !checkPasswordStrength(password, '')) {
             e.preventDefault();
-            alert('Please meet all password requirements');
+            showAlert('danger', 'Please meet all password requirements');
             return false;
         }
         
         if (password !== confirmPassword) {
             e.preventDefault();
-            alert('Passwords do not match');
+            showAlert('danger', 'Passwords do not match');
             return false;
         }
         
@@ -489,7 +907,7 @@ $(document).ready(function() {
         // Only validate if a new password was provided
         if (password && !checkPasswordStrength(password, 'edit')) {
             e.preventDefault();
-            alert('Please meet all password requirements');
+            showAlert('danger', 'Please meet all password requirements');
             return false;
         }
         
@@ -498,173 +916,30 @@ $(document).ready(function() {
     
     // Initialize password strength when modal is shown
     $('#addUserModal').on('shown.bs.modal', function() {
-        // Set up event listeners for the add user modal
         $('#password').trigger('input');
+    });
+    
+    // Show alert message
+    function showAlert(type, message) {
+        var alertHtml = `
+            <div class="alert alert-${type} animate__animated animate__fadeIn">
+                <div class="alert-content">
+                    <span class="alert-message">${message}</span>
+                    <button class="close-alert">&times;</button>
+                </div>
+            </div>
+        `;
+        
+        $('#alert-container').html(alertHtml);
+        setTimeout(function() {
+            $('.alert').remove();
+        }, 5000);
+    }
+    
+    // Close alert handler
+    $(document).on('click', '.close-alert', function() {
+        $(this).closest('.alert').remove();
     });
 });
 </script>
-
-<style>
-    /* User Management Specific Styles */
-    .user-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 1rem;
-    }
-    
-    .user-table th {
-        background-color: #f8f9fa;
-        color: #495057;
-        font-weight: 600;
-        padding: 12px 15px;
-        text-align: left;
-        border-bottom: 2px solid #dee2e6;
-    }
-    
-    .user-table td {
-        padding: 12px 15px;
-        border-bottom: 1px solid #e9ecef;
-        vertical-align: middle;
-    }
-    
-    .user-table tr:hover {
-        background-color: #f8f9fa;
-    }
-    
-    .status-badge {
-        display: inline-block;
-        padding: 0.25rem 0.5rem;
-        border-radius: 0.25rem;
-        font-size: 0.875rem;
-        font-weight: 500;
-    }
-    
-    .status-badge.active {
-        background-color: #d4edda;
-        color: #155724;
-    }
-    
-    .status-badge.inactive {
-        background-color: #f8d7da;
-        color: #721c24;
-    }
-    
-    .user-actions .btn {
-        padding: 0.25rem 0.5rem;
-        font-size: 0.875rem;
-        margin-right: 0.25rem;
-    }
-    
-    /* Modal Specific Styles */
-    .user-modal .form-group {
-        margin-bottom: 1.25rem;
-    }
-    
-    .user-modal .modal-header {
-        background-color: #f8f9fa;
-        border-bottom: 1px solid #dee2e6;
-    }
-    
-    .user-modal .modal-title {
-        color: #495057;
-        font-weight: 600;
-    }
-    
-    /* Navigation Tabs */
-    .management-tabs {
-        border-bottom: 1px solid #dee2e6;
-        margin-bottom: 1.5rem;
-    }
-    
-    .management-tabs .nav-link {
-        color: #495057;
-        font-weight: 500;
-        padding: 0.75rem 1.5rem;
-        border: none;
-        border-bottom: 2px solid transparent;
-    }
-    
-    .management-tabs .nav-link.active {
-        color: #007bff;
-        border-bottom: 2px solid #007bff;
-        background-color: transparent;
-    }
-    
-    .management-tabs .nav-link:hover:not(.active) {
-        color: #007bff;
-        background-color: rgba(0, 123, 255, 0.05);
-    }
-    
-    /* Page Header */
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 1.5rem;
-    }
-    
-    .page-header h2 {
-        margin: 0;
-        color: #343a40;
-    }
-    
-    .page-actions .btn {
-        margin-left: 0.5rem;
-    }
-    
-    /* Responsive Adjustments */
-    @media (max-width: 768px) {
-        .user-table th, 
-        .user-table td {
-            padding: 0.5rem;
-            font-size: 0.875rem;
-        }
-        
-        .management-tabs .nav-link {
-            padding: 0.5rem 1rem;
-            font-size: 0.875rem;
-        }
-        
-        .page-header {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-        
-        .page-actions {
-            margin-top: 1rem;
-            width: 100%;
-        }
-        
-        .page-actions .btn {
-            width: 100%;
-            margin: 0.25rem 0;
-        }
-    }
-    
-    /* DataTables Overrides */
-    .dataTables_wrapper .dataTables_filter input {
-        border: 1px solid #ced4da;
-        border-radius: 0.25rem;
-        padding: 0.375rem 0.75rem;
-    }
-    
-    .dataTables_wrapper .dataTables_length select {
-        border: 1px solid #ced4da;
-        border-radius: 0.25rem;
-        padding: 0.375rem 0.75rem;
-    }
-    
-    .dataTables_wrapper .dataTables_paginate .paginate_button {
-        padding: 0.25rem 0.5rem;
-        margin-left: 0.25rem;
-        border: 1px solid transparent;
-        border-radius: 0.25rem;
-    }
-    
-    .dataTables_wrapper .dataTables_paginate .paginate_button.current {
-        background: #007bff;
-        color: white !important;
-        border: 1px solid #007bff;
-    }
-</style>
 {% endblock %}

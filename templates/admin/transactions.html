@@ -201,13 +201,6 @@ $(document).ready(function () {
     return 'Ksh ' + new Intl.NumberFormat('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
   }
 
-  // Initialize DataTable
-  const table = $('#transactionsTable').DataTable({
-    responsive: true,
-    dom: '<"top"lf>rt<"bottom"ip>',
-    pageLength: 25,
-    order: [[5, 'desc']]
-  });
 
   // Transaction type filter (by displayed text in Type column)
   $('#type_filter').on('change', function () {

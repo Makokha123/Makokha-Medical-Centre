@@ -7922,7 +7922,7 @@ def receptionist_dashboard():
     ).scalar() or 0
     
     # Calculate outstanding bills (from Debtor model)
-    outstanding_bills = db.session.query(func.sum(Debtor.balance)).scalar() or 0
+    outstanding_bills = db.session.query(func.sum(Debtor.amount_owed)).scalar() or 0
     
     # Get today's appointments (placeholder - you'll need to implement this)
     today_appointments = Appointment.query.filter(

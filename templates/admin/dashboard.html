@@ -519,14 +519,6 @@ document.querySelectorAll('.sidebar-menu a').forEach(item => {
     });
 });
 
-// Initialize DataTables
-$(document).ready(function() {
-    $('.activity-table').DataTable({
-        "order": [[0, "desc"]],
-        "pageLength": 5
-    });
-});
-
 function showTimeframe(timeframe) {
     // Hide all timeframe contents
     document.querySelectorAll('.timeframe-content').forEach(content => {

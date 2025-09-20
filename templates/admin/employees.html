@@ -217,15 +217,6 @@
 
 <script>
 $(document).ready(function() {
-    // Initialize DataTable
-    $('#employeesTable').DataTable({
-        responsive: true,
-        dom: '<"top"lf>rt<"bottom"ip>',
-        pageLength: 25,
-        "columnDefs": [
-            { "type": "currency", "targets": 2 } // Enable currency sorting for salary column
-        ]
-    });
     
     // Edit employee modal handler with row data extraction
     $('.btn-edit').click(function() {

@@ -268,12 +268,6 @@
 
 <script>
 $(document).ready(function() {
-    // Initialize DataTable (sort by Date/Time desc)
-    $('#backupTable').DataTable({
-        order: [[1, 'desc']],
-        responsive: true
-    });
-
     function renderVerification(latest) {
         const ok = latest.status === 'completed';
         const $card = $('<div>', { class: 'card mb-3' });
