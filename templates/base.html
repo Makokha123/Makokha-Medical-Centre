@@ -278,33 +278,32 @@
 
 /* Universal Table Wrapper */
 .table-container {
-    overflow-x: auto;
-    overflow-y: auto;
-    max-height: 250px; /* enforce scrolling after ~5 rows */
-    border: 2px solid var(--table-blue); /* Blue outer border */
+    overflow-x: auto;  /* horizontal scroll if too wide */
+    overflow-y: auto;  /* vertical scroll if too tall */
+    max-height: 400px; /* fits ~8 rows before scroll */
+    border: 2px solid var(--table-blue);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     background: white;
     margin-bottom: 1.5rem;
+    width: 100%; /* responsive */
 }
 
-/* Apply styling to ALL tables inside .table-container */
+/* Responsive Table */
 .table-container table {
-    width: max-content; /* auto-adjust by content */
-    min-width: 100%;
-    margin-bottom: 0;
+    width: 100%; /* fills container */
     border-collapse: separate;
     border-spacing: 0;
-    table-layout: auto;
+    table-layout: auto; /* auto fit columns */
 }
 
-/* Headers */
+/* Table Headers */
 .table-container th {
     background-color: var(--table-blue) !important;
     color: var(--table-white) !important;
     position: sticky;
     top: 0;
-    padding: 0.5rem 0.75rem; /* reduced height */
+    padding: 0.6rem 0.8rem; 
     font-weight: 600;
     white-space: nowrap;
     border: none;
@@ -312,15 +311,15 @@
     z-index: 2;
 }
 
-/* Cells */
+/* Table Cells */
 .table-container td {
-    padding: 0.5rem 0.75rem; /* compact rows */
+    padding: 0.6rem 0.8rem;
     vertical-align: middle;
     border: none;
-    white-space: nowrap; /* single line */
+    white-space: nowrap; 
     overflow: hidden;
-    text-overflow: ellipsis; /* truncate with ... */
-    max-width: 250px; /* cap width */
+    text-overflow: ellipsis;
+    max-width: 250px; 
 }
 
 /* Hover Effect */
@@ -330,6 +329,18 @@
 .table-container tbody tr:hover {
     background-color: rgba(13, 110, 253, 0.05);
 }
+
+/* Make table scroll well on small devices */
+@media screen and (max-width: 768px) {
+    .table-container {
+        max-height: 300px; /* smaller on phones */
+    }
+    .table-container th, 
+    .table-container td {
+        max-width: 180px;
+    }
+}
+
 
 
         /* Form Styling */
@@ -852,7 +863,6 @@
 
     <script>
     document.addEventListener("DOMContentLoaded", () => {
-    // Function to wrap tables + add search
     function wrapTable(table) {
         if (!table.parentElement.classList.contains("table-container")) {
         const wrapper = document.createElement("div");
@@ -871,7 +881,7 @@
             border-radius: 6px;
         `;
 
-        // Search filter logic
+        // Search filter
         searchBox.addEventListener("input", () => {
             const filter = searchBox.value.toLowerCase();
             const rows = table.querySelectorAll("tbody tr");
@@ -881,17 +891,17 @@
             });
         });
 
-        // Insert wrapper + search + table
+        // Insert wrapper
         table.parentNode.insertBefore(wrapper, table);
         wrapper.appendChild(searchBox);
         wrapper.appendChild(table);
         }
     }
 
-    // Wrap existing tables on load
+    // Wrap existing tables
     document.querySelectorAll("table").forEach(wrapTable);
 
-    // Watch for new tables dynamically added
+    // Watch for new tables dynamically
     const observer = new MutationObserver(mutations => {
         mutations.forEach(mutation => {
         mutation.addedNodes.forEach(node => {
@@ -903,10 +913,10 @@
         });
         });
     });
-
     observer.observe(document.body, { childList: true, subtree: true });
     });
     </script>
+
 
 
     <!-- Table Responsiveness Script -->
