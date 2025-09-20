@@ -861,61 +861,134 @@
     });
     </script>
 
-    <script>
-    document.addEventListener("DOMContentLoaded", () => {
-    function wrapTable(table) {
-        if (!table.parentElement.classList.contains("table-container")) {
-        const wrapper = document.createElement("div");
-        wrapper.className = "table-container";
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  function wrapTable(table) {
+    // Only wrap if the table is NOT already inside .table-container
+    if (!table.closest(".table-container")) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "table-container";
 
-        // Create search input
-        const searchBox = document.createElement("input");
-        searchBox.type = "text";
-        searchBox.placeholder = "Search...";
-        searchBox.className = "table-search";
-        searchBox.style.cssText = `
-            width: 100%;
-            padding: 6px 10px;
-            margin-bottom: 8px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-        `;
+      // Insert wrapper before table and move table inside
+      table.parentNode.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+    }
+  }
 
-        // Search filter
-        searchBox.addEventListener("input", () => {
-            const filter = searchBox.value.toLowerCase();
-            const rows = table.querySelectorAll("tbody tr");
-            rows.forEach(row => {
-            const text = row.innerText.toLowerCase();
-            row.style.display = text.includes(filter) ? "" : "none";
-            });
-        });
+  // Wrap only unwrapped tables on load
+  document.querySelectorAll("table").forEach(wrapTable);
 
-        // Insert wrapper
-        table.parentNode.insertBefore(wrapper, table);
-        wrapper.appendChild(searchBox);
-        wrapper.appendChild(table);
+  // Watch for new tables dynamically
+  const observer = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
+      mutation.addedNodes.forEach(node => {
+        if (node.nodeName === "TABLE") {
+          wrapTable(node);
+        } else if (node.querySelectorAll) {
+          node.querySelectorAll("table").forEach(wrapTable);
         }
+      });
+    });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+});
+</script>
+
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  function addSearchForTable(table) {
+    const container = table.closest(".table-container");
+    if (!container) return;
+
+    // If label+search already exist, skip
+    if (container.previousElementSibling && container.previousElementSibling.classList.contains("table-search-wrapper")) {
+      return;
     }
 
-    // Wrap existing tables
-    document.querySelectorAll("table").forEach(wrapTable);
+    // Create wrapper for label + input
+    const wrapper = document.createElement("div");
+    wrapper.className = "table-search-wrapper";
+    wrapper.style.cssText = `
+      margin-bottom: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      background: white;
+      padding: 4px;
+      border-radius: 6px;
+    `;
 
-    // Watch for new tables dynamically
-    const observer = new MutationObserver(mutations => {
-        mutations.forEach(mutation => {
-        mutation.addedNodes.forEach(node => {
-            if (node.nodeName === "TABLE") {
-            wrapTable(node);
-            } else if (node.querySelectorAll) {
-            node.querySelectorAll("table").forEach(wrapTable);
-            }
-        });
-        });
+    // Create label
+    const label = document.createElement("label");
+    label.textContent = "🔍 Search in this table";
+    label.style.cssText = `
+      color: var(--table-blue, #007bff);
+      font-weight: 600;
+      margin-bottom: 4px;
+    `;
+
+    // Create search input
+    const searchBox = document.createElement("input");
+    searchBox.type = "text";
+    searchBox.placeholder = "Type to filter...";
+    searchBox.className = "table-search";
+    searchBox.style.cssText = `
+      width: 100%;
+      max-width: 300px;
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    `;
+
+    // Search filter logic
+    searchBox.addEventListener("input", () => {
+      const filter = searchBox.value.toLowerCase();
+      const rows = table.querySelectorAll("tbody tr");
+      rows.forEach(row => {
+        const text = row.innerText.toLowerCase();
+        row.style.display = text.includes(filter) ? "" : "none";
+      });
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Append label + input into wrapper
+    wrapper.appendChild(label);
+    wrapper.appendChild(searchBox);
+
+    // Insert before table container
+    container.parentNode.insertBefore(wrapper, container);
+  }
+
+  function wrapTable(table) {
+    if (!table.closest(".table-container")) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "table-container";
+      table.parentNode.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+      addSearchForTable(table);
+    } else {
+      addSearchForTable(table);
+    }
+  }
+
+  // Wrap & add search to existing tables
+  document.querySelectorAll("table").forEach(wrapTable);
+
+  // Watch for dynamically added tables
+  const observer = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
+      mutation.addedNodes.forEach(node => {
+        if (node.nodeName === "TABLE") {
+          wrapTable(node);
+        } else if (node.querySelectorAll) {
+          node.querySelectorAll("table").forEach(wrapTable);
+        }
+      });
     });
-    </script>
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+});
+</script>
 
 
 

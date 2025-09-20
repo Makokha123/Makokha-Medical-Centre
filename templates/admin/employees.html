@@ -12,6 +12,20 @@
         </div>
     </div>
     
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    
     <div class="table-responsive">
         <table class="data-table" id="employeesTable">
             <thead>
@@ -30,7 +44,7 @@
                 <tr>
                     <td>{{ employee.name }}</td>
                     <td>{{ employee.position }}</td>
-                    <td>{{ "${:,.2f}".format(employee.salary) if employee.salary else 'N/A' }}</td>
+                    <td>{{ "Ksh {:,.2f}".format(employee.salary) if employee.salary else 'N/A' }}</td>
                     <td>{{ employee.hire_date.strftime('%Y-%m-%d') if employee.hire_date else 'N/A' }}</td>
                     <td>{{ employee.contact if employee.contact else 'N/A' }}</td>
                     <td>
@@ -68,18 +82,21 @@
             </div>
             <form id="addEmployeeForm" method="POST" action="{{ url_for('manage_employees') }}">
                 <input type="hidden" name="action" value="add">
+                {% if csrf_token %}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                {% endif %}
                 <div class="modal-body">
                     <div class="form-group">
-                        <label for="name">Full Name</label>
+                        <label for="name">Full Name *</label>
                         <input type="text" class="form-control" id="name" name="name" required>
                     </div>
                     <div class="form-group">
-                        <label for="position">Position</label>
+                        <label for="position">Position *</label>
                         <input type="text" class="form-control" id="position" name="position" required>
                     </div>
                     <div class="form-group">
-                        <label for="salary">Salary</label>
-                        <input type="number" step="0.01" class="form-control" id="salary" name="salary">
+                        <label for="salary">Salary (Ksh)</label>
+                        <input type="number" step="0.01" class="form-control" id="salary" name="salary" placeholder="Enter amount in Ksh">
                     </div>
                     <div class="form-group">
                         <label for="hire_date">Hire Date</label>
@@ -87,7 +104,7 @@
                     </div>
                     <div class="form-group">
                         <label for="contact">Contact Information</label>
-                        <input type="text" class="form-control" id="contact" name="contact">
+                        <input type="text" class="form-control" id="contact" name="contact" placeholder="Phone or email">
                     </div>
                     <div class="form-group">
                         <label for="user_id">Associated User (optional)</label>
@@ -121,18 +138,21 @@
             <form id="editEmployeeForm" method="POST" action="{{ url_for('manage_employees') }}">
                 <input type="hidden" name="action" value="edit">
                 <input type="hidden" id="edit_employee_id" name="employee_id">
+                {% if csrf_token %}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                {% endif %}
                 <div class="modal-body">
                     <div class="form-group">
-                        <label for="edit_name">Full Name</label>
+                        <label for="edit_name">Full Name *</label>
                         <input type="text" class="form-control" id="edit_name" name="name" required>
                     </div>
                     <div class="form-group">
-                        <label for="edit_position">Position</label>
+                        <label for="edit_position">Position *</label>
                         <input type="text" class="form-control" id="edit_position" name="position" required>
                     </div>
                     <div class="form-group">
-                        <label for="edit_salary">Salary</label>
-                        <input type="number" step="0.01" class="form-control" id="edit_salary" name="salary">
+                        <label for="edit_salary">Salary (Ksh)</label>
+                        <input type="number" step="0.01" class="form-control" id="edit_salary" name="salary" placeholder="Enter amount in Ksh">
                     </div>
                     <div class="form-group">
                         <label for="edit_hire_date">Hire Date</label>
@@ -140,7 +160,7 @@
                     </div>
                     <div class="form-group">
                         <label for="edit_contact">Contact Information</label>
-                        <input type="text" class="form-control" id="edit_contact" name="contact">
+                        <input type="text" class="form-control" id="edit_contact" name="contact" placeholder="Phone or email">
                     </div>
                     <div class="form-group">
                         <label for="edit_user_id">Associated User (optional)</label>
@@ -174,6 +194,9 @@
             <form method="POST" action="{{ url_for('manage_employees') }}">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" id="delete_employee_id" name="employee_id">
+                {% if csrf_token %}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                {% endif %}
                 <div class="modal-body">
                     <p>Are you sure you want to delete this employee? This action cannot be undone.</p>
                 </div>
@@ -185,6 +208,7 @@
         </div>
     </div>
 </div>
+
 <!-- DataTables and other JS libraries -->
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -197,20 +221,46 @@ $(document).ready(function() {
     $('#employeesTable').DataTable({
         responsive: true,
         dom: '<"top"lf>rt<"bottom"ip>',
-        pageLength: 25
+        pageLength: 25,
+        "columnDefs": [
+            { "type": "currency", "targets": 2 } // Enable currency sorting for salary column
+        ]
     });
     
-    // Edit employee modal handler
+    // Edit employee modal handler with row data extraction
     $('.btn-edit').click(function() {
         const employeeId = $(this).data('id');
-        $.get(`/admin/employees/${employeeId}`, function(employee) {
-            $('#edit_employee_id').val(employee.id);
-            $('#edit_name').val(employee.name);
-            $('#edit_position').val(employee.position);
-            $('#edit_salary').val(employee.salary);
-            $('#edit_hire_date').val(employee.hire_date ? employee.hire_date.split('T')[0] : '');
-            $('#edit_contact').val(employee.contact);
-            $('#edit_user_id').val(employee.user_id);
+        // Find the table row and extract data
+        const row = $(this).closest('tr');
+        const employee = {
+            id: employeeId,
+            name: row.find('td:eq(0)').text(),
+            position: row.find('td:eq(1)').text(),
+            salary: row.find('td:eq(2)').text().replace('Ksh ', '').replace(/,/g, '') || '',
+            hire_date: row.find('td:eq(3)').text(),
+            contact: row.find('td:eq(4)').text(),
+            user_id: '' // Will be set via AJAX call
+        };
+        
+        // Populate the edit form
+        $('#edit_employee_id').val(employee.id);
+        $('#edit_name').val(employee.name);
+        $('#edit_position').val(employee.position);
+        $('#edit_salary').val(employee.salary);
+        $('#edit_hire_date').val(employee.hire_date !== 'N/A' ? employee.hire_date : '');
+        $('#edit_contact').val(employee.contact !== 'N/A' ? employee.contact : '');
+        
+        // Get additional employee data via AJAX
+        $.get(`/admin/employees/${employeeId}`, function(employeeData) {
+            if (employeeData.error) {
+                alert('Error: ' + employeeData.error);
+                return;
+            }
+            $('#edit_user_id').val(employeeData.user_id || '');
+            $('#editEmployeeModal').modal('show');
+        }).fail(function(xhr, status, error) {
+            console.error('AJAX Error:', error);
+            alert('Error loading employee details. Please try again.');
             $('#editEmployeeModal').modal('show');
         });
     });
@@ -220,6 +270,37 @@ $(document).ready(function() {
         const employeeId = $(this).data('id');
         $('#delete_employee_id').val(employeeId);
         $('#deleteEmployeeModal').modal('show');
+    });
+    
+    // Form validation
+    $('#addEmployeeForm, #editEmployeeForm').on('submit', function() {
+        // Clear any previous error messages
+        $('.is-invalid').removeClass('is-invalid');
+        $('.invalid-feedback').remove();
+        
+        let isValid = true;
+        
+        // Validate required fields
+        $(this).find('[required]').each(function() {
+            if (!$(this).val().trim()) {
+                $(this).addClass('is-invalid');
+                $(this).after('<div class="invalid-feedback">This field is required</div>');
+                isValid = false;
+            }
+        });
+        
+        // Validate salary format if provided
+        const salaryInput = $(this).find('input[name="salary"]');
+        if (salaryInput.val().trim()) {
+            const salaryValue = parseFloat(salaryInput.val());
+            if (isNaN(salaryValue) || salaryValue < 0) {
+                salaryInput.addClass('is-invalid');
+                salaryInput.after('<div class="invalid-feedback">Please enter a valid salary amount</div>');
+                isValid = false;
+            }
+        }
+        
+        return isValid;
     });
 });
 </script>

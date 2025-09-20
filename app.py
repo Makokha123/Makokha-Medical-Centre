@@ -2356,13 +2356,25 @@ def manage_employees():
         
         if action == 'add':
             try:
+                # Handle empty salary
+                salary = request.form.get('salary')
+                salary_value = float(salary) if salary and salary.strip() else None
+                
+                # Handle hire date
+                hire_date_str = request.form.get('hire_date')
+                hire_date = datetime.strptime(hire_date_str, '%Y-%m-%d').date() if hire_date_str and hire_date_str.strip() else None
+                
+                # Handle user_id
+                user_id_str = request.form.get('user_id')
+                user_id = int(user_id_str) if user_id_str and user_id_str.strip() else None
+                
                 employee = Employee(
                     name=request.form.get('name'),
                     position=request.form.get('position'),
-                    salary=float(request.form.get('salary')) if request.form.get('salary') else None,
-                    hire_date=datetime.strptime(request.form.get('hire_date'), '%Y-%m-%d').date() if request.form.get('hire_date') else None,
+                    salary=salary_value,
+                    hire_date=hire_date,
                     contact=request.form.get('contact'),
-                    user_id=request.form.get('user_id') if request.form.get('user_id') else None
+                    user_id=user_id
                 )
                 db.session.add(employee)
                 db.session.commit()
@@ -2377,6 +2389,9 @@ def manage_employees():
                 })
                 
                 flash('Employee added successfully!', 'success')
+            except ValueError as e:
+                db.session.rollback()
+                flash(f'Invalid data format: {str(e)}', 'danger')
             except Exception as e:
                 db.session.rollback()
                 flash(f'Error adding employee: {str(e)}', 'danger')
@@ -2395,12 +2410,24 @@ def manage_employees():
                         'user_id': employee.user_id
                     }
                     
+                    # Handle empty salary
+                    salary = request.form.get('salary')
+                    salary_value = float(salary) if salary and salary.strip() else None
+                    
+                    # Handle hire date
+                    hire_date_str = request.form.get('hire_date')
+                    hire_date = datetime.strptime(hire_date_str, '%Y-%m-%d').date() if hire_date_str and hire_date_str.strip() else None
+                    
+                    # Handle user_id
+                    user_id_str = request.form.get('user_id')
+                    user_id = int(user_id_str) if user_id_str and user_id_str.strip() else None
+                    
                     employee.name = request.form.get('name')
                     employee.position = request.form.get('position')
-                    employee.salary = float(request.form.get('salary')) if request.form.get('salary') else None
-                    employee.hire_date = datetime.strptime(request.form.get('hire_date'), '%Y-%m-%d').date() if request.form.get('hire_date') else None
+                    employee.salary = salary_value
+                    employee.hire_date = hire_date
                     employee.contact = request.form.get('contact')
-                    employee.user_id = request.form.get('user_id') if request.form.get('user_id') else None
+                    employee.user_id = user_id
                     
                     db.session.commit()
                     
@@ -2414,6 +2441,9 @@ def manage_employees():
                     })
                     
                     flash('Employee updated successfully!', 'success')
+                except ValueError as e:
+                    db.session.rollback()
+                    flash(f'Invalid data format: {str(e)}', 'danger')
                 except Exception as e:
                     db.session.rollback()
                     flash(f'Error updating employee: {str(e)}', 'danger')
@@ -2450,7 +2480,7 @@ def manage_employees():
     return render_template('admin/employees.html', 
                         employees=employees, 
                         users=users,
-                        User=User)  # Pass the User model to template
+                        User=User)
 
 @app.route('/admin/employees/<int:employee_id>')
 @login_required
@@ -2458,7 +2488,10 @@ def get_employee(employee_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    employee = db.session.get(Employee, request.form.get('employee_id'))
+    employee = db.session.get(Employee, employee_id)  # Fixed: use employee_id parameter
+    if not employee:
+        return jsonify({'error': 'Employee not found'}), 404
+        
     return jsonify({
         'id': employee.id,
         'name': employee.name,
