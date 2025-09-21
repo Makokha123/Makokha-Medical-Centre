@@ -55,7 +55,9 @@
                     </div>
                     <div class="card-body">
                         <p>{{ patient.chief_complaint or 'No chief complaint recorded' }}</p>
-                        <form method="POST" action="/doctor/patient/{{ patient.id }}/add_note">
+                        <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="section" value="chief_complaint">
                             <textarea name="chief_complaint" class="form-control mb-2" placeholder="Add or update chief complaint"></textarea>
                             <button type="submit" class="btn btn-primary btn-sm">Save</button>
                         </form>
@@ -69,7 +71,9 @@
                     </div>
                     <div class="card-body">
                         <p>{{ patient.history_present_illness or 'No HPI recorded' }}</p>
-                        <form method="POST" action="/doctor/patient/{{ patient.id }}/add_note">
+                        <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="section" value="hpi">
                             <textarea name="history_present_illness" class="form-control mb-2" placeholder="Add or update HPI"></textarea>
                             <button type="submit" class="btn btn-primary btn-sm">Save</button>
                         </form>
@@ -746,6 +750,7 @@
 </div>
 
 <!-- JavaScript for actions -->
+<!-- JavaScript for actions -->
 <script>
 function completeTreatment(patientId) {
     if (confirm('Are you sure you want to mark this treatment as complete?')) {
@@ -799,10 +804,137 @@ function readmitPatient(patientId) {
 
 // Add prescription item
 document.getElementById('add-prescription').addEventListener('click', function() {
-    const newItem = document.querySelector('.prescription-item').cloneNode(true);
+    const firstItem = document.querySelector('.prescription-item');
+    const newItem = firstItem.cloneNode(true);
+    
+    // Clear all input values
     newItem.querySelectorAll('input').forEach(input => input.value = '');
     newItem.querySelector('select').value = '';
+    
     document.getElementById('prescription-items').appendChild(newItem);
+    
+    // Reinitialize Select2 for the new drug select
+    $(newItem).find('.drug-select').select2({
+        width: '100%'
+    });
+});
+
+// Drug stock validation
+document.addEventListener('change', function(e) {
+    if (e.target && e.target.classList.contains('drug-select')) {
+        const selectedOption = e.target.options[e.target.selectedIndex];
+        const stock = selectedOption.getAttribute('data-stock');
+        const prescriptionItem = e.target.closest('.prescription-item');
+        const quantityInput = prescriptionItem.querySelector('input[name="quantity"]');
+        
+        if (stock !== null) {
+            quantityInput.setAttribute('max', stock);
+            if (parseInt(quantityInput.value) > parseInt(stock)) {
+                alert('Quantity exceeds available stock');
+                quantityInput.value = '';
+            }
+        }
+    }
+});
+
+// Handle Complete Prescription button
+document.getElementById('complete-prescription').addEventListener('click', function() {
+    // Get patient ID from the basic information section
+    const patientId = "{{ patient.id }}";
+    
+    if (!patientId) {
+        alert('Patient ID not found. Please refresh the page and try again.');
+        return;
+    }
+
+    // Gather prescription data
+    const prescriptions = [];
+    const prescriptionItems = document.querySelectorAll('.prescription-item');
+    
+    prescriptionItems.forEach(function(item) {
+        const drugId = item.querySelector('select[name="drug_id"]').value;
+        const quantity = item.querySelector('input[name="quantity"]').value;
+        const dosage = item.querySelector('input[name="dosage"]').value;
+        const frequency = item.querySelector('input[name="frequency"]').value;
+        const duration = item.querySelector('input[name="duration"]').value;
+        const notes = item.querySelector('input[name="prescription_notes"]').value;
+
+        if (drugId && quantity && dosage && frequency && duration) {
+            prescriptions.push({
+                drug_id: drugId,
+                quantity: quantity,
+                dosage: dosage,
+                frequency: frequency,
+                duration: duration,
+                notes: notes
+            });
+        }
+    });
+
+    if (prescriptions.length === 0) {
+        alert('No valid prescriptions to save. Please add at least one medication with all required fields.');
+        return;
+    }
+
+    // Create feedback element if it doesn't exist
+    let feedbackElement = document.getElementById('prescription-feedback');
+    if (!feedbackElement) {
+        feedbackElement = document.createElement('div');
+        feedbackElement.id = 'prescription-feedback';
+        document.querySelector('#managementModal .modal-body').appendChild(feedbackElement);
+    }
+    
+    feedbackElement.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"></div> Saving prescription...';
+    feedbackElement.style.display = 'block';
+    
+    const completeButton = document.getElementById('complete-prescription');
+    completeButton.disabled = true;
+
+    // Get CSRF token
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+    
+    fetch('/doctor/patient/complete_prescription', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({
+            patient_id: patientId,
+            prescriptions: prescriptions
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            feedbackElement.innerHTML = '<div class="alert alert-success">Prescription saved successfully! The pharmacist can now dispense the medications.</div>';
+            
+            // Optionally clear the prescription form (keep only the first item)
+            const items = document.querySelectorAll('.prescription-item');
+            for (let i = 1; i < items.length; i++) {
+                items[i].remove();
+            }
+            
+            // Clear inputs in the first item
+            const firstItem = document.querySelector('.prescription-item');
+            firstItem.querySelectorAll('input').forEach(input => input.value = '');
+            firstItem.querySelector('select').value = '';
+            
+            // Close the modal after a short delay
+            setTimeout(() => {
+                $('#managementModal').modal('hide');
+                location.reload(); // Reload to show the new prescription
+            }, 2000);
+        } else {
+            feedbackElement.innerHTML = '<div class="alert alert-danger">Error: ' + (data.error || 'Failed to save prescription') + '</div>';
+            completeButton.disabled = false;
+        }
+    })
+    .catch(error => {
+        feedbackElement.innerHTML = '<div class="alert alert-danger">Error: Failed to connect to server</div>';
+        completeButton.disabled = false;
+        console.error('Error:', error);
+    });
 });
 
 // Initialize Select2 for services
@@ -818,6 +950,20 @@ $(document).ready(function() {
         const stock = selectedOption.data('stock');
         if (stock !== undefined) {
             alert(`Current stock: ${stock}`);
+        }
+    });
+    
+    // Reset prescription form when modal is closed
+    $('#managementModal').on('hidden.bs.modal', function () {
+        const feedbackElement = document.getElementById('prescription-feedback');
+        if (feedbackElement) {
+            feedbackElement.innerHTML = '';
+            feedbackElement.style.display = 'none';
+        }
+        
+        const completeButton = document.getElementById('complete-prescription');
+        if (completeButton) {
+            completeButton.disabled = false;
         }
     });
 });

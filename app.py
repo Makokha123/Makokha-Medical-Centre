@@ -7548,7 +7548,34 @@ def doctor_patient_details(patient_id):
     if request.method == 'POST':
         section = request.form.get('section')
         
-        if section == 'review_systems':
+        # Add these new sections for chief complaint and HPI
+        if section == 'chief_complaint':
+            try:
+                chief_complaint = request.form.get('chief_complaint')
+                if chief_complaint:
+                    patient.chief_complaint = chief_complaint
+                    db.session.commit()
+                    flash('Chief complaint updated successfully!', 'success')
+                else:
+                    flash('Chief complaint cannot be empty', 'warning')
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Error updating chief complaint: {str(e)}', 'danger')
+        
+        elif section == 'hpi':
+            try:
+                hpi = request.form.get('history_present_illness')
+                if hpi:
+                    patient.history_present_illness = hpi
+                    db.session.commit()
+                    flash('History of present illness updated successfully!', 'success')
+                else:
+                    flash('History of present illness cannot be empty', 'warning')
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Error updating history of present illness: {str(e)}', 'danger')
+        
+        elif section == 'review_systems':
             try:
                 review_systems = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
                 if not review_systems:
@@ -7627,7 +7654,6 @@ def doctor_patient_details(patient_id):
                 db.session.rollback()
                 flash(f'Error updating diagnosis: {str(e)}', 'danger')
         
-
         elif section == 'management':
             try:
                 # Update or create management plan
@@ -7699,8 +7725,6 @@ def doctor_patient_details(patient_id):
                 db.session.rollback()
                 flash(f'Error updating management plan: {str(e)}', 'danger')
         
-            return redirect(url_for('doctor_patient_details', patient_id=patient_id))
-    
         elif section == 'lab_request':
             try:
                 test_id = request.form.get('test_id')
@@ -7758,7 +7782,7 @@ def doctor_patient_details(patient_id):
         elif request.form.get('action') == 'complete_treatment':
             try:
                 patient.status = 'completed'
-                patient.updated_at = datetime.now(timezone.utc)  # Fixed deprecated datetime.utcnow()
+                patient.updated_at = datetime.now(timezone.utc)
                 db.session.commit()
                 flash('Patient treatment marked as completed!', 'success')
                 return redirect(url_for('doctor_patients'))
@@ -7769,7 +7793,7 @@ def doctor_patient_details(patient_id):
         elif request.form.get('action') == 'readmit_patient':
             try:
                 patient.status = 'active'
-                patient.updated_at = datetime.now(timezone.utc)  # Fixed deprecated datetime.utcnow()
+                patient.updated_at = datetime.now(timezone.utc)
                 db.session.commit()
                 flash('Patient readmitted successfully!', 'success')
             except Exception as e:
