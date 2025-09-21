@@ -54,12 +54,18 @@
                         <h3><i class="fas fa-comment-medical"></i> Chief Complaint</h3>
                     </div>
                     <div class="card-body">
-                        <p>{{ patient.chief_complaint or 'No chief complaint recorded' }}</p>
+                        <div class="chief-complaint-history">
+                            {% if patient.chief_complaint %}
+                                {{ patient.chief_complaint|safe }}
+                            {% else %}
+                                <p>No chief complaint recorded</p>
+                            {% endif %}
+                        </div>
                         <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="section" value="chief_complaint">
-                            <textarea name="chief_complaint" class="form-control mb-2" placeholder="Add or update chief complaint"></textarea>
-                            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                            <textarea name="chief_complaint" class="form-control mb-2" placeholder="Add today's chief complaint" required></textarea>
+                            <button type="submit" class="btn btn-primary btn-sm">Save Today's Complaint</button>
                         </form>
                     </div>
                 </div>
@@ -70,12 +76,18 @@
                         <h3><i class="fas fa-history"></i> History of Present Illness</h3>
                     </div>
                     <div class="card-body">
-                        <p>{{ patient.history_present_illness or 'No HPI recorded' }}</p>
+                        <div class="hpi-history">
+                            {% if patient.history_present_illness %}
+                                {{ patient.history_present_illness|safe }}
+                            {% else %}
+                                <p>No HPI recorded</p>
+                            {% endif %}
+                        </div>
                         <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="section" value="hpi">
-                            <textarea name="history_present_illness" class="form-control mb-2" placeholder="Add or update HPI"></textarea>
-                            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                            <textarea name="history_present_illness" class="form-control mb-2" placeholder="Add today's HPI" required></textarea>
+                            <button type="submit" class="btn btn-primary btn-sm">Save Today's HPI</button>
                         </form>
                     </div>
                 </div>
@@ -96,29 +108,41 @@
                 <div class="row">
                     <div class="col-md-4">
                         <h5>CNS</h5>
-                        <p>{{ review_systems.cns if review_systems and review_systems.cns else 'Normal' }}</p>
+                        <div class="ros-history">
+                            {{ review_systems.cns if review_systems and review_systems.cns else 'Normal' }}
+                        </div>
                     </div>
                     <div class="col-md-4">
                         <h5>CVS</h5>
-                        <p>{{ review_systems.cvs if review_systems and review_systems.cvs else 'Normal' }}</p>
+                        <div class="ros-history">
+                            {{ review_systems.cvs if review_systems and review_systems.cvs else 'Normal' }}
+                        </div>
                     </div>
                     <div class="col-md-4">
                         <h5>Respiratory</h5>
-                        <p>{{ review_systems.rs if review_systems and review_systems.rs else 'Normal' }}</p>
+                        <div class="ros-history">
+                            {{ review_systems.rs if review_systems and review_systems.rs else 'Normal' }}
+                        </div>
                     </div>
                 </div>
                 <div class="row mt-3">
                     <div class="col-md-4">
                         <h5>GIT</h5>
-                        <p>{{ review_systems.git if review_systems and review_systems.git else 'Normal' }}</p>
+                        <div class="ros-history">
+                            {{ review_systems.git if review_systems and review_systems.git else 'Normal' }}
+                        </div>
                     </div>
                     <div class="col-md-4">
                         <h5>GUT</h5>
-                        <p>{{ review_systems.gut if review_systems and review_systems.gut else 'Normal' }}</p>
+                        <div class="ros-history">
+                            {{ review_systems.gut if review_systems and review_systems.gut else 'Normal' }}
+                        </div>
                     </div>
                     <div class="col-md-4">
                         <h5>MSK</h5>
-                        <p>{{ review_systems.msk if review_systems and review_systems.msk else 'Normal' }}</p>
+                        <div class="ros-history">
+                            {{ review_systems.msk if review_systems and review_systems.msk else 'Normal' }}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -138,31 +162,49 @@
                 <div class="row">
                     <div class="col-md-6">
                         <h5>Past Medical History</h5>
-                        <p>{{ history.medical_history if history and history.medical_history else 'None reported' }}</p>
+                        <div class="medical-history">
+                            {{ history.medical_history if history and history.medical_history else 'None reported' }}
+                        </div>
                         
                         <h5 class="mt-3">Surgical History</h5>
-                        <p>{{ history.surgical_history if history and history.surgical_history else 'None reported' }}</p>
+                        <div class="medical-history">
+                            {{ history.surgical_history if history and history.surgical_history else 'None reported' }}
+                        </div>
                     </div>
                     <div class="col-md-6">
                         <h5>Family History</h5>
-                        <p>{{ history.family_history if history and history.family_history else 'None reported' }}</p>
+                        <div class="medical-history">
+                            {{ history.family_history if history and history.family_history else 'None reported' }}
+                        </div>
                         
                         <h5 class="mt-3">Allergies</h5>
-                        <p>{{ history.allergies if history and history.allergies else 'None reported' }}</p>
+                        <div class="medical-history">
+                            {{ history.allergies if history and history.allergies else 'None reported' }}
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
-
-        <!-- Added Progression Section -->
+        <!-- Daily Progression Section -->
         <div class="card mb-4">
             <div class="card-header bg-info text-white">
                 <h3><i class="fas fa-chart-line"></i> Daily Progression</h3>
             </div>
             <div class="card-body">
-                <textarea name="progression" class="form-control mb-3" rows="3">{{ patient.progression or '' }}</textarea>
-                <button type="submit" class="btn btn-primary">Save Progression</button>
+                <div class="progression-history">
+                    {% if patient.progression %}
+                        {{ patient.progression|safe }}
+                    {% else %}
+                        <p>No progression notes recorded</p>
+                    {% endif %}
+                </div>
+                <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="section" value="progression">
+                    <textarea name="progression" class="form-control mb-3" rows="3" placeholder="Add today's progression notes" required></textarea>
+                    <button type="submit" class="btn btn-primary">Save Today's Progression</button>
+                </form>
             </div>
         </div>
 
@@ -180,7 +222,9 @@
                 <div class="row">
                     <div class="col-md-6">
                         <h5>General Appearance</h5>
-                        <p>{{ examination.general_appearance if examination and examination.general_appearance else 'Normal' }}</p>
+                        <div class="examination-history">
+                            {{ examination.general_appearance if examination and examination.general_appearance else 'Normal' }}
+                        </div>
                         
                         <h5 class="mt-3">Vital Signs</h5>
                         <ul class="list-unstyled">
@@ -193,31 +237,27 @@
                     </div>
                     <div class="col-md-6">
                         <h5>System Examinations</h5>
-                        <p><strong>CVS:</strong> {{ examination.cvs_exam if examination and examination.cvs_exam else 'Normal' }}</p>
-                        <p><strong>Resp:</strong> {{ examination.resp_exam if examination and examination.resp_exam else 'Normal' }}</p>
-                        <p><strong>Abdomen:</strong> {{ examination.abdo_exam if examination and examination.abdo_exam else 'Normal' }}</p>
-                        <p><strong>CNS:</strong> {{ examination.cns_exam if examination and examination.cns_exam else 'Normal' }}</p>
+                        <p><strong>CVS:</strong> 
+                            <div class="examination-history">
+                                {{ examination.cvs_exam if examination and examination.cvs_exam else 'Normal' }}
+                            </div>
+                        </p>
+                        <p><strong>Resp:</strong> 
+                            <div class="examination-history">
+                                {{ examination.resp_exam if examination and examination.resp_exam else 'Normal' }}
+                            </div>
+                        </p>
+                        <p><strong>Abdomen:</strong> 
+                            <div class="examination-history">
+                                {{ examination.abdo_exam if examination and examination.abdo_exam else 'Normal' }}
+                            </div>
+                        </p>
+                        <p><strong>CNS:</strong> 
+                            <div class="examination-history">
+                                {{ examination.cns_exam if examination and examination.cns_exam else 'Normal' }}
+                            </div>
+                        </p>
                     </div>
-                </div>
-            </div>
-        </div>
-
-
-        <!-- Added Examination Findings Section -->
-        <div class="card mb-4">
-            <div class="card-header bg-warning text-white">
-                <h3><i class="fas fa-stethoscope"></i> Daily New Examination Findings</h3>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="/doctor/add_examination_finding">
-                    <textarea name="examination_finding" class="form-control mb-3" rows="3" placeholder="Add new finding..."></textarea>
-                    <button type="submit" class="btn btn-success">Add Finding</button>
-                </form>
-                <div class="mt-4">
-                    <h6>Previous Findings:</h6>
-                    {% for finding in examination.findings %}
-                        <p><strong>{{ finding.timestamp }}:</strong> {{ finding.note }}</p>
-                    {% endfor %}
                 </div>
             </div>
         </div>
@@ -234,10 +274,14 @@
             </div>
             <div class="card-body">
                 <h5>Working Diagnosis</h5>
-                <p>{{ diagnosis.working_diagnosis if diagnosis and diagnosis.working_diagnosis else 'No diagnosis recorded' }}</p>
+                <div class="diagnosis-history">
+                    {{ diagnosis.working_diagnosis if diagnosis and diagnosis.working_diagnosis else 'No diagnosis recorded' }}
+                </div>
                 
                 <h5 class="mt-3">Differential Diagnosis</h5>
-                <p>{{ diagnosis.differential_diagnosis if diagnosis and diagnosis.differential_diagnosis else 'No differential diagnosis recorded' }}</p>
+                <div class="diagnosis-history">
+                    {{ diagnosis.differential_diagnosis if diagnosis and diagnosis.differential_diagnosis else 'No differential diagnosis recorded' }}
+                </div>
             </div>
         </div>
 
@@ -255,13 +299,19 @@
                 <div class="row">
                     <div class="col-md-6">
                         <h5>Treatment Plan</h5>
-                        <p>{{ management.treatment_plan if management and management.treatment_plan else 'No treatment plan recorded' }}</p>
+                        <div class="management-history">
+                            {{ management.treatment_plan if management and management.treatment_plan else 'No treatment plan recorded' }}
+                        </div>
                         
                         <h5 class="mt-3">Follow Up</h5>
-                        <p>{{ management.follow_up if management and management.follow_up else 'No follow up plan recorded' }}</p>
+                        <div class="management-history">
+                            {{ management.follow_up if management and management.follow_up else 'No follow up plan recorded' }}
+                        </div>
                         
                         <h5 class="mt-3">Additional Notes</h5>
-                        <p>{{ management.notes if management and management.notes else 'No additional notes' }}</p>
+                        <div class="management-history">
+                            {{ management.notes if management and management.notes else 'No additional notes' }}
+                        </div>
                     </div>
                     <div class="col-md-6">
                         <h5>Prescriptions</h5>
@@ -401,47 +451,50 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header bg-secondary text-white">
-                <h5 class="modal-title" id="reviewSystemsModalLabel">Edit Review of Systems</h5>
+                <h5 class="modal-title" id="reviewSystemsModalLabel">Add Today's Review of Systems</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="review_systems">
                 <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> Today's date and time (EAT) will be automatically added to your entries.
+                    </div>
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="cns" class="form-label">CNS</label>
-                                <textarea class="form-control" id="cns" name="cns" rows="2">{{ review_systems.cns if review_systems and review_systems.cns }}</textarea>
+                                <textarea class="form-control" id="cns" name="cns" rows="2" placeholder="Add today's CNS findings"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="cvs" class="form-label">CVS</label>
-                                <textarea class="form-control" id="cvs" name="cvs" rows="2">{{ review_systems.cvs if review_systems and review_systems.cvs }}</textarea>
+                                <textarea class="form-control" id="cvs" name="cvs" rows="2" placeholder="Add today's CVS findings"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="rs" class="form-label">Respiratory</label>
-                                <textarea class="form-control" id="rs" name="rs" rows="2">{{ review_systems.rs if review_systems and review_systems.rs }}</textarea>
+                                <textarea class="form-control" id="rs" name="rs" rows="2" placeholder="Add today's respiratory findings"></textarea>
                             </div>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="git" class="form-label">GIT</label>
-                                <textarea class="form-control" id="git" name="git" rows="2">{{ review_systems.git if review_systems and review_systems.git }}</textarea>
+                                <textarea class="form-control" id="git" name="git" rows="2" placeholder="Add today's GIT findings"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="gut" class="form-label">GUT</label>
-                                <textarea class="form-control" id="gut" name="gut" rows="2">{{ review_systems.gut if review_systems and review_systems.gut }}</textarea>
+                                <textarea class="form-control" id="gut" name="gut" rows="2" placeholder="Add today's GUT findings"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="msk" class="form-label">MSK</label>
-                                <textarea class="form-control" id="msk" name="msk" rows="2">{{ review_systems.msk if review_systems and review_systems.msk }}</textarea>
+                                <textarea class="form-control" id="msk" name="msk" rows="2" placeholder="Add today's MSK findings"></textarea>
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary">Save changes</button>
+                    <button type="submit" class="btn btn-primary">Save Today's Findings</button>
                 </div>
             </form>
         </div>
@@ -453,39 +506,42 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header bg-warning text-dark">
-                <h5 class="modal-title" id="medicalHistoryModalLabel">Edit Medical History</h5>
+                <h5 class="modal-title" id="medicalHistoryModalLabel">Add Today's Medical History</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="history">
                 <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> Today's date and time (EAT) will be automatically added to your entries.
+                    </div>
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="medical_history" class="form-label">Past Medical History</label>
-                                <textarea class="form-control" id="medical_history" name="medical_history" rows="3">{{ history.medical_history if history and history.medical_history }}</textarea>
+                                <textarea class="form-control" id="medical_history" name="medical_history" rows="3" placeholder="Add today's medical history notes"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="surgical_history" class="form-label">Surgical History</label>
-                                <textarea class="form-control" id="surgical_history" name="surgical_history" rows="3">{{ history.surgical_history if history and history.surgical_history }}</textarea>
+                                <textarea class="form-control" id="surgical_history" name="surgical_history" rows="3" placeholder="Add today's surgical history notes"></textarea>
                             </div>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="family_history" class="form-label">Family History</label>
-                                <textarea class="form-control" id="family_history" name="family_history" rows="3">{{ history.family_history if history and history.family_history }}</textarea>
+                                <textarea class="form-control" id="family_history" name="family_history" rows="3" placeholder="Add today's family history notes"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="allergies" class="form-label">Allergies</label>
-                                <textarea class="form-control" id="allergies" name="allergies" rows="3">{{ history.allergies if history and history.allergies }}</textarea>
+                                <textarea class="form-control" id="allergies" name="allergies" rows="3" placeholder="Add today's allergy notes"></textarea>
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary">Save changes</button>
+                    <button type="submit" class="btn btn-primary">Save Today's History</button>
                 </div>
             </form>
         </div>
@@ -497,44 +553,47 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header bg-danger text-white">
-                <h5 class="modal-title" id="examinationModalLabel">Edit Examination Findings</h5>
+                <h5 class="modal-title" id="examinationModalLabel">Add Today's Examination Findings</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="examination">
                 <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> Today's date and time (EAT) will be automatically added to your entries.
+                    </div>
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="general_appearance" class="form-label">General Appearance</label>
-                                <textarea class="form-control" id="general_appearance" name="general_appearance" rows="2">{{ examination.general_appearance if examination and examination.general_appearance }}</textarea>
+                                <textarea class="form-control" id="general_appearance" name="general_appearance" rows="2" placeholder="Add today's general appearance notes"></textarea>
                             </div>
                             <h5>Vital Signs</h5>
                             <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <label for="temperature" class="form-label">Temperature (°C)</label>
-                                    <input type="number" step="0.1" class="form-control" id="temperature" name="temperature" value="{{ examination.temperature if examination and examination.temperature }}">
+                                    <input type="number" step="0.1" class="form-control" id="temperature" name="temperature" placeholder="Today's temperature">
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <label for="pulse" class="form-label">Pulse (bpm)</label>
-                                    <input type="number" class="form-control" id="pulse" name="pulse" value="{{ examination.pulse if examination and examination.pulse }}">
+                                    <input type="number" class="form-control" id="pulse" name="pulse" placeholder="Today's pulse">
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <label for="resp_rate" class="form-label">Resp Rate (/min)</label>
-                                    <input type="number" class="form-control" id="resp_rate" name="resp_rate" value="{{ examination.resp_rate if examination and examination.resp_rate }}">
+                                    <input type="number" class="form-control" id="resp_rate" name="resp_rate" placeholder="Today's respiratory rate">
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <label for="bp_systolic" class="form-label">BP Systolic (mmHg)</label>
-                                    <input type="number" class="form-control" id="bp_systolic" name="bp_systolic" value="{{ examination.bp_systolic if examination and examination.bp_systolic }}">
+                                    <input type="number" class="form-control" id="bp_systolic" name="bp_systolic" placeholder="Today's systolic BP">
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <label for="bp_diastolic" class="form-label">BP Diastolic (mmHg)</label>
-                                    <input type="number" class="form-control" id="bp_diastolic" name="bp_diastolic" value="{{ examination.bp_diastolic if examination and examination.bp_diastolic }}">
+                                    <input type="number" class="form-control" id="bp_diastolic" name="bp_diastolic" placeholder="Today's diastolic BP">
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <label for="spo2" class="form-label">SpO2 (%)</label>
-                                    <input type="number" class="form-control" id="spo2" name="spo2" value="{{ examination.spo2 if examination and examination.spo2 }}">
+                                    <input type="number" class="form-control" id="spo2" name="spo2" placeholder="Today's SpO2">
                                 </div>
                             </div>
                         </div>
@@ -542,26 +601,26 @@
                             <h5>System Examinations</h5>
                             <div class="mb-3">
                                 <label for="cvs_exam" class="form-label">CVS</label>
-                                <textarea class="form-control" id="cvs_exam" name="cvs_exam" rows="2">{{ examination.cvs_exam if examination and examination.cvs_exam }}</textarea>
+                                <textarea class="form-control" id="cvs_exam" name="cvs_exam" rows="2" placeholder="Add today's CVS findings"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="resp_exam" class="form-label">Respiratory</label>
-                                <textarea class="form-control" id="resp_exam" name="resp_exam" rows="2">{{ examination.resp_exam if examination and examination.resp_exam }}</textarea>
+                                <textarea class="form-control" id="resp_exam" name="resp_exam" rows="2" placeholder="Add today's respiratory findings"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="abdo_exam" class="form-label">Abdomen</label>
-                                <textarea class="form-control" id="abdo_exam" name="abdo_exam" rows="2">{{ examination.abdo_exam if examination and examination.abdo_exam }}</textarea>
+                                <textarea class="form-control" id="abdo_exam" name="abdo_exam" rows="2" placeholder="Add today's abdominal findings"></textarea>
                             </div>
                             <div class="mb-3">
                                 <label for="cns_exam" class="form-label">CNS</label>
-                                <textarea class="form-control" id="cns_exam" name="cns_exam" rows="2">{{ examination.cns_exam if examination and examination.cns_exam }}</textarea>
+                                <textarea class="form-control" id="cns_exam" name="cns_exam" rows="2" placeholder="Add today's CNS findings"></textarea>
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary">Save changes</button>
+                    <button type="submit" class="btn btn-primary">Save Today's Examination</button>
                 </div>
             </form>
         </div>
@@ -573,25 +632,28 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header bg-success text-white">
-                <h5 class="modal-title" id="diagnosisModalLabel">Edit Diagnosis</h5>
+                <h5 class="modal-title" id="diagnosisModalLabel">Add Today's Diagnosis</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="diagnosis">
                 <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> Today's date and time (EAT) will be automatically added to your entries.
+                    </div>
                     <div class="mb-3">
                         <label for="working_diagnosis" class="form-label">Working Diagnosis</label>
-                        <textarea class="form-control" id="working_diagnosis" name="working_diagnosis" rows="3">{{ diagnosis.working_diagnosis if diagnosis and diagnosis.working_diagnosis }}</textarea>
+                        <textarea class="form-control" id="working_diagnosis" name="working_diagnosis" rows="3" placeholder="Add today's working diagnosis notes"></textarea>
                     </div>
                     <div class="mb-3">
                         <label for="differential_diagnosis" class="form-label">Differential Diagnosis</label>
-                        <textarea class="form-control" id="differential_diagnosis" name="differential_diagnosis" rows="3">{{ diagnosis.differential_diagnosis if diagnosis and diagnosis.differential_diagnosis }}</textarea>
+                        <textarea class="form-control" id="differential_diagnosis" name="differential_diagnosis" rows="3" placeholder="Add today's differential diagnosis notes"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary">Save changes</button>
+                    <button type="submit" class="btn btn-primary">Save Today's Diagnosis</button>
                 </div>
             </form>
         </div>
@@ -603,20 +665,23 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header bg-dark text-white">
-                <h5 class="modal-title" id="managementModalLabel">Edit Management Plan</h5>
+                <h5 class="modal-title" id="managementModalLabel">Add Today's Management Plan</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="POST" action="{{ url_for('doctor_patient_details', patient_id=patient.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="section" value="management">
                 <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> Today's date and time (EAT) will be automatically added to your entries.
+                    </div>
                     <div class="mb-3">
                         <label for="treatment_plan" class="form-label">Treatment Plan</label>
-                        <textarea class="form-control" id="treatment_plan" name="treatment_plan" rows="3">{{ management.treatment_plan if management and management.treatment_plan }}</textarea>
+                        <textarea class="form-control" id="treatment_plan" name="treatment_plan" rows="3" placeholder="Add today's treatment plan notes"></textarea>
                     </div>
                     <div class="mb-3">
                         <label for="follow_up" class="form-label">Follow Up</label>
-                        <textarea class="form-control" id="follow_up" name="follow_up" rows="3">{{ management.follow_up if management and management.follow_up }}</textarea>
+                        <textarea class="form-control" id="follow_up" name="follow_up" rows="3" placeholder="Add today's follow up notes"></textarea>
                     </div>
                     
                     <h4>Prescriptions</h4>
@@ -662,17 +727,17 @@
                                 <option value="{{ service.id }}">{{ service.name }}</option>
                             {% endfor %}
                         </select>
-                        <textarea class="form-control mt-2" name="service_notes" placeholder="Notes for services" rows="2">{{ management.service_notes if management and management.service_notes }}</textarea>
+                        <textarea class="form-control mt-2" name="service_notes" placeholder="Notes for services" rows="2"></textarea>
                     </div>
                     
                     <div class="form-group mt-3">
                         <label for="management_notes">Additional Notes</label>
-                        <textarea class="form-control" id="management_notes" name="management_notes" rows="3">{{ management.notes if management and management.notes }}</textarea>
+                        <textarea class="form-control" id="management_notes" name="management_notes" rows="3" placeholder="Add today's additional notes"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="submit" class="btn btn-primary">Save changes</button>
+                    <button type="submit" class="btn btn-primary">Save Today's Management Plan</button>
                 </div>
             </form>
         </div>
@@ -702,7 +767,7 @@
                     </div>
                     <div class="mb-3">
                         <label for="notes" class="form-label">Notes</label>
-                        <textarea class="form-control" id="notes" name="notes" rows="3"></textarea>
+                        <textarea class="form-control" id="notes" name="notes" rows="3" placeholder="Add request notes"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -737,7 +802,7 @@
                     </div>
                     <div class="mb-3">
                         <label for="notes" class="form-label">Notes</label>
-                        <textarea class="form-control" id="notes" name="notes" rows="3"></textarea>
+                        <textarea class="form-control" id="notes" name="notes" rows="3" placeholder="Add request notes"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -749,7 +814,6 @@
     </div>
 </div>
 
-<!-- JavaScript for actions -->
 <!-- JavaScript for actions -->
 <script>
 function completeTreatment(patientId) {
@@ -984,6 +1048,15 @@ $(document).ready(function() {
 }
 .select2-container {
     width: 100% !important;
+}
+.chief-complaint-history, .hpi-history, .ros-history, .medical-history, 
+.progression-history, .examination-history, .diagnosis-history, .management-history {
+    white-space: pre-wrap;
+    margin-bottom: 15px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+    border-left: 4px solid #007bff;
 }
 </style>
 {% endblock %}

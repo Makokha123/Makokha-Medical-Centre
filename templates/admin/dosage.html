@@ -73,7 +73,8 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
-            <form method="POST" action="{{ url_for('manage_dosage') }}">
+            <form method="POST" action="{{ url_for('manage_dosage') }}">  {# Changed to match error endpoint #}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>  {# Added CSRF token #}
                 <input type="hidden" name="action" value="add">
                 <div class="modal-body">
                     <div class="form-group">
@@ -154,7 +155,8 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
-            <form method="POST" action="{{ url_for('manage_dosage') }}">
+            <form method="POST" action="{{ url_for('manage_dosage') }}">  {# Changed to match error endpoint #}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>  {# Added CSRF token #}
                 <input type="hidden" name="action" value="edit">
                 <input type="hidden" id="edit_dosage_id" name="dosage_id">
                 <div class="modal-body">
@@ -320,7 +322,8 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
-            <form method="POST" action="{{ url_for('manage_dosage') }}">
+            <form method="POST" action="{{ url_for('manage_dosage') }}">  {# Changed to match error endpoint #}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>  {# Added CSRF token #}
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" id="delete_dosage_id" name="dosage_id">
                 <div class="modal-body">
