@@ -4708,7 +4708,7 @@ def patient_details(patient_id):
 # Medical Tests Management
 @app.route('/admin/medical-tests')
 @login_required
-def manage_medical_tests():
+def manage_tests():
     if current_user.role != 'admin':
         abort(403)
     
