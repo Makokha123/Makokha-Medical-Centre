@@ -624,12 +624,6 @@
                                 <span class="nav-text">Patients</span>
                             </a>
                         </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('api_lab_tests') }}" class="nav-link">
-                                <i class="bi bi-clipboard2-pulse"></i>
-                                <span class="nav-text">Lab Tests</span>
-                            </a>
-                        </div>
                     {% elif current_user.role == 'pharmacist' %}
                         <!-- Pharmacist Navigation -->
                         <div class="nav-item">
