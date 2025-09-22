@@ -453,8 +453,9 @@
             {% endif %}
         </div>
     </div>
+</div>
 
-<!-- Include all modals -->
+<!-- Add Drawing Modal -->
 <div class="modal" id="add-drawing-modal" role="dialog" aria-modal="true" aria-labelledby="add-drawing-title">
     <div class="modal-content">
         <div class="modal-header">
@@ -701,7 +702,7 @@
     </div>
 </div>
 
-<!-- Add Payroll Modal (Updated) -->
+<!-- Add Payroll Modal -->
 <div class="modal" id="add-payroll-modal" role="dialog" aria-modal="true" aria-labelledby="add-payroll-title">
     <div class="modal-content">
         <div class="modal-header">
@@ -827,7 +828,7 @@
                 <input type="date" id="last-payment-date" name="last_payment_date">
             </div>
             <div class="form-group">
-                <label for="next-payment-date">Next Payment Date *</label>
+                <label for="next-payment-date">Next Payment Date</label>
                 <input type="date" id="next-payment-date" name="next_payment_date">
             </div>
             <div class="form-group">
@@ -881,7 +882,7 @@
                 <input type="date" id="edit-last-payment-date" name="last_payment_date">
             </div>
             <div class="form-group">
-                <label for="edit-next-payment-date">Next Payment Date *</label>
+                <label for="edit-next-payment-date">Next Payment Date</label>
                 <input type="date" id="edit-next-payment-date" name="next_payment_date">
             </div>
             <div class="form-group">
@@ -900,7 +901,7 @@
 <div class="modal" id="add-debtor-payment-modal" role="dialog" aria-modal="true" aria-labelledby="add-debtor-payment-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h2 id="add-debtor-payment-title">Record Payment to Debtor</h2>
+            <h2 id="add-debtor-payment-title">Record Payment from Debtor</h2>
             <button class="close-btn" data-modal-target="add-debtor-payment">&times;</button>
         </div>
         <form id="add-debtor-payment-form" method="POST">
@@ -1372,6 +1373,10 @@
     color: var(--success);
 }
 
+.text-muted {
+    color: var(--gray-500);
+}
+
 .empty-state {
     padding: 40px 20px;
     text-align: center;
@@ -1477,6 +1482,18 @@
     box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
 }
 
+.info-display {
+    background: var(--gray-100);
+    padding: 12px;
+    border-radius: var(--border-radius);
+    border-left: 4px solid var(--primary);
+}
+
+.info-display p {
+    margin: 0;
+    font-weight: 500;
+}
+
 .form-actions {
     display: flex;
     justify-content: flex-end;
@@ -1556,7 +1573,7 @@ window.moneyManagement = {
     setupEventListeners: function() {
         // Close alert buttons
         $(document).on('click', '.close-alert', function() {
-            $(this).parent().remove();
+            $(this).closest('.alert').remove();
         });
 
         // Tab switching
@@ -1600,25 +1617,6 @@ window.moneyManagement = {
         this.setupFormSubmissions();
     },
 
-    refreshAllData: function() {
-        window.location.reload();
-    },
-    
-    loadEmployeeSalary: function(employeeId) {
-        if (!employeeId) return;
-        
-        fetch(`/admin/get_employee_salary/${employeeId}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.salary) {
-                    document.getElementById('payroll-amount').value = data.salary;
-                }
-            })
-            .catch(error => {
-                console.error('Error loading employee salary:', error);
-            });
-    },
-    
     setupFormSubmissions: function() {
         $('form[id$="-form"]').on('submit', function(e) {
             e.preventDefault();
@@ -1626,7 +1624,6 @@ window.moneyManagement = {
             const action = form.attr('action');
             const method = form.attr('method') || 'POST';
             const formData = new FormData(this);
-            const currentTab = $('.tab.active').data('tab');
 
             fetch(action, {
                 method: method,
@@ -1644,9 +1641,12 @@ window.moneyManagement = {
                 if (data.success) {
                     const modalId = form.closest('.modal').attr('id').replace('-modal', '');
                     moneyManagement.closeModal(modalId);
-                    moneyManagement.showAlert('success', data.message || 'Saved successfully');
+                    moneyManagement.showAlert('success', data.message || 'Operation completed successfully');
                     
-                    moneyManagement.refreshTabData(currentTab);
+                    // Refresh the page to show updated data
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
                 }
             })
             .catch(error => {
@@ -1654,24 +1654,6 @@ window.moneyManagement = {
                 moneyManagement.showAlert('danger', 'An error occurred. Please try again.');
             });
         });
-    },
-    
-    refreshTabData: function(tabId) {
-        switch(tabId) {
-            case 'drawings':
-                break;
-            case 'bills':
-                break;
-            case 'purchases':
-                break;
-            case 'payroll':
-                break;
-            case 'debtors':
-                break;
-        }
-        
-        this.loadSummaryData();
-        this.checkPendingPayments();
     },
 
     loadSummaryData: function() {
@@ -1687,9 +1669,9 @@ window.moneyManagement = {
                     console.error(data.error);
                     return;
                 }
-                $('#total-income').text(moneyManagement.formatCurrency(data.total_income));
-                $('#total-expenses').text(moneyManagement.formatCurrency(data.total_expenses));
-                $('#net-profit').text(moneyManagement.formatCurrency(data.net_profit));
+                $('#total-income').text('Ksh ' + moneyManagement.formatCurrency(data.total_income));
+                $('#total-expenses').text('Ksh ' + moneyManagement.formatCurrency(data.total_expenses));
+                $('#net-profit').text('Ksh ' + moneyManagement.formatCurrency(data.net_profit));
             })
             .catch(error => {
                 console.error('Error loading summary data:', error);
@@ -1708,6 +1690,21 @@ window.moneyManagement = {
             })
             .catch(error => {
                 console.error('Error checking pending payments:', error);
+            });
+    },
+
+    loadEmployeeSalary: function(employeeId) {
+        if (!employeeId) return;
+        
+        fetch(`/admin/get_employee_salary/${employeeId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.salary) {
+                    document.getElementById('payroll-amount').value = data.salary;
+                }
+            })
+            .catch(error => {
+                console.error('Error loading employee salary:', error);
             });
     },
 
@@ -1768,7 +1765,7 @@ window.moneyManagement = {
     payBill: function(id, type, amount) {
         $('#pay-bill-id').val(id);
         $('#pay-bill-type-display').text(type);
-        $('#pay-bill-amount-display').text(moneyManagement.formatCurrency(amount));
+        $('#pay-bill-amount-display').text('Ksh ' + moneyManagement.formatCurrency(amount));
         $('#pay-bill-form').attr('action', `/admin/pay_bill/${id}`);
         this.openModal('pay-bill');
     },
@@ -1801,8 +1798,8 @@ window.moneyManagement = {
         $('#edit-debtor-contact').val(contact || '');
         $('#edit-debtor-email').val(email || '');
         $('#edit-total-debt').val(totalDebt);
-        $('#edit-amount-paid-display').text(moneyManagement.formatCurrency(amountPaid));
-        $('#edit-amount-owed-display').text(moneyManagement.formatCurrency(amountOwed));
+        $('#edit-amount-paid-display').text('Ksh ' + moneyManagement.formatCurrency(amountPaid));
+        $('#edit-amount-owed-display').text('Ksh ' + moneyManagement.formatCurrency(amountOwed));
         $('#edit-last-payment-date').val(lastPaymentDate || '');
         $('#edit-next-payment-date').val(nextPaymentDate || '');
         $('#edit-debtor-notes').val(notes || '');
@@ -1813,9 +1810,9 @@ window.moneyManagement = {
     addDebtorPayment: function(id, name, totalDebt, amountPaid, amountOwed, nextPaymentDate) {
         $('#debtor-payment-id').val(id);
         $('#debtor-payment-name').text(name);
-        $('#debtor-total-debt-display').text(moneyManagement.formatCurrency(totalDebt));
-        $('#debtor-amount-paid-display').text(moneyManagement.formatCurrency(amountPaid));
-        $('#debtor-amount-owed-display').text(moneyManagement.formatCurrency(amountOwed));
+        $('#debtor-total-debt-display').text('Ksh ' + moneyManagement.formatCurrency(totalDebt));
+        $('#debtor-amount-paid-display').text('Ksh ' + moneyManagement.formatCurrency(amountPaid));
+        $('#debtor-amount-owed-display').text('Ksh ' + moneyManagement.formatCurrency(amountOwed));
         
         $('#payment-amount').attr('max', amountOwed);
         $('#payment-amount').val(amountOwed > 0 ? amountOwed.toFixed(2) : '0.00');
@@ -1849,28 +1846,36 @@ window.moneyManagement = {
         const form = document.getElementById('delete-form');
         const action = form.getAttribute('action');
         const formData = new FormData(form);
-        const headers = {};
-        const token = moneyManagement.getCSRFToken();
-        if (token) headers['X-CSRFToken'] = token;
-        fetch(action, { method: 'POST', body: formData, headers })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    moneyManagement.closeModal('delete-confirm');
-                    moneyManagement.showAlert('success', 'Record deleted successfully');
-                    moneyManagement.refreshAllData();
-                } else {
-                    moneyManagement.showAlert('danger', data.error || 'Failed to delete record');
-                }
-            })
-            .catch(err => {
-                console.error(err);
-                moneyManagement.showAlert('danger', 'An error occurred while deleting the record');
-            });
+
+        fetch(action, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': moneyManagement.getCSRFToken()
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                moneyManagement.showAlert('danger', data.error);
+                return;
+            }
+            if (data.success) {
+                moneyManagement.closeModal('delete-confirm');
+                moneyManagement.showAlert('success', data.message || 'Record deleted successfully');
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            moneyManagement.showAlert('danger', 'An error occurred while deleting the record');
+        });
     },
 
     formatCurrency: function(amount) {
-        return 'Ksh ' + parseFloat(amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        return parseFloat(amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     },
     
     getCSRFToken: function() {

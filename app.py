@@ -4705,6 +4705,7 @@ def patient_details(patient_id):
             'date': prescription.created_at.strftime('%Y-%m-%d')
         } for prescription in patient.prescriptions for item in prescription.items]
     })
+    
 # Medical Tests Management
 @app.route('/admin/medical-tests')
 @login_required
