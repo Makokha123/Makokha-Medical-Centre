@@ -143,7 +143,7 @@ class User(db.Model, UserMixin):
         self.last_login = datetime.now(timezone.utc)  # Changed from utcnow()
         db.session.commit()
 
-
+    generated_summaries = db.relationship('PatientSummary', back_populates='generator', lazy=True)
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
 
@@ -325,6 +325,8 @@ class Patient(db.Model):
     management = db.relationship('PatientManagement', backref='patient', lazy=True)
     lab_requests = db.relationship('LabRequest', backref='patient', lazy=True)
     imaging_requests = db.relationship('ImagingRequest', backref='patient', lazy=True)
+    summaries = db.relationship('PatientSummary', back_populates='patient', lazy=True)
+   
     @property
     def decrypted_name(self):
         if not self.name:
@@ -449,6 +451,19 @@ class PatientExamination(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+class PatientSummary(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    summary_text = db.Column(db.Text, nullable=False)
+    summary_type = db.Column(db.String(20), default='manual')  # 'manual' or 'ai_generated'
+    generated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # FIXED: Use back_populates instead of backref to avoid naming conflicts
+    patient = db.relationship('Patient', back_populates='summaries')
+    generator = db.relationship('User', back_populates='generated_summaries')
+    
 class PatientDiagnosis(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
@@ -759,6 +774,111 @@ class AIService:
 
         Please generate the HPI in full paragraph narrative format suitable for a medical record.
         """
+
+    def generate_patient_summary(patient_data):
+        """
+        Generate a comprehensive patient summary from all available patient data
+        """
+        prompt = f"""
+        You are an experienced medical professional. Create a comprehensive patient summary 
+        by synthesizing all the available patient information into a coherent clinical narrative.
+        
+        PATIENT INFORMATION:
+        
+        Biodata:
+        - Name: {patient_data.get('name', 'Not specified')}
+        - Age: {patient_data.get('age', 'Not specified')}
+        - Gender: {patient_data.get('gender', 'Not specified')}
+        - Address: {patient_data.get('address', 'Not specified')}
+        - Occupation: {patient_data.get('occupation', 'Not specified')}
+        - Religion: {patient_data.get('religion', 'Not specified')}
+        
+        Chief Complaint:
+        {patient_data.get('chief_complaint', 'Not documented')}
+        
+        History of Present Illness (HPI):
+        {patient_data.get('history_present_illness', 'Not documented')}
+        
+        Review of Systems (ROS):
+        {json.dumps(patient_data.get('review_systems', {}), indent=2)}
+        
+        Medical History:
+        - Social History: {patient_data.get('social_history', 'Not documented')}
+        - Medical History: {patient_data.get('medical_history', 'Not documented')}
+        - Surgical History: {patient_data.get('surgical_history', 'Not documented')}
+        - Family History: {patient_data.get('family_history', 'Not documented')}
+        - Allergies: {patient_data.get('allergies', 'None known')}
+        - Current Medications: {patient_data.get('medications', 'None')}
+        
+        Physical Examination Findings:
+        {json.dumps(patient_data.get('examination', {}), indent=2)}
+        
+        Current Working Diagnosis:
+        {patient_data.get('working_diagnosis', 'Not established')}
+        
+        Please create a well-structured patient summary that includes:
+        1. Patient demographics and presenting complaint
+        2. Key findings from history and examination
+        3. Assessment and current diagnosis
+        4. Relevant positive and negative findings
+        5. Clinical impression
+        
+        Format the summary in professional medical narrative style, suitable for inclusion in a medical record.
+        Be concise but comprehensive, focusing on clinically relevant information.
+        """
+        
+        try:
+            client = AIService.get_client()
+            response = client.chat.completions.create(
+                model=AIService.MODELS['primary'],
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1200,
+                timeout=30
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"AI Summary Generation Error: {str(e)}")
+            return None
+
+    @staticmethod
+    def generate_diagnosis_from_summary(patient_summary):
+        """
+        Generate diagnosis and differentials from patient summary
+        """
+        prompt = f"""
+        Based on the following comprehensive patient summary, provide:
+        
+        1. PRIMARY WORKING DIAGNOSIS: The most likely diagnosis with supporting evidence
+        2. DIFFERENTIAL DIAGNOSES: 3-5 alternative diagnoses in order of likelihood
+        3. KEY FINDINGS: Clinical findings that support each diagnosis
+        4. RECOMMENDED INVESTIGATIONS: Tests needed to confirm or rule out diagnoses
+        
+        PATIENT SUMMARY:
+        {patient_summary}
+        
+        Please format your response clearly with these sections:
+        - Working Diagnosis: [Your primary diagnosis]
+        - Differential Diagnoses: [List of differentials with brief rationale]
+        - Supporting Findings: [Key clinical evidence]
+        - Recommended Tests: [Investigations needed]
+        
+        Be concise and clinically focused.
+        """
+        
+        try:
+            client = AIService.get_client()
+            response = client.chat.completions.create(
+                model=AIService.MODELS['primary'],
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1000,
+                timeout=30
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            current_app.logger.error(f"AI Diagnosis from Summary Error: {str(e)}")
+            return None
 
     @staticmethod
     def generate_diagnosis(patient_data):
@@ -1294,6 +1414,9 @@ def generate_random_string(length=6):
 # Replace with this:
 _first_request = True
 
+
+_first_request = True
+
 @app.before_request
 def initialize_data():
     global _first_request
@@ -1301,60 +1424,76 @@ def initialize_data():
         return
     _first_request = False
     
-    # Create all database tables
-    db.create_all()
-
-    # Create default admin if not exists
-    if not db.session.query(User).filter_by(role='admin').first():
-        admin = User(
-            username='Makokha Nelson',
-            email='makokhanelson4@gmail.com',
-            role='admin',
-            is_active=True
-        )
-        admin.set_password('Doc.makokha@2024')
-        db.session.add(admin)
-    
-    # Create default doctor if not exists
-    if not db.session.query(User).filter_by(role='doctor').first():
-        doctor = User(
-            username='Default Doctor',
-            email='doctor@clinic.com',
-            role='doctor',
-            is_active=True
-        )
-        doctor.set_password('Doctor@123')
-        db.session.add(doctor)
-    
-    # Create default pharmacist if not exists
-    if not db.session.query(User).filter_by(role='pharmacist').first():
-        pharmacist = User(
-            username='Default Pharmacist',
-            email='pharmacist@clinic.com',
-            role='pharmacist',
-            is_active=True
-        )
-        pharmacist.set_password('Pharmacist@123')
-        db.session.add(pharmacist)
-    
-    # Create default receptionist if not exists
-    if not db.session.query(User).filter_by(role='receptionist').first():
-        receptionist = User(
-            username='Default Receptionist',
-            email='receptionist@clinic.com',
-            role='receptionist',
-            is_active=True
-        )
-        receptionist.set_password('Receptionist@123')
-        db.session.add(receptionist)
-    
-    # Commit all changes at once
     try:
+        # Create all database tables
+        db.create_all()
+
+        # Create default admin if not exists
+        admin_exists = db.session.execute(
+            db.select(User).filter_by(role='admin')
+        ).scalar()
+        
+        if not admin_exists:
+            admin = User(
+                username='Makokha Nelson',
+                email='makokhanelson4@gmail.com',
+                role='admin',
+                is_active=True
+            )
+            admin.set_password('Doc.makokha@2024')
+            db.session.add(admin)
+        
+        # Create default doctor if not exists
+        doctor_exists = db.session.execute(
+            db.select(User).filter_by(role='doctor')
+        ).scalar()
+        
+        if not doctor_exists:
+            doctor = User(
+                username='Default Doctor',
+                email='doctor@clinic.com',
+                role='doctor',
+                is_active=True
+            )
+            doctor.set_password('Doctor@123')
+            db.session.add(doctor)
+        
+        # Create default pharmacist if not exists
+        pharmacist_exists = db.session.execute(
+            db.select(User).filter_by(role='pharmacist')
+        ).scalar()
+        
+        if not pharmacist_exists:
+            pharmacist = User(
+                username='Default Pharmacist',
+                email='pharmacist@clinic.com',
+                role='pharmacist',
+                is_active=True
+            )
+            pharmacist.set_password('Pharmacist@123')
+            db.session.add(pharmacist)
+        
+        # Create default receptionist if not exists
+        receptionist_exists = db.session.execute(
+            db.select(User).filter_by(role='receptionist')
+        ).scalar()
+        
+        if not receptionist_exists:
+            receptionist = User(
+                username='Default Receptionist',
+                email='receptionist@clinic.com',
+                role='receptionist',
+                is_active=True
+            )
+            receptionist.set_password('Receptionist@123')
+            db.session.add(receptionist)
+        
+        # Commit all changes at once
         db.session.commit()
+        
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error initializing data: {str(e)}")
-
 
 # Login Manager
 @login_manager.user_loader
@@ -6179,6 +6318,217 @@ def doctor_patients():
         completed_patients=completed_patients
     )
 
+@app.route('/doctor/patient/<int:patient_id>/summary', methods=['GET', 'POST'])
+@login_required
+def patient_summary(patient_id):
+    if current_user.role not in ['doctor', 'admin']:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+    
+    if request.method == 'POST':
+        action = request.form.get('action')
+        
+        if action == 'add_manual':
+            try:
+                summary_text = request.form.get('summary_text')
+                if not summary_text:
+                    return jsonify({'success': False, 'error': 'Summary text is required'}), 400
+                
+                summary = PatientSummary(
+                    patient_id=patient.id,
+                    summary_text=summary_text,
+                    summary_type='manual'
+                )
+                db.session.add(summary)
+                db.session.commit()
+                
+                return jsonify({'success': True, 'message': 'Summary saved successfully'})
+                
+            except Exception as e:
+                db.session.rollback()
+                return jsonify({'success': False, 'error': str(e)}), 500
+        
+        elif action == 'generate_ai':
+            try:
+                # Collect all patient data for summary generation
+                review_systems = db.session.execute(
+                    db.select(PatientReviewSystem).filter_by(patient_id=patient.id)
+                ).scalar()
+                
+                history = db.session.execute(
+                    db.select(PatientHistory).filter_by(patient_id=patient.id)
+                ).scalar()
+                
+                examination = db.session.execute(
+                    db.select(PatientExamination).filter_by(patient_id=patient.id)
+                ).scalar()
+                
+                diagnosis = db.session.execute(
+                    db.select(PatientDiagnosis).filter_by(patient_id=patient.id)
+                ).scalar()
+
+                patient_data = {
+                    'name': patient.decrypted_name,
+                    'age': patient.age,
+                    'gender': patient.gender,
+                    'address': patient.decrypted_address or '',
+                    'occupation': patient.decrypted_occupation or '',
+                    'religion': patient.religion or '',
+                    'chief_complaint': patient.chief_complaint or '',
+                    'history_present_illness': patient.history_present_illness or '',
+                    'review_systems': {
+                        'cns': review_systems.cns if review_systems else '',
+                        'cvs': review_systems.cvs if review_systems else '',
+                        'rs': review_systems.rs if review_systems else '',
+                        'git': review_systems.git if review_systems else '',
+                        'gut': review_systems.gut if review_systems else '',
+                        'skin': review_systems.skin if review_systems else '',
+                        'msk': review_systems.msk if review_systems else ''
+                    } if review_systems else {},
+                    'social_history': history.social_history if history else '',
+                    'medical_history': history.medical_history if history else '',
+                    'surgical_history': history.surgical_history if history else '',
+                    'family_history': history.family_history if history else '',
+                    'allergies': history.allergies if history else '',
+                    'medications': history.medications if history else '',
+                    'examination': {
+                        'general_appearance': examination.general_appearance if examination else '',
+                        'vitals': {
+                            'temperature': examination.temperature if examination else None,
+                            'pulse': examination.pulse if examination else None,
+                            'bp': f"{examination.bp_systolic}/{examination.bp_diastolic}" if examination and examination.bp_systolic and examination.bp_diastolic else None,
+                            'resp_rate': examination.resp_rate if examination else None,
+                            'spo2': examination.spo2 if examination else None
+                        },
+                        'systems': {
+                            'cvs': examination.cvs_exam if examination else '',
+                            'respiratory': examination.resp_exam if examination else '',
+                            'abdominal': examination.abdo_exam if examination else '',
+                            'cns': examination.cns_exam if examination else ''
+                        }
+                    } if examination else {},
+                    'working_diagnosis': diagnosis.working_diagnosis if diagnosis else ''
+                }
+                
+                summary_text = AIService.generate_patient_summary(patient_data)
+                if not summary_text:
+                    return jsonify({'success': False, 'error': 'Failed to generate AI summary'}), 500
+                
+                # Save AI-generated summary
+                summary = PatientSummary(
+                    patient_id=patient.id,
+                    summary_text=summary_text,
+                    summary_type='ai_generated',
+                    generated_by=current_user.id
+                )
+                db.session.add(summary)
+                db.session.commit()
+                
+                return jsonify({
+                    'success': True, 
+                    'summary_text': summary_text,
+                    'message': 'AI summary generated successfully'
+                })
+                
+            except Exception as e:
+                db.session.rollback()
+                return jsonify({'success': False, 'error': str(e)}), 500
+        
+        elif action == 'generate_diagnosis':
+            try:
+                # Get the latest summary
+                latest_summary = db.session.execute(
+                    db.select(PatientSummary)
+                    .filter_by(patient_id=patient.id)
+                    .order_by(PatientSummary.created_at.desc())
+                ).scalar()
+                
+                if not latest_summary:
+                    return jsonify({'success': False, 'error': 'No summary available for diagnosis generation'}), 400
+                
+                diagnosis_text = AIService.generate_diagnosis_from_summary(latest_summary.summary_text)
+                if not diagnosis_text:
+                    return jsonify({'success': False, 'error': 'Failed to generate diagnosis from summary'}), 500
+                
+                # Update patient's AI diagnosis
+                patient.ai_diagnosis = diagnosis_text
+                patient.ai_last_updated = datetime.now(timezone.utc)
+                patient.ai_assistance_enabled = True
+                
+                # Also update the diagnosis record if exists
+                diagnosis_record = db.session.execute(
+                    db.select(PatientDiagnosis).filter_by(patient_id=patient.id)
+                ).scalar()
+                
+                if not diagnosis_record:
+                    diagnosis_record = PatientDiagnosis(patient_id=patient.id)
+                    db.session.add(diagnosis_record)
+                
+                diagnosis_record.ai_supported_diagnosis = True
+                diagnosis_record.ai_alternative_diagnoses = diagnosis_text
+                
+                db.session.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'diagnosis': diagnosis_text,
+                    'message': 'Diagnosis generated from summary successfully'
+                })
+                
+            except Exception as e:
+                db.session.rollback()
+                return jsonify({'success': False, 'error': str(e)}), 500
+    
+    # GET request - return summary data
+    summaries = db.session.execute(
+        db.select(PatientSummary)
+        .filter_by(patient_id=patient.id)
+        .order_by(PatientSummary.created_at.desc())
+    ).scalars().all()
+    
+    summaries_data = []
+    for summary in summaries:
+        # Get generator username safely
+        generator_name = 'Manual'
+        if summary.generated_by:
+            generator = db.session.get(User, summary.generated_by)
+            generator_name = generator.username if generator else 'System'
+        
+        summaries_data.append({
+            'id': summary.id,
+            'summary_text': summary.summary_text,
+            'summary_type': summary.summary_type,
+            'created_at': summary.created_at.strftime('%Y-%m-%d %H:%M'),
+            'generated_by': generator_name
+        })
+    
+    return jsonify({
+        'success': True,
+        'summaries': summaries_data,
+        'patient_name': patient.decrypted_name,
+        'patient_number': patient.op_number or patient.ip_number
+    })
+
+@app.route('/doctor/patient/<int:patient_id>/summary/<int:summary_id>', methods=['DELETE'])
+@login_required
+def delete_patient_summary(patient_id, summary_id):
+    if current_user.role not in ['doctor', 'admin']:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    summary = db.session.get(PatientSummary, summary_id)
+    if not summary or summary.patient_id != patient_id:
+        return jsonify({'success': False, 'error': 'Summary not found'}), 404
+    
+    try:
+        db.session.delete(summary)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Summary deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # Doctor Routes - Complete with all sections
 @app.route('/doctor/patient/new', methods=['GET', 'POST'])
