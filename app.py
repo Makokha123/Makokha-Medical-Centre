@@ -337,16 +337,16 @@ class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     op_number = db.Column(db.String(500), unique=True, nullable=True)  # Increased from 20
     ip_number = db.Column(db.String(500), unique=True, nullable=True)  # Increased from 20
-    name = db.Column(db.String(550), nullable=True)  # Increased length
+    name = db.Column(db.Text, nullable=True)
     age = db.Column(db.Integer, nullable=True)
     gender = db.Column(db.String(200), nullable=True)  # Increased from 10
-    address = db.Column(db.String(550), nullable=True)  # Increased length
-    phone = db.Column(db.String(550), nullable=True)  # Increased length
-    destination = db.Column(db.String(550), nullable=True)
-    occupation = db.Column(db.String(550), nullable=True)  # Increased length
+    address = db.Column(db.Text, nullable=True)
+    phone = db.Column(db.Text, nullable=True)
+    destination = db.Column(db.Text, nullable=True)
+    occupation = db.Column(db.Text, nullable=True)
     religion = db.Column(db.String(500), nullable=True)
-    nok_name = db.Column(db.String(550), nullable=True)  # Increased length
-    nok_contact = db.Column(db.String(550), nullable=True)  # Increased length
+    nok_name = db.Column(db.Text, nullable=True)
+    nok_contact = db.Column(db.Text, nullable=True)
     tca = db.Column(db.Date, nullable=True)
     date_of_admission = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(250), default='active', nullable=True)
