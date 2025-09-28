@@ -1960,12 +1960,14 @@ def admin_dashboard():
             Drug.expiry_date <= date.today() + timedelta(days=30)
         ).scalar()
         
+        # FIXED: Use PostgreSQL to_char instead of strftime
         today_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.date(Sale.created_at) == date.today()
         ).scalar() or 0
         
+        # FIXED: This is the line that was causing the error
         monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
-            func.strftime('%Y-%m', Sale.created_at) == datetime.now().strftime('%Y-%m')
+            func.to_char(Sale.created_at, 'YYYY-MM') == datetime.now().strftime('%Y-%m')
         ).scalar() or 0
         
         pending_bills = db.session.query(func.sum(Debtor.amount_owed)).scalar() or 0
@@ -2003,7 +2005,7 @@ def admin_dashboard():
                 BackupRecord.timestamp.label('created_at'),
                 literal('backup').label('type')
             )
-        ).order_by(text('created_at')).limit(10).all()
+        ).order_by(text('created_at DESC')).limit(10).all()
         
         return render_template('admin/dashboard.html',
             total_drugs=total_drugs,
@@ -2052,7 +2054,7 @@ def get_doctor_stats(timeframe='daily'):
         start_date = today
         end_date = today + timedelta(days=1)
 
-    # Get inpatient and outpatient counts
+    # Get inpatient and outpatient counts - using date comparisons compatible with PostgreSQL
     inpatients = db.session.query(Patient).filter(
         Patient.ip_number.isnot(None),
         Patient.date_of_admission >= start_date,
@@ -2065,7 +2067,7 @@ def get_doctor_stats(timeframe='daily'):
         Patient.date_of_admission < end_date
     ).count()
 
-    # Get discharged patients
+    # Get discharged patients - using date comparisons
     discharged = db.session.query(Patient).filter(
         Patient.status == 'completed',
         Patient.updated_at >= start_date,
@@ -6350,7 +6352,7 @@ def doctor_dashboard():
     # Get counts for the stats cards
     active_patients_count = Patient.query.filter_by(status='active').count()
     today_patients = Patient.query.filter(
-        func.date(Patient.created_at) == date.today()
+        func.date(Sale.created_at) == date.today()
     ).count()
     completed_patients_count = Patient.query.filter_by(status='completed').count()
     
@@ -8382,7 +8384,7 @@ def receptionist_dashboard():
     
     # Calculate today's patients
     today_patients = Patient.query.filter(
-        func.date(Patient.created_at) == date.today()
+        func.date(Sale.created_at) == date.today()
     ).count()
     
     # Calculate active patients
