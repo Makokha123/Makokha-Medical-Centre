@@ -165,13 +165,13 @@ class User(db.Model, UserMixin):
     __tablename__ = 'user'
     
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(255), unique=True, nullable=False)
-    email = db.Column(db.String(255), unique=True, nullable=False)
-    password = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(50), nullable=False, default='user')
+    username = db.Column(db.String(255), unique=True, nullable=False)  # Increased from 50
+    email = db.Column(db.String(255), unique=True, nullable=False)    # Increased from 100
+    password = db.Column(db.String(255), nullable=False)              # Increased from 200
+    role = db.Column(db.String(50), nullable=False, default='user')   # Increased from 20
     is_active = db.Column(db.Boolean, default=True)
     last_login = db.Column(db.DateTime)
-    profile_picture = db.Column(db.String(500))
+    profile_picture = db.Column(db.Text)  # Changed from String(255) to Text for long URLs
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -262,11 +262,11 @@ def get_occupied_beds():
 
 class Drug(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    drug_number = db.Column(db.String(50), unique=True, nullable=False)
-    name = db.Column(db.String(225), nullable=False)
-    specification = db.Column(db.Text)
-    buying_price = db.Column(db.Numeric(10, 2), nullable=False)
-    selling_price = db.Column(db.Float, nullable=False)
+    drug_number = db.Column(db.String(100), unique=True, nullable=False)  # Increased from 50
+    name = db.Column(db.String(255), nullable=False)                      # Increased from 100
+    specification = db.Column(db.Text)                                    # Changed from String(200) to Text
+    buying_price = db.Column(db.Numeric(10, 2), nullable=False)           # Use Numeric for money
+    selling_price = db.Column(db.Numeric(10, 2), nullable=False)          # Use Numeric for money
     stocked_quantity = db.Column(db.Integer, nullable=False)
     sold_quantity = db.Column(db.Integer, default=0)
     expiry_date = db.Column(db.Date, nullable=False)
@@ -335,18 +335,18 @@ class DrugDosage(db.Model):
 
 class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    op_number = db.Column(db.String(20), unique=True, nullable=True)
-    ip_number = db.Column(db.String(20), unique=True, nullable=True)
-    name = db.Column(db.String(255), nullable=True)  # encrypted
+    op_number = db.Column(db.String(50), unique=True, nullable=True)  # Increased from 20
+    ip_number = db.Column(db.String(50), unique=True, nullable=True)  # Increased from 20
+    name = db.Column(db.Text, nullable=True)  # Changed from String(100) to Text
     age = db.Column(db.Integer, nullable=True)
-    gender = db.Column(db.String(10), nullable=True)
-    address = db.Column(db.Text, nullable=True)
-    phone = db.Column(db.String(20), nullable=True)  # encrypted
+    gender = db.Column(db.String(20), nullable=True)  # Increased from 10
+    address = db.Column(db.Text, nullable=True)  # Changed from String(200) to Text
+    phone = db.Column(db.Text, nullable=True)  # Changed from String(20) to Text
     destination = db.Column(db.String(100), nullable=True)
-    occupation = db.Column(db.String(100), nullable=True)  # encrypted
+    occupation = db.Column(db.Text, nullable=True)  # Changed from String(100) to Text
     religion = db.Column(db.String(100), nullable=True)
-    nok_name = db.Column(db.String(100), nullable=True)  # encrypted
-    nok_contact = db.Column(db.String(20), nullable=True)  # encrypted
+    nok_name = db.Column(db.Text, nullable=True)  # Changed from String(100) to Text
+    nok_contact = db.Column(db.Text, nullable=True)  # Changed from String(20) to Text
     tca = db.Column(db.Date, nullable=True)
     date_of_admission = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(20), default='active', nullable=True)
@@ -358,7 +358,7 @@ class Patient(db.Model):
     ai_diagnosis = db.Column(db.Text)
     ai_treatment_recommendations = db.Column(db.Text)
     ai_last_updated = db.Column(db.DateTime)
-    ai_confidence_score = db.Column(db.Float)  # 0-1 scale for diagnosis confidence
+    ai_confidence_score = db.Column(db.Float)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -372,7 +372,8 @@ class Patient(db.Model):
     lab_requests = db.relationship('LabRequest', backref='patient', lazy=True)
     imaging_requests = db.relationship('ImagingRequest', backref='patient', lazy=True)
     summaries = db.relationship('PatientSummary', back_populates='patient', lazy=True)
-   
+
+    # Use methods instead of properties for decrypted data
     def get_decrypted_name(self):
         if not self.name:
             return None
@@ -382,19 +383,44 @@ class Patient(db.Model):
             return "[Decryption Error]"
 
     def get_decrypted_address(self):
-        return Config.decrypt_data_static(self.address)
+        if not self.address:
+            return None
+        try:
+            return Config.decrypt_data_static(self.address)
+        except Exception:
+            return "[Decryption Error]"
 
     def get_decrypted_phone(self):
-        return Config.decrypt_data_static(self.phone)
+        if not self.phone:
+            return None
+        try:
+            return Config.decrypt_data_static(self.phone)
+        except Exception:
+            return "[Decryption Error]"
 
     def get_decrypted_occupation(self):
-        return Config.decrypt_data_static(self.occupation)
+        if not self.occupation:
+            return None
+        try:
+            return Config.decrypt_data_static(self.occupation)
+        except Exception:
+            return "[Decryption Error]"
 
     def get_decrypted_nok_name(self):
-        return Config.decrypt_data_static(self.nok_name)
+        if not self.nok_name:
+            return None
+        try:
+            return Config.decrypt_data_static(self.nok_name)
+        except Exception:
+            return "[Decryption Error]"
 
     def get_decrypted_nok_contact(self):
-        return Config.decrypt_data_static(self.nok_contact)
+        if not self.nok_contact:
+            return None
+        try:
+            return Config.decrypt_data_static(self.nok_contact)
+        except Exception:
+            return "[Decryption Error]"
     
     def get_ai_recommendations(self):
         """Return formatted AI recommendations if available"""
@@ -1458,6 +1484,9 @@ from flask import current_app
 
 _first_request = True
 
+# Replace with this:
+_first_request = True
+
 @app.before_request
 def initialize_data():
     global _first_request
@@ -1537,8 +1566,8 @@ def initialize_data():
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Error initializing data: {str(e)}")
-
-# Login Manager
+            
+# Login ManagerT
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
