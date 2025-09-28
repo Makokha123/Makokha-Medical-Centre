@@ -1,4 +1,6 @@
 
+from importlib.metadata.diagnose import inspect
+from logging.handlers import RotatingFileHandler
 from sqlalchemy import MetaData, Table
 from sqlalchemy import MetaData, Table
 import csv
@@ -53,6 +55,38 @@ from wtforms.validators import DataRequired, Email, EqualTo, Length
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# Production configuration for Render
+if os.environ.get('RENDER'):
+    # Production settings
+    app.config.update(
+        DEBUG=False,
+        TESTING=False,
+        PREFERRED_URL_SCHEME='https'
+    )
+    
+    # Setup logging for production
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    
+    file_handler = RotatingFileHandler('logs/clinic.log', maxBytes=10240, backupCount=10)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    ))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+    app.logger.info('Clinic Management System starting in production mode')
+else:
+    # Development settings
+    app.config.update(
+        DEBUG=True,
+        TESTING=True,
+        PREFERRED_URL_SCHEME='http'
+    )
+    app.logger.setLevel(logging.DEBUG)
+    app.logger.info('Clinic Management System starting in development mode')
+
 app.config.from_object('config.Config')
 Config.init_fernet(app)
 db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
@@ -76,7 +110,18 @@ os.makedirs(PROFILE_PICTURE_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'U3VwZXJTZWNyZXRBZG1pblRva2VuMTIzIQ')  # Provide default only for development
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///clinic.db')
+def get_database_uri():
+    database_url = os.getenv('DATABASE_URL')
+    
+    if database_url:
+        # Handle both PostgreSQL URL formats
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        return database_url
+    else:
+        # Fallback to SQLite for local development
+        return 'sqlite:///clinic.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', UPLOAD_FOLDER)
 app.config['BACKUP_FOLDER'] = os.getenv('BACKUP_FOLDER', 'backups')
@@ -120,13 +165,13 @@ class User(db.Model, UserMixin):
     __tablename__ = 'user'
     
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), unique=True, nullable=False)
-    email = db.Column(db.String(100), unique=True, nullable=False)
-    password = db.Column(db.String(200), nullable=False)
-    role = db.Column(db.String(20), nullable=False, default='user')
+    username = db.Column(db.String(255), unique=True, nullable=False)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    password = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(50), nullable=False, default='user')
     is_active = db.Column(db.Boolean, default=True)
     last_login = db.Column(db.DateTime)
-    profile_picture = db.Column(db.String(255))
+    profile_picture = db.Column(db.String(500))
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -218,9 +263,9 @@ def get_occupied_beds():
 class Drug(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     drug_number = db.Column(db.String(50), unique=True, nullable=False)
-    name = db.Column(db.String(100), nullable=False)
-    specification = db.Column(db.String(200))
-    buying_price = db.Column(db.Float, nullable=False)
+    name = db.Column(db.String(225), nullable=False)
+    specification = db.Column(db.Text)
+    buying_price = db.Column(db.Numeric(10, 2), nullable=False)
     selling_price = db.Column(db.Float, nullable=False)
     stocked_quantity = db.Column(db.Integer, nullable=False)
     sold_quantity = db.Column(db.Integer, default=0)
@@ -230,11 +275,11 @@ class Drug(db.Model):
 
     @hybrid_property
     def remaining_quantity(self):
-        return self.stocked_quantity - self.sold_quantity
+        return self.stocked_quantity - (self.sold_quantity or 0)
     
     @remaining_quantity.expression
     def remaining_quantity(cls):
-        return cls.stocked_quantity - cls.sold_quantity
+        return cls.stocked_quantity - (cls.sold_quantity or 0)
     
     def update_stock(self, quantity):
         """Safe method to update stock quantities"""
@@ -246,11 +291,12 @@ class Drug(db.Model):
     
     @hybrid_property
     def stock_status(self):
-        if self.remaining_quantity == 0:
+        remaining = self.remaining_quantity
+        if remaining <= 0:
             return 'out-of-stock'
-        elif self.remaining_quantity < 10:
+        elif remaining < 10:
             return 'low-stock'
-        elif (self.expiry_date - date.today()).days < 30:
+        elif self.expiry_date and (self.expiry_date - date.today()).days < 30:
             return 'expiring-soon'
         return 'in-stock'
     
@@ -291,10 +337,10 @@ class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     op_number = db.Column(db.String(20), unique=True, nullable=True)
     ip_number = db.Column(db.String(20), unique=True, nullable=True)
-    name = db.Column(db.String(100), nullable=True)  # encrypted
+    name = db.Column(db.String(255), nullable=True)  # encrypted
     age = db.Column(db.Integer, nullable=True)
     gender = db.Column(db.String(10), nullable=True)
-    address = db.Column(db.String(200), nullable=True)  # encrypted
+    address = db.Column(db.Text, nullable=True)
     phone = db.Column(db.String(20), nullable=True)  # encrypted
     destination = db.Column(db.String(100), nullable=True)
     occupation = db.Column(db.String(100), nullable=True)  # encrypted
@@ -327,8 +373,7 @@ class Patient(db.Model):
     imaging_requests = db.relationship('ImagingRequest', backref='patient', lazy=True)
     summaries = db.relationship('PatientSummary', back_populates='patient', lazy=True)
    
-    @property
-    def decrypted_name(self):
+    def get_decrypted_name(self):
         if not self.name:
             return None
         try:
@@ -336,25 +381,21 @@ class Patient(db.Model):
         except Exception:
             return "[Decryption Error]"
 
-    @property 
-    def decrypted_address(self):
+    def get_decrypted_address(self):
         return Config.decrypt_data_static(self.address)
 
-    @property
-    def decrypted_phone(self):
+    def get_decrypted_phone(self):
         return Config.decrypt_data_static(self.phone)
 
-    @property
-    def decrypted_occupation(self):
+    def get_decrypted_occupation(self):
         return Config.decrypt_data_static(self.occupation)
 
-    @property
-    def decrypted_nok_name(self):
+    def get_decrypted_nok_name(self):
         return Config.decrypt_data_static(self.nok_name)
 
-    @property
-    def decrypted_nok_contact(self):
+    def get_decrypted_nok_contact(self):
         return Config.decrypt_data_static(self.nok_contact)
+    
     def get_ai_recommendations(self):
         """Return formatted AI recommendations if available"""
         if not self.ai_assistance_enabled or not self.ai_diagnosis:
@@ -1413,10 +1454,6 @@ def generate_random_string(length=6):
 
 # Replace with this:
 _first_request = True
-
-
-_first_request = True
-
 @app.before_request
 def initialize_data():
     global _first_request
@@ -1427,6 +1464,7 @@ def initialize_data():
     try:
         # Create all database tables
         db.create_all()
+        app.logger.info("Database tables created successfully")
 
         # Create default admin if not exists
         admin_exists = db.session.execute(
@@ -1442,13 +1480,8 @@ def initialize_data():
             )
             admin.set_password('Doc.makokha@2024')
             db.session.add(admin)
-        
-        # Create default doctor if not exists
-        doctor_exists = db.session.execute(
-            db.select(User).filter_by(role='doctor')
-        ).scalar()
-        
-        if not doctor_exists:
+            
+            # Create other default users...
             doctor = User(
                 username='Default Doctor',
                 email='doctor@clinic.com',
@@ -1457,13 +1490,7 @@ def initialize_data():
             )
             doctor.set_password('Doctor@123')
             db.session.add(doctor)
-        
-        # Create default pharmacist if not exists
-        pharmacist_exists = db.session.execute(
-            db.select(User).filter_by(role='pharmacist')
-        ).scalar()
-        
-        if not pharmacist_exists:
+            
             pharmacist = User(
                 username='Default Pharmacist',
                 email='pharmacist@clinic.com',
@@ -1472,13 +1499,7 @@ def initialize_data():
             )
             pharmacist.set_password('Pharmacist@123')
             db.session.add(pharmacist)
-        
-        # Create default receptionist if not exists
-        receptionist_exists = db.session.execute(
-            db.select(User).filter_by(role='receptionist')
-        ).scalar()
-        
-        if not receptionist_exists:
+            
             receptionist = User(
                 username='Default Receptionist',
                 email='receptionist@clinic.com',
@@ -1487,13 +1508,13 @@ def initialize_data():
             )
             receptionist.set_password('Receptionist@123')
             db.session.add(receptionist)
-        
-        # Commit all changes at once
-        db.session.commit()
+            
+            db.session.commit()
+            app.logger.info("Default users created successfully")
         
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"Error initializing data: {str(e)}")
+        app.logger.error(f"Error initializing data: {str(e)}")
 
 # Login Manager
 @login_manager.user_loader
@@ -1616,7 +1637,26 @@ def generate_individual_sale_number():
     now = datetime.now()
     return f"ITEM-{now.strftime('%Y%m%d')}-{random.randint(100, 999)}"
 
-# In your home route:
+def database_is_sqlite():
+    try:
+        inspector = inspect(db.engine)
+        return inspector.dialect.name == 'sqlite'
+    except:
+        return False
+
+def database_is_postgresql():
+    try:
+        inspector = inspect(db.engine)
+        return inspector.dialect.name == 'postgresql'
+    except:
+        return False
+
+def get_database_dialect():
+    try:
+        inspector = inspect(db.engine)
+        return inspector.dialect.name
+    except:
+        return 'unknown'
 @app.route('/')
 def home():
     if current_user.is_authenticated:
@@ -2022,7 +2062,7 @@ def create_backup(backup_id):
             for table_name in BACKUP_CONFIG['tables_to_backup']:
                 try:
                     # Get table data
-                    result = db.engine.execute(f'SELECT * FROM {table_name}')
+                    result = db.engine.execute(text(f'SELECT * FROM {table_name}'))
                     rows = [dict(row) for row in result]
                     
                     # Convert to JSON
@@ -3248,44 +3288,47 @@ def restore_backup(backup_id):
             with zipfile.ZipFile(decrypted_file, 'r') as z:
                 # Read metadata
                 metadata = json.loads(z.read('metadata.json').decode('utf-8'))
+
+            for table_name in metadata['tables_backed_up']:
+                if table_name not in allowed_tables:
+                    continue
                 
-                for table_name in metadata['tables_backed_up']:
-                    if table_name not in allowed_tables:
-                        app.logger.warning(f"Skipping non-whitelisted table: {table_name}")
-                        continue
-                    
-                    ndjson_name = f"{table_name}.ndjson"
-                    if ndjson_name not in z.namelist():
-                        continue
-                    
-                    meta = MetaData()
-                    table = Table(table_name, meta, autoload_with=db.engine)
-                    
-                    # Truncate and insert in an atomic transaction
-                    batch = []
-                    batch_size = 1000
-                    with db.engine.begin() as conn:
+                ndjson_name = f"{table_name}.ndjson"
+                if ndjson_name not in z.namelist():
+                    continue
+                
+                meta = MetaData()
+                table = Table(table_name, meta, autoload_with=db.engine)
+                
+                batch = []
+                batch_size = 1000
+                with db.engine.begin() as conn:
+                    # DATABASE-AGNOSTIC TABLE CLEARING
+                    if database_is_postgresql():
                         conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
-                        with z.open(ndjson_name) as f:
-                            for raw_line in f:
-                                line = raw_line.decode('utf-8').strip()
-                                if not line:
-                                    continue
-                                row = json.loads(line)
-                                # Handle special cases (like dates)
-                                for key, value in list(row.items()):
-                                    if value and isinstance(value, str) and value.endswith('+00:00'):
-                                        try:
-                                            row[key] = datetime.fromisoformat(value)
-                                        except:
-                                            pass
-                                batch.append(row)
-                                if len(batch) >= batch_size:
-                                    conn.execute(table.insert(), batch)
-                                    batch.clear()
-                            if batch:
+                    else:
+                        conn.execute(text(f'DELETE FROM "{table_name}"'))
+                    
+                    with z.open(ndjson_name) as f:
+                        for raw_line in f:
+                            line = raw_line.decode('utf-8').strip()
+                            if not line:
+                                continue
+                            row = json.loads(line)
+                            # Handle special cases (like dates)
+                            for key, value in list(row.items()):
+                                if value and isinstance(value, str) and value.endswith('+00:00'):
+                                    try:
+                                        row[key] = datetime.fromisoformat(value)
+                                    except:
+                                        pass
+                            batch.append(row)
+                            if len(batch) >= batch_size:
                                 conn.execute(table.insert(), batch)
-            
+                                batch.clear()
+                        if batch:
+                            conn.execute(table.insert(), batch)
+                         
             # Update backup record
             backup.notes = 'Restore completed successfully'
             db.session.commit()
@@ -7043,6 +7086,9 @@ with app.app_context():
         if os.getenv("DEEPSEEK_API_KEY"):
             models = deepseek_client.models.list()
             current_app.logger.info(f"Connected to DeepSeek API. Available models: {[m.id for m in models.data]}")
+        else:
+            current_app.logger.warning("DEEPSEEK_API_KEY not set - AI features will be disabled")
+            deepseek_client = None
     except Exception as e:
         current_app.logger.error(f"Failed to initialize DeepSeek client: {str(e)}")
         deepseek_client = None
@@ -8700,18 +8746,27 @@ app.register_blueprint(auth_bp, url_prefix='/auth')
 
 
 if __name__ == '__main__':
+    # Create necessary directories
     if not os.path.exists('instance'):
         os.makedirs('instance')
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
         os.makedirs(app.config['UPLOAD_FOLDER'])
     if not os.path.exists(app.config['BACKUP_FOLDER']):
         os.makedirs(app.config['BACKUP_FOLDER'])
-        login_manager = LoginManager()
+    
+    # Initialize login manager
     login_manager.init_app(app)
     
     @login_manager.user_loader
     def load_user(user_id):
         return db.session.get(User, int(user_id))
     
-    initialize_database() 
-    app.run(debug=True)
+    # Start the application
+    if os.environ.get('RENDER'):
+        # Production - use gunicorn (handled by Render)
+        app.logger.info("Production mode - ready for gunicorn")
+    else:
+        # Development
+        app.logger.info("Development mode - starting Flask server")
+        initialize_data() 
+        app.run(debug=True, host='0.0.0.0', port=5000)

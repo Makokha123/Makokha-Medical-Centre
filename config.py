@@ -76,15 +76,13 @@ class Config:
     SESSION_COOKIE_SAMESITE = _get_env("SESSION_COOKIE_SAMESITE", "Lax")
     PREFERRED_URL_SCHEME = _get_env("PREFERRED_URL_SCHEME", "https")
 
-    # Core secrets
     # In production, SECRET_KEY and SECURITY_PASSWORD_SALT must be provided. For development, fall back to ephemeral keys with warnings.
     SECRET_KEY = _get_env("SECRET_KEY")
     SECURITY_PASSWORD_SALT = _get_env("SECURITY_PASSWORD_SALT")
 
-    # Database
     # Use a stable SQLite path by default under instance/
     SQLALCHEMY_DATABASE_URI = _get_env("DATABASE_URL", "sqlite:///instance/clinic.db")
-    SQLALCHEMY_TRACK_MODIFICATIONS = _parse_bool(_get_env("SQLALCHEMY_TRACK_MODIFICATIONS", "false"))
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # File handling
     UPLOAD_FOLDER = _get_env("UPLOAD_FOLDER", "static/uploads")
