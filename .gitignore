@@ -5,3 +5,30 @@ static/
 .env
 .env.*
 !.env.example
+logs/
+*.log
+*.db
+*.sqlite3
+*.sqlite
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
