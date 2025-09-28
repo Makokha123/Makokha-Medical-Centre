@@ -1,8 +1,8 @@
 """Initial PostgreSQL schema
 
-Revision ID: 9442efe0569e
+Revision ID: 5a764b784854
 Revises: 
-Create Date: 2025-09-28 13:58:02.497705
+Create Date: 2025-09-28 20:13:03.408520
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '9442efe0569e'
+revision = '5a764b784854'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -46,11 +46,11 @@ def upgrade():
     )
     op.create_table('drug',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('drug_number', sa.String(length=50), nullable=False),
-    sa.Column('name', sa.String(length=225), nullable=False),
+    sa.Column('drug_number', sa.String(length=100), nullable=False),
+    sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('specification', sa.Text(), nullable=True),
     sa.Column('buying_price', sa.Numeric(precision=10, scale=2), nullable=False),
-    sa.Column('selling_price', sa.Float(), nullable=False),
+    sa.Column('selling_price', sa.Numeric(precision=10, scale=2), nullable=False),
     sa.Column('stocked_quantity', sa.Integer(), nullable=False),
     sa.Column('sold_quantity', sa.Integer(), nullable=True),
     sa.Column('expiry_date', sa.Date(), nullable=False),
@@ -80,21 +80,21 @@ def upgrade():
     )
     op.create_table('patient',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('op_number', sa.String(length=20), nullable=True),
-    sa.Column('ip_number', sa.String(length=20), nullable=True),
-    sa.Column('name', sa.String(length=255), nullable=True),
+    sa.Column('op_number', sa.String(length=500), nullable=True),
+    sa.Column('ip_number', sa.String(length=500), nullable=True),
+    sa.Column('name', sa.String(length=550), nullable=True),
     sa.Column('age', sa.Integer(), nullable=True),
-    sa.Column('gender', sa.String(length=10), nullable=True),
-    sa.Column('address', sa.Text(), nullable=True),
-    sa.Column('phone', sa.String(length=20), nullable=True),
-    sa.Column('destination', sa.String(length=100), nullable=True),
-    sa.Column('occupation', sa.String(length=100), nullable=True),
-    sa.Column('religion', sa.String(length=100), nullable=True),
-    sa.Column('nok_name', sa.String(length=100), nullable=True),
-    sa.Column('nok_contact', sa.String(length=20), nullable=True),
+    sa.Column('gender', sa.String(length=200), nullable=True),
+    sa.Column('address', sa.String(length=550), nullable=True),
+    sa.Column('phone', sa.String(length=550), nullable=True),
+    sa.Column('destination', sa.String(length=550), nullable=True),
+    sa.Column('occupation', sa.String(length=550), nullable=True),
+    sa.Column('religion', sa.String(length=500), nullable=True),
+    sa.Column('nok_name', sa.String(length=550), nullable=True),
+    sa.Column('nok_contact', sa.String(length=550), nullable=True),
     sa.Column('tca', sa.Date(), nullable=True),
     sa.Column('date_of_admission', sa.Date(), nullable=True),
-    sa.Column('status', sa.String(length=20), nullable=True),
+    sa.Column('status', sa.String(length=250), nullable=True),
     sa.Column('chief_complaint', sa.Text(), nullable=True),
     sa.Column('history_present_illness', sa.Text(), nullable=True),
     sa.Column('ai_assistance_enabled', sa.Boolean(), nullable=True),
@@ -125,7 +125,7 @@ def upgrade():
     sa.Column('role', sa.String(length=50), nullable=False),
     sa.Column('is_active', sa.Boolean(), nullable=True),
     sa.Column('last_login', sa.DateTime(), nullable=True),
-    sa.Column('profile_picture', sa.String(length=500), nullable=True),
+    sa.Column('profile_picture', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
