@@ -335,21 +335,21 @@ class DrugDosage(db.Model):
 
 class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    op_number = db.Column(db.String(50), unique=True, nullable=True)  # Increased from 20
-    ip_number = db.Column(db.String(50), unique=True, nullable=True)  # Increased from 20
-    name = db.Column(db.Text, nullable=True)  # Changed from String(100) to Text
+    op_number = db.Column(db.String(500), unique=True, nullable=True)  # Increased from 20
+    ip_number = db.Column(db.String(500), unique=True, nullable=True)  # Increased from 20
+    name = db.Column(db.String(500), nullable=True)  # Increased length
     age = db.Column(db.Integer, nullable=True)
-    gender = db.Column(db.String(20), nullable=True)  # Increased from 10
-    address = db.Column(db.Text, nullable=True)  # Changed from String(200) to Text
-    phone = db.Column(db.Text, nullable=True)  # Changed from String(20) to Text
-    destination = db.Column(db.String(100), nullable=True)
-    occupation = db.Column(db.Text, nullable=True)  # Changed from String(100) to Text
-    religion = db.Column(db.String(100), nullable=True)
-    nok_name = db.Column(db.Text, nullable=True)  # Changed from String(100) to Text
-    nok_contact = db.Column(db.Text, nullable=True)  # Changed from String(20) to Text
+    gender = db.Column(db.String(200), nullable=True)  # Increased from 10
+    address = db.Column(db.String(500), nullable=True)  # Increased length
+    phone = db.Column(db.String(500), nullable=True)  # Increased length
+    destination = db.Column(db.String(500), nullable=True)
+    occupation = db.Column(db.String(500), nullable=True)  # Increased length
+    religion = db.Column(db.String(500), nullable=True)
+    nok_name = db.Column(db.String(500), nullable=True)  # Increased length
+    nok_contact = db.Column(db.String(500), nullable=True)  # Increased length
     tca = db.Column(db.Date, nullable=True)
     date_of_admission = db.Column(db.Date, nullable=True)
-    status = db.Column(db.String(20), default='active', nullable=True)
+    status = db.Column(db.String(200), default='active', nullable=True)
     chief_complaint = db.Column(db.Text, nullable=True)
     history_present_illness = db.Column(db.Text, nullable=True)
     
