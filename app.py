@@ -1454,6 +1454,10 @@ def generate_random_string(length=6):
 
 # Replace with this:
 _first_request = True
+from flask import current_app
+
+_first_request = True
+
 @app.before_request
 def initialize_data():
     global _first_request
@@ -1461,60 +1465,78 @@ def initialize_data():
         return
     _first_request = False
     
-    try:
-        # Create all database tables
-        db.create_all()
-        app.logger.info("Database tables created successfully")
+    # Use application context
+    with app.app_context():
+        try:
+            # Create all database tables
+            db.create_all()
 
-        # Create default admin if not exists
-        admin_exists = db.session.execute(
-            db.select(User).filter_by(role='admin')
-        ).scalar()
-        
-        if not admin_exists:
-            admin = User(
-                username='Makokha Nelson',
-                email='makokhanelson4@gmail.com',
-                role='admin',
-                is_active=True
-            )
-            admin.set_password('Doc.makokha@2024')
-            db.session.add(admin)
+            # Create default admin if not exists
+            admin_exists = db.session.execute(
+                db.select(User).filter_by(role='admin')
+            ).scalar()
             
-            # Create other default users...
-            doctor = User(
-                username='Default Doctor',
-                email='doctor@clinic.com',
-                role='doctor',
-                is_active=True
-            )
-            doctor.set_password('Doctor@123')
-            db.session.add(doctor)
+            if not admin_exists:
+                admin = User(
+                    username='Makokha Nelson',
+                    email='makokhanelson4@gmail.com',
+                    role='admin',
+                    is_active=True
+                )
+                admin.set_password('Doc.makokha@2024')
+                db.session.add(admin)
             
-            pharmacist = User(
-                username='Default Pharmacist',
-                email='pharmacist@clinic.com',
-                role='pharmacist',
-                is_active=True
-            )
-            pharmacist.set_password('Pharmacist@123')
-            db.session.add(pharmacist)
+            # Create default doctor if not exists
+            doctor_exists = db.session.execute(
+                db.select(User).filter_by(role='doctor')
+            ).scalar()
             
-            receptionist = User(
-                username='Default Receptionist',
-                email='receptionist@clinic.com',
-                role='receptionist',
-                is_active=True
-            )
-            receptionist.set_password('Receptionist@123')
-            db.session.add(receptionist)
+            if not doctor_exists:
+                doctor = User(
+                    username='Default Doctor',
+                    email='doctor@clinic.com',
+                    role='doctor',
+                    is_active=True
+                )
+                doctor.set_password('Doctor@123')
+                db.session.add(doctor)
             
+            # Create default pharmacist if not exists
+            pharmacist_exists = db.session.execute(
+                db.select(User).filter_by(role='pharmacist')
+            ).scalar()
+            
+            if not pharmacist_exists:
+                pharmacist = User(
+                    username='Default Pharmacist',
+                    email='pharmacist@clinic.com',
+                    role='pharmacist',
+                    is_active=True
+                )
+                pharmacist.set_password('Pharmacist@123')
+                db.session.add(pharmacist)
+            
+            # Create default receptionist if not exists
+            receptionist_exists = db.session.execute(
+                db.select(User).filter_by(role='receptionist')
+            ).scalar()
+            
+            if not receptionist_exists:
+                receptionist = User(
+                    username='Default Receptionist',
+                    email='receptionist@clinic.com',
+                    role='receptionist',
+                    is_active=True
+                )
+                receptionist.set_password('Receptionist@123')
+                db.session.add(receptionist)
+            
+            # Commit all changes at once
             db.session.commit()
-            app.logger.info("Default users created successfully")
-        
-    except Exception as e:
-        db.session.rollback()
-        app.logger.error(f"Error initializing data: {str(e)}")
+            
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"Error initializing data: {str(e)}")
 
 # Login Manager
 @login_manager.user_loader
