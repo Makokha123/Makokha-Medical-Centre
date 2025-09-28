@@ -4688,6 +4688,15 @@ def get_drug_dosage(drug_id):
         } if dosage else None
     })
 
+@app.before_request
+def log_request_info():
+    """Log detailed information about each request"""
+    if request.method == 'POST':
+        app.logger.info(f"POST Request to: {request.path}")
+        app.logger.info(f"Headers: {dict(request.headers)}")
+        app.logger.info(f"Form data: {dict(request.form)}")
+        app.logger.info(f"JSON data: {request.get_json(silent=True)}")
+        
 # Admin Patient Management Routes
 @app.route('/admin/patients', methods=['GET'])
 @login_required
