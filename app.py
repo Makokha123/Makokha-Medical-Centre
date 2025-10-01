@@ -1961,14 +1961,18 @@ def admin_dashboard():
             Drug.expiry_date <= date.today() + timedelta(days=30)
         ).scalar()
         
-        # FIXED: Use PostgreSQL to_char instead of strftime
+        # FIXED: Today's sales - use date() function compatible with both SQLite and PostgreSQL
         today_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.date(Sale.created_at) == date.today()
         ).scalar() or 0
         
-        # FIXED: This is the line that was causing the error
+        # FIXED: Monthly sales - use database-agnostic approach
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        
         monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
-            func.to_char(Sale.created_at, 'YYYY-MM') == datetime.now().strftime('%Y-%m')
+            func.extract('year', Sale.created_at) == current_year,
+            func.extract('month', Sale.created_at) == current_month
         ).scalar() or 0
         
         pending_bills = db.session.query(func.sum(Debtor.amount_owed)).scalar() or 0
@@ -1988,25 +1992,13 @@ def admin_dashboard():
         
         active_users = db.session.query(func.count(User.id)).filter_by(is_active=True).scalar()
         
-        # Get doctor statistics - ensure these are called
+        # Get doctor statistics
         daily_stats = get_doctor_stats('daily')
         monthly_stats = get_doctor_stats('monthly')
         yearly_stats = get_doctor_stats('yearly')
         
         # Get recent activity
-        recent_activity = db.session.query(
-            AuditLog.id,
-            AuditLog.action,
-            AuditLog.created_at.label('created_at'),
-            literal('audit').label('type')
-        ).union_all(
-            db.session.query(
-                BackupRecord.id,
-                literal('backup').label('action'),
-                BackupRecord.timestamp.label('created_at'),
-                literal('backup').label('type')
-            )
-        ).order_by(text('created_at DESC')).limit(10).all()
+        recent_activity = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(10).all()
         
         return render_template('admin/dashboard.html',
             total_drugs=total_drugs,
