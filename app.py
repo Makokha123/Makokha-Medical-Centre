@@ -6,6 +6,7 @@ from sqlalchemy import MetaData, Table
 import csv
 import io
 from threading import Thread
+from flask_migrate import Migrate
 import time
 from flask import Flask, abort, Blueprint, make_response, render_template, request, redirect, send_from_directory, url_for, flash, session, jsonify, send_file
 from flask_migrate import Migrate
@@ -1201,7 +1202,7 @@ class SaleItem(db.Model):
     drug_id = db.Column(db.Integer, db.ForeignKey('drug.id'))
     drug_name = db.Column(db.String(100))  # Store drug name directly
     drug_specification = db.Column(db.String(200))  # Store drug specs
-    individual_sale_number = db.Column(db.String(20))
+    individual_sale_number = db.Column(db.String(100))
     service_id = db.Column(db.Integer, db.ForeignKey('service.id'))
     lab_test_id = db.Column(db.Integer, db.ForeignKey('lab_test.id'))
     description = db.Column(db.String(200), nullable=False, default="Drug sale")
