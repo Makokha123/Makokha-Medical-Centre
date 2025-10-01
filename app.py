@@ -1,12 +1,9 @@
 
-from importlib.metadata.diagnose import inspect
-from logging.handlers import RotatingFileHandler
 from sqlalchemy import MetaData, Table
 from sqlalchemy import MetaData, Table
 import csv
 import io
 from threading import Thread
-from flask_migrate import Migrate
 import time
 from flask import Flask, abort, Blueprint, make_response, render_template, request, redirect, send_from_directory, url_for, flash, session, jsonify, send_file
 from flask_migrate import Migrate
@@ -56,38 +53,6 @@ from wtforms.validators import DataRequired, Email, EqualTo, Length
 
 # Initialize Flask app
 app = Flask(__name__)
-
-# Production configuration for Render
-if os.environ.get('RENDER'):
-    # Production settings
-    app.config.update(
-        DEBUG=False,
-        TESTING=False,
-        PREFERRED_URL_SCHEME='https'
-    )
-    
-    # Setup logging for production
-    if not os.path.exists('logs'):
-        os.mkdir('logs')
-    
-    file_handler = RotatingFileHandler('logs/clinic.log', maxBytes=10240, backupCount=10)
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-    ))
-    file_handler.setLevel(logging.INFO)
-    app.logger.addHandler(file_handler)
-    app.logger.setLevel(logging.INFO)
-    app.logger.info('Clinic Management System starting in production mode')
-else:
-    # Development settings
-    app.config.update(
-        DEBUG=True,
-        TESTING=True,
-        PREFERRED_URL_SCHEME='http'
-    )
-    app.logger.setLevel(logging.DEBUG)
-    app.logger.info('Clinic Management System starting in development mode')
-
 app.config.from_object('config.Config')
 Config.init_fernet(app)
 db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
@@ -111,18 +76,7 @@ os.makedirs(PROFILE_PICTURE_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'U3VwZXJTZWNyZXRBZG1pblRva2VuMTIzIQ')  # Provide default only for development
-def get_database_uri():
-    database_url = os.getenv('DATABASE_URL')
-    
-    if database_url:
-        # Handle both PostgreSQL URL formats
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        return database_url
-    else:
-        # Fallback to SQLite for local development
-        return 'sqlite:///clinic.db'
-app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///clinic.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', UPLOAD_FOLDER)
 app.config['BACKUP_FOLDER'] = os.getenv('BACKUP_FOLDER', 'backups')
@@ -166,13 +120,13 @@ class User(db.Model, UserMixin):
     __tablename__ = 'user'
     
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(255), unique=True, nullable=False)  # Increased from 50
-    email = db.Column(db.String(255), unique=True, nullable=False)    # Increased from 100
-    password = db.Column(db.String(255), nullable=False)              # Increased from 200
-    role = db.Column(db.String(50), nullable=False, default='user')   # Increased from 20
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    email = db.Column(db.String(100), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default='user')
     is_active = db.Column(db.Boolean, default=True)
     last_login = db.Column(db.DateTime)
-    profile_picture = db.Column(db.Text)  # Changed from String(255) to Text for long URLs
+    profile_picture = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -189,7 +143,7 @@ class User(db.Model, UserMixin):
         self.last_login = datetime.now(timezone.utc)  # Changed from utcnow()
         db.session.commit()
 
-    generated_summaries = db.relationship('PatientSummary', back_populates='generator', lazy=True)
+
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
 
@@ -263,11 +217,11 @@ def get_occupied_beds():
 
 class Drug(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    drug_number = db.Column(db.String(100), unique=True, nullable=False)  # Increased from 50
-    name = db.Column(db.String(255), nullable=False)                      # Increased from 100
-    specification = db.Column(db.Text)                                    # Changed from String(200) to Text
-    buying_price = db.Column(db.Numeric(10, 2), nullable=False)           # Use Numeric for money
-    selling_price = db.Column(db.Numeric(10, 2), nullable=False)          # Use Numeric for money
+    drug_number = db.Column(db.String(50), unique=True, nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    specification = db.Column(db.String(200))
+    buying_price = db.Column(db.Float, nullable=False)
+    selling_price = db.Column(db.Float, nullable=False)
     stocked_quantity = db.Column(db.Integer, nullable=False)
     sold_quantity = db.Column(db.Integer, default=0)
     expiry_date = db.Column(db.Date, nullable=False)
@@ -276,11 +230,11 @@ class Drug(db.Model):
 
     @hybrid_property
     def remaining_quantity(self):
-        return self.stocked_quantity - (self.sold_quantity or 0)
+        return self.stocked_quantity - self.sold_quantity
     
     @remaining_quantity.expression
     def remaining_quantity(cls):
-        return cls.stocked_quantity - (cls.sold_quantity or 0)
+        return cls.stocked_quantity - cls.sold_quantity
     
     def update_stock(self, quantity):
         """Safe method to update stock quantities"""
@@ -292,12 +246,11 @@ class Drug(db.Model):
     
     @hybrid_property
     def stock_status(self):
-        remaining = self.remaining_quantity
-        if remaining <= 0:
+        if self.remaining_quantity == 0:
             return 'out-of-stock'
-        elif remaining < 10:
+        elif self.remaining_quantity < 10:
             return 'low-stock'
-        elif self.expiry_date and (self.expiry_date - date.today()).days < 30:
+        elif (self.expiry_date - date.today()).days < 30:
             return 'expiring-soon'
         return 'in-stock'
     
@@ -336,21 +289,21 @@ class DrugDosage(db.Model):
 
 class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    op_number = db.Column(db.String(500), unique=True, nullable=True)  # Increased from 20
-    ip_number = db.Column(db.String(500), unique=True, nullable=True)  # Increased from 20
-    name = db.Column(db.Text, nullable=True)
+    op_number = db.Column(db.String(20), unique=True, nullable=True)
+    ip_number = db.Column(db.String(20), unique=True, nullable=True)
+    name = db.Column(db.String(100), nullable=True)  # encrypted
     age = db.Column(db.Integer, nullable=True)
-    gender = db.Column(db.String(200), nullable=True)  # Increased from 10
-    address = db.Column(db.Text, nullable=True)
-    phone = db.Column(db.Text, nullable=True)
-    destination = db.Column(db.Text, nullable=True)
-    occupation = db.Column(db.Text, nullable=True)
-    religion = db.Column(db.String(500), nullable=True)
-    nok_name = db.Column(db.Text, nullable=True)
-    nok_contact = db.Column(db.Text, nullable=True)
+    gender = db.Column(db.String(10), nullable=True)
+    address = db.Column(db.String(200), nullable=True)  # encrypted
+    phone = db.Column(db.String(20), nullable=True)  # encrypted
+    destination = db.Column(db.String(100), nullable=True)
+    occupation = db.Column(db.String(100), nullable=True)  # encrypted
+    religion = db.Column(db.String(100), nullable=True)
+    nok_name = db.Column(db.String(100), nullable=True)  # encrypted
+    nok_contact = db.Column(db.String(20), nullable=True)  # encrypted
     tca = db.Column(db.Date, nullable=True)
     date_of_admission = db.Column(db.Date, nullable=True)
-    status = db.Column(db.String(250), default='active', nullable=True)
+    status = db.Column(db.String(20), default='active', nullable=True)
     chief_complaint = db.Column(db.Text, nullable=True)
     history_present_illness = db.Column(db.Text, nullable=True)
     
@@ -359,7 +312,7 @@ class Patient(db.Model):
     ai_diagnosis = db.Column(db.Text)
     ai_treatment_recommendations = db.Column(db.Text)
     ai_last_updated = db.Column(db.DateTime)
-    ai_confidence_score = db.Column(db.Float)
+    ai_confidence_score = db.Column(db.Float)  # 0-1 scale for diagnosis confidence
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -372,10 +325,8 @@ class Patient(db.Model):
     management = db.relationship('PatientManagement', backref='patient', lazy=True)
     lab_requests = db.relationship('LabRequest', backref='patient', lazy=True)
     imaging_requests = db.relationship('ImagingRequest', backref='patient', lazy=True)
-    summaries = db.relationship('PatientSummary', back_populates='patient', lazy=True)
-
-    # Use methods instead of properties for decrypted data
-    def get_decrypted_name(self):
+    @property
+    def decrypted_name(self):
         if not self.name:
             return None
         try:
@@ -383,46 +334,25 @@ class Patient(db.Model):
         except Exception:
             return "[Decryption Error]"
 
-    def get_decrypted_address(self):
-        if not self.address:
-            return None
-        try:
-            return Config.decrypt_data_static(self.address)
-        except Exception:
-            return "[Decryption Error]"
+    @property 
+    def decrypted_address(self):
+        return Config.decrypt_data_static(self.address)
 
-    def get_decrypted_phone(self):
-        if not self.phone:
-            return None
-        try:
-            return Config.decrypt_data_static(self.phone)
-        except Exception:
-            return "[Decryption Error]"
+    @property
+    def decrypted_phone(self):
+        return Config.decrypt_data_static(self.phone)
 
-    def get_decrypted_occupation(self):
-        if not self.occupation:
-            return None
-        try:
-            return Config.decrypt_data_static(self.occupation)
-        except Exception:
-            return "[Decryption Error]"
+    @property
+    def decrypted_occupation(self):
+        return Config.decrypt_data_static(self.occupation)
 
-    def get_decrypted_nok_name(self):
-        if not self.nok_name:
-            return None
-        try:
-            return Config.decrypt_data_static(self.nok_name)
-        except Exception:
-            return "[Decryption Error]"
+    @property
+    def decrypted_nok_name(self):
+        return Config.decrypt_data_static(self.nok_name)
 
-    def get_decrypted_nok_contact(self):
-        if not self.nok_contact:
-            return None
-        try:
-            return Config.decrypt_data_static(self.nok_contact)
-        except Exception:
-            return "[Decryption Error]"
-    
+    @property
+    def decrypted_nok_contact(self):
+        return Config.decrypt_data_static(self.nok_contact)
     def get_ai_recommendations(self):
         """Return formatted AI recommendations if available"""
         if not self.ai_assistance_enabled or not self.ai_diagnosis:
@@ -519,19 +449,6 @@ class PatientExamination(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-class PatientSummary(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
-    summary_text = db.Column(db.Text, nullable=False)
-    summary_type = db.Column(db.String(20), default='manual')  # 'manual' or 'ai_generated'
-    generated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    
-    # FIXED: Use back_populates instead of backref to avoid naming conflicts
-    patient = db.relationship('Patient', back_populates='summaries')
-    generator = db.relationship('User', back_populates='generated_summaries')
-    
 class PatientDiagnosis(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
@@ -843,111 +760,6 @@ class AIService:
         Please generate the HPI in full paragraph narrative format suitable for a medical record.
         """
 
-    def generate_patient_summary(patient_data):
-        """
-        Generate a comprehensive patient summary from all available patient data
-        """
-        prompt = f"""
-        You are an experienced medical professional. Create a comprehensive patient summary 
-        by synthesizing all the available patient information into a coherent clinical narrative.
-        
-        PATIENT INFORMATION:
-        
-        Biodata:
-        - Name: {patient_data.get('name', 'Not specified')}
-        - Age: {patient_data.get('age', 'Not specified')}
-        - Gender: {patient_data.get('gender', 'Not specified')}
-        - Address: {patient_data.get('address', 'Not specified')}
-        - Occupation: {patient_data.get('occupation', 'Not specified')}
-        - Religion: {patient_data.get('religion', 'Not specified')}
-        
-        Chief Complaint:
-        {patient_data.get('chief_complaint', 'Not documented')}
-        
-        History of Present Illness (HPI):
-        {patient_data.get('history_present_illness', 'Not documented')}
-        
-        Review of Systems (ROS):
-        {json.dumps(patient_data.get('review_systems', {}), indent=2)}
-        
-        Medical History:
-        - Social History: {patient_data.get('social_history', 'Not documented')}
-        - Medical History: {patient_data.get('medical_history', 'Not documented')}
-        - Surgical History: {patient_data.get('surgical_history', 'Not documented')}
-        - Family History: {patient_data.get('family_history', 'Not documented')}
-        - Allergies: {patient_data.get('allergies', 'None known')}
-        - Current Medications: {patient_data.get('medications', 'None')}
-        
-        Physical Examination Findings:
-        {json.dumps(patient_data.get('examination', {}), indent=2)}
-        
-        Current Working Diagnosis:
-        {patient_data.get('working_diagnosis', 'Not established')}
-        
-        Please create a well-structured patient summary that includes:
-        1. Patient demographics and presenting complaint
-        2. Key findings from history and examination
-        3. Assessment and current diagnosis
-        4. Relevant positive and negative findings
-        5. Clinical impression
-        
-        Format the summary in professional medical narrative style, suitable for inclusion in a medical record.
-        Be concise but comprehensive, focusing on clinically relevant information.
-        """
-        
-        try:
-            client = AIService.get_client()
-            response = client.chat.completions.create(
-                model=AIService.MODELS['primary'],
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1200,
-                timeout=30
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            current_app.logger.error(f"AI Summary Generation Error: {str(e)}")
-            return None
-
-    @staticmethod
-    def generate_diagnosis_from_summary(patient_summary):
-        """
-        Generate diagnosis and differentials from patient summary
-        """
-        prompt = f"""
-        Based on the following comprehensive patient summary, provide:
-        
-        1. PRIMARY WORKING DIAGNOSIS: The most likely diagnosis with supporting evidence
-        2. DIFFERENTIAL DIAGNOSES: 3-5 alternative diagnoses in order of likelihood
-        3. KEY FINDINGS: Clinical findings that support each diagnosis
-        4. RECOMMENDED INVESTIGATIONS: Tests needed to confirm or rule out diagnoses
-        
-        PATIENT SUMMARY:
-        {patient_summary}
-        
-        Please format your response clearly with these sections:
-        - Working Diagnosis: [Your primary diagnosis]
-        - Differential Diagnoses: [List of differentials with brief rationale]
-        - Supporting Findings: [Key clinical evidence]
-        - Recommended Tests: [Investigations needed]
-        
-        Be concise and clinically focused.
-        """
-        
-        try:
-            client = AIService.get_client()
-            response = client.chat.completions.create(
-                model=AIService.MODELS['primary'],
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1000,
-                timeout=30
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            current_app.logger.error(f"AI Diagnosis from Summary Error: {str(e)}")
-            return None
-
     @staticmethod
     def generate_diagnosis(patient_data):
         """
@@ -1202,7 +1014,7 @@ class SaleItem(db.Model):
     drug_id = db.Column(db.Integer, db.ForeignKey('drug.id'))
     drug_name = db.Column(db.String(100))  # Store drug name directly
     drug_specification = db.Column(db.String(200))  # Store drug specs
-    individual_sale_number = db.Column(db.String(100))
+    individual_sale_number = db.Column(db.String(20))
     service_id = db.Column(db.Integer, db.ForeignKey('service.id'))
     lab_test_id = db.Column(db.Integer, db.ForeignKey('lab_test.id'))
     description = db.Column(db.String(200), nullable=False, default="Drug sale")
@@ -1481,12 +1293,6 @@ def generate_random_string(length=6):
 
 # Replace with this:
 _first_request = True
-from flask import current_app
-
-_first_request = True
-
-# Replace with this:
-_first_request = True
 
 @app.before_request
 def initialize_data():
@@ -1495,80 +1301,62 @@ def initialize_data():
         return
     _first_request = False
     
-    # Use application context
-    with app.app_context():
-        try:
-            # Create all database tables
-            db.create_all()
+    # Create all database tables
+    db.create_all()
 
-            # Create default admin if not exists
-            admin_exists = db.session.execute(
-                db.select(User).filter_by(role='admin')
-            ).scalar()
-            
-            if not admin_exists:
-                admin = User(
-                    username='Makokha Nelson',
-                    email='makokhanelson4@gmail.com',
-                    role='admin',
-                    is_active=True
-                )
-                admin.set_password('Doc.makokha@2024')
-                db.session.add(admin)
-            
-            # Create default doctor if not exists
-            doctor_exists = db.session.execute(
-                db.select(User).filter_by(role='doctor')
-            ).scalar()
-            
-            if not doctor_exists:
-                doctor = User(
-                    username='Default Doctor',
-                    email='doctor@clinic.com',
-                    role='doctor',
-                    is_active=True
-                )
-                doctor.set_password('Doctor@123')
-                db.session.add(doctor)
-            
-            # Create default pharmacist if not exists
-            pharmacist_exists = db.session.execute(
-                db.select(User).filter_by(role='pharmacist')
-            ).scalar()
-            
-            if not pharmacist_exists:
-                pharmacist = User(
-                    username='Default Pharmacist',
-                    email='pharmacist@clinic.com',
-                    role='pharmacist',
-                    is_active=True
-                )
-                pharmacist.set_password('Pharmacist@123')
-                db.session.add(pharmacist)
-            
-            # Create default receptionist if not exists
-            receptionist_exists = db.session.execute(
-                db.select(User).filter_by(role='receptionist')
-            ).scalar()
-            
-            if not receptionist_exists:
-                receptionist = User(
-                    username='Default Receptionist',
-                    email='receptionist@clinic.com',
-                    role='receptionist',
-                    is_active=True
-                )
-                receptionist.set_password('Receptionist@123')
-                db.session.add(receptionist)
-            
-            # Commit all changes at once
-            db.session.commit()
-            
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"Error initializing data: {str(e)}")
-            
-# Login ManagerT
+    # Create default admin if not exists
+    if not db.session.query(User).filter_by(role='admin').first():
+        admin = User(
+            username='Makokha Nelson',
+            email='makokhanelson4@gmail.com',
+            role='admin',
+            is_active=True
+        )
+        admin.set_password('Doc.makokha@2024')
+        db.session.add(admin)
+    
+    # Create default doctor if not exists
+    if not db.session.query(User).filter_by(role='doctor').first():
+        doctor = User(
+            username='Default Doctor',
+            email='doctor@clinic.com',
+            role='doctor',
+            is_active=True
+        )
+        doctor.set_password('Doctor@123')
+        db.session.add(doctor)
+    
+    # Create default pharmacist if not exists
+    if not db.session.query(User).filter_by(role='pharmacist').first():
+        pharmacist = User(
+            username='Default Pharmacist',
+            email='pharmacist@clinic.com',
+            role='pharmacist',
+            is_active=True
+        )
+        pharmacist.set_password('Pharmacist@123')
+        db.session.add(pharmacist)
+    
+    # Create default receptionist if not exists
+    if not db.session.query(User).filter_by(role='receptionist').first():
+        receptionist = User(
+            username='Default Receptionist',
+            email='receptionist@clinic.com',
+            role='receptionist',
+            is_active=True
+        )
+        receptionist.set_password('Receptionist@123')
+        db.session.add(receptionist)
+    
+    # Commit all changes at once
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error initializing data: {str(e)}")
+
+
+# Login Manager
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
@@ -1689,26 +1477,7 @@ def generate_individual_sale_number():
     now = datetime.now()
     return f"ITEM-{now.strftime('%Y%m%d')}-{random.randint(100, 999)}"
 
-def database_is_sqlite():
-    try:
-        inspector = inspect(db.engine)
-        return inspector.dialect.name == 'sqlite'
-    except:
-        return False
-
-def database_is_postgresql():
-    try:
-        inspector = inspect(db.engine)
-        return inspector.dialect.name == 'postgresql'
-    except:
-        return False
-
-def get_database_dialect():
-    try:
-        inspector = inspect(db.engine)
-        return inspector.dialect.name
-    except:
-        return 'unknown'
+# In your home route:
 @app.route('/')
 def home():
     if current_user.is_authenticated:
@@ -1961,14 +1730,12 @@ def admin_dashboard():
             Drug.expiry_date <= date.today() + timedelta(days=30)
         ).scalar()
         
-        # FIXED: Use PostgreSQL to_char instead of strftime
         today_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.date(Sale.created_at) == date.today()
         ).scalar() or 0
         
-        # FIXED: This is the line that was causing the error
         monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
-            func.to_char(Sale.created_at, 'YYYY-MM') == datetime.now().strftime('%Y-%m')
+            func.strftime('%Y-%m', Sale.created_at) == datetime.now().strftime('%Y-%m')
         ).scalar() or 0
         
         pending_bills = db.session.query(func.sum(Debtor.amount_owed)).scalar() or 0
@@ -2006,7 +1773,7 @@ def admin_dashboard():
                 BackupRecord.timestamp.label('created_at'),
                 literal('backup').label('type')
             )
-        ).order_by(text('created_at DESC')).limit(10).all()
+        ).order_by(text('created_at')).limit(10).all()
         
         return render_template('admin/dashboard.html',
             total_drugs=total_drugs,
@@ -2055,7 +1822,7 @@ def get_doctor_stats(timeframe='daily'):
         start_date = today
         end_date = today + timedelta(days=1)
 
-    # Get inpatient and outpatient counts - using date comparisons compatible with PostgreSQL
+    # Get inpatient and outpatient counts
     inpatients = db.session.query(Patient).filter(
         Patient.ip_number.isnot(None),
         Patient.date_of_admission >= start_date,
@@ -2068,7 +1835,7 @@ def get_doctor_stats(timeframe='daily'):
         Patient.date_of_admission < end_date
     ).count()
 
-    # Get discharged patients - using date comparisons
+    # Get discharged patients
     discharged = db.session.query(Patient).filter(
         Patient.status == 'completed',
         Patient.updated_at >= start_date,
@@ -2116,7 +1883,7 @@ def create_backup(backup_id):
             for table_name in BACKUP_CONFIG['tables_to_backup']:
                 try:
                     # Get table data
-                    result = db.engine.execute(text(f'SELECT * FROM {table_name}'))
+                    result = db.engine.execute(f'SELECT * FROM {table_name}')
                     rows = [dict(row) for row in result]
                     
                     # Convert to JSON
@@ -3342,47 +3109,44 @@ def restore_backup(backup_id):
             with zipfile.ZipFile(decrypted_file, 'r') as z:
                 # Read metadata
                 metadata = json.loads(z.read('metadata.json').decode('utf-8'))
-
-            for table_name in metadata['tables_backed_up']:
-                if table_name not in allowed_tables:
-                    continue
                 
-                ndjson_name = f"{table_name}.ndjson"
-                if ndjson_name not in z.namelist():
-                    continue
-                
-                meta = MetaData()
-                table = Table(table_name, meta, autoload_with=db.engine)
-                
-                batch = []
-                batch_size = 1000
-                with db.engine.begin() as conn:
-                    # DATABASE-AGNOSTIC TABLE CLEARING
-                    if database_is_postgresql():
-                        conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
-                    else:
-                        conn.execute(text(f'DELETE FROM "{table_name}"'))
+                for table_name in metadata['tables_backed_up']:
+                    if table_name not in allowed_tables:
+                        app.logger.warning(f"Skipping non-whitelisted table: {table_name}")
+                        continue
                     
-                    with z.open(ndjson_name) as f:
-                        for raw_line in f:
-                            line = raw_line.decode('utf-8').strip()
-                            if not line:
-                                continue
-                            row = json.loads(line)
-                            # Handle special cases (like dates)
-                            for key, value in list(row.items()):
-                                if value and isinstance(value, str) and value.endswith('+00:00'):
-                                    try:
-                                        row[key] = datetime.fromisoformat(value)
-                                    except:
-                                        pass
-                            batch.append(row)
-                            if len(batch) >= batch_size:
+                    ndjson_name = f"{table_name}.ndjson"
+                    if ndjson_name not in z.namelist():
+                        continue
+                    
+                    meta = MetaData()
+                    table = Table(table_name, meta, autoload_with=db.engine)
+                    
+                    # Truncate and insert in an atomic transaction
+                    batch = []
+                    batch_size = 1000
+                    with db.engine.begin() as conn:
+                        conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
+                        with z.open(ndjson_name) as f:
+                            for raw_line in f:
+                                line = raw_line.decode('utf-8').strip()
+                                if not line:
+                                    continue
+                                row = json.loads(line)
+                                # Handle special cases (like dates)
+                                for key, value in list(row.items()):
+                                    if value and isinstance(value, str) and value.endswith('+00:00'):
+                                        try:
+                                            row[key] = datetime.fromisoformat(value)
+                                        except:
+                                            pass
+                                batch.append(row)
+                                if len(batch) >= batch_size:
+                                    conn.execute(table.insert(), batch)
+                                    batch.clear()
+                            if batch:
                                 conn.execute(table.insert(), batch)
-                                batch.clear()
-                        if batch:
-                            conn.execute(table.insert(), batch)
-                         
+            
             # Update backup record
             backup.notes = 'Restore completed successfully'
             db.session.commit()
@@ -4689,15 +4453,6 @@ def get_drug_dosage(drug_id):
         } if dosage else None
     })
 
-@app.before_request
-def log_request_info():
-    """Log detailed information about each request"""
-    if request.method == 'POST':
-        app.logger.info(f"POST Request to: {request.path}")
-        app.logger.info(f"Headers: {dict(request.headers)}")
-        app.logger.info(f"Form data: {dict(request.form)}")
-        app.logger.info(f"JSON data: {request.get_json(silent=True)}")
-        
 # Admin Patient Management Routes
 @app.route('/admin/patients', methods=['GET'])
 @login_required
@@ -4950,11 +4705,10 @@ def patient_details(patient_id):
             'date': prescription.created_at.strftime('%Y-%m-%d')
         } for prescription in patient.prescriptions for item in prescription.items]
     })
-    
 # Medical Tests Management
 @app.route('/admin/medical-tests')
 @login_required
-def manage_tests():
+def manage_medical_tests():
     if current_user.role != 'admin':
         abort(403)
     
@@ -6362,7 +6116,7 @@ def doctor_dashboard():
     # Get counts for the stats cards
     active_patients_count = Patient.query.filter_by(status='active').count()
     today_patients = Patient.query.filter(
-        func.date(Sale.created_at) == date.today()
+        func.date(Patient.created_at) == date.today()
     ).count()
     completed_patients_count = Patient.query.filter_by(status='completed').count()
     
@@ -6424,217 +6178,6 @@ def doctor_patients():
         completed_patients=completed_patients
     )
 
-@app.route('/doctor/patient/<int:patient_id>/summary', methods=['GET', 'POST'])
-@login_required
-def patient_summary(patient_id):
-    if current_user.role not in ['doctor', 'admin']:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-    
-    patient = db.session.get(Patient, patient_id)
-    if not patient:
-        return jsonify({'success': False, 'error': 'Patient not found'}), 404
-    
-    if request.method == 'POST':
-        action = request.form.get('action')
-        
-        if action == 'add_manual':
-            try:
-                summary_text = request.form.get('summary_text')
-                if not summary_text:
-                    return jsonify({'success': False, 'error': 'Summary text is required'}), 400
-                
-                summary = PatientSummary(
-                    patient_id=patient.id,
-                    summary_text=summary_text,
-                    summary_type='manual'
-                )
-                db.session.add(summary)
-                db.session.commit()
-                
-                return jsonify({'success': True, 'message': 'Summary saved successfully'})
-                
-            except Exception as e:
-                db.session.rollback()
-                return jsonify({'success': False, 'error': str(e)}), 500
-        
-        elif action == 'generate_ai':
-            try:
-                # Collect all patient data for summary generation
-                review_systems = db.session.execute(
-                    db.select(PatientReviewSystem).filter_by(patient_id=patient.id)
-                ).scalar()
-                
-                history = db.session.execute(
-                    db.select(PatientHistory).filter_by(patient_id=patient.id)
-                ).scalar()
-                
-                examination = db.session.execute(
-                    db.select(PatientExamination).filter_by(patient_id=patient.id)
-                ).scalar()
-                
-                diagnosis = db.session.execute(
-                    db.select(PatientDiagnosis).filter_by(patient_id=patient.id)
-                ).scalar()
-
-                patient_data = {
-                    'name': patient.decrypted_name,
-                    'age': patient.age,
-                    'gender': patient.gender,
-                    'address': patient.decrypted_address or '',
-                    'occupation': patient.decrypted_occupation or '',
-                    'religion': patient.religion or '',
-                    'chief_complaint': patient.chief_complaint or '',
-                    'history_present_illness': patient.history_present_illness or '',
-                    'review_systems': {
-                        'cns': review_systems.cns if review_systems else '',
-                        'cvs': review_systems.cvs if review_systems else '',
-                        'rs': review_systems.rs if review_systems else '',
-                        'git': review_systems.git if review_systems else '',
-                        'gut': review_systems.gut if review_systems else '',
-                        'skin': review_systems.skin if review_systems else '',
-                        'msk': review_systems.msk if review_systems else ''
-                    } if review_systems else {},
-                    'social_history': history.social_history if history else '',
-                    'medical_history': history.medical_history if history else '',
-                    'surgical_history': history.surgical_history if history else '',
-                    'family_history': history.family_history if history else '',
-                    'allergies': history.allergies if history else '',
-                    'medications': history.medications if history else '',
-                    'examination': {
-                        'general_appearance': examination.general_appearance if examination else '',
-                        'vitals': {
-                            'temperature': examination.temperature if examination else None,
-                            'pulse': examination.pulse if examination else None,
-                            'bp': f"{examination.bp_systolic}/{examination.bp_diastolic}" if examination and examination.bp_systolic and examination.bp_diastolic else None,
-                            'resp_rate': examination.resp_rate if examination else None,
-                            'spo2': examination.spo2 if examination else None
-                        },
-                        'systems': {
-                            'cvs': examination.cvs_exam if examination else '',
-                            'respiratory': examination.resp_exam if examination else '',
-                            'abdominal': examination.abdo_exam if examination else '',
-                            'cns': examination.cns_exam if examination else ''
-                        }
-                    } if examination else {},
-                    'working_diagnosis': diagnosis.working_diagnosis if diagnosis else ''
-                }
-                
-                summary_text = AIService.generate_patient_summary(patient_data)
-                if not summary_text:
-                    return jsonify({'success': False, 'error': 'Failed to generate AI summary'}), 500
-                
-                # Save AI-generated summary
-                summary = PatientSummary(
-                    patient_id=patient.id,
-                    summary_text=summary_text,
-                    summary_type='ai_generated',
-                    generated_by=current_user.id
-                )
-                db.session.add(summary)
-                db.session.commit()
-                
-                return jsonify({
-                    'success': True, 
-                    'summary_text': summary_text,
-                    'message': 'AI summary generated successfully'
-                })
-                
-            except Exception as e:
-                db.session.rollback()
-                return jsonify({'success': False, 'error': str(e)}), 500
-        
-        elif action == 'generate_diagnosis':
-            try:
-                # Get the latest summary
-                latest_summary = db.session.execute(
-                    db.select(PatientSummary)
-                    .filter_by(patient_id=patient.id)
-                    .order_by(PatientSummary.created_at.desc())
-                ).scalar()
-                
-                if not latest_summary:
-                    return jsonify({'success': False, 'error': 'No summary available for diagnosis generation'}), 400
-                
-                diagnosis_text = AIService.generate_diagnosis_from_summary(latest_summary.summary_text)
-                if not diagnosis_text:
-                    return jsonify({'success': False, 'error': 'Failed to generate diagnosis from summary'}), 500
-                
-                # Update patient's AI diagnosis
-                patient.ai_diagnosis = diagnosis_text
-                patient.ai_last_updated = datetime.now(timezone.utc)
-                patient.ai_assistance_enabled = True
-                
-                # Also update the diagnosis record if exists
-                diagnosis_record = db.session.execute(
-                    db.select(PatientDiagnosis).filter_by(patient_id=patient.id)
-                ).scalar()
-                
-                if not diagnosis_record:
-                    diagnosis_record = PatientDiagnosis(patient_id=patient.id)
-                    db.session.add(diagnosis_record)
-                
-                diagnosis_record.ai_supported_diagnosis = True
-                diagnosis_record.ai_alternative_diagnoses = diagnosis_text
-                
-                db.session.commit()
-                
-                return jsonify({
-                    'success': True,
-                    'diagnosis': diagnosis_text,
-                    'message': 'Diagnosis generated from summary successfully'
-                })
-                
-            except Exception as e:
-                db.session.rollback()
-                return jsonify({'success': False, 'error': str(e)}), 500
-    
-    # GET request - return summary data
-    summaries = db.session.execute(
-        db.select(PatientSummary)
-        .filter_by(patient_id=patient.id)
-        .order_by(PatientSummary.created_at.desc())
-    ).scalars().all()
-    
-    summaries_data = []
-    for summary in summaries:
-        # Get generator username safely
-        generator_name = 'Manual'
-        if summary.generated_by:
-            generator = db.session.get(User, summary.generated_by)
-            generator_name = generator.username if generator else 'System'
-        
-        summaries_data.append({
-            'id': summary.id,
-            'summary_text': summary.summary_text,
-            'summary_type': summary.summary_type,
-            'created_at': summary.created_at.strftime('%Y-%m-%d %H:%M'),
-            'generated_by': generator_name
-        })
-    
-    return jsonify({
-        'success': True,
-        'summaries': summaries_data,
-        'patient_name': patient.decrypted_name,
-        'patient_number': patient.op_number or patient.ip_number
-    })
-
-@app.route('/doctor/patient/<int:patient_id>/summary/<int:summary_id>', methods=['DELETE'])
-@login_required
-def delete_patient_summary(patient_id, summary_id):
-    if current_user.role not in ['doctor', 'admin']:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-    
-    summary = db.session.get(PatientSummary, summary_id)
-    if not summary or summary.patient_id != patient_id:
-        return jsonify({'success': False, 'error': 'Summary not found'}), 404
-    
-    try:
-        db.session.delete(summary)
-        db.session.commit()
-        return jsonify({'success': True, 'message': 'Summary deleted successfully'})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 # Doctor Routes - Complete with all sections
 @app.route('/doctor/patient/new', methods=['GET', 'POST'])
@@ -7149,9 +6692,6 @@ with app.app_context():
         if os.getenv("DEEPSEEK_API_KEY"):
             models = deepseek_client.models.list()
             current_app.logger.info(f"Connected to DeepSeek API. Available models: {[m.id for m in models.data]}")
-        else:
-            current_app.logger.warning("DEEPSEEK_API_KEY not set - AI features will be disabled")
-            deepseek_client = None
     except Exception as e:
         current_app.logger.error(f"Failed to initialize DeepSeek client: {str(e)}")
         deepseek_client = None
@@ -8394,7 +7934,7 @@ def receptionist_dashboard():
     
     # Calculate today's patients
     today_patients = Patient.query.filter(
-        func.date(Sale.created_at) == date.today()
+        func.date(Patient.created_at) == date.today()
     ).count()
     
     # Calculate active patients
@@ -8809,27 +8349,18 @@ app.register_blueprint(auth_bp, url_prefix='/auth')
 
 
 if __name__ == '__main__':
-    # Create necessary directories
     if not os.path.exists('instance'):
         os.makedirs('instance')
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
         os.makedirs(app.config['UPLOAD_FOLDER'])
     if not os.path.exists(app.config['BACKUP_FOLDER']):
         os.makedirs(app.config['BACKUP_FOLDER'])
-    
-    # Initialize login manager
+        login_manager = LoginManager()
     login_manager.init_app(app)
     
     @login_manager.user_loader
     def load_user(user_id):
         return db.session.get(User, int(user_id))
     
-    # Start the application
-    if os.environ.get('RENDER'):
-        # Production - use gunicorn (handled by Render)
-        app.logger.info("Production mode - ready for gunicorn")
-    else:
-        # Development
-        app.logger.info("Development mode - starting Flask server")
-        initialize_data() 
-        app.run(debug=True, host='0.0.0.0', port=5000)
+    initialize_database() 
+    app.run(debug=True)
