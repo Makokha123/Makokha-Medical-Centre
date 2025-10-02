@@ -4468,7 +4468,7 @@ def money_summary():
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
-        # Calculate totals
+        # Calculate totals from Transaction table (existing income sources)
         total_income = db.session.query(
             func.sum(Transaction.amount)
         ).filter(
@@ -4481,14 +4481,49 @@ def money_summary():
             Transaction.transaction_type.in_(['expense', 'drawing', 'purchase', 'payroll'])
         ).scalar() or 0
 
-        net_profit = total_income - total_expenses
+        # NEW: Calculate income from drug sales in SaleItem table
+        drug_sales_income = db.session.query(
+            func.sum(SaleItem.total_price)
+        ).filter(
+            SaleItem.sale_id.isnot(None),
+            Sale.status == 'completed',
+            SaleItem.drug_id.isnot(None)  # Only items that are drugs (have drug_id)
+        ).join(Sale, SaleItem.sale_id == Sale.id).scalar() or 0
+
+        # Also include income from lab tests and services if needed
+        service_sales_income = db.session.query(
+            func.sum(SaleItem.total_price)
+        ).filter(
+            SaleItem.sale_id.isnot(None),
+            Sale.status == 'completed',
+            SaleItem.service_id.isnot(None)  # Service sales
+        ).join(Sale, SaleItem.sale_id == Sale.id).scalar() or 0
+
+        lab_sales_income = db.session.query(
+            func.sum(SaleItem.total_price)
+        ).filter(
+            SaleItem.sale_id.isnot(None),
+            Sale.status == 'completed',
+            SaleItem.lab_test_id.isnot(None)  # Lab test sales
+        ).join(Sale, SaleItem.sale_id == Sale.id).scalar() or 0
+
+        # Combine all income sources
+        total_sales_income = float(drug_sales_income) + float(service_sales_income) + float(lab_sales_income)
+        total_income_with_sales = float(total_income) + total_sales_income
+        
+        net_profit = total_income_with_sales - float(total_expenses)
         
         return jsonify({
-            'total_income': float(total_income),
+            'total_income': total_income_with_sales,
             'total_expenses': float(total_expenses),
-            'net_profit': float(net_profit),
+            'net_profit': net_profit,
+            'drug_sales_income': float(drug_sales_income),
+            'service_sales_income': float(service_sales_income),
+            'lab_sales_income': float(lab_sales_income),
+            'other_income': float(total_income)
         })
     except Exception as e:
+        current_app.logger.error(f"Error calculating money summary: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
 @app.route('/admin/dosage', methods=['GET', 'POST'])
