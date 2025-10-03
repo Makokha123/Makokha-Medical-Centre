@@ -1432,20 +1432,19 @@ class AuditLog(db.Model):
     __tablename__ = 'audit_logs'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False)  # Added ondelete
     action = db.Column(db.String(50), nullable=False)
-    table_name = db.Column(db.String(50))  # Tracks which table was affected
-    record_id = db.Column(db.Integer)      # ID of the affected record
-    description = db.Column(db.String(255))  # For backward compatibility
-    changes = db.Column(db.JSON)           # Structured change data
-    old_values = db.Column(db.JSON)        # Previous values before change
-    new_values = db.Column(db.JSON)        # Values after change
-    ip_address = db.Column(db.String(50))  # IP address of the requester
+    table_name = db.Column(db.String(50))
+    record_id = db.Column(db.Integer)
+    description = db.Column(db.String(255))
+    changes = db.Column(db.JSON)
+    old_values = db.Column(db.JSON)
+    new_values = db.Column(db.JSON)
+    ip_address = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-
-    # Relationship
-    user = db.relationship('User', backref='audit_log_entries')
+    # Updated relationship with cascade
+    user = db.relationship('User', backref=db.backref('audit_log_entries', lazy=True, cascade='all, delete-orphan'))
 
     def __init__(self, **kwargs):
         if 'description' not in kwargs and 'changes' in kwargs:
@@ -7221,9 +7220,9 @@ def ai_review_systems():
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.decrypted_address or '',
+            'address': patient.get_decrypted_address() or '',  # ✅ FIXED: Use method call
             'chief_complaint': patient.chief_complaint or '',
-            'occupation': patient.decrypted_occupation or '',
+            'occupation': patient.get_decrypted_occupation() or '',  # ✅ FIXED: Use method call
             'religion': patient.religion or '',
         }
         
@@ -7277,9 +7276,9 @@ def ai_hpi_questions():
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.decrypted_address or '',
+            'address': patient.get_decrypted_address() or '',  # ✅ FIXED
             'chief_complaint': patient.chief_complaint or '',
-            'occupation': patient.decrypted_occupation or '',
+            'occupation': patient.get_decrypted_occupation() or '',  # ✅ FIXED
             'religion': patient.religion or '',
         }
         
@@ -7336,9 +7335,9 @@ def ai_generate_hpi():
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.decrypted_address or '',
+            'address': patient.get_decrypted_address() or '',  # ✅ FIXED
             'chief_complaint': patient.chief_complaint or '',
-            'occupation': patient.decrypted_occupation or '',
+            'occupation': patient.get_decrypted_occupation() or '',  # ✅ FIXED
             'religion': patient.religion or '',
             'review_systems': (
                 f"CNS: {review.cns or 'Not documented'}\n"
@@ -7407,8 +7406,8 @@ def ai_diagnosis():
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.decrypted_address or '',
-            'occupation': patient.decrypted_occupation or '',
+            'address': patient.get_decrypted_address() or '',  # ✅ FIXED
+            'occupation': patient.get_decrypted_occupation() or '',  # ✅ FIXED
             'religion': patient.religion or '',
             'chief_complaint': patient.chief_complaint or '',
             'history_present_illness': patient.history_present_illness or '',
