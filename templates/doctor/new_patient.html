@@ -14,9 +14,9 @@
             <div class="progress-step" data-step="hpi"><span>4</span><p>HPI</p></div>
             <div class="progress-step" data-step="smhx"><span>5</span><p>SMHx</p></div>
             <div class="progress-step" data-step="examination"><span>6</span><p>Examination</p></div>
-            <div class="progress-step" data-step="diagnosis"><span>7</span><p>Diagnosis</p></div>
-            <div class="progress-step" data-step="management"><span>8</span><p>Management</p></div>
-            <div class="progress-step" data-step="summary"><span>9</span><p>Summary</p></div>
+            <div class="progress-step" data-step="summary"><span>7</span><p>Summary</p></div>
+            <div class="progress-step" data-step="diagnosis"><span>8</span><p>Diagnosis</p></div>
+            <div class="progress-step" data-step="management"><span>9</span><p>Management</p></div>
         </div>
         
         <form id="patientForm" method="POST">
@@ -392,6 +392,42 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Patient Summary Section (After Examination) -->
+            <div class="form-section" id="summary-section">
+                <h3>Clinical Summary</h3>
+                
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-file-medical"></i> Clinical Summary
+                            <small class="float-right">(Used for AI Diagnosis)</small>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="summary-importance">
+                            <i class="fas fa-lightbulb text-warning"></i>
+                            <strong>Important:</strong> This summary will be used by AI to generate accurate diagnosis suggestions. 
+                            Include key findings from history and examination.
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="patient_summary" class="form-label"><strong>Clinical Summary</strong></label>
+                            <textarea class="form-control" id="patient_summary" name="patient_summary" rows="6"
+                                      placeholder="Enter a comprehensive clinical summary including:
+- Presenting complaint and key history
+- Significant examination findings  
+- Relevant positive and negative findings
+- Initial clinical impression
+
+This summary will help AI generate accurate diagnosis suggestions in the next section."></textarea>
+                            <small class="form-text text-muted">
+                                A good clinical summary helps AI provide better diagnostic suggestions.
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
             
             <!-- Diagnosis Section -->
             <div class="form-section" id="diagnosis-section">
@@ -410,7 +446,7 @@
                                 <div class="spinner-border text-primary" role="status">
                                     <span class="visually-hidden">Loading...</span>
                                 </div>
-                                <p>Analyzing patient data...</p>
+                                <p>Analyzing clinical summary...</p>
                             </div>
                             <div id="ai-diagnosis-results" class="ai-suggestions-content" style="display: none;">
                                 <div class="alert alert-info" id="ai-diagnosis-text"></div>
@@ -419,7 +455,7 @@
                                 </button>
                             </div>
                             <div id="diagnosis-placeholder" class="ai-suggestions-content">
-                                <p class="text-muted">AI diagnosis suggestions will appear here. Click the button above to generate recommendations.</p>
+                                <p class="text-muted">AI diagnosis suggestions will appear here. Click the button above to generate recommendations based on your clinical summary.</p>
                             </div>
                         </div>
                     </div>
@@ -553,31 +589,6 @@
                     <textarea class="form-control" id="management_notes" name="management_notes" rows="3"></textarea>
                 </div>
             </div>
-
-            <!-- Patient Summary Section -->
-            <div class="form-section" id="summary-section">
-                <h3>Patient Summary</h3>
-                <div class="card mb-4" id="summarySection">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">
-                            <i class="fas fa-file-medical"></i> Patient Summary (Optional)
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label class="form-label">Initial Patient Summary</label>
-                            <textarea class="form-control" name="patient_summary" rows="6" 
-                                      placeholder="You can enter an initial summary now or generate one later using AI..."></textarea>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name="generate_ai_summary" id="generateAiSummary">
-                            <label class="form-check-label" for="generateAiSummary">
-                                Generate AI summary after saving all sections
-                            </label>
-                        </div>
-                    </div>
-                </div>
-            </div>
             
             <div class="form-navigation">
                 <input type="hidden" name="section" id="current_section" value="biodata">
@@ -599,41 +610,11 @@
 
 <script>
 $(document).ready(function() {
-    // Function to generate AI recommendations (diagnosis) automatically
-    function generateAIRecommendations() {
-        const patientId = $('#patient_id').val();
-        if (!patientId) {
-            alert('Please save patient data first');
-            return;
-        }
-        $('#ai-diagnosis-loading').show();
-        $('#ai-diagnosis-results').hide();
-        $('#diagnosis-placeholder').hide();
-        $.ajax({
-            url: '/doctor/patient/ai/diagnosis',
-            method: 'POST',
-            data: {
-                patient_id: patientId,
-                csrf_token: getCSRFToken()  // Add CSRF token
-            },
-            success: function(response) {
-                $('#ai-diagnosis-loading').hide();
-                if (response.success) {
-                    $('#ai-diagnosis-text').html(formatAIText(response.diagnosis));
-                    $('#ai-diagnosis-results').show();
-                    $('#diagnosis-placeholder').hide();
-                } else {
-                    showAIError(response.error || 'Failed to generate diagnosis');
-                    $('#diagnosis-placeholder').show();
-                }
-            },
-            error: function(xhr) {
-                $('#ai-diagnosis-loading').hide();
-                showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
-                $('#diagnosis-placeholder').show();
-            }
-        });
+    // Function to get CSRF token
+    function getCSRFToken() {
+        return $('input[name="csrf_token"]').val();
     }
+
     // Ensure all AJAX requests carry CSRF header
     var csrfMeta = $('meta[name="csrf-token"]').attr('content');
     if (csrfMeta) {
@@ -644,10 +625,6 @@ $(document).ready(function() {
                 }
             }
         });
-    }
-    // Function to get CSRF token
-    function getCSRFToken() {
-        return $('input[name="csrf_token"]').val();
     }
 
     // Initialize Select2 for multi-select inputs
@@ -758,7 +735,7 @@ $(document).ready(function() {
             data: JSON.stringify({
                 patient_id: patientId,
                 prescriptions: prescriptions,
-                csrf_token: getCSRFToken()  // Add CSRF token
+                csrf_token: getCSRFToken()
             }),
             success: function(response) {
                 if (response.success) {
@@ -796,33 +773,23 @@ $(document).ready(function() {
         $('#submitBtn').toggle(index === sections.length - 1);
     }
     
-    $('#nextBtn').click(function() {
-        saveCurrentSection().then(() => {
-            if (currentSection < sections.length - 1) {
-                currentSection++;
-                showSection(currentSection);
-                
-                // If moving to diagnosis section and AI is enabled, generate recommendations
-                if (sections.eq(currentSection).attr('id') === 'diagnosis-section' && 
-                    $('#enable-ai-assistance').is(':checked')) {
-                    generateAIRecommendations();
-                }
-            }
-        }).catch(error => {
-            console.error('Error saving section:', error);
-            alert('Error saving section: ' + error);
-        });
-    });
-    
-    $('#prevBtn').click(function() {
-        if (currentSection > 0) {
-            currentSection--;
-            showSection(currentSection);
-        }
-    });
+    // Update section validation (summary is now optional)
+    function validateCurrentSection() {
+        const currentSectionId = sections.eq(currentSection).attr('id');
+        
+        // Summary section is now optional - no validation needed
+        // All other validations remain the same
+        
+        return true;
+    }
 
     function saveCurrentSection() {
         return new Promise((resolve, reject) => {
+            if (!validateCurrentSection()) {
+                reject('Please complete the current section properly');
+                return;
+            }
+            
             const formData = $('#patientForm').serialize();
             
             $.ajax({
@@ -845,6 +812,30 @@ $(document).ready(function() {
             });
         });
     }
+    
+    $('#nextBtn').click(function() {
+        saveCurrentSection().then(() => {
+            if (currentSection < sections.length - 1) {
+                currentSection++;
+                showSection(currentSection);
+                
+                // If moving to diagnosis section and summary exists, offer to generate diagnosis
+                if (sections.eq(currentSection).attr('id') === 'diagnosis-section') {
+                    autoGenerateDiagnosisIfSummaryExists();
+                }
+            }
+        }).catch(error => {
+            console.error('Error saving section:', error);
+            alert('Error saving section: ' + error);
+        });
+    });
+    
+    $('#prevBtn').click(function() {
+        if (currentSection > 0) {
+            currentSection--;
+            showSection(currentSection);
+        }
+    });
 
     // Initialize form to show first section
     showSection(0);
@@ -873,7 +864,7 @@ $(document).ready(function() {
             method: 'POST',
             data: { 
                 patient_id: patientId,
-                csrf_token: getCSRFToken()  // Add CSRF token
+                csrf_token: getCSRFToken()
             },
             success: function(response) {
                 if (response.success) {
@@ -916,7 +907,7 @@ $(document).ready(function() {
             method: 'POST',
             data: { 
                 patient_id: patientId,
-                csrf_token: getCSRFToken()  // Add CSRF token
+                csrf_token: getCSRFToken()
             },
             success: function(response) {
                 if (response.success) {
@@ -953,7 +944,7 @@ $(document).ready(function() {
             method: 'POST',
             data: { 
                 patient_id: patientId,
-                csrf_token: getCSRFToken()  // Add CSRF token
+                csrf_token: getCSRFToken()
             },
             success: function(response) {
                 if (response.success) {
@@ -971,12 +962,19 @@ $(document).ready(function() {
         });
     });
 
-    // AI Diagnosis Suggestions
+    // AI Diagnosis Suggestions - Now reads from summary section
     $('#suggest-diagnosis').click(function() {
         const patientId = $('#patient_id').val();
+        const clinicalSummary = $('#patient_summary').val().trim();
         
         if (!patientId) {
             alert('Please save patient data first');
+            return;
+        }
+        
+        if (!clinicalSummary) {
+            alert('Please enter a clinical summary in the summary section first. The AI needs this information to generate accurate diagnoses.');
+            $('#summary-section').addClass('highlight-required');
             return;
         }
         
@@ -984,31 +982,57 @@ $(document).ready(function() {
         $('#ai-diagnosis-results').hide();
         $('#diagnosis-placeholder').hide();
         
-        $.ajax({
-            url: '/doctor/patient/ai/diagnosis',
-            method: 'POST',
-            data: { 
-                patient_id: patientId,
-                csrf_token: getCSRFToken()  // Add CSRF token
-            },
-            success: function(response) {
-                $('#ai-diagnosis-loading').hide();
-                if (response.success) {
-                    $('#ai-diagnosis-text').html(formatAIText(response.diagnosis));
-                    $('#ai-diagnosis-results').show();
-                    $('#diagnosis-placeholder').hide();
-                } else {
-                    showAIError(response.error || 'Failed to generate diagnosis');
+        // First save the current summary section to ensure data is available
+        saveCurrentSection().then(() => {
+            // Now generate diagnosis
+            $.ajax({
+                url: '/doctor/patient/ai/diagnosis',
+                method: 'POST',
+                data: { 
+                    patient_id: patientId,
+                    patient_summary: clinicalSummary,  // Send the summary
+                    csrf_token: getCSRFToken()
+                },
+                success: function(response) {
+                    $('#ai-diagnosis-loading').hide();
+                    if (response.success) {
+                        $('#ai-diagnosis-text').html(formatAIText(response.diagnosis));
+                        $('#ai-diagnosis-results').show();
+                        $('#diagnosis-placeholder').hide();
+                        
+                        // Show source of diagnosis
+                        if (response.source === 'clinical_summary') {
+                            showAISuccess('Diagnosis generated from clinical summary');
+                        }
+                    } else {
+                        showAIError(response.error || 'Failed to generate diagnosis');
+                        $('#diagnosis-placeholder').show();
+                    }
+                },
+                error: function(xhr) {
+                    $('#ai-diagnosis-loading').hide();
+                    showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
                     $('#diagnosis-placeholder').show();
                 }
-            },
-            error: function(xhr) {
-                $('#ai-diagnosis-loading').hide();
-                showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
-                $('#diagnosis-placeholder').show();
-            }
+            });
+        }).catch(error => {
+            $('#ai-diagnosis-loading').hide();
+            showAIError('Error saving summary section: ' + error);
+            $('#diagnosis-placeholder').show();
         });
     });
+
+    // Auto-generate diagnosis when entering diagnosis section if summary exists
+    function autoGenerateDiagnosisIfSummaryExists() {
+        const clinicalSummary = $('#patient_summary').val().trim();
+        if (clinicalSummary && $('#enable-ai-assistance').is(':checked')) {
+            setTimeout(() => {
+                if (confirm('You have a clinical summary entered. Would you like AI to generate diagnosis suggestions based on it?')) {
+                    $('#suggest-diagnosis').click();
+                }
+            }, 1000);
+        }
+    }
 
     // Apply AI diagnosis to form
     $('#apply-ai-diagnosis').click(function() {
@@ -1042,7 +1066,7 @@ $(document).ready(function() {
             method: 'POST',
             data: { 
                 patient_id: patientId,
-                csrf_token: getCSRFToken()  // Add CSRF token
+                csrf_token: getCSRFToken()
             },
             success: function(response) {
                 if (response.success) {
@@ -1089,7 +1113,7 @@ $(document).ready(function() {
             data: {
                 patient_id: patientId,
                 lab_text: labText,
-                csrf_token: getCSRFToken()  // Add CSRF token
+                csrf_token: getCSRFToken()
             },
             success: function(response) {
                 if (response.success) {
@@ -1195,6 +1219,14 @@ $(document).ready(function() {
             $('#suggest-treatment').click();
         }
     });
+
+    // Highlight summary section when diagnosis needs it
+    function highlightSummaryRequirement() {
+        $('#summary-section').addClass('highlight-required');
+        setTimeout(() => {
+            $('#summary-section').removeClass('highlight-required');
+        }, 3000);
+    }
 });
 </script>
 
@@ -1394,19 +1426,42 @@ $(document).ready(function() {
 }
 
 /* Summary Section Styling */
-#summarySection {
-    border: 1px solid #e9ecef;
+.summary-importance {
+    background: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    padding: 10px 15px;
+    margin-bottom: 15px;
+    border-radius: 4px;
+}
+
+.summary-importance strong {
+    color: #1976d2;
+}
+
+/* Highlight for required sections */
+.highlight-required {
+    border: 2px solid #dc3545 !important;
     border-radius: 8px;
+    animation: pulse-highlight 2s ease-in-out;
 }
 
-#summarySection .card-header {
-    background-color: #f8f9fa;
-    border-bottom: 1px solid #e9ecef;
+@keyframes pulse-highlight {
+    0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
 }
 
-#summarySection .card-title {
-    color: #495057;
-    font-size: 1.1rem;
+/* Clinical Summary Styling */
+.clinical-summary-content {
+    line-height: 1.6;
+    font-size: 14px;
+    white-space: pre-line;
+}
+
+#patient_summary {
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    line-height: 1.5;
 }
 
 /* Responsive Adjustments */

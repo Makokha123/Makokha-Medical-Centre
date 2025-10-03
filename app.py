@@ -910,177 +910,150 @@ class AIService:
             return None
 
     @staticmethod
-    def generate_diagnosis_from_summary(patient_summary):
+    def generate_diagnosis_from_summary(clinical_summary, patient_info=None):
         """
-        Generate diagnosis and differentials from patient summary
+        Generate differential diagnosis based on clinical summary
         """
-        prompt = f"""
-        Based on the following comprehensive patient summary, provide:
-        
-        1. PRIMARY WORKING DIAGNOSIS: The most likely diagnosis with supporting evidence
-        2. DIFFERENTIAL DIAGNOSES: 3-5 alternative diagnoses in order of likelihood
-        3. KEY FINDINGS: Clinical findings that support each diagnosis
-        4. RECOMMENDED INVESTIGATIONS: Tests needed to confirm or rule out diagnoses
-        
-        PATIENT SUMMARY:
-        {patient_summary}
-        
-        Please format your response clearly with these sections:
-        - Working Diagnosis: [Your primary diagnosis]
-        - Differential Diagnoses: [List of differentials with brief rationale]
-        - Supporting Findings: [Key clinical evidence]
-        - Recommended Tests: [Investigations needed]
-        
-        Be concise and clinically focused.
-        """
-        
         try:
+            # Use the client that's already initialized in the class
             client = AIService.get_client()
+            model = AIService.MODELS['primary']
+            
+            # Build patient context
+            patient_context = ""
+            if patient_info:
+                if patient_info.get('age'):
+                    patient_context += f"Age: {patient_info['age']} years\n"
+                if patient_info.get('gender'):
+                    patient_context += f"Gender: {patient_info['gender']}\n"
+                if patient_info.get('name'):
+                    patient_context += f"Patient: {patient_info['name']}\n"
+            
+            prompt = f"""
+            As an experienced medical diagnostician, analyze the following clinical summary and provide a comprehensive differential diagnosis.
+
+            PATIENT CONTEXT:
+            {patient_context}
+
+            CLINICAL SUMMARY:
+            {clinical_summary}
+
+            Please provide a structured analysis with the following sections:
+
+            1. PRIMARY WORKING DIAGNOSIS:
+            - The most likely diagnosis based on the clinical presentation
+            - Brief rationale explaining why this is the most likely
+
+            2. DIFFERENTIAL DIAGNOSES (List 3-5 alternatives in order of likelihood):
+            For each differential diagnosis include:
+            - Condition name
+            - Key supporting features from the clinical summary
+            - Important distinguishing features from the working diagnosis
+
+            3. KEY CLINICAL FINDINGS:
+            - List the most significant positive findings from the summary
+            - Note any important negative findings that help rule out alternatives
+
+            4. RECOMMENDED INVESTIGATIONS:
+            - Essential tests to confirm the working diagnosis
+            - Tests to rule out key differential diagnoses
+            - Any urgent investigations if red flags are present
+
+            5. CLINICAL PEARLS:
+            - Important considerations for management
+            - Any red flags or urgent concerns
+            - Specific follow-up recommendations
+
+            Format your response in clear, clinical language suitable for medical records.
+            Be concise but comprehensive.
+            """
+            
             response = client.chat.completions.create(
-                model=AIService.MODELS['primary'],
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1000,
-                timeout=30
+                max_tokens=1200,
+                temperature=0.7
             )
+            
             return response.choices[0].message.content
         except Exception as e:
             current_app.logger.error(f"AI Diagnosis from Summary Error: {str(e)}")
             return None
 
+
+    # Keep your existing methods but update the main diagnosis method to use summary
     @staticmethod
     def generate_diagnosis(patient_data):
         """
-        Generate comprehensive diagnosis with differentials and supporting evidence
+        Updated to prioritize clinical summary if available
         """
-        prompt = f"""
-        Analyze this patient case and provide diagnostic recommendations:
+        # Check if clinical summary is available in patient_data
+        clinical_summary = patient_data.get('clinical_summary') or patient_data.get('patient_summary')
         
-        Patient: {patient_data['age']} year old {patient_data['gender']}
-        Chief Complaint: {patient_data['chief_complaint']}
-        HPI: {patient_data.get('hpi', 'Not yet documented')}
-        Review of Systems: {patient_data.get('review_systems', 'Not yet documented')}
-        Medical History: {patient_data.get('medical_history', 'Not significant')}
-        Examination Findings: {patient_data.get('examination', 'Not yet documented')}
-        
-        Provide:
-        1. Primary working diagnosis with supporting evidence
-        2. 3-5 differential diagnoses in order of likelihood
-        3. Key findings that support each diagnosis
-        4. Important negatives that rule out alternatives
-        5. Recommended diagnostic tests to confirm
-        """
-        
+        if clinical_summary:
+            # Use the summary-based diagnosis
+            patient_info = {
+                'age': patient_data.get('age'),
+                'gender': patient_data.get('gender'),
+                'name': patient_data.get('name')
+            }
+            return AIService.generate_diagnosis_from_summary(clinical_summary, patient_info)
+        else:
+            # Fall back to the original detailed diagnosis method
+            return AIService._generate_detailed_diagnosis(patient_data)
+
     @staticmethod
-    def generate_diagnosis(patient_data):
+    def _generate_detailed_diagnosis(patient_data):
         """
-        Generate a concise working diagnosis and differentials using all available patient data.
-        """
-        import json
-        prompt = f"""
-        You are an expert physician. Based on the following patient information, provide:
-        1. The most likely (working) diagnosis (1-2 sentences)
-        2. 3-5 differential diagnoses, each with a brief explanation (1-2 sentences each)
-        3. Key findings supporting each diagnosis
-        4. Recommended diagnostic tests to confirm
-
-        Patient Demographics:
-        - Name: {patient_data.get('name', 'Not specified')}
-        - Age: {patient_data.get('age', 'Not specified')}
-        - Gender: {patient_data.get('gender', 'Not specified')}
-        - Address: {patient_data.get('address', 'Not specified')}
-        - Occupation: {patient_data.get('occupation', 'Not specified')}
-        - Religion: {patient_data.get('religion', 'Not specified')}
-
-        Chief Complaint:
-        {patient_data.get('chief_complaint', 'Not specified')}
-
-        History of Present Illness (HPI):
-        {patient_data.get('history_present_illness', 'Not documented')}
-
-        Review of Systems (ROS):
-        {json.dumps(patient_data.get('review_systems', {}), indent=2)}
-
-        Medical History:
-        - Social: {patient_data.get('social_history', 'Not documented')}
-        - Medical: {patient_data.get('medical_history', 'Not documented')}
-        - Surgical: {patient_data.get('surgical_history', 'Not documented')}
-        - Family: {patient_data.get('family_history', 'Not documented')}
-        - Allergies: {patient_data.get('allergies', 'None known')}
-        - Medications: {patient_data.get('medications', 'None')}
-
-        Physical Examination:
-        {json.dumps(patient_data.get('examination', {}), indent=2)}
-
-        Please be brief and straight to the point. Format your answer as:
-        - Working Diagnosis:
-        - Differentials:
-        - Key Findings:
-        - Recommended Tests:
+        Original detailed diagnosis method (fallback)
         """
         try:
-            client = None
-            client = AIService.get_client()
-            response = client.chat.completions.create(
-                model=AIService.MODELS['primary'],
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1000,
-                timeout=3600  # 60 minutes
-            )
-            return response.choices[0].message.content
-        except Exception as primary_error:
-            current_app.logger.error(f"Primary model failed: {str(primary_error)}")
-            try:
-                if client is None:
-                    client = AIService.get_client()
-                response = client.chat.completions.create(
-                    model=AIService.MODELS['fallback'],
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                    max_tokens=1000,
-                    timeout=3600  # 60 minutes
-                )
-                current_app.logger.warning("Used fallback model successfully")
-                return response.choices[0].message.content
-            except Exception as fallback_error:
-                current_app.logger.error(f"Fallback model failed: {str(fallback_error)}")
-                return None
+            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
             
-    @staticmethod
-    def analyze_lab_results(patient_data, lab_text):
-        """
-        Analyze lab results in context of patient presentation
-        """
-        prompt = f"""
-        Analyze these lab results in the context of the patient's presentation:
-        
-        Patient: {patient_data['age']} year old {patient_data['gender']}
-        Chief Complaint: {patient_data['chief_complaint']}
-        Working Diagnosis: {patient_data.get('diagnosis', 'Not yet established')}
-        
-        Lab Results:
-        {lab_text}
-        
-        Provide:
-        1. Interpretation of abnormal values
-        2. How results support or contradict working diagnosis
-        3. Any new diagnostic considerations
-        4. Recommendations for follow-up testing if needed
-        """
-        
-        try:
+            prompt = f"""
+            Based on the following patient information, generate a differential diagnosis:
+            
+            Patient Demographics:
+            - Age: {patient_data.get('age', 'Not specified')}
+            - Gender: {patient_data.get('gender', 'Not specified')}
+            
+            Clinical Presentation:
+            - Chief Complaint: {patient_data.get('chief_complaint', 'Not specified')}
+            - History of Present Illness: {patient_data.get('history_present_illness', 'Not documented')}
+            
+            Review of Systems:
+            {json.dumps(patient_data.get('review_systems', {}), indent=2)}
+            
+            Medical History:
+            - Social: {patient_data.get('social_history', 'Not documented')}
+            - Medical: {patient_data.get('medical_history', 'Not documented')}
+            - Surgical: {patient_data.get('surgical_history', 'Not documented')}
+            - Family: {patient_data.get('family_history', 'Not documented')}
+            - Allergies: {patient_data.get('allergies', 'None known')}
+            - Medications: {patient_data.get('medications', 'None')}
+            
+            Physical Examination:
+            {json.dumps(patient_data.get('examination', {}), indent=2)}
+            
+            Please provide:
+            1. Most likely diagnosis (working diagnosis)
+            2. 3-5 differential diagnoses in order of likelihood
+            3. Brief rationale for each
+            4. Suggested diagnostic tests to confirm
+            """
+            
             response = deepseek_client.chat.completions.create(
-                model="deepseek-medical",
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=800
+                max_tokens=1000,
+                temperature=0.7
             )
+            
             return response.choices[0].message.content
         except Exception as e:
-            current_app.logger.error(f"AI Lab Analysis Error: {str(e)}")
+            current_app.logger.error(f"AI Diagnosis Error: {str(e)}")
             return None
-
+        
     @staticmethod
     def generate_treatment_plan(patient_data, available_drugs):
         """
@@ -1432,19 +1405,20 @@ class AuditLog(db.Model):
     __tablename__ = 'audit_logs'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False)  # Added ondelete
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     action = db.Column(db.String(50), nullable=False)
-    table_name = db.Column(db.String(50))
-    record_id = db.Column(db.Integer)
-    description = db.Column(db.String(255))
-    changes = db.Column(db.JSON)
-    old_values = db.Column(db.JSON)
-    new_values = db.Column(db.JSON)
-    ip_address = db.Column(db.String(50))
+    table_name = db.Column(db.String(50))  # Tracks which table was affected
+    record_id = db.Column(db.Integer)      # ID of the affected record
+    description = db.Column(db.String(255))  # For backward compatibility
+    changes = db.Column(db.JSON)           # Structured change data
+    old_values = db.Column(db.JSON)        # Previous values before change
+    new_values = db.Column(db.JSON)        # Values after change
+    ip_address = db.Column(db.String(50))  # IP address of the requester
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-    # Updated relationship with cascade
-    user = db.relationship('User', backref=db.backref('audit_log_entries', lazy=True, cascade='all, delete-orphan'))
+
+    # Relationship
+    user = db.relationship('User', backref='audit_log_entries')
 
     def __init__(self, **kwargs):
         if 'description' not in kwargs and 'changes' in kwargs:
@@ -1960,18 +1934,14 @@ def admin_dashboard():
             Drug.expiry_date <= date.today() + timedelta(days=30)
         ).scalar()
         
-        # FIXED: Today's sales - use date() function compatible with both SQLite and PostgreSQL
+        # FIXED: Use PostgreSQL to_char instead of strftime
         today_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.date(Sale.created_at) == date.today()
         ).scalar() or 0
         
-        # FIXED: Monthly sales - use database-agnostic approach
-        current_year = datetime.now().year
-        current_month = datetime.now().month
-        
+        # FIXED: This is the line that was causing the error
         monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
-            func.extract('year', Sale.created_at) == current_year,
-            func.extract('month', Sale.created_at) == current_month
+            func.to_char(Sale.created_at, 'YYYY-MM') == datetime.now().strftime('%Y-%m')
         ).scalar() or 0
         
         pending_bills = db.session.query(func.sum(Debtor.amount_owed)).scalar() or 0
@@ -1991,13 +1961,25 @@ def admin_dashboard():
         
         active_users = db.session.query(func.count(User.id)).filter_by(is_active=True).scalar()
         
-        # Get doctor statistics
+        # Get doctor statistics - ensure these are called
         daily_stats = get_doctor_stats('daily')
         monthly_stats = get_doctor_stats('monthly')
         yearly_stats = get_doctor_stats('yearly')
         
         # Get recent activity
-        recent_activity = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(10).all()
+        recent_activity = db.session.query(
+            AuditLog.id,
+            AuditLog.action,
+            AuditLog.created_at.label('created_at'),
+            literal('audit').label('type')
+        ).union_all(
+            db.session.query(
+                BackupRecord.id,
+                literal('backup').label('action'),
+                BackupRecord.timestamp.label('created_at'),
+                literal('backup').label('type')
+            )
+        ).order_by(text('created_at DESC')).limit(10).all()
         
         return render_template('admin/dashboard.html',
             total_drugs=total_drugs,
@@ -4467,7 +4449,7 @@ def money_summary():
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
-        # Calculate totals from Transaction table (existing income sources)
+        # Calculate totals
         total_income = db.session.query(
             func.sum(Transaction.amount)
         ).filter(
@@ -4480,49 +4462,14 @@ def money_summary():
             Transaction.transaction_type.in_(['expense', 'drawing', 'purchase', 'payroll'])
         ).scalar() or 0
 
-        # NEW: Calculate income from drug sales in SaleItem table
-        drug_sales_income = db.session.query(
-            func.sum(SaleItem.total_price)
-        ).filter(
-            SaleItem.sale_id.isnot(None),
-            Sale.status == 'completed',
-            SaleItem.drug_id.isnot(None)  # Only items that are drugs (have drug_id)
-        ).join(Sale, SaleItem.sale_id == Sale.id).scalar() or 0
-
-        # Also include income from lab tests and services if needed
-        service_sales_income = db.session.query(
-            func.sum(SaleItem.total_price)
-        ).filter(
-            SaleItem.sale_id.isnot(None),
-            Sale.status == 'completed',
-            SaleItem.service_id.isnot(None)  # Service sales
-        ).join(Sale, SaleItem.sale_id == Sale.id).scalar() or 0
-
-        lab_sales_income = db.session.query(
-            func.sum(SaleItem.total_price)
-        ).filter(
-            SaleItem.sale_id.isnot(None),
-            Sale.status == 'completed',
-            SaleItem.lab_test_id.isnot(None)  # Lab test sales
-        ).join(Sale, SaleItem.sale_id == Sale.id).scalar() or 0
-
-        # Combine all income sources
-        total_sales_income = float(drug_sales_income) + float(service_sales_income) + float(lab_sales_income)
-        total_income_with_sales = float(total_income) + total_sales_income
-        
-        net_profit = total_income_with_sales - float(total_expenses)
+        net_profit = total_income - total_expenses
         
         return jsonify({
-            'total_income': total_income_with_sales,
+            'total_income': float(total_income),
             'total_expenses': float(total_expenses),
-            'net_profit': net_profit,
-            'drug_sales_income': float(drug_sales_income),
-            'service_sales_income': float(service_sales_income),
-            'lab_sales_income': float(lab_sales_income),
-            'other_income': float(total_income)
+            'net_profit': float(net_profit),
         })
     except Exception as e:
-        current_app.logger.error(f"Error calculating money summary: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
 @app.route('/admin/dosage', methods=['GET', 'POST'])
@@ -5436,7 +5383,7 @@ def sale_receipt_data(sale_id):
         'sale_id': sale.id,
         'sale_number': sale.sale_number,
         'date': sale.created_at.strftime('%Y-%m-%d %H:%M'),
-        'patient_name': sale.patient.decrypted_name if sale.patient else 'Walk-in Customer',
+        'patient_name': sale.patient.get_decrypted_name if sale.patient else 'Walk-in Customer',
         'patient_number': sale.patient.op_number or sale.patient.ip_number if sale.patient else 'N/A',
         'pharmacist_name': sale.user.username,
         'payment_method': sale.payment_method,
@@ -5475,7 +5422,7 @@ def refund_receipt_data(refund_id):
         'refund_number': refund.refund_number,
         'sale_number': refund.sale.sale_number,
         'date': refund.created_at.strftime('%Y-%m-%d %H:%M'),
-        'patient_name': refund.sale.patient.decrypted_name if refund.sale.patient else 'Walk-in Customer',
+        'patient_name': refund.sale.patient.get_decrypted_name if refund.sale.patient else 'Walk-in Customer',
         'reason': refund.reason,
         'total_amount': refund.total_amount,
         'items': []
@@ -6006,7 +5953,7 @@ def search_sale_for_refund():
         'bulk_sale_number': sale.bulk_sale_number,
         'is_bulk': bool(sale.bulk_sale_number),
         'created_at': sale.created_at.strftime('%Y-%m-%d %H:%M'),
-        'patient_name': sale.patient.decrypted_name if sale.patient else 'Walk-in Customer',
+        'patient_name': sale.patient.get_decrypted_name if sale.patient else 'Walk-in Customer',
         'total_amount': sale.total_amount,
         'items': items
     })
@@ -6150,7 +6097,7 @@ def patient_prescriptions():
         for prescription in prescriptions:
             prescription_data.append({
                 'id': prescription.id,
-                'patient_name': prescription.patient.decrypted_name,
+                'patient_name': prescription.patient.get_decrypted_name,
                 'patient_number': prescription.patient.op_number or prescription.patient.ip_number,
                 'doctor_name': prescription.doctor.username,
                 'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M'),
@@ -6201,7 +6148,7 @@ def get_prescription_details(prescription_id):
         return jsonify({
             'id': prescription.id,
             'patient_id': prescription.patient_id,
-            'patient_name': prescription.patient.decrypted_name,
+            'patient_name': prescription.patient.get_decrypted_name,
             'patient_number': prescription.patient.op_number or prescription.patient.ip_number,
             'doctor_id': prescription.doctor_id,
             'doctor_name': prescription.doctor.username,
@@ -6353,7 +6300,7 @@ def get_sale_receipt(sale_id):
             'sale_id': sale.id,
             'sale_number': sale.sale_number,
             'date': sale.created_at.strftime('%Y-%m-%d %H:%M'),
-            'patient_name': sale.patient.decrypted_name if sale.patient else 'Walk-in Customer',
+            'patient_name': sale.patient.get_decrypted_name if sale.patient else 'Walk-in Customer',
             'patient_number': sale.patient.op_number or sale.patient.ip_number if sale.patient else 'N/A',
             'pharmacist_name': sale.user.username,
             'payment_method': sale.payment_method,
@@ -6503,11 +6450,11 @@ def patient_summary(patient_id):
                 ).scalar()
 
                 patient_data = {
-                    'name': patient.decrypted_name,
+                    'name': patient.get_decrypted_name,
                     'age': patient.age,
                     'gender': patient.gender,
-                    'address': patient.decrypted_address or '',
-                    'occupation': patient.decrypted_occupation or '',
+                    'address': patient.get_decrypted_address or '',
+                    'occupation': patient.get_decrypted_occupation or '',
                     'religion': patient.religion or '',
                     'chief_complaint': patient.chief_complaint or '',
                     'history_present_illness': patient.history_present_illness or '',
@@ -6640,7 +6587,7 @@ def patient_summary(patient_id):
     return jsonify({
         'success': True,
         'summaries': summaries_data,
-        'patient_name': patient.decrypted_name,
+        'patient_name': patient.get_decrypted_name,
         'patient_number': patient.op_number or patient.ip_number
     })
 
@@ -6673,6 +6620,7 @@ def doctor_new_patient():
     if request.method == 'POST':
         section = request.form.get('section')
         patient_id = request.form.get('patient_id')
+        
         try:
             if section == 'biodata':
                 patient_type = request.form.get('patient_type')
@@ -6815,10 +6763,34 @@ def doctor_new_patient():
                 
                 return jsonify({
                     'success': True,
-                    'next_section': 'diagnosis'
+                    'next_section': 'summary'  # Now goes to summary after examination
                 })
 
-            elif section == 'diagnosis':
+            elif section == 'summary':  # MOVED TO AFTER EXAMINATION
+                patient = db.session.get(Patient, patient_id)
+                if not patient:
+                    return jsonify({'success': False, 'error': 'Patient not found'})
+                
+                # Get the clinical summary (optional - can be empty)
+                clinical_summary = request.form.get('patient_summary', '').strip()
+                
+                # Only save if summary is provided
+                if clinical_summary:
+                    summary = PatientSummary(
+                        patient_id=patient.id,
+                        summary_text=clinical_summary,
+                        summary_type='manual',
+                        generated_by=current_user.id
+                    )
+                    db.session.add(summary)
+                    db.session.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'next_section': 'diagnosis'  # Now goes to diagnosis after summary
+                })
+
+            elif section == 'diagnosis':  # NOW AFTER SUMMARY
                 patient = db.session.get(Patient, patient_id)
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
@@ -6931,9 +6903,6 @@ def doctor_new_patient():
         current_date=date.today().strftime('%Y-%m-%d')
     )
 
-
-
-# In your configuration/initialization code
 # AI Assistant for diagnosis and treatment suggestions
 class AIService:
     @staticmethod
@@ -7220,9 +7189,9 @@ def ai_review_systems():
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.get_decrypted_address() or '',  # ✅ FIXED: Use method call
+            'address': patient.get_decrypted_address or '',
             'chief_complaint': patient.chief_complaint or '',
-            'occupation': patient.get_decrypted_occupation() or '',  # ✅ FIXED: Use method call
+            'occupation': patient.get_decrypted_occupation or '',
             'religion': patient.religion or '',
         }
         
@@ -7276,9 +7245,9 @@ def ai_hpi_questions():
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.get_decrypted_address() or '',  # ✅ FIXED
+            'address': patient.get_decrypted_address or '',
             'chief_complaint': patient.chief_complaint or '',
-            'occupation': patient.get_decrypted_occupation() or '',  # ✅ FIXED
+            'occupation': patient.get_decrypted_occupation or '',
             'religion': patient.religion or '',
         }
         
@@ -7335,9 +7304,9 @@ def ai_generate_hpi():
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.get_decrypted_address() or '',  # ✅ FIXED
+            'address': patient.get_decrypted_address or '',
             'chief_complaint': patient.chief_complaint or '',
-            'occupation': patient.get_decrypted_occupation() or '',  # ✅ FIXED
+            'occupation': patient.get_decrypted_occupation or '',
             'religion': patient.religion or '',
             'review_systems': (
                 f"CNS: {review.cns or 'Not documented'}\n"
@@ -7384,72 +7353,35 @@ def ai_diagnosis():
         if not patient:
             return jsonify({'success': False, 'error': 'Patient not found'}), 404
         
-        # Get related records safely
-        review_systems = db.session.scalar(
-            db.select(PatientReviewSystem)
-            .filter_by(patient_id=patient.id)
-            .limit(1)
-        )
+        # Get the clinical summary from the form data
+        clinical_summary = request.form.get('patient_summary', '').strip()
         
-        history = db.session.scalar(
-            db.select(PatientHistory)
-            .filter_by(patient_id=patient.id)
-            .limit(1)
-        )
+        # If no clinical summary in form, check if patient has existing summary
+        if not clinical_summary:
+            existing_summary = db.session.scalar(
+                db.select(PatientSummary)
+                .filter_by(patient_id=patient.id)
+                .order_by(PatientSummary.created_at.desc())
+                .limit(1)
+            )
+            if existing_summary:
+                clinical_summary = existing_summary.summary_text
         
-        examination = db.session.scalar(
-            db.select(PatientExamination)
-            .filter_by(patient_id=patient.id)
-            .limit(1)
-        )
-
-        patient_data = {
+        if not clinical_summary:
+            return jsonify({
+                'success': False, 
+                'error': 'Please enter a clinical summary in the summary section first'
+            }), 400
+        
+        # Get basic patient info for context
+        patient_basic_info = {
             'age': patient.age,
             'gender': patient.gender,
-            'address': patient.get_decrypted_address() or '',  # ✅ FIXED
-            'occupation': patient.get_decrypted_occupation() or '',  # ✅ FIXED
-            'religion': patient.religion or '',
-            'chief_complaint': patient.chief_complaint or '',
-            'history_present_illness': patient.history_present_illness or '',
-            'review_systems': {
-                'cns': review_systems.cns if review_systems else '',
-                'cvs': review_systems.cvs if review_systems else '',
-                'git': review_systems.git if review_systems else '',
-                'gut': review_systems.gut if review_systems else '',
-                'skin': review_systems.skin if review_systems else '',
-                'msk': review_systems.msk if review_systems else '',
-                'rs': review_systems.rs if review_systems else ''
-            },
-            'social_history': history.social_history if history else '',
-            'medical_history': history.medical_history if history else '',
-            'surgical_history': history.surgical_history if history else '',
-            'family_history': history.family_history if history else '',
-            'allergies': history.allergies if history else '',
-            'medications': history.medications if history else '',
-            'examination': {
-                'general_appearance': examination.general_appearance if examination else '',
-                'vitals': {
-                    'temperature': examination.temperature if examination else None,
-                    'pulse': examination.pulse if examination else None,
-                    'resp_rate': examination.resp_rate if examination else None,
-                    'bp': f"{examination.bp_systolic}/{examination.bp_diastolic}" if examination else None,
-                    'spo2': examination.spo2 if examination else None,
-                    'weight': examination.weight if examination else None,
-                    'height': examination.height if examination else None,
-                    'bmi': examination.bmi if examination else None
-                },
-                'systems': {
-                    'cvs': examination.cvs_exam if examination else '',
-                    'respiratory': examination.resp_exam if examination else '',
-                    'abdominal': examination.abdo_exam if examination else '',
-                    'cns': examination.cns_exam if examination else '',
-                    'msk': examination.msk_exam if examination else '',
-                    'skin': examination.skin_exam if examination else ''
-                }
-            }
+            'name': patient.get_decrypted_name
         }
         
-        diagnosis = AIService.generate_diagnosis(patient_data)
+        # Generate diagnosis based on clinical summary - FIXED LINE
+        diagnosis = AIService.generate_diagnosis_from_summary(clinical_summary, patient_basic_info)
         if not diagnosis:
             return jsonify({
                 'success': False,
@@ -7458,7 +7390,8 @@ def ai_diagnosis():
             
         return jsonify({
             'success': True,
-            'diagnosis': diagnosis
+            'diagnosis': diagnosis,
+            'source': 'clinical_summary'
         })
         
     except Exception as e:
