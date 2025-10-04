@@ -746,6 +746,9 @@ $(document).ready(function() {
     // Load summary statistics
     loadSummaryStats();
     
+    // Store current filter state
+    var currentFilter = 'all';
+    
     // Edit button handler
     $('#drugsTable').on('click', '.btn-edit', function() {
         var drugId = $(this).data('id');
@@ -821,27 +824,65 @@ $(document).ready(function() {
         });
     });
 
-    // Filter buttons
+    // Filter buttons - UPDATED TO WORK PROPERLY
     $('#viewLowStock').click(function(e) {
         e.preventDefault();
-        drugsTable.column(9).search('low-stock').draw();
+        currentFilter = 'low_stock';
+        updateFilterButtons('low_stock');
+        // Reload DataTable with filter
+        drugsTable.ajax.url('/api/drugs?filter=low_stock').load();
+        showAlert('info', 'Showing low stock drugs');
     });
     
     $('#viewExpiringSoon').click(function(e) {
         e.preventDefault();
-        drugsTable.column(9).search('expiring-soon').draw();
+        currentFilter = 'expiring_soon';
+        updateFilterButtons('expiring_soon');
+        // Reload DataTable with filter
+        drugsTable.ajax.url('/api/drugs?filter=expiring_soon').load();
+        showAlert('info', 'Showing drugs expiring soon');
     });
     
     $('#viewOutOfStock').click(function(e) {
         e.preventDefault();
-        drugsTable.column(9).search('out-of-stock').draw();
+        currentFilter = 'out_of_stock';
+        updateFilterButtons('out_of_stock');
+        // Reload DataTable with filter
+        drugsTable.ajax.url('/api/drugs?filter=out_of_stock').load();
+        showAlert('info', 'Showing out of stock drugs');
     });
 
     // Clear filters
     $('#clearFilters').click(function(e) {
         e.preventDefault();
-        drugsTable.search('').columns().search('').draw();
+        currentFilter = 'all';
+        updateFilterButtons('all');
+        // Reload DataTable without filter
+        drugsTable.ajax.url('/api/drugs').load();
+        showAlert('info', 'Showing all drugs');
     });
+
+    // Update filter button states
+    function updateFilterButtons(activeFilter) {
+        // Remove active class from all buttons
+        $('.filter-btn').removeClass('active').removeClass('btn-primary').addClass('btn-outline');
+        
+        // Add active class to clicked button
+        switch(activeFilter) {
+            case 'low_stock':
+                $('#viewLowStock').removeClass('btn-outline').addClass('btn-primary active');
+                break;
+            case 'expiring_soon':
+                $('#viewExpiringSoon').removeClass('btn-outline').addClass('btn-primary active');
+                break;
+            case 'out_of_stock':
+                $('#viewOutOfStock').removeClass('btn-outline').addClass('btn-primary active');
+                break;
+            case 'all':
+                $('#clearFilters').removeClass('btn-outline').addClass('btn-primary active');
+                break;
+        }
+    }
 
     // Form submission handlers
     $('#addDrugForm').submit(function(e) {
@@ -859,7 +900,7 @@ $(document).ready(function() {
         submitDrugForm('delete');
     });
 
-    // Initialize DataTable function
+    // Initialize DataTable function - UPDATED
     function initializeDataTable() {
         // Destroy existing DataTable if it exists
         if ($.fn.DataTable.isDataTable('#drugsTable')) {
@@ -871,7 +912,13 @@ $(document).ready(function() {
             responsive: true,
             ajax: {
                 url: '/api/drugs',
-                dataSrc: ''
+                dataSrc: '',
+                data: function(d) {
+                    // Add filter parameter to AJAX request
+                    if (currentFilter && currentFilter !== 'all') {
+                        d.filter = currentFilter;
+                    }
+                }
             },
             columns: [
                 { data: 'drug_number' },
@@ -894,51 +941,39 @@ $(document).ready(function() {
                 { 
                     data: null,
                     render: function(data) {
-                        return data.stocked_quantity - data.sold_quantity;
+                        const remaining = data.stocked_quantity - data.sold_quantity;
+                        const statusClass = getStockStatusClass(data);
+                        return `<span class="${statusClass}">${remaining}</span>`;
                     }
                 },
                 { 
                     data: 'expiry_date',
                     render: function(data) {
-                        return new Date(data).toISOString().split('T')[0];
+                        const date = new Date(data);
+                        const today = new Date();
+                        const diffDays = Math.ceil((date - today) / (1000 * 60 * 60 * 24));
+                        
+                        let dateClass = '';
+                        if (diffDays < 0) {
+                            dateClass = 'text-danger';
+                        } else if (diffDays < 30) {
+                            dateClass = 'text-warning';
+                        }
+                        
+                        return `<span class="${dateClass}">${date.toISOString().split('T')[0]}</span>`;
                     }
                 },
                 { 
                     data: null,
                     render: function(data) {
-                        var statusClass = '';
-                        var statusText = '';
-                        
-                        if (data.stocked_quantity - data.sold_quantity <= 0) {
-                            statusClass = 'out-of-stock';
-                            statusText = 'Out of Stock';
-                        } else if (data.stocked_quantity - data.sold_quantity < 10) {
-                            statusClass = 'low-stock';
-                            statusText = 'Low Stock';
-                        } else {
-                            // Check if expiring soon (within 30 days)
-                            var expiryDate = new Date(data.expiry_date);
-                            var today = new Date();
-                            var diffDays = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
-                            
-                            if (diffDays < 30 && diffDays >= 0) {
-                                statusClass = 'expiring-soon';
-                                statusText = 'Expiring Soon';
-                            } else if (diffDays < 0) {
-                                statusClass = 'expired';
-                                statusText = 'Expired';
-                            } else {
-                                statusClass = 'in-stock';
-                                statusText = 'In Stock';
-                            }
-                        }
-                        
-                        return '<span class="status-badge ' + statusClass + '">' + statusText + '</span>';
+                        const status = getStockStatus(data);
+                        const statusClass = getStockStatusClass(data);
+                        return `<span class="status-badge ${statusClass}">${status}</span>`;
                     }
                 },
                 {
                     data: 'id',
-                    render: function(data) {
+                    render: function(data, type, row) {
                         return `
                             <div class="btn-group">
                                 <button class="action-btn btn-primary btn-edit" data-id="${data}" data-toggle="modal" data-target="#editDrugModal">
@@ -960,9 +995,66 @@ $(document).ready(function() {
             pageLength: 25,
             language: {
                 search: "_INPUT_",
-                searchPlaceholder: "Search drugs..."
+                searchPlaceholder: "Search drugs...",
+                emptyTable: "No drugs found matching the current filter",
+                zeroRecords: "No matching drugs found"
+            },
+            initComplete: function() {
+                // Add loading state
+                this.api().on('preXhr', function(e, settings, data) {
+                    $('#drugsTable tbody').html(`
+                        <tr>
+                            <td colspan="11" class="text-center py-4">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="sr-only">Loading...</span>
+                                </div>
+                                <p class="mt-2">Loading drugs...</p>
+                            </td>
+                        </tr>
+                    `);
+                });
             }
         });
+    }
+
+    // Helper function to get stock status
+    function getStockStatus(data) {
+        const remaining = data.stocked_quantity - data.sold_quantity;
+        const expiryDate = new Date(data.expiry_date);
+        const today = new Date();
+        const diffDays = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+        
+        if (remaining <= 0) {
+            return 'Out of Stock';
+        } else if (remaining < 10) {
+            return 'Low Stock';
+        } else if (diffDays < 30 && diffDays >= 0) {
+            return 'Expiring Soon';
+        } else if (diffDays < 0) {
+            return 'Expired';
+        } else {
+            return 'In Stock';
+        }
+    }
+
+    // Helper function to get stock status class
+    function getStockStatusClass(data) {
+        const remaining = data.stocked_quantity - data.sold_quantity;
+        const expiryDate = new Date(data.expiry_date);
+        const today = new Date();
+        const diffDays = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+        
+        if (remaining <= 0) {
+            return 'text-danger font-weight-bold';
+        } else if (remaining < 10) {
+            return 'text-warning font-weight-bold';
+        } else if (diffDays < 30 && diffDays >= 0) {
+            return 'text-warning';
+        } else if (diffDays < 0) {
+            return 'text-danger';
+        } else {
+            return 'text-success';
+        }
     }
 
     // Load drug data for editing
@@ -995,7 +1087,7 @@ $(document).ready(function() {
                 showAlert('success', 'Drug ' + (action === 'delete' ? 'deleted' : 'saved') + ' successfully');
                 
                 // Refresh DataTable
-                drugsTable.ajax.reload();
+                drugsTable.ajax.reload(null, false); // false to keep current page
                 
                 // Reload summary stats
                 loadSummaryStats();
@@ -1018,6 +1110,8 @@ $(document).ready(function() {
             $('#lowStockCount').text(stats.low_stock);
             $('#expiringSoonCount').text(stats.expiring_soon);
             $('#outOfStockCount').text(stats.out_of_stock);
+        }).fail(function() {
+            showAlert('danger', 'Failed to load summary statistics');
         });
     }
 
@@ -1026,6 +1120,7 @@ $(document).ready(function() {
         var alertHtml = `
             <div class="alert alert-${type} animate__animated animate__fadeIn">
                 <div class="alert-content">
+                    <i class="fas fa-${getAlertIcon(type)} me-2"></i>
                     <span class="alert-message">${message}</span>
                     <button class="close-alert">&times;</button>
                 </div>
@@ -1034,14 +1129,50 @@ $(document).ready(function() {
         
         $('#alert-container').html(alertHtml);
         setTimeout(function() {
-            $('.alert').remove();
+            $('.alert').addClass('animate__fadeOut');
+            setTimeout(function() {
+                $('.alert').remove();
+            }, 500);
         }, 5000);
+    }
+    
+    // Get appropriate icon for alert type
+    function getAlertIcon(type) {
+        switch(type) {
+            case 'success': return 'check-circle';
+            case 'danger': return 'exclamation-circle';
+            case 'warning': return 'exclamation-triangle';
+            case 'info': return 'info-circle';
+            default: return 'info-circle';
+        }
     }
     
     // Close alert handler
     $(document).on('click', '.close-alert', function() {
-        $(this).closest('.alert').remove();
+        $(this).closest('.alert').addClass('animate__fadeOut');
+        setTimeout(function() {
+            $(this).closest('.alert').remove();
+        }, 500);
     });
+
+    // Add some CSS for the active filter state
+    $('<style>')
+        .prop('type', 'text/css')
+        .html(`
+            .filter-btn.active {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            }
+            .text-danger.font-weight-bold {
+                font-weight: bold !important;
+                color: #dc3545 !important;
+            }
+            .text-warning.font-weight-bold {
+                font-weight: bold !important;
+                color: #ffc107 !important;
+            }
+        `)
+        .appendTo('head');
 });
 </script>
 {% endblock %}
