@@ -1994,6 +1994,39 @@ def messages():
                          unread_count=unread_count,
                          active_tab='inbox')
 
+@messages_bp.route('/messages/compose', methods=['GET', 'POST'])
+@login_required
+def compose_message():
+    """Compose new message"""
+    form = SendMessageForm()
+    
+    # Populate recipient choices (all active users except current user)
+    form.recipient_id.choices = [
+        (user.id, f"{user.username} ({user.role})") 
+        for user in User.query.filter(
+            User.id != current_user.id, 
+            User.is_active == True
+        ).order_by(User.username).all()
+    ]
+    
+    if form.validate_on_submit():
+        message = Message(
+            sender_id=current_user.id,
+            recipient_id=form.recipient_id.data,
+            subject=form.subject.data,
+            content=form.content.data
+        )
+        
+        db.session.add(message)
+        db.session.commit()
+        
+        flash('Message sent successfully!', 'success')
+        return redirect(url_for('messages.messages'))
+    
+    unread_count = get_unread_count()
+    return render_template('compose_message.html', 
+                         form=form, 
+                         unread_count=unread_count)
 @messages_bp.route('/messages/sent')
 @login_required
 def sent_messages():

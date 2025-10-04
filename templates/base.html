@@ -935,26 +935,29 @@
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">Messages</h5>
-                        <a href="{{ url_for('messages.compose') }}" class="btn btn-primary btn-sm">
+                        <!-- Safe compose button - only shows if compose endpoint exists -->
+                        {% if request.endpoint != 'messages.compose' %}
+                        <a href="{{ url_for('messages.compose_message') }}" class="btn btn-primary btn-sm">
                             <i class="bi bi-pencil-square me-1"></i> Compose
                         </a>
+                        {% endif %}
                     </div>
                     <div class="card-body">
                         <!-- Message Navigation -->
                         <div class="message-nav">
-                            <a href="{{ url_for('messages.inbox') }}" 
-                               class="message-nav-link {% if request.endpoint == 'messages.inbox' %}active{% endif %}">
+                            <a href="{{ url_for('messages.messages') }}" 
+                            class="message-nav-link {% if request.endpoint == 'messages.messages' %}active{% endif %}">
                                 <i class="bi bi-inbox"></i> Inbox
-                                {% if inbox_count and inbox_count > 0 %}
-                                <span class="badge bg-secondary ms-1">{{ inbox_count }}</span>
+                                {% if unread_count and unread_count > 0 %}
+                                <span class="badge bg-secondary ms-1">{{ unread_count }}</span>
                                 {% endif %}
                             </a>
-                            <a href="{{ url_for('messages.sent') }}" 
-                               class="message-nav-link {% if request.endpoint == 'messages.sent' %}active{% endif %}">
+                            <a href="{{ url_for('messages.sent_messages') }}" 
+                            class="message-nav-link {% if request.endpoint == 'messages.sent_messages' %}active{% endif %}">
                                 <i class="bi bi-send"></i> Sent
                             </a>
-                            <a href="{{ url_for('messages.unread') }}" 
-                               class="message-nav-link {% if request.endpoint == 'messages.unread' %}active{% endif %}">
+                            <a href="{{ url_for('messages.unread_messages') }}" 
+                            class="message-nav-link {% if request.endpoint == 'messages.unread_messages' %}active{% endif %}">
                                 <i class="bi bi-envelope"></i> Unread
                                 {% if unread_count and unread_count > 0 %}
                                 <span class="badge bg-danger ms-1">{{ unread_count }}</span>
