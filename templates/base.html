@@ -447,6 +447,93 @@
             border-left: 3px solid var(--primary-color);
         }
 
+        /* Message Navigation Styles */
+        .message-nav {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+        
+        .message-nav-link {
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius);
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+        
+        .message-nav-link:not(.active) {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .message-nav-link.active {
+            background-color: #28a745; /* Green for active */
+            color: white;
+        }
+        
+        .message-nav-link:hover:not(.active) {
+            background-color: var(--primary-dark);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        /* Message List Styles */
+        .message-list {
+            background: white;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .message-item {
+            padding: 1rem;
+            border-bottom: 1px solid #e9ecef;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .message-item:hover {
+            background-color: #f8f9fa;
+        }
+
+        .message-item.unread {
+            background-color: #e7f3ff;
+            border-left: 3px solid var(--primary-color);
+        }
+
+        .message-item:last-child {
+            border-bottom: none;
+        }
+
+        .message-subject {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .message-preview {
+            color: #6c757d;
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .message-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+
+        /* Message Compose Styles */
+        .compose-form {
+            background: white;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 1.5rem;
+        }
+
         /* Responsive Design */
         /* Desktop (PC) */
         @media (min-width: 1200px) {
@@ -519,6 +606,12 @@
             .nav-link i {
                 margin-right: 0.8rem;
                 font-size: 1rem;
+            }
+
+            /* Message navigation on mobile */
+            .message-nav {
+                flex-direction: column;
+                gap: 0.25rem;
             }
 
             /* Stack table on mobile */
@@ -834,6 +927,55 @@
                 {% endfor %}
             {% endif %}
         {% endwith %}
+        
+        <!-- Messages Section -->
+        {% if request.endpoint and 'messages' in request.endpoint %}
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Messages</h5>
+                        <a href="{{ url_for('messages.compose') }}" class="btn btn-primary btn-sm">
+                            <i class="bi bi-pencil-square me-1"></i> Compose
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <!-- Message Navigation -->
+                        <div class="message-nav">
+                            <a href="{{ url_for('messages.inbox') }}" 
+                               class="message-nav-link {% if request.endpoint == 'messages.inbox' %}active{% endif %}">
+                                <i class="bi bi-inbox"></i> Inbox
+                                {% if inbox_count and inbox_count > 0 %}
+                                <span class="badge bg-secondary ms-1">{{ inbox_count }}</span>
+                                {% endif %}
+                            </a>
+                            <a href="{{ url_for('messages.sent') }}" 
+                               class="message-nav-link {% if request.endpoint == 'messages.sent' %}active{% endif %}">
+                                <i class="bi bi-send"></i> Sent
+                            </a>
+                            <a href="{{ url_for('messages.unread') }}" 
+                               class="message-nav-link {% if request.endpoint == 'messages.unread' %}active{% endif %}">
+                                <i class="bi bi-envelope"></i> Unread
+                                {% if unread_count and unread_count > 0 %}
+                                <span class="badge bg-danger ms-1">{{ unread_count }}</span>
+                                {% endif %}
+                            </a>
+                        </div>
+                        
+                        <!-- Message Content -->
+                        {% block message_content %}
+                        <!-- This will be overridden by specific message templates -->
+                        <div class="text-center py-5">
+                            <i class="bi bi-chat-dots display-1 text-muted"></i>
+                            <h4 class="text-muted mt-3">Select a message folder</h4>
+                            <p class="text-muted">Choose from Inbox, Sent, or Unread to view your messages</p>
+                        </div>
+                        {% endblock %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
         
         {% block content %}{% endblock %}
     </main>
