@@ -2189,22 +2189,17 @@ def admin_dashboard():
             Drug.expiry_date <= date.today() + timedelta(days=30)
         ).scalar()
         
-        # FIXED: Use PostgreSQL to_char instead of strftime
+        # Today's sales
         today_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.date(Sale.created_at) == date.today()
         ).scalar() or 0
         
-        # FIXED: Database-agnostic monthly sales calculation
-        current_year_month = datetime.now().strftime('%Y-%m')
-        if database_is_postgresql():
-            monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
-                func.to_char(Sale.created_at, 'YYYY-MM') == current_year_month
-            ).scalar() or 0
-        else:
-            # SQLite compatible version
-            monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
-                func.strftime('%Y-%m', Sale.created_at) == current_year_month
-            ).scalar() or 0
+        # UNIVERSAL FIX: Use extract for month and year - works on all databases
+        current_date = datetime.now()
+        monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
+            func.extract('year', Sale.created_at) == current_date.year,
+            func.extract('month', Sale.created_at) == current_date.month
+        ).scalar() or 0
         
         pending_bills = db.session.query(func.sum(Debtor.amount_owed)).scalar() or 0
         
