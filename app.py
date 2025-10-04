@@ -8679,12 +8679,36 @@ def receptionist_receipt(sale_id):
     return render_template('receptionist/receipt.html', sale=sale)
 
 # API Routes
-@app.route('/api/drugs')
+
 @login_required
 def api_drugs():
     if current_user.role == 'admin':
-        # Admin gets full drug details
-        drugs = Drug.query.all()
+        # Get filter parameter
+        filter_type = request.args.get('filter', 'all')
+        
+        # Base query
+        query = Drug.query
+        
+        # Apply filters based on status
+        if filter_type == 'low_stock':
+            # Drugs with less than 10 remaining
+            query = query.filter(Drug.remaining_quantity < 10, Drug.remaining_quantity > 0)
+        elif filter_type == 'expiring_soon':
+            # Drugs expiring in the next 30 days but not expired yet
+            today = datetime.now().date()
+            thirty_days_later = today + timedelta(days=30)
+            query = query.filter(Drug.expiry_date <= thirty_days_later, 
+                               Drug.expiry_date >= today)
+        elif filter_type == 'out_of_stock':
+            # Drugs with zero remaining quantity
+            query = query.filter(Drug.remaining_quantity <= 0)
+        elif filter_type == 'expired':
+            # Only expired drugs
+            today = datetime.now().date()
+            query = query.filter(Drug.expiry_date < today)
+        
+        drugs = query.all()
+        
         drugs_data = [{
             'id': drug.id,
             'drug_number': drug.drug_number,
@@ -8694,8 +8718,11 @@ def api_drugs():
             'selling_price': float(drug.selling_price),
             'stocked_quantity': drug.stocked_quantity,
             'sold_quantity': drug.sold_quantity,
-            'expiry_date': drug.expiry_date.isoformat()
+            'remaining_quantity': drug.remaining_quantity,
+            'expiry_date': drug.expiry_date.isoformat() if drug.expiry_date else None,
+            'status': get_drug_status(drug)  # Helper function to determine status
         } for drug in drugs]
+        
         return jsonify(drugs_data)
     else:
         # Other roles get limited drug details
@@ -8716,6 +8743,23 @@ def api_drugs():
             'selling_price': drug.selling_price,
             'remaining_quantity': drug.remaining_quantity
         } for drug in drugs])
+
+# Helper function to determine drug status
+def get_drug_status(drug):
+    remaining = drug.remaining_quantity
+    expiry_date = drug.expiry_date
+    today = datetime.now().date()
+    
+    if remaining <= 0:
+        return 'Out of Stock'
+    elif remaining < 10:
+        return 'Low Stock'
+    elif expiry_date and expiry_date < today:
+        return 'Expired'
+    elif expiry_date and (expiry_date - today).days < 30:
+        return 'Expiring Soon'
+    else:
+        return 'In Stock'
 
 # Add this function to generate drug numbers automatically
 def generate_drug_number():

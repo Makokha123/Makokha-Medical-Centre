@@ -73,6 +73,9 @@
         <button class="btn btn-outline filter-btn" id="viewOutOfStock">
             <i class="fas fa-times-circle"></i> View Out of Stock
         </button>
+        <button class="btn btn-outline filter-btn" id="viewExpired">
+            <i class="fas fa-skull-crossbones"></i> View Expired Drugs
+        </button>
         <button class="btn btn-outline filter-btn" id="clearFilters">
             <i class="fas fa-times"></i> Clear Filters
         </button>
@@ -376,6 +379,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.status-badge.expired {
+    background: #fce8e6;
+    color: #c5221f;
+    border: 1px solid #f5c6cb;
 }
 
 .summary-cards-grid {
@@ -824,7 +833,7 @@ $(document).ready(function() {
         });
     });
 
-    // Filter buttons - UPDATED TO WORK PROPERLY
+    // Filter buttons - UPDATED WITH EXPIRED DRUGS FILTER
     $('#viewLowStock').click(function(e) {
         e.preventDefault();
         currentFilter = 'low_stock';
@@ -833,7 +842,7 @@ $(document).ready(function() {
         drugsTable.ajax.url('/api/drugs?filter=low_stock').load();
         showAlert('info', 'Showing low stock drugs');
     });
-    
+
     $('#viewExpiringSoon').click(function(e) {
         e.preventDefault();
         currentFilter = 'expiring_soon';
@@ -842,7 +851,7 @@ $(document).ready(function() {
         drugsTable.ajax.url('/api/drugs?filter=expiring_soon').load();
         showAlert('info', 'Showing drugs expiring soon');
     });
-    
+
     $('#viewOutOfStock').click(function(e) {
         e.preventDefault();
         currentFilter = 'out_of_stock';
@@ -850,6 +859,15 @@ $(document).ready(function() {
         // Reload DataTable with filter
         drugsTable.ajax.url('/api/drugs?filter=out_of_stock').load();
         showAlert('info', 'Showing out of stock drugs');
+    });
+
+    $('#viewExpired').click(function(e) {
+        e.preventDefault();
+        currentFilter = 'expired';
+        updateFilterButtons('expired');
+        // Reload DataTable with filter
+        drugsTable.ajax.url('/api/drugs?filter=expired').load();
+        showAlert('warning', 'Showing expired drugs');
     });
 
     // Clear filters
@@ -877,6 +895,9 @@ $(document).ready(function() {
                 break;
             case 'out_of_stock':
                 $('#viewOutOfStock').removeClass('btn-outline').addClass('btn-primary active');
+                break;
+            case 'expired':
+                $('#viewExpired').removeClass('btn-outline').addClass('btn-primary active');
                 break;
             case 'all':
                 $('#clearFilters').removeClass('btn-outline').addClass('btn-primary active');
@@ -1026,7 +1047,7 @@ $(document).ready(function() {
         
         if (remaining <= 0) {
             return 'Out of Stock';
-        } else if (remaining < 10) {
+        } else if (remaining < 5) {
             return 'Low Stock';
         } else if (diffDays < 30 && diffDays >= 0) {
             return 'Expiring Soon';
