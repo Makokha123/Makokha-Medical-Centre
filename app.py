@@ -1,6 +1,7 @@
 
 from importlib.metadata.diagnose import inspect
 from logging.handlers import RotatingFileHandler
+from operator import and_
 from sqlalchemy import MetaData, Table
 from sqlalchemy import MetaData, Table
 import csv
@@ -54,8 +55,24 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, Length
 
+from forms import ReplyMessageForm, SendMessageForm
+
 # Initialize Flask app
 app = Flask(__name__)
+import re
+from markupsafe import Markup, escape
+
+def nl2br(value):
+    """Convert newlines to <br> tags"""
+    if not value:
+        return ""
+    # Normalize line endings and convert to <br> tags
+    value = re.sub(r'\r\n|\r|\n', '\n', str(value))
+    return Markup(value.replace('\n', '<br>\n'))
+
+app.jinja_env.filters['nl2br'] = nl2br
+
+
 
 # Production configuration for Render
 if os.environ.get('RENDER'):
@@ -94,6 +111,7 @@ db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
 migrate = Migrate(app, db)
 
 auth_bp = Blueprint('auth', __name__)
+messages_bp = Blueprint('messages', __name__)
 csrf = CSRFProtect()
 # Configure rate limit storage backend via env or config; default to in-memory for development
 app.config['RATELIMIT_STORAGE_URI'] = os.getenv(
@@ -188,8 +206,34 @@ class User(db.Model, UserMixin):
     def update_last_login(self):
         self.last_login = datetime.now(timezone.utc)  # Changed from utcnow()
         db.session.commit()
-
+    # Relationships 
     generated_summaries = db.relationship('PatientSummary', back_populates='generator', lazy=True)
+
+class Message(db.Model):
+    __tablename__ = 'messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    uuid = db.Column(db.String(36), unique=True, default=lambda: str(uuid.uuid4()))
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)  # Changed from 'users.id'
+    recipient_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)  # Changed from 'users.id'
+    subject = db.Column(db.String(255), nullable=True)
+    content = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, default=False)
+    is_deleted_sender = db.Column(db.Boolean, default=False)
+    is_deleted_recipient = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    read_at = db.Column(db.DateTime, nullable=True)
+    
+    # Index for better performance
+    __table_args__ = (
+        db.Index('idx_recipient_unread', 'recipient_id', 'is_read'),
+        db.Index('idx_sender_recipient', 'sender_id', 'recipient_id'),
+    )
+    
+    # Relationships - updated to use 'user' table
+    sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_messages')
+    recipient = db.relationship('User', foreign_keys=[recipient_id], backref='received_messages')
+   
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
 
@@ -1741,6 +1785,13 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg', 'gif'}
 
+# Add unread_count to all templates
+@app.context_processor
+def inject_unread_count():
+    if hasattr(current_user, 'is_authenticated') and current_user.is_authenticated:
+        return {'unread_count': get_unread_count()}
+    return {'unread_count': 0}
+
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
@@ -1917,6 +1968,210 @@ def reset_with_token(token):
     
     return render_template('auth/reset_with_token.html', form=form, token=token)
 
+
+@messages_bp.route('/messages')
+@login_required
+def messages():
+    # Get messages where current user is either sender or recipient and not deleted
+    user_messages = Message.query.filter(
+        or_(
+            and_(Message.sender_id == current_user.id, Message.is_deleted_sender == False),
+            and_(Message.recipient_id == current_user.id, Message.is_deleted_recipient == False)
+        )
+    ).order_by(Message.created_at.desc()).all()
+    
+    # Mark messages as read when user views them
+    unread_messages = Message.query.filter_by(recipient_id=current_user.id, is_read=False).all()
+    for msg in unread_messages:
+        msg.is_read = True
+        msg.read_at = datetime.now(timezone.utc)
+    
+    db.session.commit()
+    
+    unread_count = get_unread_count()
+    return render_template('messages.html', 
+                         messages=user_messages, 
+                         unread_count=unread_count,
+                         active_tab='inbox')
+
+@messages_bp.route('/messages/sent')
+@login_required
+def sent_messages():
+    sent_messages = Message.query.filter_by(
+        sender_id=current_user.id, 
+        is_deleted_sender=False
+    ).order_by(Message.created_at.desc()).all()
+    
+    unread_count = get_unread_count()
+    return render_template('messages.html', 
+                         messages=sent_messages, 
+                         unread_count=unread_count,
+                         active_tab='sent')
+
+@messages_bp.route('/messages/unread')
+@login_required
+def unread_messages():
+    unread_messages = Message.query.filter_by(
+        recipient_id=current_user.id, 
+        is_read=False,
+        is_deleted_recipient=False
+    ).order_by(Message.created_at.desc()).all()
+    
+    unread_count = get_unread_count()
+    return render_template('messages.html', 
+                         messages=unread_messages, 
+                         unread_count=unread_count,
+                         active_tab='unread')
+
+@messages_bp.route('/send_message', methods=['GET', 'POST'])
+@login_required
+def send_message():
+    form = SendMessageForm()
+    
+    # Populate recipient choices (all active users except current user)
+    form.recipient_id.choices = [
+        (user.id, f"{user.username} ({user.role})") 
+        for user in User.query.filter(
+            User.id != current_user.id, 
+            User.is_active == True
+        ).order_by(User.username).all()
+    ]
+    
+    if form.validate_on_submit():
+        message = Message(
+            sender_id=current_user.id,
+            recipient_id=form.recipient_id.data,
+            subject=form.subject.data,
+            content=form.content.data
+        )
+        
+        db.session.add(message)
+        db.session.commit()
+        
+        flash('Message sent successfully!', 'success')
+        return redirect(url_for('messages.messages'))
+    
+    unread_count = get_unread_count()
+    return render_template('send_message.html', 
+                         form=form, 
+                         unread_count=unread_count)
+
+@messages_bp.route('/messages/reply/<int:message_id>', methods=['GET', 'POST'])
+@login_required
+def reply_message(message_id):
+    original_message = Message.query.get_or_404(message_id)
+    
+    # Check if current user can reply to this message
+    if original_message.recipient_id != current_user.id and original_message.sender_id != current_user.id:
+        flash('You cannot reply to this message.', 'error')
+        return redirect(url_for('messages.messages'))
+    
+    form = ReplyMessageForm()
+    
+    if form.validate_on_submit():
+        # Determine recipient - if current user is recipient, reply to sender
+        if original_message.sender_id == current_user.id:
+            recipient_id = original_message.recipient_id
+        else:
+            recipient_id = original_message.sender_id
+        
+        reply = Message(
+            sender_id=current_user.id,
+            recipient_id=recipient_id,
+            subject=f"Re: {original_message.subject}" if original_message.subject else "Re: Message",
+            content=form.content.data
+        )
+        
+        db.session.add(reply)
+        db.session.commit()
+        
+        flash('Reply sent successfully!', 'success')
+        return redirect(url_for('messages.messages'))
+    
+    unread_count = get_unread_count()
+    return render_template('reply_message.html', 
+                         form=form, 
+                         original_message=original_message,
+                         unread_count=unread_count)
+
+@messages_bp.route('/messages/view/<int:message_id>')
+@login_required
+def view_message(message_id):
+    message = Message.query.get_or_404(message_id)
+    
+    # Check if current user can view this message
+    if message.sender_id != current_user.id and message.recipient_id != current_user.id:
+        flash('You cannot view this message.', 'error')
+        return redirect(url_for('messages.messages'))
+    
+    # Mark as read if recipient is viewing
+    if message.recipient_id == current_user.id and not message.is_read:
+        message.is_read = True
+        message.read_at = datetime.now(timezone.utc)
+        db.session.commit()
+    
+    unread_count = get_unread_count()
+    return render_template('view_message.html', 
+                         message=message, 
+                         unread_count=unread_count)
+
+@messages_bp.route('/messages/delete/<int:message_id>')
+@login_required
+def delete_message(message_id):
+    message = Message.query.get_or_404(message_id)
+    
+    # Check if current user can delete this message
+    if message.sender_id != current_user.id and message.recipient_id != current_user.id:
+        flash('You cannot delete this message.', 'error')
+        return redirect(url_for('messages.messages'))
+    
+    # Soft delete - mark as deleted for the current user
+    if message.sender_id == current_user.id:
+        message.is_deleted_sender = True
+    else:
+        message.is_deleted_recipient = True
+    
+    # If both sender and recipient have deleted, actually delete from database
+    if message.is_deleted_sender and message.is_deleted_recipient:
+        db.session.delete(message)
+    
+    db.session.commit()
+    
+    flash('Message deleted successfully!', 'success')
+    return redirect(url_for('messages.messages'))
+
+@messages_bp.route('/api/check_new_messages')
+@login_required
+def check_new_messages():
+    unread_count = get_unread_count()
+    return jsonify({'unread_count': unread_count})
+
+@messages_bp.route('/api/get_users')
+@login_required
+def get_users():
+    """API endpoint for autocomplete user search"""
+    search_term = request.args.get('q', '')
+    
+    users = User.query.filter(
+        User.id != current_user.id,
+        User.is_active == True,
+        User.username.ilike(f'%{search_term}%')
+    ).order_by(User.username).limit(10).all()
+    
+    users_data = [{
+        'id': user.id,
+        'text': f"{user.username} ({user.role})"
+    } for user in users]
+    
+    return jsonify({'results': users_data})
+
+def get_unread_count():
+    """Helper function to get unread message count for current user"""
+    return Message.query.filter_by(
+        recipient_id=current_user.id, 
+        is_read=False,
+        is_deleted_recipient=False
+    ).count()
 @app.route('/admin')
 @login_required
 def admin_dashboard():
@@ -1939,10 +2194,17 @@ def admin_dashboard():
             func.date(Sale.created_at) == date.today()
         ).scalar() or 0
         
-        # FIXED: This is the line that was causing the error
-        monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
-            func.to_char(Sale.created_at, 'YYYY-MM') == datetime.now().strftime('%Y-%m')
-        ).scalar() or 0
+        # FIXED: Database-agnostic monthly sales calculation
+        current_year_month = datetime.now().strftime('%Y-%m')
+        if database_is_postgresql():
+            monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
+                func.to_char(Sale.created_at, 'YYYY-MM') == current_year_month
+            ).scalar() or 0
+        else:
+            # SQLite compatible version
+            monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
+                func.strftime('%Y-%m', Sale.created_at) == current_year_month
+            ).scalar() or 0
         
         pending_bills = db.session.query(func.sum(Debtor.amount_owed)).scalar() or 0
         
@@ -8679,35 +8941,28 @@ def receptionist_receipt(sale_id):
     return render_template('receptionist/receipt.html', sale=sale)
 
 # API Routes
-
+@app.route('/api/drugs')
 @login_required
 def api_drugs():
     if current_user.role == 'admin':
-        # Get filter parameter
         filter_type = request.args.get('filter', 'all')
         
-        # Base query
-        query = Drug.query
+        query = db.session.query(Drug)
         
-        # Apply filters based on status
         if filter_type == 'low_stock':
-            # Drugs with less than 10 remaining
             query = query.filter(Drug.remaining_quantity < 10, Drug.remaining_quantity > 0)
         elif filter_type == 'expiring_soon':
-            # Drugs expiring in the next 30 days but not expired yet
-            today = datetime.now().date()
-            thirty_days_later = today + timedelta(days=30)
-            query = query.filter(Drug.expiry_date <= thirty_days_later, 
-                               Drug.expiry_date >= today)
+            # Drugs expiring in the next 30 days
+            thirty_days_later = date.today() + timedelta(days=30)
+            query = query.filter(Drug.expiry_date <= thirty_days_later, Drug.expiry_date >= date.today())
         elif filter_type == 'out_of_stock':
-            # Drugs with zero remaining quantity
             query = query.filter(Drug.remaining_quantity <= 0)
         elif filter_type == 'expired':
             # Only expired drugs
             today = datetime.now().date()
             query = query.filter(Drug.expiry_date < today)
         
-        drugs = query.all()
+        drugs = query.order_by(Drug.name).all()
         
         drugs_data = [{
             'id': drug.id,
@@ -8740,7 +8995,7 @@ def api_drugs():
             'drug_number': drug.drug_number,
             'name': drug.name,
             'specification': drug.specification,
-            'selling_price': drug.selling_price,
+            'selling_price': float(drug.selling_price),
             'remaining_quantity': drug.remaining_quantity
         } for drug in drugs])
 
@@ -8927,6 +9182,8 @@ def initialize_database():
         db.create_all()
 
 app.register_blueprint(auth_bp, url_prefix='/auth')
+# Add this after your other blueprint registrations
+app.register_blueprint(messages_bp)
 
 
 if __name__ == '__main__':
@@ -8939,7 +9196,10 @@ if __name__ == '__main__':
         os.makedirs(app.config['BACKUP_FOLDER'])
     
     # Initialize login manager
+    login_manager = LoginManager()
     login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'
+    login_manager.login_message_category = 'info'
     
     @login_manager.user_loader
     def load_user(user_id):
