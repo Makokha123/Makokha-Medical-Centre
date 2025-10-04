@@ -6095,13 +6095,25 @@ def patient_prescriptions():
         
         prescription_data = []
         for prescription in prescriptions:
+            # Safely get patient name - handle the method properly
+            patient_name = ""
+            try:
+                if hasattr(prescription.patient, 'get_decrypted_name'):
+                    # Call the method to get the actual value
+                    patient_name = prescription.patient.get_decrypted_name()
+                else:
+                    patient_name = str(prescription.patient) if prescription.patient else "Unknown Patient"
+            except Exception as e:
+                current_app.logger.error(f"Error getting patient name: {str(e)}")
+                patient_name = "Error loading patient"
+            
             prescription_data.append({
                 'id': prescription.id,
-                'patient_name': prescription.patient.get_decrypted_name,
-                'patient_number': prescription.patient.op_number or prescription.patient.ip_number,
-                'doctor_name': prescription.doctor.username,
-                'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M'),
-                'items_count': len(prescription.items),
+                'patient_name': patient_name,
+                'patient_number': prescription.patient.op_number or prescription.patient.ip_number if prescription.patient else "N/A",
+                'doctor_name': prescription.doctor.username if prescription.doctor else "Unknown Doctor",
+                'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M') if prescription.created_at else "Unknown Date",
+                'items_count': len(prescription.items) if prescription.items else 0,
                 'status': prescription.status
             })
         
@@ -6110,7 +6122,96 @@ def patient_prescriptions():
     except Exception as e:
         current_app.logger.error(f"Error fetching prescriptions: {str(e)}")
         return jsonify({'error': 'Failed to fetch prescriptions'}), 500
+    
+    
+@app.route('/pharmacist/prescriptions/check-new')
+@login_required
+def check_new_prescriptions():
+    """Check if there are new pending prescriptions"""
+    if current_user.role != 'pharmacist':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        # Get the count of pending prescriptions
+        pending_count = db.session.query(Prescription).filter_by(status='pending').count()
+        
+        # You could also track the last checked time for each pharmacist
+        # For simplicity, we'll just return if there are any pending prescriptions
+        
+        return jsonify({
+            'success': True,
+            'has_new_prescriptions': pending_count > 0,
+            'pending_count': pending_count
+        })
+    
+    except Exception as e:
+        current_app.logger.error(f"Error checking new prescriptions: {str(e)}")
+        return jsonify({'error': 'Failed to check prescriptions'}), 500
 
+@app.route('/doctor/complete_prescription', methods=['POST'])
+@login_required
+def doctor_complete_prescription():
+    """Doctor completes a prescription - this should trigger pharmacist notification"""
+    if current_user.role != 'doctor':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        data = request.get_json()
+        patient_id = data.get('patient_id')
+        prescription_data = data.get('prescription_data')
+        
+        if not patient_id or not prescription_data:
+            return jsonify({'success': False, 'error': 'Missing required data'}), 400
+        
+        # Create prescription record
+        prescription = Prescription(
+            patient_id=patient_id,
+            doctor_id=current_user.id,
+            notes=prescription_data.get('notes', ''),
+            status='pending'  # Set to pending for pharmacist to dispense
+        )
+        db.session.add(prescription)
+        db.session.flush()  # Get prescription ID
+        
+        # Add prescription items
+        for item in prescription_data.get('items', []):
+            prescription_item = PrescriptionItem(
+                prescription_id=prescription.id,
+                drug_id=item['drug_id'],
+                quantity=item['quantity'],
+                dosage=item.get('dosage', ''),
+                frequency=item.get('frequency', ''),
+                duration=item.get('duration', ''),
+                notes=item.get('notes', ''),
+                status='pending'
+            )
+            db.session.add(prescription_item)
+        
+        db.session.commit()
+        
+        # Log the prescription creation
+        log_audit(
+            'create_prescription',
+            'Prescription',
+            prescription.id,
+            None,
+            {
+                'patient_id': patient_id,
+                'doctor_id': current_user.id,
+                'items_count': len(prescription_data.get('items', []))
+            }
+        )
+        
+        return jsonify({
+            'success': True,
+            'prescription_id': prescription.id,
+            'message': 'Prescription completed successfully and sent to pharmacy'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error completing prescription: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/pharmacist/prescription/<int:prescription_id>')
 @login_required
@@ -6120,7 +6221,7 @@ def get_prescription_details(prescription_id):
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
-        # Replace the legacy Query.get() with Session.get()
+        # FIXED: Use db.session.get() instead of Query.get()
         prescription = db.session.get(Prescription, prescription_id)
         
         if not prescription:
@@ -6131,30 +6232,41 @@ def get_prescription_details(prescription_id):
             items_data.append({
                 'id': item.id,
                 'drug_id': item.drug_id,
-                'drug_name': item.drug.name,
-                'drug_number': item.drug.drug_number,
-                'dosage': item.dosage,
-                'frequency': item.frequency,
-                'duration': item.duration,
+                'drug_name': item.drug.name if item.drug else "Unknown Drug",
+                'drug_number': item.drug.drug_number if item.drug else "N/A",
+                'dosage': item.dosage or "",
+                'frequency': item.frequency or "",
+                'duration': item.duration or "",
                 'quantity': item.quantity,
-                'notes': item.notes,
+                'notes': item.notes or "",
                 'drug': {
-                    'id': item.drug.id,
-                    'name': item.drug.name,
-                    'remaining_quantity': item.drug.remaining_quantity
-                }
+                    'id': item.drug.id if item.drug else None,
+                    'name': item.drug.name if item.drug else "Unknown Drug",
+                    'remaining_quantity': item.drug.remaining_quantity if item.drug else 0
+                } if item.drug else None
             })
+        
+        # Safely get patient name
+        patient_name = ""
+        try:
+            if hasattr(prescription.patient, 'get_decrypted_name'):
+                patient_name = prescription.patient.get_decrypted_name()
+            else:
+                patient_name = str(prescription.patient) if prescription.patient else "Unknown Patient"
+        except Exception as e:
+            current_app.logger.error(f"Error getting patient name: {str(e)}")
+            patient_name = "Error loading patient"
         
         return jsonify({
             'id': prescription.id,
             'patient_id': prescription.patient_id,
-            'patient_name': prescription.patient.get_decrypted_name,
-            'patient_number': prescription.patient.op_number or prescription.patient.ip_number,
+            'patient_name': patient_name,
+            'patient_number': prescription.patient.op_number or prescription.patient.ip_number if prescription.patient else "N/A",
             'doctor_id': prescription.doctor_id,
-            'doctor_name': prescription.doctor.username,
-            'notes': prescription.notes,
+            'doctor_name': prescription.doctor.username if prescription.doctor else "Unknown Doctor",
+            'notes': prescription.notes or "",
             'status': prescription.status,
-            'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M'),
+            'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M') if prescription.created_at else "Unknown Date",
             'items': items_data
         })
     
@@ -6323,7 +6435,8 @@ def get_sale_receipt(sale_id):
         current_app.logger.error(f"Error generating receipt: {str(e)}")
         
         return jsonify({'error': 'Failed to generate receipt'}), 500
-    
+
+   
 # Doctor Routes
 @app.route('/doctor')
 @login_required
@@ -8305,7 +8418,7 @@ def complete_prescription():
         prescription = Prescription(
             patient_id=patient_id,
             doctor_id=current_user.id,
-            status='pending',  # Will be changed to 'completed' when pharmacist dispenses
+            status='pending',  # This triggers the pharmacist notification
             notes='Prescription completed by doctor'
         )
         db.session.add(prescription)
@@ -8334,15 +8447,20 @@ def complete_prescription():
         # Log the prescription creation
         log_audit('create_prescription', 'Prescription', prescription.id, None, {
             'patient_id': patient_id,
-            'items_count': len(prescriptions)
+            'items_count': len(prescriptions),
+            'action': 'doctor_completed_prescription'
         })
         
-        return jsonify({'success': True})
+        return jsonify({
+            'success': True,
+            'prescription_id': prescription.id,
+            'message': 'Prescription sent to pharmacy successfully'
+        })
     
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
-
+    
 # Receptionist Routes
 @app.route('/receptionist')
 @login_required
