@@ -1159,6 +1159,9 @@
             let lastPrescriptionCheck = null;
             let messageCheckInterval = null;
             let lastMessageCheck = null;
+            // Resize debounce and focus-guard to avoid rebuilding cart while typing on mobile
+            let resizeTimer = null;
+            let ignoreResizeUpdate = false;
 
             // Initialize toasts
             const successToast = new bootstrap.Toast(document.getElementById('successToast'));
@@ -1641,19 +1644,34 @@
                 });
                 
                 // Add event listeners to quantity inputs
-                $('.quantity-input').on('change', function() {
-                    const index = $(this).data('index');
-                    const newQuantity = parseInt($(this).val());
-                    
-                    if (newQuantity > 0) {
-                        cart[index].quantity = newQuantity;
-                        cart[index].total_price = cart[index].unit_price * newQuantity;
-                        updateCartDisplay();
-                        saveCartToStorage();
-                        showSuccessToast(`${cart[index].drug_name} quantity updated`);
-                    } else {
-                        $(this).val(cart[index].quantity);
-                    }
+                $('.quantity-input').each(function() {
+                    const $input = $(this);
+
+                    // When input value changes, update cart
+                    $input.off('change').on('change', function() {
+                        const index = $(this).data('index');
+                        const newQuantity = parseInt($(this).val());
+
+                        if (newQuantity > 0) {
+                            cart[index].quantity = newQuantity;
+                            cart[index].total_price = cart[index].unit_price * newQuantity;
+                            updateCartDisplay();
+                            saveCartToStorage();
+                            showSuccessToast(`${cart[index].drug_name} quantity updated`);
+                        } else {
+                            $(this).val(cart[index].quantity);
+                        }
+                    });
+
+                    // Prevent cart rebuilds while the user is focused on the input (mobile keyboards closing issue)
+                    $input.off('focus').on('focus', function() {
+                        ignoreResizeUpdate = true;
+                    });
+
+                    // On blur, allow resize-driven updates again (use a small timeout to avoid immediate rebuild)
+                    $input.off('blur').on('blur', function() {
+                        setTimeout(function() { ignoreResizeUpdate = false; }, 200);
+                    });
                 });
             }
             
@@ -1718,19 +1736,31 @@
                 });
                 
                 // Add event listeners to prescription cart quantity inputs
-                $('.quantity-input').on('change', function() {
-                    const index = $(this).data('index');
-                    const isPrescriptionItem = $(this).data('is-prescription');
-                    const newQuantity = parseInt($(this).val());
-                    
-                    if (newQuantity > 0) {
-                        prescriptionCart[index].quantity = newQuantity;
-                        prescriptionCart[index].total_price = prescriptionCart[index].unit_price * newQuantity;
-                        updatePrescriptionCartDisplay();
-                        showSuccessToast(`${prescriptionCart[index].drug_name} quantity updated`);
-                    } else {
-                        $(this).val(prescriptionCart[index].quantity);
-                    }
+                $('.quantity-input').each(function() {
+                    const $input = $(this);
+
+                    $input.off('change').on('change', function() {
+                        const index = $(this).data('index');
+                        const isPrescriptionItem = $(this).data('is-prescription');
+                        const newQuantity = parseInt($(this).val());
+
+                        if (newQuantity > 0) {
+                            prescriptionCart[index].quantity = newQuantity;
+                            prescriptionCart[index].total_price = prescriptionCart[index].unit_price * newQuantity;
+                            updatePrescriptionCartDisplay();
+                            showSuccessToast(`${prescriptionCart[index].drug_name} quantity updated`);
+                        } else {
+                            $(this).val(prescriptionCart[index].quantity);
+                        }
+                    });
+
+                    // Focus guard to avoid cart DOM rebuild while user edits quantity on mobile
+                    $input.off('focus').on('focus', function() {
+                        ignoreResizeUpdate = true;
+                    });
+                    $input.off('blur').on('blur', function() {
+                        setTimeout(function() { ignoreResizeUpdate = false; }, 200);
+                    });
                 });
 
             }
@@ -2415,9 +2445,19 @@
             });
 
             // Handle window resize for responsive behavior
+            // Debounced and focus-aware to avoid rebuilding cart while user is editing quantity on mobile
             $(window).resize(function() {
-                // Update cart display to adjust for responsive changes
-                updateCartDisplay();
+                if (ignoreResizeUpdate) return; // skip resize update while input has focus
+
+                if (resizeTimer) {
+                    clearTimeout(resizeTimer);
+                }
+
+                resizeTimer = setTimeout(function() {
+                    if (!ignoreResizeUpdate) {
+                        updateCartDisplay();
+                    }
+                }, 150);
             });
 
             // Handle beforeunload to clean up intervals
