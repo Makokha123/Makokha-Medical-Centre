@@ -12,543 +12,561 @@
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
     <!-- Select2 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
-    <style>
-        :root {
-            --sidebar-width: 250px;
-            --header-height: 60px;
-            --primary-color: #3498db;
-            --secondary-color: #2c3e50;
-            --success-color: #28a745;
-            --danger-color: #dc3545;
-            --warning-color: #ffc107;
-            --info-color: #17a2b8;
-            --light-color: #f8f9fa;
-            --dark-color: #343a40;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f5f7fa;
-            margin: 0;
-            padding: 0;
-            color: #333;
-        }
-        
-        .main-content {
-            margin-left: var(--sidebar-width);
-            padding: 20px;
-            min-height: calc(100vh - var(--header-height));
-        }
-        
-        .header {
-            background-color: white;
-            height: var(--header-height);
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 20px;
-            position: sticky;
-            top: 0;
-            z-index: 999;
-        }
-        
-        .card {
-            border: none;
-            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
-            margin-bottom: 1.5rem;
-            height: 100%;
-        }
-        
-        .card-header {
-            background-color: #f8f9fa;
-            border-bottom: 1px solid #dee2e6;
-            padding: 1rem 1.25rem;
-            font-weight: 600;
-        }
-        
-        .badge {
-            font-size: 0.85em;
-            font-weight: 500;
-        }
-        
-        .table th {
-            background-color: #f8f9fa;
-            font-weight: 600;
-        }
-        
-        .nav-tabs .nav-link {
-            color: #495057;
-            background-color: transparent;
-            border: none;
-            border-bottom: 3px solid transparent;
-            padding: 12px 20px;
-            font-weight: 500;
-        }
-        
-        .nav-tabs .nav-link:hover {
-            border-color: transparent;
-            color: var(--primary-color);
-        }
-        
-        .nav-tabs .nav-link.active {
-            color: var(--primary-color);
-            background-color: transparent;
-            border-bottom: 3px solid #0d6efd;
-        }
-        
-        .tab-content {
-            background: white;
-            border-radius: 0 0 8px 8px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        
-        .cart-item {
-            border-bottom: 1px solid #eee;
-            padding: 10px 0;
-        }
-        
-        .cart-total {
-            font-weight: bold;
-            font-size: 1.2em;
-            border-top: 2px solid #eee;
-            padding-top: 10px;
-        }
-        
-        .drug-card {
-            transition: all 0.3s ease;
-            height: 100%;
-        }
-        
-        .drug-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
-        .stock-low {
-            color: #ffc107;
-        }
-        
-        .stock-out {
-            color: #dc3545;
-        }
-        
-        .stock-ok {
-            color: #28a745;
-        }
+<style>
+    :root {
+        --sidebar-width: 250px;
+        --header-height: 60px;
+        --primary-color: #3498db;
+        --secondary-color: #2c3e50;
+        --success-color: #28a745;
+        --danger-color: #dc3545;
+        --warning-color: #ffc107;
+        --info-color: #17a2b8;
+        --light-color: #f8f9fa;
+        --dark-color: #343a40;
+    }
+    
+    .main-content {
+        margin-left: 0;
+        padding: 0;
+        min-height: calc(100vh - var(--header-height));
+    }
+    
+    .header {
+        background-color: white;
+        height: var(--header-height);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        position: sticky;
+        top: 0;
+        z-index: 999;
+    }
+    
+    .card {
+        border: none;
+        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        margin-bottom: 1.5rem;
+        height: 100%;
+    }
+    
+    .card-header {
+        background-color: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+        padding: 1rem 1.25rem;
+        font-weight: 600;
+    }
+    
+    .badge {
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+    
+    .table th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+    }
+    
+    /* FIXED: Navigation tabs with blue background and white foreground */
+    .nav-tabs {
+        border-bottom: 2px solid #dee2e6;
+        background-color: #f8f9fa;
+        padding: 0.5rem 0.5rem 0 0.5rem;
+    }
+    
+    .nav-tabs .nav-link {
+        color: white !important;
+        background-color: #3498db !important; /* Blue background */
+        border: none;
+        border-radius: 8px 8px 0 0;
+        padding: 12px 20px;
+        font-weight: 500;
+        margin-right: 5px;
+        transition: all 0.3s ease;
+        border-bottom: 3px solid transparent;
+    }
+    
+    .nav-tabs .nav-link:hover {
+        background-color: #2980b9 !important; /* Darker blue on hover */
+        color: white !important;
+        border-color: transparent;
+    }
+    
+    .nav-tabs .nav-link.active {
+        background-color: #28a745 !important; /* Green when selected */
+        color: white !important;
+        border-bottom: 3px solid #1e7e34;
+    }
+    
+    .tab-content {
+        background: white;
+        border-radius: 0 0 8px 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        min-height: 500px;
+    }
+    
+    .cart-item {
+        border-bottom: 1px solid #eee;
+        padding: 10px 0;
+    }
+    
+    .cart-total {
+        font-weight: bold;
+        font-size: 1.2em;
+        border-top: 2px solid #eee;
+        padding-top: 10px;
+    }
+    
+    .drug-card {
+        transition: all 0.3s ease;
+        height: 100%;
+    }
+    
+    .drug-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .stock-low {
+        color: #ffc107;
+    }
+    
+    .stock-out {
+        color: #dc3545;
+    }
+    
+    .stock-ok {
+        color: #28a745;
+    }
 
-        .toast {
-            min-width: 300px;
+    .toast {
+        min-width: 300px;
+    }
+    
+    .price-value {
+        font-family: 'Courier New', monospace;
+        font-weight: 600;
+    }
+    
+    .action-buttons {
+        display: flex;
+        gap: 0.5rem;
+    }
+    
+    .btn-action {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+    }
+    
+    /* New styles for side-by-side layout */
+    .inventory-container {
+        display: flex;
+        gap: 20px;
+    }
+    
+    .drugs-column {
+        flex: 3;
+    }
+    
+    .cart-column {
+        flex: 2;
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        height: fit-content;
+        position: sticky;
+        top: 90px;
+    }
+    
+    .cart-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #dee2e6;
+    }
+    
+    /* Animation for cart updates */
+    @keyframes highlight {
+        0% { background-color: rgba(40, 167, 69, 0.2); }
+        100% { background-color: transparent; }
+    }
+    
+    .highlight {
+        animation: highlight 1s ease;
+    }
+    
+    .refund-quantity {
+        max-width: 100px;
+    }
+    
+    /* Notification badge styles */
+    .notification-badge {
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        background: var(--danger-color);
+        color: white;
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7rem;
+        font-weight: bold;
+    }
+    
+    .nav-tabs .nav-link {
+        position: relative;
+    }
+    
+    /* Prescription notification styles */
+    .prescription-notification {
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        z-index: 1050;
+        min-width: 300px;
+        animation: slideInRight 0.3s ease;
+    }
+    
+    @keyframes slideInRight {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
         }
-        
-        .price-value {
-            font-family: 'Courier New', monospace;
-            font-weight: 600;
+        to {
+            transform: translateX(0);
+            opacity: 1;
         }
-        
-        .action-buttons {
-            display: flex;
-            gap: 0.5rem;
-        }
-        
-        .btn-action {
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0;
-        }
-        
-        /* New styles for side-by-side layout */
+    }
+
+    /* Messaging System Styles */
+    .message-badge {
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        background-color: #dc3545;
+        color: white;
+        border-radius: 50%;
+        width: 18px;
+        height: 18px;
+        font-size: 0.7rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .message-container {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 1rem;
+        background-color: #f8f9fa;
+    }
+
+    .message {
+        padding: 0.75rem;
+        margin-bottom: 0.75rem;
+        border-radius: 8px;
+        max-width: 80%;
+        word-break: break-word;
+    }
+
+    .message-sent {
+        background-color: #d1ecf1;
+        margin-left: auto;
+        border-bottom-right-radius: 0;
+    }
+
+    .message-received {
+        background-color: #e2e3e5;
+        margin-right: auto;
+        border-bottom-left-radius: 0;
+    }
+
+    .message-time {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-top: 0.25rem;
+    }
+
+    .message-sender {
+        font-weight: 600;
+        font-size: 0.9rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .unread-message {
+        border-left: 3px solid var(--primary-color);
+    }
+
+    .message-actions {
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .message:hover .message-actions {
+        opacity: 1;
+    }
+
+    .message-tabs .nav-link {
+        padding: 8px 16px;
+    }
+
+    /* Responsive styles */
+    @media (max-width: 992px) {
         .inventory-container {
-            display: flex;
-            gap: 20px;
-        }
-        
-        .drugs-column {
-            flex: 3;
+            flex-direction: column;
         }
         
         .cart-column {
-            flex: 2;
+            position: static;
+        }
+        
+    }
+    
+    @media (max-width: 768px) {
+        
+        .drug-card .card-title {
+            font-size: 1rem;
+        }
+        
+        .drug-card .card-subtitle {
+            font-size: 0.85rem;
+        }
+        
+        .drug-card .card-text {
+            font-size: 0.8rem;
+        }
+        
+        .drugs-scroll-container {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .drugs-container .col-md-6 {
+            flex: 0 0 100%;
+            max-width: 100%;
+        }
+        
+        .mobile-cart {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
             background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            height: fit-content;
-            position: sticky;
-            top: 90px;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            padding: 10px;
+            z-index: 1000;
         }
         
-        .cart-header {
+        .desktop-cart {
+            display: none;
+        }
+        
+        .prescription-notification {
+            top: 70px;
+            right: 10px;
+            left: 10px;
+            min-width: auto;
+        }
+
+        .message {
+            max-width: 95%;
+        }
+    }
+    
+    @media (min-width: 769px) and (max-width: 992px) {
+        /* Tablet styles */
+        .drugs-container .col-md-6 {
+            flex: 0 0 50%;
+            max-width: 50%;
+        }
+        
+        .drugs-scroll-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .mobile-cart {
+            display: none;
+        }
+    }
+    
+    @media (min-width: 993px) {
+        /* Desktop styles */
+        .drugs-container .col-md-6 {
+            flex: 0 0 33.333%;
+            max-width: 33.333%;
+        }
+        
+        .drugs-scroll-container {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .mobile-cart {
+            display: none;
+        }
+    }
+    
+    @media (max-width: 576px) {
+        .header h4 {
+            font-size: 1.2rem;
+        }
+        
+        .nav-tabs .nav-link {
+            padding: 8px 12px;
+            font-size: 0.85rem;
+        }
+        
+        .nav-tabs .nav-link i {
+            margin-right: 4px;
+        }
+    }
+    
+    /* Landscape mode for phones */
+    @media (max-height: 576px) and (orientation: landscape) {
+        .drugs-scroll-container {
+            max-height: 200px;
+        }
+    }
+    
+    @media (max-width: 992px) {
+        .sidebar-toggle {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #dee2e6;
+        }
+    }
+    
+    /* Mobile cart button */
+    .cart-toggle {
+        display: none;
+    }
+    
+    @media (max-width: 768px) {
+        .cart-toggle {
+            display: block;
+            position: fixed;
+            bottom: 80px;
+            right: 20px;
+            z-index: 1000;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: var(--primary-color);
+            color: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
         }
         
-        /* Animation for cart updates */
-        @keyframes highlight {
-            0% { background-color: rgba(40, 167, 69, 0.2); }
-            100% { background-color: transparent; }
-        }
-        
-        .highlight {
-            animation: highlight 1s ease;
-        }
-        
-        .refund-quantity {
-            max-width: 100px;
-        }
-        
-        /* Notification badge styles */
-        .notification-badge {
+        .cart-badge {
             position: absolute;
             top: -5px;
             right: -5px;
             background: var(--danger-color);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
+            width: 24px;
+            height: 24px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.7rem;
-            font-weight: bold;
-        }
-        
-        .nav-tabs .nav-link {
-            position: relative;
-        }
-        
-        /* Prescription notification styles */
-        .prescription-notification {
-            position: fixed;
-            top: 80px;
-            right: 20px;
-            z-index: 1050;
-            min-width: 300px;
-            animation: slideInRight 0.3s ease;
-        }
-        
-        @keyframes slideInRight {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-
-        /* Messaging System Styles */
-        .message-badge {
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            background-color: #dc3545;
-            color: white;
-            border-radius: 50%;
-            width: 18px;
-            height: 18px;
-            font-size: 0.7rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .message-container {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 1rem;
-            background-color: #f8f9fa;
-        }
-
-        .message {
-            padding: 0.75rem;
-            margin-bottom: 0.75rem;
-            border-radius: 8px;
-            max-width: 80%;
-            word-break: break-word;
-        }
-
-        .message-sent {
-            background-color: #d1ecf1;
-            margin-left: auto;
-            border-bottom-right-radius: 0;
-        }
-
-        .message-received {
-            background-color: #e2e3e5;
-            margin-right: auto;
-            border-bottom-left-radius: 0;
-        }
-
-        .message-time {
             font-size: 0.75rem;
-            color: #6c757d;
-            margin-top: 0.25rem;
         }
-
-        .message-sender {
-            font-weight: 600;
-            font-size: 0.9rem;
-            margin-bottom: 0.25rem;
-        }
-
-        .unread-message {
-            border-left: 3px solid var(--primary-color);
-        }
-
-        .message-actions {
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .message:hover .message-actions {
-            opacity: 1;
-        }
-
-        .message-tabs .nav-link {
-            padding: 8px 16px;
-        }
-
-        /* Responsive styles */
-        @media (max-width: 992px) {
-            .inventory-container {
-                flex-direction: column;
-            }
-            
-            .cart-column {
-                position: static;
-            }
-            
+    }
+    
+    /* Landscape orientation for mobile */
+    @media (max-width: 992px) and (orientation: landscape) {
+        .inventory-container {
+            flex-direction: row;
         }
         
-        @media (max-width: 768px) {
-            
-            .drug-card .card-title {
-                font-size: 1rem;
-            }
-            
-            .drug-card .card-subtitle {
-                font-size: 0.85rem;
-            }
-            
-            .drug-card .card-text {
-                font-size: 0.8rem;
-            }
-            
-            .drugs-scroll-container {
-                max-height: 300px;
-                overflow-y: auto;
-            }
-            
-            .drugs-container .col-md-6 {
-                flex: 0 0 100%;
-                max-width: 100%;
-            }
-            
-            .mobile-cart {
-                position: fixed;
-                bottom: 0;
-                left: 0;
-                right: 0;
-                background: white;
-                box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-                padding: 10px;
-                z-index: 1000;
-            }
-            
-            .desktop-cart {
-                display: none;
-            }
-            
-            .prescription-notification {
-                top: 70px;
-                right: 10px;
-                left: 10px;
-                min-width: auto;
-            }
-
-            .message {
-                max-width: 95%;
-            }
+        .drugs-column {
+            flex: 2;
         }
         
-        @media (min-width: 769px) and (max-width: 992px) {
-            /* Tablet styles */
-            .drugs-container .col-md-6 {
-                flex: 0 0 50%;
-                max-width: 50%;
-            }
-            
-            .drugs-scroll-container {
-                max-height: 400px;
-                overflow-y: auto;
-            }
-            
-            .mobile-cart {
-                display: none;
-            }
+        .cart-column {
+            flex: 1;
+            position: sticky;
+            top: 90px;
         }
         
-        @media (min-width: 993px) {
-            /* Desktop styles */
-            .drugs-container .col-md-6 {
-                flex: 0 0 33.333%;
-                max-width: 33.333%;
-            }
-            
-            .drugs-scroll-container {
-                max-height: 500px;
-                overflow-y: auto;
-            }
-            
-            .mobile-cart {
-                display: none;
-            }
-        }
-        
-        @media (max-width: 576px) {
-            .header h4 {
-                font-size: 1.2rem;
-            }
-            
-            .nav-tabs .nav-link {
-                padding: 8px 12px;
-                font-size: 0.85rem;
-            }
-            
-            .nav-tabs .nav-link i {
-                margin-right: 4px;
-            }
-        }
-        
-        /* Landscape mode for phones */
-        @media (max-height: 576px) and (orientation: landscape) {
-            .drugs-scroll-container {
-                max-height: 200px;
-            }
-        }
-        
-        @media (max-width: 992px) {
-            .sidebar-toggle {
-                display: flex;
-            }
-        }
-        
-        /* Mobile cart button */
-        .cart-toggle {
+        .mobile-cart {
             display: none;
         }
         
-        @media (max-width: 768px) {
-            .cart-toggle {
-                display: block;
-                position: fixed;
-                bottom: 80px;
-                right: 20px;
-                z-index: 1000;
-                width: 60px;
-                height: 60px;
-                border-radius: 50%;
-                background: var(--primary-color);
-                color: white;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            }
-            
-            .cart-badge {
-                position: absolute;
-                top: -5px;
-                right: -5px;
-                background: var(--danger-color);
-                color: white;
-                border-radius: 50%;
-                width: 24px;
-                height: 24px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 0.75rem;
-            }
+        .desktop-cart {
+            display: block;
+        }
+    }
+    
+    /* Portrait orientation for mobile */
+    @media (max-width: 768px) and (orientation: portrait) {
+        .inventory-container {
+            flex-direction: column;
         }
         
-        /* Landscape orientation for mobile */
-        @media (max-width: 992px) and (orientation: landscape) {
-            .inventory-container {
-                flex-direction: row;
-            }
-            
-            .drugs-column {
-                flex: 2;
-            }
-            
-            .cart-column {
-                flex: 1;
-                position: sticky;
-                top: 90px;
-            }
-            
-            .mobile-cart {
-                display: none;
-            }
-            
-            .desktop-cart {
-                display: block;
-            }
+        .desktop-cart {
+            display: none;
         }
         
-        /* Portrait orientation for mobile */
-        @media (max-width: 768px) and (orientation: portrait) {
-            .inventory-container {
-                flex-direction: column;
-            }
-            
-            .desktop-cart {
-                display: none;
-            }
-            
-            .mobile-cart {
-                display: block;
-            }
+        .mobile-cart {
+            display: block;
         }
+    }
 
-        /* Expiry date color */
-        .expiry-date {
-            color: #00008b; /* Dark blue */
-        }
-        
-        /* Quantity input styling */
-        .quantity-input {
-            width: 60px;
-            text-align: center;
-        }
-        
-        /* Prescription cart modal */
-        .prescription-cart-modal .modal-dialog {
-            max-width: 900px;
-        }
-        
-        .prescription-items {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-        
-        .prescription-origin {
-            background-color: #f8f9fa;
-            border-left: 4px solid #0d6efd;
-            padding: 8px 12px;
-            margin-bottom: 10px;
-            border-radius: 4px;
-        }
+    /* Expiry date color */
+    .expiry-date {
+        color: #00008b; /* Dark blue */
+    }
+    
+    /* Quantity input styling */
+    .quantity-input {
+        width: 60px;
+        text-align: center;
+    }
+    
+    /* Prescription cart modal */
+    .prescription-cart-modal .modal-dialog {
+        max-width: 900px;
+    }
+    
+    .prescription-items {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    
+    .prescription-origin {
+        background-color: #f8f9fa;
+        border-left: 4px solid #0d6efd;
+        padding: 8px 12px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+    }
+
+    /* FIXED: Ensure content is visible */
+    .tab-pane {
+        display: block !important;
+        opacity: 1 !important;
+    }
+    
+    .tab-pane:not(.active) {
+        display: none !important;
+    }
+    
+    .tab-pane.active {
+        display: block !important;
+    }
     </style>
 </head>
 <body>
@@ -1636,11 +1654,6 @@
                     } else {
                         $(this).val(cart[index].quantity);
                     }
-                });
-                
-                // Enable manual typing on mobile and tablet
-                $('.quantity-input').on('focus', function() {
-                    $(this).select();
                 });
             }
             
