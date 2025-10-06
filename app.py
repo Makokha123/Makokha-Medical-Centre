@@ -9543,7 +9543,7 @@ def get_drug_status(drug):
     
     if remaining <= 0:
         return 'Out of Stock'
-    elif remaining < 10:
+    elif remaining < 5:
         return 'Low Stock'
     elif expiry_date and expiry_date < today:
         return 'Expired'
