@@ -9486,7 +9486,7 @@ def api_drugs():
         query = db.session.query(Drug)
         
         if filter_type == 'low_stock':
-            query = query.filter(Drug.remaining_quantity < 10, Drug.remaining_quantity > 0)
+            query = query.filter(Drug.remaining_quantity < 5, Drug.remaining_quantity > 0)
         elif filter_type == 'expiring_soon':
             # Drugs expiring in the next 30 days
             thirty_days_later = date.today() + timedelta(days=30)
