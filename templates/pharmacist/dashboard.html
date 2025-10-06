@@ -1930,6 +1930,9 @@
                                             <i class="bi bi-capsule"></i> Dispense
                                         </button>
                                     ` : ''}
+                                    <button class="btn btn-sm btn-danger remove-prescription-btn" data-prescription-id="${prescription.id}">
+                                        <i class="bi bi-trash"></i> Remove
+                                    </button>
                                 `
                             ]);
                         });
@@ -1945,6 +1948,27 @@
                         $('.dispense-prescription-btn').click(function() {
                             const prescriptionId = $(this).data('prescription-id');
                             dispensePrescription(prescriptionId);
+                        });
+
+                        $('.remove-prescription-btn').click(function() {
+                            const prescriptionId = $(this).data('prescription-id');
+                            if (!confirm('Are you sure you want to remove this prescription? This action cannot be undone.')) return;
+                            $.ajax({
+                                url: `/pharmacist/prescription/${prescriptionId}/delete`,
+                                method: 'POST',
+                                success: function(resp) {
+                                    if (resp.success) {
+                                        showSuccessToast('Prescription removed');
+                                        loadPrescriptions();
+                                    } else {
+                                        showErrorToast(resp.error || 'Failed to remove prescription');
+                                    }
+                                },
+                                error: function(xhr) {
+                                    const err = xhr.responseJSON?.error || 'Failed to remove prescription';
+                                    showErrorToast(err);
+                                }
+                            });
                         });
                         
                         // Update prescription badge count

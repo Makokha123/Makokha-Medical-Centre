@@ -1,4 +1,6 @@
 
+import eventlet
+eventlet.monkey_patch()
 from importlib.metadata.diagnose import inspect
 from logging.handlers import RotatingFileHandler
 from operator import and_
@@ -8,6 +10,7 @@ import csv
 import io
 from threading import Thread
 from flask_migrate import Migrate
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import time
 from flask import Flask, abort, Blueprint, make_response, render_template, request, redirect, send_from_directory, url_for, flash, session, jsonify, send_file
 from flask_migrate import Migrate
@@ -109,6 +112,8 @@ app.config.from_object('config.Config')
 Config.init_fernet(app)
 db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
 migrate = Migrate(app, db)
+# Initialize SocketIO (use eventlet/gevent in production if available)
+socketio = SocketIO(app, cors_allowed_origins='*')
 
 auth_bp = Blueprint('auth', __name__)
 messages_bp = Blueprint('messages', __name__)
@@ -219,6 +224,10 @@ class Message(db.Model):
     subject = db.Column(db.String(255), nullable=True)
     content = db.Column(db.Text, nullable=False)
     is_read = db.Column(db.Boolean, default=False)
+    is_delivered = db.Column(db.Boolean, default=False)
+    delivered_at = db.Column(db.DateTime, nullable=True)
+    edited = db.Column(db.Boolean, default=False)
+    edited_at = db.Column(db.DateTime, nullable=True)
     is_deleted_sender = db.Column(db.Boolean, default=False)
     is_deleted_recipient = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -233,6 +242,109 @@ class Message(db.Model):
     # Relationships - updated to use 'user' table
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_messages')
     recipient = db.relationship('User', foreign_keys=[recipient_id], backref='received_messages')
+
+class Conversation(db.Model):
+    __tablename__ = 'conversations'
+    id = db.Column(db.Integer, primary_key=True)
+    uuid = db.Column(db.String(36), unique=True, default=lambda: str(uuid.uuid4()))
+    title = db.Column(db.String(255))
+    is_group = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    members = db.relationship('ConversationMember', back_populates='conversation', cascade='all, delete-orphan')
+
+class ConversationMember(db.Model):
+    __tablename__ = 'conversation_members'
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    last_read_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    conversation = db.relationship('Conversation', back_populates='members')
+    user = db.relationship('User', backref='conversations')
+
+# Add optional conversation_id to messages
+if not hasattr(Message, 'conversation_id'):
+    Message.conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), nullable=True)
+    Message.conversation = db.relationship('Conversation', backref='messages')
+
+# Socket event handlers for messaging
+@socketio.on('join_conversation')
+def handle_join(data):
+    # Join by conversation_id if provided, else fallback to user pair
+    conv_id = data.get('conversation_id')
+    if conv_id:
+        room = f'conversation_{int(conv_id)}'
+        join_room(room)
+        # mark messages in this conversation as delivered for this user
+        try:
+            msgs = Message.query.filter_by(conversation_id=conv_id, recipient_id=current_user.id, is_delivered=False).all()
+            for m in msgs:
+                m.is_delivered = True
+                m.delivered_at = datetime.now(timezone.utc)
+            db.session.commit()
+            # notify others in the room
+            socketio.emit('messages_delivered', {'conversation_id': conv_id}, room=room)
+        except Exception:
+            app.logger.exception('Failed to mark delivered')
+        return
+
+    user_a = data.get('user_a')
+    user_b = data.get('user_b')
+    if user_a and user_b:
+        user_a = int(user_a); user_b = int(user_b)
+        room = f"chat_{min(user_a,user_b)}_{max(user_a,user_b)}"
+        join_room(room)
+
+
+@socketio.on('connect')
+def socket_connect():
+    # Enforce session-based auth: only allow if user is logged in
+    if not current_user or not getattr(current_user, 'is_authenticated', False):
+        return False  # rejects connection
+    # Optionally join user-specific room for notifications
+    join_room(f'user_{current_user.id}')
+    app.logger.debug(f'User {current_user.id} connected to SocketIO')
+
+
+@socketio.on('disconnect')
+def socket_disconnect():
+    if current_user and getattr(current_user, 'is_authenticated', False):
+        leave_room(f'user_{current_user.id}')
+
+@socketio.on('leave_conversation')
+def handle_leave(data):
+    user_a = int(data.get('user_a'))
+    user_b = int(data.get('user_b'))
+    room = f"chat_{min(user_a,user_b)}_{max(user_a,user_b)}"
+    leave_room(room)
+
+@socketio.on('send_message')
+def handle_socket_send_message(data):
+    sender_id = data.get('sender_id')
+    recipient_id = data.get('recipient_id')
+    content = data.get('content', '').strip()
+    if not recipient_id or not content:
+        emit('send_error', {'error':'Missing recipient or content'})
+        return
+
+    m = Message(sender_id=sender_id, recipient_id=recipient_id, content=content)
+    db.session.add(m)
+    db.session.commit()
+
+    # mark delivered and emit to room
+    room = f"chat_{min(int(sender_id),int(recipient_id))}_{max(int(sender_id),int(recipient_id))}"
+    msg = {
+        'id': m.id,
+        'content': m.content,
+        'time': m.created_at.strftime('%Y-%m-%d %H:%M'),
+        'sender_id': m.sender_id,
+        'recipient_id': m.recipient_id
+    }
+    emit('new_message', msg, room=room)
+
    
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
@@ -1417,6 +1529,20 @@ class Debtor(db.Model):
 
     payments = db.relationship('DebtorPayment', backref='debtor', lazy=True)
 
+
+class PayrollPayment(db.Model):
+    __tablename__ = 'payroll_payments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    payroll_id = db.Column(db.Integer, db.ForeignKey('payrolls.id'), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    paid_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    payment_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    notes = db.Column(db.Text)
+
+    payroll = db.relationship('Payroll', backref=db.backref('payments', lazy=True))
+    user = db.relationship('User', backref='payroll_payments')
+
 class DebtorPayment(db.Model):
     __tablename__ = 'debtor_payments'
     
@@ -2178,6 +2304,270 @@ def delete_message(message_id):
 def check_new_messages():
     unread_count = get_unread_count()
     return jsonify({'unread_count': unread_count})
+
+
+@messages_bp.route('/api/conversations')
+@login_required
+def api_conversations():
+    # Return a list of conversation heads grouped by other user
+    q = request.args.get('q', '').strip()
+
+    # Find distinct users we've exchanged messages with
+    sent_users = db.session.query(Message.recipient_id).filter(Message.sender_id == current_user.id).distinct()
+    recv_users = db.session.query(Message.sender_id).filter(Message.recipient_id == current_user.id).distinct()
+    user_ids = set([r[0] for r in sent_users.union(recv_users)]) if hasattr(sent_users, 'union') else set()
+
+    # Fallback: collect from messages table
+    msgs = Message.query.filter(
+        or_(Message.sender_id == current_user.id, Message.recipient_id == current_user.id)
+    ).all()
+    ids = new_ids = set()
+    for m in msgs:
+        other_id = m.recipient_id if m.sender_id == current_user.id else m.sender_id
+        ids.add(other_id)
+
+    users = User.query.filter(User.id.in_(list(ids)))
+    if q:
+        users = users.filter(User.username.ilike(f'%{q}%'))
+
+    users = users.order_by(User.username).all()
+
+    conversations = []
+    for u in users:
+        # Find last message between current_user and u
+        last = Message.query.filter(
+            or_(and_(Message.sender_id == current_user.id, Message.recipient_id == u.id),
+                and_(Message.sender_id == u.id, Message.recipient_id == current_user.id))
+        ).order_by(Message.created_at.desc()).first()
+
+        if not last:
+            continue
+
+        conversations.append({
+            'user_id': u.id,
+            'username': u.username,
+            'initials': ''.join([p[0] for p in u.username.split()])[:2].upper(),
+            'last_message': (last.content[:60] + ('...' if len(last.content) > 60 else '')) if last.content else '',
+            'unread_count': Message.query.filter_by(recipient_id=current_user.id, sender_id=u.id, is_read=False, is_deleted_recipient=False).count(),
+            'time': last.created_at.strftime('%Y-%m-%d %H:%M')
+        })
+
+    return jsonify({'conversations': conversations})
+
+
+@messages_bp.route('/api/conversation_messages')
+@login_required
+def api_conversation_messages():
+    user_id = request.args.get('user_id', type=int)
+    page = request.args.get('page', default=1, type=int)
+    per_page = request.args.get('per_page', default=25, type=int)
+    if not user_id:
+        return jsonify({'messages': [], 'page': page, 'per_page': per_page})
+
+    # Paginated messages between current_user and user_id ordered asc
+    query = Message.query.filter(
+        or_(and_(Message.sender_id == current_user.id, Message.recipient_id == user_id),
+            and_(Message.sender_id == user_id, Message.recipient_id == current_user.id))
+    ).order_by(Message.created_at.desc())
+
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    messages = list(reversed(pagination.items))  # reverse to ascending
+
+    out = []
+    for m in messages:
+        out.append({
+            'id': m.id,
+            'content': m.content,
+            'time': m.created_at.strftime('%Y-%m-%d %H:%M'),
+            'is_sender': (m.sender_id == current_user.id),
+            'is_read': m.is_read,
+            'is_delivered': m.is_delivered,
+            'edited': m.edited
+        })
+
+    return jsonify({
+        'messages': out,
+        'page': page,
+        'per_page': per_page,
+        'total': pagination.total,
+        'has_next': pagination.has_next,
+        'has_prev': pagination.has_prev
+    })
+
+
+@messages_bp.route('/api/send_message', methods=['POST'])
+@login_required
+def api_send_message():
+    data = request.get_json() or {}
+    recipient_id = data.get('recipient_id')
+    content = data.get('content', '').strip()
+
+    if not recipient_id or not content:
+        return jsonify({'success': False, 'error': 'Missing recipient or content'}), 400
+
+    # verify recipient exists and is active
+    recipient = User.query.get(recipient_id)
+    if not recipient or not recipient.is_active:
+        return jsonify({'success': False, 'error': 'Recipient not found'}), 404
+
+    # Determine or create conversation (1:1) - find existing conversation containing both users
+    conv = None
+    convs = Conversation.query.join(ConversationMember).filter(ConversationMember.user_id.in_([current_user.id, recipient_id])).group_by(Conversation.id).having(func.count(Conversation.id) >= 2).all()
+    # Filter for non-group 1:1 convs containing exactly these two users
+    for c in convs:
+        member_ids = [m.user_id for m in c.members]
+        if set(member_ids) == set([current_user.id, recipient_id]):
+            conv = c
+            break
+
+    if not conv:
+        conv = Conversation(is_group=False)
+        db.session.add(conv)
+        db.session.flush()
+        db.session.add(ConversationMember(conversation_id=conv.id, user_id=current_user.id))
+        db.session.add(ConversationMember(conversation_id=conv.id, user_id=recipient_id))
+
+    m = Message(sender_id=current_user.id, recipient_id=recipient_id, subject=None, content=content, conversation_id=conv.id)
+    db.session.add(m)
+    db.session.commit()
+
+    # Notify via SocketIO room
+    try:
+        room = f'conversation_{conv.id}'
+        msg = {
+            'id': m.id,
+            'content': m.content,
+            'time': m.created_at.strftime('%Y-%m-%d %H:%M'),
+            'sender_id': m.sender_id,
+            'recipient_id': m.recipient_id,
+            'conversation_id': conv.id
+        }
+        socketio.emit('new_message', msg, room=room)
+        # Also notify recipient by user room
+        socketio.emit('new_message_notification', {'conversation_id': conv.id, 'from': current_user.id}, room=f'user_{recipient_id}')
+    except Exception:
+        app.logger.exception('Socket emit failed')
+
+    return jsonify({'success': True, 'message_id': m.id})
+
+
+@messages_bp.route('/api/message/<int:message_id>', methods=['PUT'])
+@login_required
+def api_edit_message(message_id):
+    m = Message.query.get_or_404(message_id)
+    if m.sender_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    data = request.get_json() or {}
+    new_content = data.get('content', '').strip()
+    if not new_content:
+        return jsonify({'success': False, 'error': 'Content required'}), 400
+    m.content = new_content
+    m.edited = True
+    m.edited_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    # emit edited message to room
+    room = f"chat_{min(m.sender_id,m.recipient_id)}_{max(m.sender_id,m.recipient_id)}"
+    socketio.emit('message_edited', {'id': m.id, 'content': m.content, 'edited_at': m.edited_at.strftime('%Y-%m-%d %H:%M')}, room=room)
+
+    return jsonify({'success': True})
+
+
+@messages_bp.route('/api/message/<int:message_id>', methods=['DELETE'])
+@login_required
+def api_delete_message(message_id):
+    m = Message.query.get_or_404(message_id)
+    # allow sender or recipient to soft delete for themselves
+    if m.sender_id == current_user.id:
+        m.is_deleted_sender = True
+    elif m.recipient_id == current_user.id:
+        m.is_deleted_recipient = True
+    else:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    # if both deleted, hard delete
+    if m.is_deleted_sender and m.is_deleted_recipient:
+        db.session.delete(m)
+    db.session.commit()
+
+    room = f"chat_{min(m.sender_id,m.recipient_id)}_{max(m.sender_id,m.recipient_id)}"
+    socketio.emit('message_deleted', {'id': m.id}, room=room)
+
+    return jsonify({'success': True})
+
+
+@messages_bp.route('/api/mark_read', methods=['POST'])
+@login_required
+def api_mark_read():
+    data = request.get_json() or {}
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({'success': False}), 400
+    # mark messages where current_user is recipient and sender is user_id
+    msgs = Message.query.filter_by(recipient_id=current_user.id, sender_id=user_id, is_read=False).all()
+    for m in msgs:
+        m.is_read = True
+        m.read_at = datetime.now(timezone.utc)
+    db.session.commit()
+    # notify room
+    room = f"chat_{min(current_user.id,user_id)}_{max(current_user.id,user_id)}"
+    socketio.emit('messages_read', {'user_id': current_user.id, 'by': user_id}, room=room)
+    return jsonify({'success': True, 'count': len(msgs)})
+
+
+@messages_bp.route('/api/mark_delivered', methods=['POST'])
+@login_required
+def api_mark_delivered():
+    data = request.get_json() or {}
+    message_ids = data.get('message_ids', [])
+    updated = 0
+    for mid in message_ids:
+        m = Message.query.get(mid)
+        if m and not m.is_delivered:
+            m.is_delivered = True
+            m.delivered_at = datetime.now(timezone.utc)
+            updated += 1
+    db.session.commit()
+    return jsonify({'success': True, 'updated': updated})
+
+
+@messages_bp.route('/api/find_user_by_username')
+@login_required
+def api_find_user_by_username():
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({'user': None})
+    user = User.query.filter(User.username.ilike(q)).first()
+    if not user:
+        # try partial
+        user = User.query.filter(User.username.ilike(f'%{q}%')).first()
+    if not user:
+        return jsonify({'user': None})
+    return jsonify({'user': {'id': user.id, 'username': user.username}})
+
+
+@messages_bp.route('/api/get_or_create_conversation')
+@login_required
+def api_get_or_create_conversation():
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({'conversation_id': None}), 400
+
+    # find existing 1:1 conversation
+    convs = Conversation.query.join(ConversationMember).filter(ConversationMember.user_id.in_([current_user.id, user_id])).group_by(Conversation.id).having(func.count(Conversation.id) >= 2).all()
+    for c in convs:
+        member_ids = [m.user_id for m in c.members]
+        if set(member_ids) == set([current_user.id, user_id]):
+            return jsonify({'conversation_id': c.id})
+
+    # create new
+    conv = Conversation(is_group=False)
+    db.session.add(conv)
+    db.session.flush()
+    db.session.add(ConversationMember(conversation_id=conv.id, user_id=current_user.id))
+    db.session.add(ConversationMember(conversation_id=conv.id, user_id=user_id))
+    db.session.commit()
+    return jsonify({'conversation_id': conv.id})
 
 @messages_bp.route('/api/get_users')
 @login_required
@@ -4104,6 +4494,99 @@ def add_drawing():
             notes=f"Owner's drawing: {description}"
         )
         db.session.add(transaction)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Payroll added and transaction recorded'})
+    except ValueError:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': 'Invalid data provided'}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+
+
+@app.route('/admin/pay_payroll/<int:id>', methods=['POST'])
+@login_required
+def pay_payroll(id):
+    if current_user.role not in ('admin', 'accountant'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    payroll = Payroll.query.get_or_404(id)
+    try:
+        # Ensure DB schema for payroll_payments has expected columns (helps when migrations weren't run)
+        try:
+            with db.engine.connect() as conn:
+                # For SQLite this returns rows with columns: cid, name, type, notnull, dflt_value, pk
+                res = conn.execute(text("PRAGMA table_info('payroll_payments')"))
+                cols = [r[1] for r in res.fetchall()]
+                if 'paid_by' not in cols:
+                    app.logger.info('Schema fix: adding missing column payroll_payments.paid_by')
+                    conn.execute(text('ALTER TABLE payroll_payments ADD COLUMN paid_by INTEGER'))
+        except Exception as schema_exc:
+            # Log but continue; if table missing entirely the normal flow will error and be returned to client
+            current_app.logger.debug(f"Schema check/alter failed: {schema_exc}")
+        amount = float(request.form.get('amount', 0))
+        notes = request.form.get('notes', '')
+        # allow user to pass payment_date (YYYY-MM-DD)
+        payment_date_str = request.form.get('payment_date')
+
+        if amount <= 0:
+            return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+        # Calculate total already paid
+        total_paid = sum([p.amount for p in payroll.payments]) if payroll.payments else 0.0
+        remaining = payroll.amount - total_paid
+
+        if amount > remaining + 0.0001:
+            return jsonify({'success': False, 'error': f'Amount exceeds remaining balance (Ksh {remaining:.2f})'}), 400
+
+        # Parse payment date if provided, otherwise use now
+        if payment_date_str:
+            try:
+                pd = datetime.strptime(payment_date_str, '%Y-%m-%d')
+                payment_dt = datetime(pd.year, pd.month, pd.day, tzinfo=timezone.utc)
+            except Exception:
+                payment_dt = datetime.now(timezone.utc)
+        else:
+            payment_dt = datetime.now(timezone.utc)
+
+        payment = PayrollPayment(
+            payroll_id=payroll.id,
+            amount=amount,
+            paid_by=current_user.id,
+            payment_date=payment_dt,
+            notes=notes
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        # Create transaction record for the payroll payment
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='payroll_payment',
+            amount=amount,
+            user_id=current_user.id,
+            reference_id=payroll.id,
+            notes=f"Payroll payment for {payroll.payroll_number}: {notes}"
+        )
+        db.session.add(transaction)
+
+        # Update payroll status if fully paid
+        total_paid += amount
+        if abs(total_paid - payroll.amount) < 0.005 or total_paid >= payroll.amount:
+            payroll.status = 'paid'
+        else:
+            payroll.status = 'partial'
+
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Payment recorded successfully', 'remaining': round(payroll.amount - total_paid, 2)})
+    except ValueError:
+        db.session.rollback()
+        current_app.logger.exception(f"ValueError processing payroll payment {id}")
+        return jsonify({'success': False, 'error': 'Invalid amount provided'}), 400
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.exception(f"Error processing payroll payment {id}: {str(e)}")
+        return jsonify({'success': False, 'error': 'An unexpected error occurred while processing payment'}), 500
         db.session.commit()
         return jsonify({'success': True, 'message': 'Drawing added successfully'})
     except Exception as e:
@@ -6437,6 +6920,31 @@ def check_new_prescriptions():
     except Exception as e:
         current_app.logger.error(f"Error checking new prescriptions: {str(e)}")
         return jsonify({'error': 'Failed to check prescriptions'}), 500
+
+
+@app.route('/pharmacist/prescription/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_prescription(id):
+    """Allow pharmacist or admin to delete a prescription (only if not dispensed)."""
+    if current_user.role not in ('pharmacist', 'admin'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    prescription = Prescription.query.get_or_404(id)
+    try:
+        if prescription.status == 'dispensed':
+            return jsonify({'success': False, 'error': 'Cannot remove a dispensed prescription'}), 400
+
+        # Delete associated items first
+        PrescriptionItem.query.filter_by(prescription_id=prescription.id).delete()
+
+        # Then delete the prescription
+        db.session.delete(prescription)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Prescription removed'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error deleting prescription {id}: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to remove prescription'}), 500
 
 @app.route('/doctor/complete_prescription', methods=['POST'])
 @login_required
@@ -9213,7 +9721,6 @@ app.register_blueprint(auth_bp, url_prefix='/auth')
 # Add this after your other blueprint registrations
 app.register_blueprint(messages_bp)
 
-
 if __name__ == '__main__':
     # Create necessary directories
     if not os.path.exists('instance'):
@@ -9222,23 +9729,40 @@ if __name__ == '__main__':
         os.makedirs(app.config['UPLOAD_FOLDER'])
     if not os.path.exists(app.config['BACKUP_FOLDER']):
         os.makedirs(app.config['BACKUP_FOLDER'])
-    
+
     # Initialize login manager
     login_manager = LoginManager()
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
     login_manager.login_message_category = 'info'
-    
+
     @login_manager.user_loader
     def load_user(user_id):
         return db.session.get(User, int(user_id))
-    
-    # Start the application
+
+    # Start the application using Socket.IO server so client and server use matching Engine.IO/Socket.IO
     if os.environ.get('RENDER'):
-        # Production - use gunicorn (handled by Render)
-        app.logger.info("Production mode - ready for gunicorn")
+        # Production - use gunicorn or platform-provided process manager
+        app.logger.info("Production mode - ready for gunicorn/socketio")
     else:
-        # Development
-        app.logger.info("Development mode - starting Flask server")
-        initialize_data() 
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        # Development - prefer eventlet if available for better websocket support
+        app.logger.info("Development mode - starting Socket.IO server")
+        try:
+            initialize_data()
+        except Exception:
+            app.logger.exception('initialize_data failed, continuing to start server')
+
+        use_eventlet = False
+        try:
+            import eventlet
+            eventlet.monkey_patch()
+            use_eventlet = True
+            app.logger.info('Using eventlet for Socket.IO')
+        except Exception:
+            app.logger.info('eventlet not available, falling back to default Socket.IO server')
+
+        host = '0.0.0.0'
+        port = int(os.environ.get('PORT', 5000))
+
+        # Start socketio server (works with eventlet/gevent or the default threaded server)
+        socketio.run(app, host=host, port=port, debug=app.config.get('DEBUG', False))

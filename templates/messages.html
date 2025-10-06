@@ -3,42 +3,224 @@
 {% block title %}Messages - MMC System{% endblock %}
 
 {% block message_content %}
-<div class="message-list">
-    {% if messages %}
-        {% for message in messages %}
-        <div class="message-item {% if not message.is_read and message.recipient_id == current_user.id %}unread{% endif %}" 
-             onclick="location.href='{{ url_for('messages.view_message', message_id=message.id) }}'">
-            <div class="d-flex justify-content-between align-items-start">
-                <div class="flex-grow-1">
-                    <div class="message-subject">
-                        {{ message.subject or 'No Subject' }}
-                        {% if not message.is_read and message.recipient_id == current_user.id %}
-                        <span class="badge bg-primary ms-1">New</span>
-                        {% endif %}
-                    </div>
-                    <div class="message-preview">
-                        {{ message.content|truncate(100) }}
-                    </div>
-                    <div class="message-meta">
-                        <span>
-                            {% if message.sender_id == current_user.id %}
-                                To: {{ message.recipient.username }}
-                            {% else %}
-                                From: {{ message.sender.username }}
-                            {% endif %}
-                        </span>
-                        <span>{{ message.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                    </div>
-                </div>
+<style>
+/* WhatsApp-like conversation UI styles */
+.chat-wrapper { display: flex; gap: 1rem; height: 70vh; }
+.conversations { width: 320px; background: #f6f7f9; border-radius: 8px; overflow: hidden; display:flex; flex-direction:column; }
+.conversation-list { overflow-y: auto; flex:1; }
+.conversation-item { padding: 12px; cursor: pointer; display:flex; gap:10px; align-items:center; border-bottom:1px solid #e6e8eb; }
+.conversation-item:hover { background:#eef3ff; }
+.conversation-item.active { background:#e6f3ff; }
+.conv-avatar { width:44px; height:44px; border-radius:50%; background:#dfe7f6; display:flex; align-items:center; justify-content:center; font-weight:700; color:#2b4a83; }
+.conv-meta { flex:1; }
+.conv-name { font-weight:600; }
+.conv-snippet { color:#6b7280; font-size:0.9rem; }
+.conv-time { font-size:0.8rem; color:#9ca3af; }
+
+.chat { flex:1; background: linear-gradient(180deg,#fff,#fbfdff); border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
+.chat-header { padding:12px 16px; border-bottom:1px solid #e6e8eb; display:flex; align-items:center; gap:12px; }
+.chat-body { padding:16px; flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+.msg-row { display:flex; }
+.msg-row.sent { justify-content:flex-end; }
+.msg-row.received { justify-content:flex-start; }
+.msg-bubble { max-width:70%; padding:10px 14px; border-radius:14px; font-size:0.95rem; box-shadow:0 1px 0 rgba(0,0,0,0.04); }
+.msg-bubble.sent { background:#dcf8c6; border-bottom-right-radius:4px; }
+.msg-bubble.received { background:#fff; border-bottom-left-radius:4px; border:1px solid #eef0f3; }
+.msg-meta { font-size:0.75rem; color:#9ca3af; margin-top:4px; }
+
+.chat-input { padding:12px; border-top:1px solid #e6e8eb; display:flex; gap:8px; align-items:center; }
+.chat-input textarea { flex:1; resize:none; border-radius:18px; padding:10px 12px; border:1px solid #e6e8eb; min-height:44px; }
+.chat-input button { min-width:44px; height:44px; border-radius:50%; }
+
+.empty-conversations { padding:24px; text-align:center; color:#6b7280; }
+
+/* small screens */
+@media (max-width:768px) { .conversations { width: 100%; height: 260px; } .chat-wrapper { flex-direction:column; height: auto; } }
+</style>
+
+<div class="chat-wrapper">
+    <div class="conversations">
+        <div style="padding:12px 16px; border-bottom:1px solid #e6e8eb; display:flex; align-items:center; gap:8px;">
+            <input id="conv-search" class="form-control form-control-sm" placeholder="Search users or messages...">
+        </div>
+        <div class="conversation-list" id="conversationList">
+            <div class="empty-conversations">Loading conversations...</div>
+        </div>
+        <div style="padding:10px; border-top:1px solid #e6e8eb;">
+            <button id="startNewBtn" class="btn btn-sm btn-primary w-100">New Conversation</button>
+        </div>
+    </div>
+
+    <div class="chat">
+        <div class="chat-header" id="chatHeader">
+            <div class="conv-avatar" id="chatAvatar">U</div>
+            <div>
+                <div id="chatName" style="font-weight:700">Select a conversation</div>
+                    <div id="chatStatus" style="font-size:0.85rem;color:#6b7280">Messages will appear here</div>
             </div>
         </div>
-        {% endfor %}
-    {% else %}
-        <div class="text-center py-5">
-            <i class="bi bi-inbox display-1 text-muted"></i>
-            <h4 class="text-muted mt-3">No messages found</h4>
-            <p class="text-muted">There are no messages in this folder.</p>
+
+        <div class="chat-body" id="chatBody">
+            <div class="text-center" style="color:#9ca3af">No conversation selected</div>
         </div>
-    {% endif %}
+
+        <div class="chat-input">
+            <textarea id="chatMessageInput" placeholder="Type a message..." disabled></textarea>
+            <button id="sendMessageBtn" class="btn btn-success" disabled><i class="bi bi-send"></i></button>
+        </div>
+    </div>
 </div>
+
+<!-- Load Socket.IO client from server; if that returns 400 (server not running via socketio.run), fall back to CDN -->
+<script src="/socket.io/socket.io.js" onerror="this.onerror=null;var s=document.createElement('script');s.src='https://cdn.socket.io/4.7.2/socket.io.min.js';document.head.appendChild(s);"></script>
+<script>
+$(function(){
+    // Use explicit options: ensure correct path and send cookies for session-based auth
+    const socket = io({ path: '/socket.io', transports: ['websocket', 'polling'], withCredentials: true });
+    let currentConversationUserId = null;
+    let currentPage = 1;
+    const perPage = 25;
+
+    function formatTime(ts) { const d = new Date(ts); return d.toLocaleString(); }
+
+    function renderConversationItem(conv){
+        return $(
+            `<div class="conversation-item" data-user-id="${conv.user_id}">
+                <div class="conv-avatar">${conv.initials}</div>
+                <div class="conv-meta">
+                    <div class="conv-name">${conv.username} <span class="conv-time">${conv.time}</span></div>
+                    <div class="conv-snippet">${conv.last_message}</div>
+                </div>
+            </div>`
+        );
+    }
+
+    function loadConversations(q=''){
+        $('#conversationList').html('<div class="empty-conversations">Loading conversations...</div>');
+        $.getJSON('/api/conversations', {q:q}, function(res){
+            const list = $('#conversationList'); list.empty();
+            if(!res.conversations || res.conversations.length===0){ list.html('<div class="empty-conversations">No conversations yet</div>'); return; }
+            res.conversations.forEach(conv => {
+                const item = renderConversationItem(conv);
+                item.click(function(){ $('.conversation-item').removeClass('active'); $(this).addClass('active'); openConversation(conv.user_id, conv.username); });
+                // unread badge
+                if(conv.unread_count && conv.unread_count>0){ item.find('.conv-meta .conv-name').append(`<span class="badge bg-danger ms-2">${conv.unread_count}</span>`); }
+                list.append(item);
+            });
+        });
+    }
+
+    // Modal-based new conversation
+    function showNewConversationModal(){
+        const modalHtml = `
+            <div class="modal fade" id="newConvModal" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                  <div class="modal-header"><h5 class="modal-title">Start Conversation</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                  <div class="modal-body">
+                    <input id="newConvSearch" class="form-control" placeholder="Search user...">
+                    <div id="newConvResults" style="margin-top:10px;"></div>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+        const $modal = $(modalHtml);
+        $('body').append($modal);
+        const bsModal = new bootstrap.Modal($modal[0]);
+        $modal.on('hidden.bs.modal', function(){ $modal.remove(); });
+
+        $modal.find('#newConvSearch').on('input', function(){
+            const q = $(this).val();
+            if(!q) { $modal.find('#newConvResults').empty(); return; }
+            $.getJSON('/api/get_users', {q:q}, function(res){
+                const container = $modal.find('#newConvResults'); container.empty();
+                res.results.forEach(u=>{
+                    const btn = $(`<button class="btn btn-sm btn-outline-primary w-100 mb-1">${u.text}</button>`);
+                    btn.click(function(){
+                        openConversation(u.id, u.text);
+                        bsModal.hide();
+                    });
+                    container.append(btn);
+                });
+            });
+        });
+
+        bsModal.show();
+    }
+
+    let currentConversationId = null;
+    function openConversation(userId, username){
+        currentConversationUserId = userId; currentPage = 1;
+        $('#chatName').text(username);
+        $('#chatAvatar').text(username.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase());
+        $('#chatMessageInput').prop('disabled', false).focus(); $('#sendMessageBtn').prop('disabled', false);
+        // load messages and get/ensure conversation id, then join room
+        $.getJSON('/api/get_or_create_conversation', {user_id: userId}, function(res){
+            currentConversationId = res.conversation_id;
+            socket.emit('join_conversation', { conversation_id: currentConversationId });
+            loadMessages(userId, currentPage);
+            // mark read
+            $.post('/api/mark_read', JSON.stringify({user_id: userId}), function(){ loadConversations(); });
+        });
+    }
+
+    function loadMessages(userId, page){
+        $('#chatBody').html('<div class="text-center" style="color:#9ca3af">Loading messages...</div>');
+        $.getJSON('/api/conversation_messages', {user_id: userId, page: page, per_page: perPage}, function(res){
+            const body = $('#chatBody'); body.empty();
+            if(res.page && res.page>1){
+                const loadMore = $(`<div style="text-align:center"><button class="btn btn-sm btn-link" id="loadMoreBtn">Load more</button></div>`);
+                loadMore.find('#loadMoreBtn').click(function(){ currentPage += 1; loadMessages(userId, currentPage); });
+                body.append(loadMore);
+            }
+            res.messages.forEach(m => { const side = m.is_sender ? 'sent' : 'received'; const row = $(`<div class="msg-row ${side}" data-message-id="${m.id}"></div>`); const checks = m.is_delivered ? '✓✓' : (m.is_sender? '✓' : ''); const editedLabel = m.edited ? ' • edited' : ''; const bubble = $(`<div class="msg-bubble ${side}">${m.content}<div class="msg-meta">${m.time}${editedLabel} <span class="msg-checks">${checks}</span></div></div>`); row.append(bubble); body.append(row); });
+            body.scrollTop(body[0].scrollHeight);
+        });
+    }
+
+    function sendMessage(){
+        const text = $('#chatMessageInput').val().trim(); if(!text || !currentConversationUserId) return;
+        const payload = { recipient_id: currentConversationUserId, content: text };
+        // optimistic UI
+        const body = $('#chatBody'); const now = new Date().toLocaleString(); const row = $(`<div class="msg-row sent"></div>`); const bubble = $(`<div class="msg-bubble sent">${text}<div class="msg-meta">${now}</div></div>`);
+        row.append(bubble); body.append(row); body.scrollTop(body[0].scrollHeight); $('#chatMessageInput').val('');
+
+        $.ajax({ url: '/api/send_message', method: 'POST', contentType: 'application/json', data: JSON.stringify(payload), success: function(res){ loadConversations(); }, error: function(){ alert('Failed to send message'); } });
+    }
+
+    // connection status
+    socket.on('connect', function(){
+        $('#chatStatus').text('Connected').css('color','#6b7280');
+    });
+    socket.on('disconnect', function(){
+        $('#chatStatus').text('Disconnected - real-time messages disabled. Start server with run_socketio.py').css('color','#d9534f');
+    });
+    socket.on('connect_error', function(err){
+        $('#chatStatus').text('Socket connection failed - ensure run_socketio.py is running').css('color','#d9534f');
+    });
+
+    // Socket listeners
+    socket.on('new_message', function(msg){
+        // if current conversation, append; otherwise refresh conversation list
+        const other = (msg.sender_id == {{ current_user.id }}) ? msg.recipient_id : msg.sender_id;
+        if(currentConversationUserId && (other == currentConversationUserId)){
+            const body = $('#chatBody'); const side = (msg.sender_id == {{ current_user.id }}) ? 'sent' : 'received'; const row = $(`<div class="msg-row ${side}"></div>`); const bubble = $(`<div class="msg-bubble ${side}">${msg.content}</div>`); const meta = $(`<div class="msg-meta">${msg.time}</div>`); bubble.append(meta); row.append(bubble); body.append(row); body.scrollTop(body[0].scrollHeight);
+        }
+        loadConversations();
+    });
+
+    socket.on('message_edited', function(data){ loadMessages(currentConversationUserId, currentPage); loadConversations(); });
+    socket.on('message_deleted', function(data){ loadMessages(currentConversationUserId, currentPage); loadConversations(); });
+    socket.on('messages_delivered', function(data){ /* could mark delivered checks visually */ loadMessages(currentConversationUserId, currentPage); });
+    socket.on('messages_read', function(data){ loadConversations(); });
+
+    $('#sendMessageBtn').click(sendMessage);
+    $('#chatMessageInput').on('keydown', function(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); } });
+    $('#conv-search').on('input', function(){ loadConversations($(this).val()); });
+    $('#startNewBtn').click(showNewConversationModal);
+
+    loadConversations();
+});
+</script>
+
 {% endblock %}
