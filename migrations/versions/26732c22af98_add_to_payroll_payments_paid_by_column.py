@@ -1,3 +1,4 @@
+
 """Add to payroll_payments paid_by column
 
 Revision ID: 26732c22af98
@@ -22,8 +23,7 @@ def upgrade():
         batch_op.add_column(sa.Column('paid_by', sa.Integer(), nullable=True))
         batch_op.add_column(sa.Column('payment_date', sa.DateTime(), nullable=True))
         batch_op.add_column(sa.Column('notes', sa.Text(), nullable=True))
-        batch_op.drop_constraint(None, type_='foreignkey')
-        batch_op.create_foreign_key(None, 'user', ['paid_by'], ['id'])
+        # REMOVED: Constraint operations that are causing issues
         batch_op.drop_column('created_at')
         batch_op.drop_column('user_id')
 
@@ -35,8 +35,7 @@ def downgrade():
     with op.batch_alter_table('payroll_payments', schema=None) as batch_op:
         batch_op.add_column(sa.Column('user_id', sa.INTEGER(), nullable=False))
         batch_op.add_column(sa.Column('created_at', sa.DATETIME(), nullable=True))
-        batch_op.drop_constraint(None, type_='foreignkey')
-        batch_op.create_foreign_key(None, 'user', ['user_id'], ['id'])
+        # REMOVED: Constraint operations that are causing issues
         batch_op.drop_column('notes')
         batch_op.drop_column('payment_date')
         batch_op.drop_column('paid_by')
