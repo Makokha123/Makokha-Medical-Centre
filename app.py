@@ -9950,7 +9950,8 @@ def api_upload_attachment():
             static_root = os.path.abspath(app.static_folder)
             abs_path = os.path.abspath(final_path)
             if abs_path.startswith(static_root):
-                rel_under_static = abs_path[len(static_root):].lstrip('\\/').replace('\\', '/')</n            else:
+                rel_under_static = abs_path[len(static_root):].lstrip('\\/').replace('\\', '/')
+            else:
                 # fallback to copy under static/uploads if configured path is outside
                 fallback_dir = os.path.join(static_root, 'uploads', 'attachments')
                 os.makedirs(fallback_dir, exist_ok=True)
