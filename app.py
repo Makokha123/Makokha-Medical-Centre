@@ -1,6 +1,5 @@
 
 import eventlet
-eventlet.monkey_patch()
 from importlib.metadata.diagnose import inspect
 from logging.handlers import RotatingFileHandler
 from operator import and_
@@ -251,6 +250,9 @@ class Conversation(db.Model):
     is_group = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    # Optional denormalized columns to make 1:1 conversation lookups and unique constraints easier
+    first_user_id = db.Column(db.Integer, nullable=True, index=True)
+    second_user_id = db.Column(db.Integer, nullable=True, index=True)
 
     members = db.relationship('ConversationMember', back_populates='conversation', cascade='all, delete-orphan')
 
@@ -264,6 +266,67 @@ class ConversationMember(db.Model):
 
     conversation = db.relationship('Conversation', back_populates='members')
     user = db.relationship('User', backref='conversations')
+
+
+# Ensure any new Message gets associated with a 1:1 Conversation.
+# This listener runs before INSERT and is idempotent: it will find an
+# existing non-group conversation for the sender/recipient pair, or create
+# a new conversation and two conversation_members, then set the
+# message.conversation_id so the frontend can load it.
+from sqlalchemy import event, text as sa_text
+import uuid as _uuid
+
+
+@event.listens_for(Message, 'before_insert')
+def ensure_conversation_for_message(mapper, connection, target):
+    # If conversation already provided, nothing to do
+    try:
+        if getattr(target, 'conversation_id', None):
+            return
+
+        sender = int(getattr(target, 'sender_id'))
+        recipient = int(getattr(target, 'recipient_id'))
+
+        # Try to find an existing 1:1 conversation (is_group = 0) that contains both users
+        find_sql = sa_text("""
+        SELECT c.id FROM conversations c
+        JOIN conversation_members m1 ON c.id = m1.conversation_id
+        JOIN conversation_members m2 ON c.id = m2.conversation_id
+        WHERE c.is_group = 0 AND ((m1.user_id = :a AND m2.user_id = :b) OR (m1.user_id = :b AND m2.user_id = :a))
+        LIMIT 1
+        """)
+        res = connection.execute(find_sql, {'a': sender, 'b': recipient}).fetchone()
+        if res and res[0]:
+            target.conversation_id = int(res[0])
+            return
+
+        # No conversation exists: create one and two conversation_members
+        new_uuid = str(_uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        insert_conv = sa_text("INSERT INTO conversations (uuid, title, is_group, created_at, updated_at, first_user_id, second_user_id) VALUES (:uuid, NULL, 0, :created, :updated, :fu, :su)")
+        fu = min(sender, recipient)
+        su = max(sender, recipient)
+        connection.execute(insert_conv, {'uuid': new_uuid, 'created': now, 'updated': now, 'fu': fu, 'su': su})
+        # Fetch the id of the conversation we just inserted (find by uuid)
+        sel = sa_text("SELECT id FROM conversations WHERE uuid = :uuid LIMIT 1")
+        conv_row = connection.execute(sel, {'uuid': new_uuid}).fetchone()
+        if not conv_row:
+            return
+        conv_id = int(conv_row[0])
+
+        # Insert members
+        ins_m = sa_text("INSERT INTO conversation_members (conversation_id, user_id, last_read_at, created_at) VALUES (:conv, :uid, NULL, :created)")
+        connection.execute(ins_m, {'conv': conv_id, 'uid': sender, 'created': now})
+        connection.execute(ins_m, {'conv': conv_id, 'uid': recipient, 'created': now})
+
+        # Set on the target so ORM will include the FK
+        target.conversation_id = conv_id
+    except Exception:
+        # Don't block message creation if backfill fails; log exception
+        try:
+            app.logger.exception('ensure_conversation_for_message failed')
+        except Exception:
+            pass
 
 # Add optional conversation_id to messages
 if not hasattr(Message, 'conversation_id'):
@@ -2115,9 +2178,40 @@ def messages():
     db.session.commit()
     
     unread_count = get_unread_count()
+    # Also build conversation heads server-side so the page works without JS
+    # Collect distinct other-user ids from messages involving current_user
+    msgs = Message.query.filter(
+        or_(Message.sender_id == current_user.id, Message.recipient_id == current_user.id)
+    ).all()
+    ids = set()
+    for m in msgs:
+        other_id = m.recipient_id if m.sender_id == current_user.id else m.sender_id
+        if other_id:
+            ids.add(other_id)
+
+    conversations = []
+    if ids:
+        users = User.query.filter(User.id.in_(list(ids))).order_by(User.username).all()
+        for u in users:
+            last = Message.query.filter(
+                or_(and_(Message.sender_id == current_user.id, Message.recipient_id == u.id),
+                    and_(Message.sender_id == u.id, Message.recipient_id == current_user.id))
+            ).order_by(Message.created_at.desc()).first()
+            if not last:
+                continue
+            conversations.append({
+                'user_id': u.id,
+                'username': u.username,
+                'initials': ''.join([p[0] for p in u.username.split()])[:2].upper(),
+                'last_message': (last.content[:60] + ('...' if len(last.content) > 60 else '')) if last.content else '',
+                'unread_count': Message.query.filter_by(recipient_id=current_user.id, sender_id=u.id, is_read=False, is_deleted_recipient=False).count(),
+                'time': last.created_at.strftime('%Y-%m-%d %H:%M')
+            })
+
     return render_template('messages.html', 
                          messages=user_messages, 
                          unread_count=unread_count,
+                         conversations=conversations,
                          active_tab='inbox')
 
 @messages_bp.route('/messages/compose', methods=['GET', 'POST'])
@@ -2311,20 +2405,19 @@ def check_new_messages():
 def api_conversations():
     # Return a list of conversation heads grouped by other user
     q = request.args.get('q', '').strip()
-
-    # Find distinct users we've exchanged messages with
-    sent_users = db.session.query(Message.recipient_id).filter(Message.sender_id == current_user.id).distinct()
-    recv_users = db.session.query(Message.sender_id).filter(Message.recipient_id == current_user.id).distinct()
-    user_ids = set([r[0] for r in sent_users.union(recv_users)]) if hasattr(sent_users, 'union') else set()
-
-    # Fallback: collect from messages table
+    # Collect distinct other-user ids from messages involving current_user
     msgs = Message.query.filter(
         or_(Message.sender_id == current_user.id, Message.recipient_id == current_user.id)
     ).all()
-    ids = new_ids = set()
+    ids = set()
     for m in msgs:
         other_id = m.recipient_id if m.sender_id == current_user.id else m.sender_id
-        ids.add(other_id)
+        if other_id:
+            ids.add(other_id)
+
+    # Query users corresponding to those ids
+    if not ids:
+        return jsonify({'conversations': []})
 
     users = User.query.filter(User.id.in_(list(ids)))
     if q:
@@ -2351,6 +2444,16 @@ def api_conversations():
             'unread_count': Message.query.filter_by(recipient_id=current_user.id, sender_id=u.id, is_read=False, is_deleted_recipient=False).count(),
             'time': last.created_at.strftime('%Y-%m-%d %H:%M')
         })
+    # Debug log to aid front-end troubleshooting
+    try:
+        app.logger.debug('api_conversations', extra={
+            'user': getattr(current_user, 'id', None),
+            'requested_q': q,
+            'conversation_count': len(conversations),
+            'users': [c['user_id'] for c in conversations]
+        })
+    except Exception:
+        app.logger.debug(f"api_conversations user={getattr(current_user,'id',None)} q={q} count={len(conversations)} users={[c['user_id'] for c in conversations]}")
 
     return jsonify({'conversations': conversations})
 
@@ -2384,6 +2487,12 @@ def api_conversation_messages():
             'is_delivered': m.is_delivered,
             'edited': m.edited
         })
+
+    # Debug logging to help diagnose frontend loading issues
+    try:
+        app.logger.debug('api_conversation_messages called', extra={'user': getattr(current_user, 'id', None), 'other_user': user_id, 'returned': len(out)})
+    except Exception:
+        app.logger.debug(f'api_conversation_messages: user={getattr(current_user, "id", None)} other_user={user_id} returned={len(out)}')
 
     return jsonify({
         'messages': out,
@@ -2561,12 +2670,29 @@ def api_get_or_create_conversation():
             return jsonify({'conversation_id': c.id})
 
     # create new
-    conv = Conversation(is_group=False)
+    fu = min(current_user.id, user_id)
+    su = max(current_user.id, user_id)
+    conv = Conversation(is_group=False, first_user_id=fu, second_user_id=su)
     db.session.add(conv)
     db.session.flush()
     db.session.add(ConversationMember(conversation_id=conv.id, user_id=current_user.id))
     db.session.add(ConversationMember(conversation_id=conv.id, user_id=user_id))
     db.session.commit()
+
+    # Attach existing one-to-one messages between these users to the new conversation
+    try:
+        existing = Message.query.filter(
+            or_(and_(Message.sender_id == current_user.id, Message.recipient_id == user_id),
+                and_(Message.sender_id == user_id, Message.recipient_id == current_user.id)),
+            Message.conversation_id == None
+        ).all()
+        if existing:
+            for m in existing:
+                m.conversation_id = conv.id
+            db.session.commit()
+    except Exception:
+        app.logger.exception('Failed to attach existing messages to new conversation')
+
     return jsonify({'conversation_id': conv.id})
 
 @messages_bp.route('/api/get_users')
@@ -4381,6 +4507,7 @@ def get_backup_file(backup):
     """Get the backup file from storage"""
     if not backup.storage_location:
         return None
+    
     
     if backup.storage_location.startswith('s3://'):
         if not s3_client:
@@ -9712,13 +9839,170 @@ def method_not_allowed(e):
 def internal_server_error(e):
     return render_template('errors/500.html'), 500
 
+
+# Management command: backfill conversations from existing messages
+@app.cli.command('backfill-conversations')
+def backfill_conversations_cmd():
+    """Backfill conversations and conversation_members from existing messages.
+    This command is idempotent and safe to run multiple times.
+    """
+    engine = db.get_engine(app)
+    conn = engine.connect()
+    trans = conn.begin()
+    try:
+        pairs = conn.execute(text("""
+            SELECT DISTINCT
+              CASE WHEN sender_id < recipient_id THEN sender_id ELSE recipient_id END AS user_a,
+              CASE WHEN sender_id < recipient_id THEN recipient_id ELSE sender_id END AS user_b
+            FROM messages
+            WHERE sender_id IS NOT NULL AND recipient_id IS NOT NULL
+        """)).fetchall()
+        created = 0
+        attached = 0
+        for row in pairs:
+            a = int(row[0]); b = int(row[1])
+            existing = conn.execute(text("""
+                SELECT cm1.conversation_id FROM conversation_members cm1
+                JOIN conversation_members cm2 ON cm1.conversation_id = cm2.conversation_id
+                WHERE cm1.user_id = :a AND cm2.user_id = :b LIMIT 1
+            """), {'a': a, 'b': b}).fetchone()
+            if existing:
+                conv_id = existing[0]
+                res = conn.execute(text("""
+                    UPDATE messages SET conversation_id = :conv
+                    WHERE ((sender_id = :a AND recipient_id = :b) OR (sender_id = :b AND recipient_id = :a))
+                      AND (conversation_id IS NULL)
+                """), {'conv': conv_id, 'a': a, 'b': b})
+                try:
+                    attached += res.rowcount
+                except Exception:
+                    pass
+                continue
+
+            # create new conversation
+            u_val = str(uuid.uuid4())
+            # normalize pair order
+            fu = min(a, b)
+            su = max(a, b)
+            conn.execute(text("INSERT INTO conversations (uuid, title, is_group, created_at, updated_at, first_user_id, second_user_id) VALUES (:u, NULL, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :fu, :su)"), {'u': u_val, 'fu': fu, 'su': su})
+            # SQLite-specific last insert id
+            try:
+                conv_id = conn.execute(text('SELECT last_insert_rowid()')).scalar()
+            except Exception:
+                # Fallback: try to select the conversation by the uuid we just inserted
+                conv_id = conn.execute(text('SELECT id FROM conversations WHERE uuid = :u LIMIT 1'), {'u': u_val}).scalar()
+
+            conn.execute(text("INSERT INTO conversation_members (conversation_id, user_id, last_read_at, created_at) VALUES (:conv, :u1, NULL, CURRENT_TIMESTAMP)"), {'conv': conv_id, 'u1': a})
+            conn.execute(text("INSERT INTO conversation_members (conversation_id, user_id, last_read_at, created_at) VALUES (:conv, :u2, NULL, CURRENT_TIMESTAMP)"), {'conv': conv_id, 'u2': b})
+            res = conn.execute(text("""
+                UPDATE messages SET conversation_id = :conv
+                WHERE (sender_id = :a AND recipient_id = :b) OR (sender_id = :b AND recipient_id = :a)
+            """), {'conv': conv_id, 'a': a, 'b': b})
+            try:
+                attached += res.rowcount
+            except Exception:
+                pass
+            created += 1
+
+        trans.commit()
+        print(f'Backfill complete. Conversations created: {created}, messages attached: {attached}')
+    except Exception:
+        trans.rollback()
+        app.logger.exception('Backfill failed')
+        raise
+    finally:
+        conn.close()
+
 def initialize_database():
     with app.app_context():
         # Create all database tables
         db.create_all()
 
 app.register_blueprint(auth_bp, url_prefix='/auth')
-# Add this after your other blueprint registrations
+
+# --- Messaging feature extensions: file upload + WebRTC signaling ---
+from mimetypes import guess_type
+
+@messages_bp.route('/api/upload_attachment', methods=['POST'])
+@login_required
+def api_upload_attachment():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file provided'}), 400
+        f = request.files['file']
+        if not f or f.filename == '':
+            return jsonify({'success': False, 'error': 'Empty filename'}), 400
+        # Compute target path under static/uploads/attachments
+        base_upload = app.config.get('UPLOAD_FOLDER') or os.path.join(app.static_folder, 'uploads')
+        attach_dir = os.path.join(base_upload, 'attachments')
+        os.makedirs(attach_dir, exist_ok=True)
+        # Unique secure filename
+        name, ext = os.path.splitext(secure_filename(f.filename))
+        unique = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S') + '_' + str(uuid.uuid4())[:8]
+        final_name = f"{name or 'file'}_{unique}{ext or ''}"
+        final_path = os.path.join(attach_dir, final_name)
+        f.save(final_path)
+        # Build relative URL via static
+        rel_under_static = None
+        # If UPLOAD_FOLDER is under static, compute relative
+        try:
+            # app.static_folder usually like <root>/static
+            static_root = os.path.abspath(app.static_folder)
+            abs_path = os.path.abspath(final_path)
+            if abs_path.startswith(static_root):
+                rel_under_static = abs_path[len(static_root):].lstrip('\\/').replace('\\', '/')</n            else:
+                # fallback to copy under static/uploads if configured path is outside
+                fallback_dir = os.path.join(static_root, 'uploads', 'attachments')
+                os.makedirs(fallback_dir, exist_ok=True)
+                fallback_path = os.path.join(fallback_dir, final_name)
+                import shutil
+                shutil.copy2(final_path, fallback_path)
+                rel_under_static = f"uploads/attachments/{final_name}"
+        except Exception:
+            rel_under_static = f"uploads/attachments/{final_name}"
+        url = url_for('static', filename=rel_under_static)
+        # Determine MIME
+        mime = f.mimetype or guess_type(final_name)[0] or 'application/octet-stream'
+        return jsonify({'success': True, 'url': url, 'mime': mime, 'name': final_name})
+    except Exception as e:
+        app.logger.exception('upload_attachment failed')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Socket.IO WebRTC signaling for voice/video calls
+@socketio.on('webrtc_offer')
+@login_required
+def webrtc_offer(data):
+    try:
+        conv_id = int(data.get('conversation_id'))
+        payload = {'sdp': data.get('sdp'), 'voice': bool(data.get('voice'))}
+        room = f'conversation_{conv_id}'
+        emit('webrtc_offer', payload, room=room, include_self=False)
+    except Exception:
+        app.logger.exception('webrtc_offer failed')
+
+@socketio.on('webrtc_answer')
+@login_required
+def webrtc_answer(data):
+    try:
+        conv_id = int(data.get('conversation_id'))
+        payload = {'sdp': data.get('sdp')}
+        room = f'conversation_{conv_id}'
+        emit('webrtc_answer', payload, room=room, include_self=False)
+    except Exception:
+        app.logger.exception('webrtc_answer failed')
+
+@socketio.on('webrtc_ice')
+@login_required
+def webrtc_ice(data):
+    try:
+        conv_id = int(data.get('conversation_id'))
+        payload = {'candidate': data.get('candidate')}
+        room = f'conversation_{conv_id}'
+        emit('webrtc_ice', payload, room=room, include_self=False)
+    except Exception:
+        app.logger.exception('webrtc_ice failed')
+
+# Register messaging blueprint after routes are defined
 app.register_blueprint(messages_bp)
 
 if __name__ == '__main__':

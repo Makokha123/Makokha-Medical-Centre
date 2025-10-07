@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -6,16 +6,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
     <meta name="theme-color" content="#0d6efd">
     <!-- CSRF token for forms and JS -->
-    <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{% block title %}Makokha Medical Centre{% endblock %}</title>
+    <meta name="csrf-token" content="IjNlZWYxZmI2YWNjMWFiNjgzZjM0YzlmOWYzZWViNTVkM2Q2ZDhiMGUi.aOV4oQ.SCE9FGRFnFe34iTYw6CHfej9RgU">
+    <title>Makokha Medical Centre</title>
 
     <!-- PWA Configuration -->
-    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-    <meta name="mobile-web-app-capable" content="yes">
+    <link rel="manifest" href="/static/manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="MMC System">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/icon-192.png') }}">
+    <link rel="apple-touch-icon" href="/static/images/icon-192.png">
 
     <!-- CSS Resources -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -24,9 +23,9 @@
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
     
     <!-- Local CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/custom.css">
     
     <!-- Modern Design Styles -->
     <style>
@@ -662,43 +661,9 @@
         }
     </style>
     
-    {% block extra_css %}{% endblock %}
-    <!-- jQuery 3.7.1 with correct SRI and robust fallback -->
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
-    <script>
-    if (typeof window.jQuery === 'undefined') {
-      var s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
-      s.integrity = 'sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieZn1O6VY9j9a6U6ChjrHja9w/pp9y9cYxRcmRl6VwB2ykKQh8I9gCeRZ8g==';
-      s.crossOrigin = 'anonymous';
-      document.head.appendChild(s);
-    }
-    </script>
-    <!-- Global jQuery AJAX setup to include CSRF token for unsafe HTTP methods -->
-    <script>
-    (function(){
-      function getCsrfToken(){
-        var el = document.querySelector('meta[name="csrf-token"]');
-        return el ? el.getAttribute('content') : null;
-      }
-      // Wait until jQuery is available (covers fallback async load)
-      function setup(){
-        if (!window.jQuery) { return setTimeout(setup, 10); }
-        $.ajaxSetup({
-          beforeSend: function(xhr, settings){
-            try{
-              var method = (settings.type || settings.method || '').toUpperCase();
-              if(['POST','PUT','PATCH','DELETE'].indexOf(method) !== -1){
-                var token = getCsrfToken();
-                if(token){ xhr.setRequestHeader('X-CSRFToken', token); }
-              }
-            }catch(e){ /* no-op */ }
-          }
-        });
-      }
-      setup();
-    })();
-    </script>
+    
+    <!-- jQuery is required by several inline scripts and templates (messages UI, dynamic tables) -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-3gJwYp8YVtT4v3s8b8f1QKXKp1K5j2Q5Y3v3w8a+7yg=" crossorigin="anonymous"></script>
 </head>
 <body>
     <!-- PC Hamburger Toggle (Green with white background) -->
@@ -724,228 +689,18 @@
         <div class="navbar-collapse flex-column h-100" id="navbarNav">               
             <!-- Navigation Menu -->
             <nav class="sidebar-nav">
-                {% if current_user.is_authenticated %}
-                    {% if current_user.role == 'admin' %}
-                        <!-- Admin Navigation -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('admin_dashboard') }}" class="nav-link">
-                                <i class="bi bi-speedometer2"></i>
-                                <span class="nav-text">Dashboard</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_drugs') }}" class="nav-link">
-                                <i class="bi bi-capsule"></i>
-                                <span class="nav-text">Drugs</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_users') }}" class="nav-link">
-                                <i class="bi bi-people"></i>
-                                <span class="nav-text">Users</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_employees') }}" class="nav-link">
-                                <i class="bi bi-person-vcard"></i>
-                                <span class="nav-text">Employees</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('admin_reports') }}" class="nav-link">
-                                <i class="bi bi-file-earmark-bar-graph"></i>
-                                <span class="nav-text">Reports</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_transactions') }}" class="nav-link">
-                                <i class="bi bi-cash-stack"></i>
-                                <span class="nav-text">Transactions</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_money') }}" class="nav-link">
-                                <i class="bi bi-wallet2"></i>
-                                <span class="nav-text">Money</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_dosage') }}" class="nav-link">
-                                <i class="bi bi-file-medical"></i>
-                                <span class="nav-text">Dosage</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_patients') }}" class="nav-link">
-                                <i class="bi bi-file-person"></i>
-                                <span class="nav-text">Patients</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_tests') }}" class="nav-link">
-                                <i class="bi bi-clipboard2-pulse"></i>
-                                <span class="nav-text">Medical Tests</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('manage_beds') }}" class="nav-link">
-                                <i class="bi bi-hospital"></i>
-                                <span class="nav-text">Beds</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('backup_management') }}" class="nav-link">
-                                <i class="bi bi-database"></i>
-                                <span class="nav-text">Backup</span>
-                            </a>
-                        </div>
-                        <!-- Messaging Link for Admin -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('messages.messages') }}" class="nav-link position-relative">
-                                <i class="bi bi-chat-dots"></i>
-                                <span class="nav-text">Messages</span>
-                                {% if unread_count and unread_count > 0 %}
-                                <span class="message-badge">{{ unread_count }}</span>
-                                {% endif %}
-                            </a>
-                        </div>
-                    {% elif current_user.role == 'doctor' %}
-                        <!-- Doctor Navigation -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('doctor_dashboard') }}" class="nav-link">
-                                <i class="bi bi-speedometer2"></i>
-                                <span class="nav-text">Dashboard</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('doctor_patients') }}" class="nav-link">
-                                <i class="bi bi-person-lines-fill"></i>
-                                <span class="nav-text">Patients</span>
-                            </a>
-                        </div>
-                        <!-- Messaging Link for Doctor -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('messages.messages') }}" class="nav-link position-relative">
-                                <i class="bi bi-chat-dots"></i>
-                                <span class="nav-text">Messages</span>
-                                {% if unread_count and unread_count > 0 %}
-                                <span class="message-badge">{{ unread_count }}</span>
-                                {% endif %}
-                            </a>
-                        </div>
-                    {% elif current_user.role == 'pharmacist' %}
-                        <!-- Pharmacist Navigation -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_dashboard') }}" class="nav-link">
-                                <i class="bi bi-speedometer2"></i>
-                                <span class="nav-text">Dashboard</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_dispense') }}" class="nav-link">
-                                <i class="bi bi-capsule"></i>
-                                <span class="nav-text">Dispense</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_sales') }}" class="nav-link">
-                                <i class="bi bi-cash-stack"></i>
-                                <span class="nav-text">Sales</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_inventory') }}" class="nav-link">
-                                <i class="bi bi-box-seam"></i>
-                                <span class="nav-text">Inventory</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_refunds') }}" class="nav-link">
-                                <i class="bi bi-arrow-counterclockwise"></i>
-                                <span class="nav-text">Refunds</span>
-                            </a>
-                        </div>
-                        <!-- NEW: Prescriptions Link -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('patient_prescriptions') }}" class="nav-link">
-                                <i class="bi bi-prescription2"></i>
-                                <span class="nav-text">Prescriptions</span>
-                            </a>
-                        </div>
-                        <!-- Messaging Link for Pharmacist -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('messages.messages') }}" class="nav-link position-relative">
-                                <i class="bi bi-chat-dots"></i>
-                                <span class="nav-text">Messages</span>
-                                {% if unread_count and unread_count > 0 %}
-                                <span class="message-badge">{{ unread_count }}</span>
-                                {% endif %}
-                            </a>
-                        </div>
-                    {% elif current_user.role == 'receptionist' %}
-                        <!-- Receptionist Navigation -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('receptionist_dashboard') }}" class="nav-link">
-                                <i class="bi bi-speedometer2"></i>
-                                <span class="nav-text">Dashboard</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('receptionist_patients') }}" class="nav-link">
-                                <i class="bi bi-person-lines-fill"></i>
-                                <span class="nav-text">Patients</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('receptionist_billing') }}" class="nav-link">
-                                <i class="bi bi-cash-coin"></i>
-                                <span class="nav-text">Billing</span>
-                            </a>
-                        </div>
-                        <!-- Messaging Link for Receptionist -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('messages.messages') }}" class="nav-link position-relative">
-                                <i class="bi bi-chat-dots"></i>
-                                <span class="nav-text">Messages</span>
-                                {% if unread_count and unread_count > 0 %}
-                                <span class="message-badge">{{ unread_count }}</span>
-                                {% endif %}
-                            </a>
-                        </div>
-                    {% endif %}
-                {% endif %}
+                
             </nav>
             
             <!-- Profile Section at Bottom -->
             <div class="mt-auto border-top border-light w-100">
-                {% if current_user.is_authenticated %}
-                    <div class="nav-item dropdown w-100">
-                        <a class="nav-link dropdown-toggle d-flex align-items-center fs-6 px-3 py-3" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
-                            {% if current_user.profile_picture %}
-                                <img src="{{ url_for('static', filename=current_user.profile_picture) }}" alt="Profile" class="profile-picture rounded-circle me-2" style="width: 32px; height: 32px;">
-                            {% else %}
-                                <i class="bi bi-person-circle me-2"></i>
-                            {% endif %}
-                            <span class="flex-grow-1">{{ current_user.username }}</span>
-                        </a>
-                        <ul class="dropdown-menu w-100 m-0 border-0 rounded-0">
-                            <li><a class="dropdown-item py-2" href="{{ url_for('profile') }}"><i class="bi bi-person me-2"></i>Profile</a></li>
-                            <li><a class="dropdown-item py-2" href="{{ url_for('messages.messages') }}"><i class="bi bi-chat-dots me-2"></i>Messages
-                                {% if unread_count and unread_count > 0 %}
-                                <span class="badge bg-danger ms-2">{{ unread_count }}</span>
-                                {% endif %}
-                            </a></li>
-                            <li><hr class="dropdown-divider mx-2 my-1"></li>
-                            <li><a class="dropdown-item py-2" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
-                        </ul>
-                    </div>
-                {% else %}
+                
                     <div class="nav-item w-100">
-                        <a class="nav-link fs-6 px-3 py-3" href="{{ url_for('auth.login') }}">
+                        <a class="nav-link fs-6 px-3 py-3" href="/auth/login">
                             <i class="bi bi-box-arrow-in-right me-2"></i>Login
                         </a>
                     </div>
-                {% endif %}
+                
             </div>
         </div>
     </div>
@@ -955,69 +710,445 @@
 
     <!-- Main Content -->
     <main class="container-fluid flex-grow-1 py-3">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ category }} alert-auto-close mb-3" role="alert">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
+        
+            
+        
         
         <!-- Messages Section -->
-        {% if request.endpoint and 'messages' in request.endpoint %}
-        <div class="row">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">Messages</h5>
-                        <!-- Safe compose button - only shows if compose endpoint exists -->
-                        {% if request.endpoint != 'messages.compose' %}
-                        <a href="{{ url_for('messages.compose_message') }}" class="btn btn-primary btn-sm">
-                            <i class="bi bi-pencil-square me-1"></i> Compose
-                        </a>
-                        {% endif %}
-                    </div>
-                    <div class="card-body">
-                        <!-- Message Navigation -->
-                        <div class="message-nav">
-                            <a href="{{ url_for('messages.messages') }}" 
-                            class="message-nav-link {% if request.endpoint == 'messages.messages' %}active{% endif %}">
-                                <i class="bi bi-inbox"></i> Inbox
-                                {% if unread_count and unread_count > 0 %}
-                                <span class="badge bg-secondary ms-1">{{ unread_count }}</span>
-                                {% endif %}
-                            </a>
-                            <a href="{{ url_for('messages.sent_messages') }}" 
-                            class="message-nav-link {% if request.endpoint == 'messages.sent_messages' %}active{% endif %}">
-                                <i class="bi bi-send"></i> Sent
-                            </a>
-                            <a href="{{ url_for('messages.unread_messages') }}" 
-                            class="message-nav-link {% if request.endpoint == 'messages.unread_messages' %}active{% endif %}">
-                                <i class="bi bi-envelope"></i> Unread
-                                {% if unread_count and unread_count > 0 %}
-                                <span class="badge bg-danger ms-1">{{ unread_count }}</span>
-                                {% endif %}
-                            </a>
-                        </div>
-                        
-                        <!-- Message Content -->
-                        {% block message_content %}
-                        <!-- This will be overridden by specific message templates -->
-                        <div class="text-center py-5">
-                            <i class="bi bi-chat-dots display-1 text-muted"></i>
-                            <h4 class="text-muted mt-3">Select a message folder</h4>
-                            <p class="text-muted">Choose from Inbox, Sent, or Unread to view your messages</p>
-                        </div>
-                        {% endblock %}
-                    </div>
+        
+        
+        
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<div class="login-container">
+    <div class="login-box">
+        <div class="logo-header">
+            <img src="/static/images/logo.png" alt="Makokha Medical Logo" class="header-logo">
+        </div>
+        
+        
+            
+        
+        
+        <form method="POST" action="/auth/login" class="login-form">
+            <input type="hidden" name="csrf_token" value="IjNlZWYxZmI2YWNjMWFiNjgzZjM0YzlmOWYzZWViNTVkM2Q2ZDhiMGUi.aOV4oQ.SCE9FGRFnFe34iTYw6CHfej9RgU">
+            <div class="form-group">
+                <input type="text" id="email" name="email" required>
+                <label for="email">Username</label>
+            </div>
+            
+            <div class="form-group">
+                <div class="password-wrapper">
+                    <input type="password" id="password" name="password" required>
+                    <label for="password">Password</label>
+                    <span class="toggle-password" onclick="togglePassword()">
+                        <i class="fas fa-eye"></i>
+                    </span>
                 </div>
             </div>
-        </div>
-        {% endif %}
+            
+            <div class="form-group role-selector">
+                <select id="role" name="role" required>
+                    <option value="" disabled selected></option>
+                    <option value="admin">Administrator</option>
+                    <option value="doctor">Doctor</option>
+                    <option value="pharmacist">Pharmacist</option>
+                    <option value="receptionist">Receptionist</option>
+                </select>
+                <label for="role">Select Role</label>
+            </div>
+            
+            <div class="form-group remember-me">
+                <input type="checkbox" id="remember" name="remember">
+                <label for="remember">Remember me</label>
+            </div>
+            
+            <div class="form-group">
+                <button type="submit" class="login-button">
+                    Login
+                </button>
+            </div>
+            
+            <div class="form-footer">
+                <a href="/auth/reset-password">Forgot Password?</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function togglePassword() {
+    const passwordField = document.getElementById('password');
+    const toggleIcon = document.querySelector('.toggle-password i');
+    if (passwordField.type === 'password') {
+        passwordField.type = 'text';
+        toggleIcon.classList.replace('fa-eye', 'fa-eye-slash');
+    } else {
+        passwordField.type = 'password';
+        toggleIcon.classList.replace('fa-eye-slash', 'fa-eye');
+    }
+}
+
+// Enhanced background logo sliding animation for both container and box
+document.addEventListener('DOMContentLoaded', function() {
+    // Animation for login container background
+    const loginContainer = document.querySelector('.login-container');
+    const containerBgLogo = document.createElement('div');
+    containerBgLogo.className = 'container-bg-logo';
+    loginContainer.insertBefore(containerBgLogo, loginContainer.firstChild);
+    
+    // Animation for login box background
+    const loginBox = document.querySelector('.login-box');
+    const boxBgLogo = document.createElement('div');
+    boxBgLogo.className = 'box-bg-logo';
+    loginBox.insertBefore(boxBgLogo, loginBox.firstChild);
+    
+    let containerPos = 0;
+    let boxPos = 0;
+    const speed = 0.3;
+    let containerDirection = -1;
+    let boxDirection = 1;
+    
+    function animateBackgrounds() {
+        // Animate container background
+        containerPos += speed * containerDirection;
+        if (containerPos <= -100) containerDirection = 1;
+        else if (containerPos >= 0) containerDirection = -1;
+        containerBgLogo.style.backgroundPosition = containerPos + 'px 0';
         
-        {% block content %}{% endblock %}
+        // Animate box background (slightly different speed for layered effect)
+        boxPos += speed * 0.8 * boxDirection;
+        if (boxPos <= -100) boxDirection = 1;
+        else if (boxPos >= 0) boxDirection = -1;
+        boxBgLogo.style.backgroundPosition = boxPos + 'px 0';
+        
+        requestAnimationFrame(animateBackgrounds);
+    }
+    
+    animateBackgrounds();
+    
+    // Floating label effect
+    const inputs = document.querySelectorAll('.form-group input, .form-group select');
+    inputs.forEach(input => {
+        input.addEventListener('focus', function() {
+            const label = this.nextElementSibling;
+            if (label && label.tagName === 'LABEL') {
+                label.classList.add('active');
+            }
+        });
+        
+        input.addEventListener('blur', function() {
+            const label = this.nextElementSibling;
+            if (label && label.tagName === 'LABEL' && !this.value) {
+                label.classList.remove('active');
+            }
+        });
+        
+        // Initialize labels if fields have values
+        if (input.value) {
+            const label = input.nextElementSibling;
+            if (label && label.tagName === 'LABEL') {
+                label.classList.add('active');
+            }
+        }
+    });
+});
+</script>
+
+<style>
+/* Base Styles */
+:root {
+    --primary-blue: #4285f4;
+    --dark-blue: #3367d6;
+    --light-blue: #e8f0fe;
+    --accent-green: #34a853;
+    --white: #ffffff;
+    --black: #000000;
+    --light-gray: #f5f5f5;
+    --medium-gray: #e0e0e0;
+    --dark-gray: #757575;
+    --shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: var(--white);
+    min-height: 100vh;
+}
+
+/* Login Container */
+.login-container {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.container-bg-logo {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: url("/static/images/logo.png");
+    background-size: 250px;
+    background-repeat: repeat;
+    z-index: 0;
+}
+
+/* Login Box */
+.login-box {
+    width: 100%;
+    max-width: 400px;
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    padding: 2.5rem;
+    position: relative;
+    overflow: hidden;
+    z-index: 10;
+}
+
+.box-bg-logo {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: url("/static/images/logo.png");
+    background-size: 200px;
+    background-repeat: repeat;
+    z-index: 0;
+}
+
+/* Logo Header */
+.logo-header {
+    text-align: center;
+    margin-bottom: 2rem;
+    position: relative;
+    z-index: 1;
+}
+
+.header-logo {
+    height: 80px;
+    width: auto;
+    border-radius: 10px;
+}
+
+/* Form Elements */
+.login-form {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.form-group {
+    position: relative;
+    margin-bottom: 1.5rem;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 1rem;
+    border: 1px solid var(--primary-blue);
+    border-radius: 8px;
+    font-size: 1rem;
+    background-color: transparent;
+    transition: all 0.3s ease;
+    color: var(--black);
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.2);
+}
+
+.form-group label {
+    position: absolute;
+    left: 1rem;
+    top: 1rem;
+    color: var(--primary-blue);
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    pointer-events: none;
+    background-color: transparent;
+    padding: 0 0.25rem;
+}
+
+.form-group label.active {
+    top: -0.6rem;
+    left: 0.8rem;
+    font-size: 0.8rem;
+    background-color: var(--white);
+    color: var(--primary-blue);
+}
+
+/* Password Field */
+.password-wrapper {
+    position: relative;
+}
+
+.toggle-password {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--primary-blue);
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.toggle-password:hover {
+    color: var(--dark-blue);
+}
+
+/* Role Selector */
+.role-selector {
+    position: relative;
+}
+
+.role-selector select {
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    color: var(--black);
+}
+
+.role-selector::after {
+    content: '\f078';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    position: absolute;
+    top: 50%;
+    right: 1rem;
+    transform: translateY(-50%);
+    color: var(--primary-blue);
+    pointer-events: none;
+}
+
+/* Remember Me */
+.remember-me {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.remember-me input {
+    width: auto;
+    margin: 0;
+}
+
+.remember-me label {
+    position: static;
+    color: var(--black);
+    font-size: 0.9rem;
+    background: none;
+    padding: 0;
+}
+
+/* Login Button */
+.login-button {
+    width: 100%;
+    padding: 1rem;
+    background: none;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 6px rgba(66, 133, 244, 0.3);
+}
+
+.login-button:hover {
+    background-color: var(--dark-blue);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(66, 133, 244, 0.4);
+}
+
+.login-button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(66, 133, 244, 0.3);
+}
+
+/* Form Footer */
+.form-footer {
+    text-align: center;
+    margin-top: 1rem;
+}
+
+.form-footer a {
+    color: var(--primary-blue);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.3s ease;
+}
+
+.form-footer a:hover {
+    color: var(--dark-blue);
+    text-decoration: underline;
+}
+
+/* Alert Messages */
+.alert {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    text-align: center;
+    font-size: 0.9rem;
+    position: relative;
+    z-index: 1;
+    background-color: rgba(255, 255, 255, 0.9);
+}
+
+.alert-danger {
+    color: #dc3545;
+    border: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+.alert-success {
+    color: #198754;
+    border: 1px solid rgba(25, 135, 84, 0.2);
+}
+
+/* Responsive Adjustments */
+@media (max-width: 480px) {
+    .login-container {
+        padding: 1rem;
+    }
+    
+    .login-box {
+        padding: 1.5rem;
+        border-radius: 15px;
+    }
+    
+    .header-logo {
+        height: 60px;
+    }
+    
+    .form-group input,
+    .role-selector select,
+    .login-button {
+        padding: 0.8rem;
+    }
+}
+</style>
+
     </main>
 
     <!-- Footer -->
@@ -1040,8 +1171,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/js/all.min.js"></script>
     
     <!-- Local JS -->
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    <script src="/static/js/main.js"></script>
+    <script src="/static/js/dashboard.js"></script>
     
     <!-- Enhanced Sidebar Behavior -->
     <script>
@@ -1401,6 +1532,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     </script>
     
-    {% block extra_js %}{% endblock %}
+    
 </body>
 </html>

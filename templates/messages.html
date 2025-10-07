@@ -44,7 +44,19 @@
             <input id="conv-search" class="form-control form-control-sm" placeholder="Search users or messages...">
         </div>
         <div class="conversation-list" id="conversationList">
-            <div class="empty-conversations">Loading conversations...</div>
+            {% if conversations and conversations|length > 0 %}
+                {% for conv in conversations %}
+                    <div class="conversation-item" data-user-id="{{ conv.user_id }}" data-username="{{ conv.username|e }}">
+                        <div class="conv-avatar">{{ conv.initials }}</div>
+                        <div class="conv-meta">
+                            <div class="conv-name">{{ conv.username }} <span class="conv-time">{{ conv.time }}</span></div>
+                            <div class="conv-snippet">{{ conv.last_message }}</div>
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-conversations">Loading conversations...</div>
+            {% endif %}
         </div>
         <div style="padding:10px; border-top:1px solid #e6e8eb;">
             <button id="startNewBtn" class="btn btn-sm btn-primary w-100">New Conversation</button>
@@ -65,53 +77,136 @@
         </div>
 
         <div class="chat-input">
+            <div class="btn-group" role="group" aria-label="Attach">
+                <button id="recordAudioBtn" class="btn btn-outline-secondary" title="Record voice note" disabled>
+                    <i class="bi bi-mic"></i>
+                </button>
+                <button id="cameraBtn" class="btn btn-outline-secondary" title="Camera / Video" disabled>
+                    <i class="bi bi-camera-video"></i>
+                </button>
+                <button id="attachFileBtn" class="btn btn-outline-secondary" title="Attach file" disabled>
+                    <i class="bi bi-paperclip"></i>
+                </button>
+                <button id="voiceCallBtn" class="btn btn-outline-primary" title="Voice call" disabled>
+                    <i class="bi bi-telephone"></i>
+                </button>
+                <button id="videoCallBtn" class="btn btn-outline-primary" title="Video call" disabled>
+                    <i class="bi bi-camera-reels"></i>
+                </button>
+                <input type="file" id="fileInput" hidden>
+            </div>
             <textarea id="chatMessageInput" placeholder="Type a message..." disabled></textarea>
             <button id="sendMessageBtn" class="btn btn-success" disabled><i class="bi bi-send"></i></button>
         </div>
     </div>
 </div>
 
-<!-- Load Socket.IO client from server; if that returns 400 (server not running via socketio.run), fall back to CDN -->
-<script src="/socket.io/socket.io.js" onerror="this.onerror=null;var s=document.createElement('script');s.src='https://cdn.socket.io/4.7.2/socket.io.min.js';document.head.appendChild(s);"></script>
+<!-- Load Socket.IO client from CDN (v4) which is compatible with python-socketio v5/python-engineio v4. Using CDN avoids 400 for /socket.io/socket.io.js in dev/debug threading mode. -->
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script>
 $(function(){
     // Use explicit options: ensure correct path and send cookies for session-based auth
-    const socket = io({ path: '/socket.io', transports: ['websocket', 'polling'], withCredentials: true });
+    // create a safe socket fallback so failures to load Socket.IO don't break the rest of the UI
+    let socket = { on: function(){}, emit: function(){}, disconnect: function(){}, close: function(){} };
+    try{
+        if(typeof io === 'function'){
+            socket = io({ path: '/socket.io', transports: ['polling'], withCredentials: true });
+        } else {
+            console.warn('Socket.IO client not available, realtime features disabled');
+        }
+    }catch(e){
+        console.warn('Failed to initialize Socket.IO client', e);
+    }
     let currentConversationUserId = null;
     let currentPage = 1;
     const perPage = 25;
+    const csrfToken = $('meta[name="csrf-token"]').attr('content') || '';
+
+    function isAuthRedirect(xhr){
+        try{
+            // Some environments return 302 that jQuery follows; detect HTML redirect-to-login pages
+            const txt = (xhr && xhr.responseText) ? xhr.responseText : '';
+            if(xhr && xhr.status && (xhr.status === 302 || xhr.status === 401 || xhr.status === 403)) return true;
+            if(txt && txt.toLowerCase().indexOf('/auth/login') !== -1) return true;
+            if(txt && txt.toLowerCase().indexOf('redirecting') !== -1 && txt.toLowerCase().indexOf('/auth/login') !== -1) return true;
+        }catch(e){/* ignore */}
+        return false;
+    }
 
     function formatTime(ts) { const d = new Date(ts); return d.toLocaleString(); }
 
     function renderConversationItem(conv){
-        return $(
-            `<div class="conversation-item" data-user-id="${conv.user_id}">
-                <div class="conv-avatar">${conv.initials}</div>
-                <div class="conv-meta">
-                    <div class="conv-name">${conv.username} <span class="conv-time">${conv.time}</span></div>
-                    <div class="conv-snippet">${conv.last_message}</div>
-                </div>
-            </div>`
-        );
+        // Build element using jQuery to safely set attributes (avoids HTML injection issues)
+        const $item = $('<div>').addClass('conversation-item').attr('data-user-id', conv.user_id).attr('data-username', conv.username);
+        const $avatar = $('<div>').addClass('conv-avatar').text(conv.initials);
+        const $meta = $('<div>').addClass('conv-meta');
+        const $name = $('<div>').addClass('conv-name').html(conv.username + ' <span class="conv-time">' + conv.time + '</span>');
+        const $snippet = $('<div>').addClass('conv-snippet').text(conv.last_message);
+        $meta.append($name).append($snippet);
+        $item.append($avatar).append($meta);
+        return $item;
     }
 
     function loadConversations(q=''){
         $('#conversationList').html('<div class="empty-conversations">Loading conversations...</div>');
-        $.getJSON('/api/conversations', {q:q}, function(res){
-            const list = $('#conversationList'); list.empty();
-            if(!res.conversations || res.conversations.length===0){ list.html('<div class="empty-conversations">No conversations yet</div>'); return; }
-            res.conversations.forEach(conv => {
-                const item = renderConversationItem(conv);
-                item.click(function(){ $('.conversation-item').removeClass('active'); $(this).addClass('active'); openConversation(conv.user_id, conv.username); });
-                // unread badge
-                if(conv.unread_count && conv.unread_count>0){ item.find('.conv-meta .conv-name').append(`<span class="badge bg-danger ms-2">${conv.unread_count}</span>`); }
-                list.append(item);
-            });
+        $.ajax({
+            url: '/api/conversations',
+            method: 'GET',
+            dataType: 'json',
+            data: { q: q },
+            success: function(res){
+                console.debug('api/conversations ->', res);
+                const list = $('#conversationList'); list.empty();
+                if(!res.conversations || res.conversations.length===0){ list.html('<div class="empty-conversations">No conversations yet</div>'); return; }
+                res.conversations.forEach(conv => {
+                    const item = renderConversationItem(conv);
+                    // unread badge
+                    if(conv.unread_count && conv.unread_count>0){ item.find('.conv-meta .conv-name').append(`<span class="badge bg-danger ms-2">${conv.unread_count}</span>`); }
+                    list.append(item);
+                });
+                // Use delegated click handler (covers server-rendered and dynamic items)
+                // delegated handler is attached once below
+            },
+            error: function(xhr, status, err){
+                if(isAuthRedirect(xhr)){
+                    window.location = '/auth/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+                    return;
+                }
+                console.error('/api/conversations failed', status, err, xhr.responseText);
+                // Show an error UI with a retry button
+                const $err = $(
+                    `<div class="empty-conversations">
+                        <div>Failed to load conversations</div>
+                        <div style="margin-top:8px;"><button id="retryConversationsBtn" class="btn btn-sm btn-outline-primary">Retry</button></div>
+                    </div>`
+                );
+                $('#conversationList').html($err);
+                // Attach retry handler which preserves the current query (q)
+                $err.find('#retryConversationsBtn').on('click', function(){
+                    const $btn = $(this);
+                    // Show inline spinner and disable button while retrying
+                    const spinner = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Retrying...`;
+                    $btn.prop('disabled', true).html(spinner);
+                    // Call loadConversations; the function will replace the conversationList on success or error
+                    loadConversations(q);
+                });
+            }
         });
     }
 
     // Modal-based new conversation
+    function ensureBootstrapLoaded(cb){
+        if(window.bootstrap){ return cb(); }
+        // Load bootstrap bundle from CDN then call callback
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js';
+        s.onload = function(){ console.debug('Bootstrap loaded dynamically'); cb(); };
+        s.onerror = function(){ console.error('Failed to load Bootstrap bundle'); cb(); };
+        document.head.appendChild(s);
+    }
+
     function showNewConversationModal(){
+        ensureBootstrapLoaded(function(){
         const modalHtml = `
             <div class="modal fade" id="newConvModal" tabindex="-1" aria-hidden="true">
               <div class="modal-dialog modal-dialog-centered">
@@ -126,8 +221,19 @@ $(function(){
             </div>`;
         const $modal = $(modalHtml);
         $('body').append($modal);
-        const bsModal = new bootstrap.Modal($modal[0]);
-        $modal.on('hidden.bs.modal', function(){ $modal.remove(); });
+        // create bsModal in outer scope so closures can access it safely
+        let bsModal = null;
+        try{
+            if(window.bootstrap && typeof bootstrap.Modal === 'function'){
+                bsModal = new bootstrap.Modal($modal[0]);
+                $modal.on('hidden.bs.modal', function(){ $modal.remove(); });
+            } else {
+                // fallback - keep DOM cleanup on removal
+                $modal.on('removed', function(){ $modal.remove(); });
+            }
+        }catch(e){
+            console.warn('bootstrap.Modal not available or failed to initialize, falling back to simple display', e);
+        }
 
         $modal.find('#newConvSearch').on('input', function(){
             const q = $(this).val();
@@ -137,15 +243,42 @@ $(function(){
                 res.results.forEach(u=>{
                     const btn = $(`<button class="btn btn-sm btn-outline-primary w-100 mb-1">${u.text}</button>`);
                     btn.click(function(){
-                        openConversation(u.id, u.text);
-                        bsModal.hide();
+                        try{
+                            openConversation(u.id, u.text);
+                        }catch(err){
+                            console.error('openConversation failed', err);
+                        }
+                        // hide modal if bsModal exists, otherwise remove modal
+                        try{
+                            if(bsModal && typeof bsModal.hide === 'function'){
+                                bsModal.hide();
+                            } else {
+                                $modal.remove();
+                            }
+                        }catch(hideErr){
+                            console.warn('Failed to hide modal, removing fallback', hideErr);
+                            $modal.remove();
+                        }
                     });
                     container.append(btn);
                 });
+            }).fail(function(err){
+                console.error('Failed to search users for new conversation', err);
             });
         });
 
-        bsModal.show();
+        // show modal using bootstrap if available, otherwise fallback to a simple jQuery show
+        try{
+            if(bsModal && typeof bsModal.show === 'function'){
+                bsModal.show();
+            } else {
+                $modal.show();
+            }
+        }catch(e){
+            console.warn('Failed to show new conversation modal', e);
+            $modal.show();
+        }
+        });
     }
 
     let currentConversationId = null;
@@ -155,26 +288,80 @@ $(function(){
         $('#chatAvatar').text(username.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase());
         $('#chatMessageInput').prop('disabled', false).focus(); $('#sendMessageBtn').prop('disabled', false);
         // load messages and get/ensure conversation id, then join room
-        $.getJSON('/api/get_or_create_conversation', {user_id: userId}, function(res){
-            currentConversationId = res.conversation_id;
-            socket.emit('join_conversation', { conversation_id: currentConversationId });
-            loadMessages(userId, currentPage);
-            // mark read
-            $.post('/api/mark_read', JSON.stringify({user_id: userId}), function(){ loadConversations(); });
+        $.ajax({
+            url: '/api/get_or_create_conversation',
+            method: 'GET',
+            dataType: 'json',
+            data: { user_id: userId },
+            success: function(res){
+                console.debug('get_or_create_conversation ->', res);
+                currentConversationId = res.conversation_id;
+                if(currentConversationId){
+                    try{ socket.emit('join_conversation', { conversation_id: currentConversationId }); }catch(e){ console.warn('socket emit failed', e); }
+                    loadMessages(userId, currentPage);
+                    // mark read
+                    $.ajax({
+                        url: '/api/mark_read',
+                        method: 'POST',
+                        contentType: 'application/json',
+                        headers: { 'X-CSRFToken': csrfToken },
+                        data: JSON.stringify({ user_id: userId }),
+                        success: function(){ loadConversations(); }
+                    });
+                } else {
+                    $('#chatBody').html('<div class="text-center" style="color:#9ca3af">No conversation available</div>');
+                }
+            },
+            error: function(xhr, status, err){
+                if(isAuthRedirect(xhr)){
+                    window.location = '/auth/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+                    return;
+                }
+                console.error('/api/get_or_create_conversation failed', status, err, xhr.responseText);
+                $('#chatBody').html('<div class="text-center" style="color:#9ca3af">Failed to open conversation</div>');
+            }
         });
     }
 
     function loadMessages(userId, page){
         $('#chatBody').html('<div class="text-center" style="color:#9ca3af">Loading messages...</div>');
-        $.getJSON('/api/conversation_messages', {user_id: userId, page: page, per_page: perPage}, function(res){
-            const body = $('#chatBody'); body.empty();
-            if(res.page && res.page>1){
-                const loadMore = $(`<div style="text-align:center"><button class="btn btn-sm btn-link" id="loadMoreBtn">Load more</button></div>`);
-                loadMore.find('#loadMoreBtn').click(function(){ currentPage += 1; loadMessages(userId, currentPage); });
-                body.append(loadMore);
+        $.ajax({
+            url: '/api/conversation_messages',
+            method: 'GET',
+            dataType: 'json',
+            data: { user_id: userId, page: page, per_page: perPage },
+            success: function(res){
+                console.debug('conversation_messages ->', res);
+                const body = $('#chatBody'); body.empty();
+                if(!res.messages || res.messages.length === 0){
+                    body.html('<div class="text-center" style="color:#9ca3af">No messages yet</div>');
+                    return;
+                }
+                if(res.page && res.page>1){
+                    const loadMore = $(`<div style="text-align:center"><button class="btn btn-sm btn-link" id="loadMoreBtn">Load more</button></div>`);
+                    loadMore.find('#loadMoreBtn').click(function(){ currentPage += 1; loadMessages(userId, currentPage); });
+                    body.append(loadMore);
+                }
+                res.messages.forEach(m => {
+                    const side = m.is_sender ? 'sent' : 'received';
+                    const row = $(`<div class="msg-row ${side}" data-message-id="${m.id}"></div>`);
+                    const editedLabel = m.edited ? ' • edited' : '';
+                    const contentHtml = renderMessageContent(m.content);
+                    const checksHtml = renderStatusChecks(m);
+                    const bubble = $(`<div class="msg-bubble ${side}" data-id="${m.id}" data-raw="${$('<div>').text(m.content).html()}">${contentHtml}<div class="msg-meta">${m.time}${editedLabel} ${checksHtml}</div></div>`);
+                    row.append(bubble);
+                    body.append(row);
+                });
+                body.scrollTop(body[0].scrollHeight);
+            },
+            error: function(xhr, status, err){
+                if(isAuthRedirect(xhr)){
+                    window.location = '/auth/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+                    return;
+                }
+                console.error('/api/conversation_messages failed', status, err, xhr.responseText);
+                $('#chatBody').html('<div class="text-center" style="color:#9ca3af">Failed to load messages</div>');
             }
-            res.messages.forEach(m => { const side = m.is_sender ? 'sent' : 'received'; const row = $(`<div class="msg-row ${side}" data-message-id="${m.id}"></div>`); const checks = m.is_delivered ? '✓✓' : (m.is_sender? '✓' : ''); const editedLabel = m.edited ? ' • edited' : ''; const bubble = $(`<div class="msg-bubble ${side}">${m.content}<div class="msg-meta">${m.time}${editedLabel} <span class="msg-checks">${checks}</span></div></div>`); row.append(bubble); body.append(row); });
-            body.scrollTop(body[0].scrollHeight);
         });
     }
 
@@ -185,7 +372,17 @@ $(function(){
         const body = $('#chatBody'); const now = new Date().toLocaleString(); const row = $(`<div class="msg-row sent"></div>`); const bubble = $(`<div class="msg-bubble sent">${text}<div class="msg-meta">${now}</div></div>`);
         row.append(bubble); body.append(row); body.scrollTop(body[0].scrollHeight); $('#chatMessageInput').val('');
 
-        $.ajax({ url: '/api/send_message', method: 'POST', contentType: 'application/json', data: JSON.stringify(payload), success: function(res){ loadConversations(); }, error: function(){ alert('Failed to send message'); } });
+        $.ajax({
+            url: '/api/send_message',
+            method: 'POST',
+            contentType: 'application/json',
+            headers: { 'X-CSRFToken': csrfToken },
+            data: JSON.stringify(payload),
+            success: function(res){ loadConversations(); },
+            error: function(){ alert('Failed to send message'); }
+        });
+    // attach global fail handler to detect auth redirect for send
+        
     }
 
     // connection status
@@ -199,25 +396,202 @@ $(function(){
         $('#chatStatus').text('Socket connection failed - ensure run_socketio.py is running').css('color','#d9534f');
     });
 
-    // Socket listeners
+    // Helper to render status checks with colors
+    function renderStatusChecks(m){
+        // one red tick = sent; two red ticks = delivered; two blue ticks = read
+        if(m.is_read){ return '<span class="msg-checks" style="color:#1d4ed8">✓✓</span>'; }
+        if(m.is_delivered){ return '<span class="msg-checks" style="color:#dc2626">✓✓</span>'; }
+        if(m.is_sender){ return '<span class="msg-checks" style="color:#dc2626">✓</span>'; }
+        return '';
+    }
+
+    // Show toast popup
+    function showToast(message, type){
+        const bg = type==='success' ? 'bg-success text-white' : (type==='error' ? 'bg-danger text-white' : 'bg-secondary text-white');
+        const el = $(`<div class="position-fixed ${bg} p-2 rounded" style="right:16px;bottom:16px;z-index:2000;box-shadow:0 4px 16px rgba(0,0,0,0.2)">${message}</div>`);
+        $('body').append(el); setTimeout(()=>{ el.fadeOut(300, ()=>el.remove()); }, 2500);
+    }
+
+    // Enable/disable composer controls
+    function setComposerEnabled(enabled){
+        $('#chatMessageInput').prop('disabled', !enabled);
+        $('#sendMessageBtn').prop('disabled', !enabled);
+        $('#recordAudioBtn').prop('disabled', !enabled);
+        $('#cameraBtn').prop('disabled', !enabled);
+        $('#attachFileBtn').prop('disabled', !enabled);
+        $('#voiceCallBtn').prop('disabled', !enabled);
+        $('#videoCallBtn').prop('disabled', !enabled);
+    }
+
+    // Wrap openConversation to enable controls
+    const __open = openConversation;
+    openConversation = function(userId, username){ __open(userId, username); setComposerEnabled(true); };
+
+    // Render attachments and replies in message content
+    function renderMessageContent(text){
+        try{
+            if(!text) return '';
+            const fileRe = /^\[file:(audio|image|video|other)\]\|([^|]+)\|([^|]*)\|?(.*)$/i;
+            const m = text.match(fileRe);
+            if(m){
+                const type = m[1].toLowerCase(); const url = m[2]; const mime = m[3]||''; const extra = m[4]||'';
+                if(type==='audio') return `<audio controls src="${url}"></audio>`;
+                if(type==='image') return `<img src="${url}" alt="image" style="max-width:240px;border-radius:8px;"/>`;
+                if(type==='video') return `<video controls style="max-width:260px;border-radius:8px;"><source src="${url}" type="${mime}"></video>`;
+                return `<a href="${url}" target="_blank" rel="noopener">${extra||'Download file'}</a>`;
+            }
+            const repRe = /^\[reply:(\d+)\]\|([^|]*)\|([\s\S]*)$/i;
+            const r = text.match(repRe);
+            if(r){
+                const snippet = r[2]; const msg = r[3];
+                const quote = `<div style="border-left:3px solid #8ab4f8;padding-left:8px;margin-bottom:6px;color:#6b7280;">${$('<div>').text(snippet).html()}</div>`;
+                return quote + $('<div>').text(msg).html();
+            }
+            return $('<div>').text(text).html();
+        }catch(e){ return $('<div>').text(text||'').html(); }
+    }
+
+    // Upload helper (requires backend /api/upload_attachment)
+    function uploadAttachment(file){
+        return new Promise(function(resolve, reject){
+            const fd = new FormData(); fd.append('file', file);
+            $.ajax({ url:'/api/upload_attachment', method:'POST', data: fd, processData: false, contentType: false, headers:{'X-CSRFToken': csrfToken}, success: function(res){ if(res && res.success){ resolve(res); } else { reject(new Error('Upload failed')); } }, error: function(xhr){ reject(new Error(xhr.responseText||'Upload failed')); } });
+        });
+    }
+
+    // File attach
+    $('#attachFileBtn').on('click', function(){ $('#fileInput').val(''); $('#fileInput').click(); });
+    $('#fileInput').on('change', async function(){ const f=this.files&&this.files[0]; if(!f) return; try{ const res=await uploadAttachment(f); const mime=(res.mime||'').toLowerCase(); let kind='other'; if(mime.startsWith('image/')) kind='image'; else if(mime.startsWith('audio/')) kind='audio'; else if(mime.startsWith('video/')) kind='video'; const payload=`[file:${kind}]|${res.url}|${res.mime}|${res.name}`; optimisticSend(payload); }catch(e){ showToast('Upload failed: '+e.message,'error'); }});
+
+    // Voice note via MediaRecorder
+    let mediaRecorder=null, audioChunks=[];
+    $('#recordAudioBtn').on('click', async function(){
+        try{
+            if(mediaRecorder && mediaRecorder.state==='recording'){ mediaRecorder.stop(); return; }
+            const stream = await navigator.mediaDevices.getUserMedia({ audio:true }); audioChunks=[]; mediaRecorder = new MediaRecorder(stream, { mimeType:'audio/webm' });
+            mediaRecorder.ondataavailable = e => { if(e.data.size>0) audioChunks.push(e.data); };
+            mediaRecorder.onstop = async () => { try{ const blob = new Blob(audioChunks, { type:'audio/webm' }); const file = new File([blob],'voice-note.webm',{type:'audio/webm'}); const res = await uploadAttachment(file); const payload = `[file:audio]|${res.url}|${res.mime}|${res.name}`; optimisticSend(payload); stream.getTracks().forEach(t=>t.stop()); }catch(err){ showToast('Voice note failed','error'); } };
+            mediaRecorder.start(); showToast('Recording voice note... click mic to stop','success'); setTimeout(()=>{ if(mediaRecorder && mediaRecorder.state==='recording'){ mediaRecorder.stop(); } }, 120000);
+        }catch(e){ showToast('Microphone access denied','error'); }
+    });
+
+    // Camera / Video capture
+    $('#cameraBtn').on('click', async function(){
+        try{
+            const choice = window.prompt('Type photo for snapshot or video for 5s clip','photo');
+            if((choice||'').toLowerCase()==='video'){
+                const stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
+                const rec = new MediaRecorder(stream, { mimeType: 'video/webm' }); const chunks=[]; rec.ondataavailable = e=>{ if(e.data.size>0) chunks.push(e.data); };
+                rec.onstop = async ()=>{ try{ const blob=new Blob(chunks,{type:'video/webm'}); const file=new File([blob],'video.webm',{type:'video/webm'}); const res=await uploadAttachment(file); const payload=`[file:video]|${res.url}|${res.mime}|${res.name}`; optimisticSend(payload); }catch(err){ showToast('Video upload failed','error'); } finally { stream.getTracks().forEach(t=>t.stop()); } };
+                rec.start(); setTimeout(()=>{ if(rec.state==='recording'){ rec.stop(); } }, 5000);
+            } else {
+                const stream = await navigator.mediaDevices.getUserMedia({ video:true }); const video=document.createElement('video'); video.srcObject=stream; await video.play(); setTimeout(()=>{ const canvas=document.createElement('canvas'); canvas.width=video.videoWidth; canvas.height=video.videoHeight; canvas.getContext('2d').drawImage(video,0,0); canvas.toBlob(async (blob)=>{ try{ const file=new File([blob],'photo.png',{type:'image/png'}); const res=await uploadAttachment(file); const payload=`[file:image]|${res.url}|${res.mime}|${res.name}`; optimisticSend(payload); }catch(err){ showToast('Photo upload failed','error'); } finally { stream.getTracks().forEach(t=>t.stop()); } }, 'image/png'); }, 400);
+            }
+        }catch(e){ showToast('Camera access denied','error'); }
+    });
+
+    // Optimistic send helper with popups
+    function optimisticSend(content){
+        const body=$('#chatBody'); const now=new Date().toLocaleString(); const row=$('<div class="msg-row sent"></div>'); const bubble=$(`<div class="msg-bubble sent">${renderMessageContent(content)}<div class="msg-meta">${now} <span class=\"msg-checks\" style=\"color:#dc2626\">✓</span></div></div>`); row.append(bubble); body.append(row); body.scrollTop(body[0].scrollHeight);
+        $.ajax({ url:'/api/send_message', method:'POST', contentType:'application/json', headers:{'X-CSRFToken': csrfToken}, data: JSON.stringify({ recipient_id: currentConversationUserId, content: content }), success: function(){ showToast('Message sent','success'); loadConversations(); }, error: function(){ showToast('Failed to send message','error'); }});
+    }
+
+    // Video/Voice call (WebRTC signaling via Socket.IO)
+    let pc=null, localStream=null, isVoice=false;
+    async function startCall(kind){
+        try{
+            isVoice = (kind==='voice');
+            localStream = await navigator.mediaDevices.getUserMedia({ video: !isVoice, audio: true });
+            pc = new RTCPeerConnection({ iceServers:[{urls:'stun:stun.l.google.com:19302'}] });
+            localStream.getTracks().forEach(t=>pc.addTrack(t, localStream));
+            pc.onicecandidate = e=>{ if(e.candidate){ try{ socket.emit('webrtc_ice', { conversation_id: currentConversationId, candidate: e.candidate }); }catch(_){} } };
+            pc.ontrack = e=>{ const v=document.getElementById('remoteVideo'); if(v){ v.srcObject = e.streams[0]; } };
+            const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+            try{ socket.emit('webrtc_offer', { conversation_id: currentConversationId, sdp: offer, voice: isVoice }); }catch(_){}
+            showCallModal(localStream, isVoice);
+        }catch(e){ showToast('Call failed: '+e.message,'error'); }
+    }
+    async function handleOffer(data){ try{ if(!pc){ pc=new RTCPeerConnection({ iceServers:[{urls:'stun:stun.l.google.com:19302'}] }); pc.onicecandidate=e=>{ if(e.candidate){ try{ socket.emit('webrtc_ice',{ conversation_id: currentConversationId, candidate:e.candidate }); }catch(_){} } }; pc.ontrack = e=>{ const v=document.getElementById('remoteVideo'); if(v){ v.srcObject=e.streams[0]; } }; }
+        if(!localStream){ localStream = await navigator.mediaDevices.getUserMedia({ video: !(data.voice), audio:true }); localStream.getTracks().forEach(t=>pc.addTrack(t, localStream)); }
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); const answer = await pc.createAnswer(); await pc.setLocalDescription(answer); try{ socket.emit('webrtc_answer', { conversation_id: currentConversationId, sdp: answer }); }catch(_){} showCallModal(localStream, !!data.voice); }catch(e){ console.error('Offer handling failed', e); }
+    }
+    async function handleAnswer(data){ try{ await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); }catch(e){} }
+    async function handleIce(data){ try{ if(data.candidate && pc){ await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } }catch(e){} }
+    function endCall(){ try{ if(pc){ pc.close(); pc=null; } if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream=null; } }catch(e){} $('#callModal').remove(); }
+    function showCallModal(stream, voice){ let modal=document.getElementById('callModal'); if(!modal){ const html = `
+        <div id="callModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;display:flex;align-items:center;justify-content:center;">
+          <div style="background:#fff;border-radius:10px;padding:10px;width:680px;max-width:96%;">
+            <div style="display:flex;gap:8px;align-items:center;justify-content:center;">
+                ${voice ? '' : '<video id="localVideo" autoplay muted playsinline style="width:45%;border-radius:8px;background:#000"></video>'}
+                <video id="remoteVideo" autoplay playsinline style="width:${voice? '100%' : '55%'};border-radius:8px;background:#000"></video>
+            </div>
+            <div style="text-align:center;margin-top:8px;">
+                <button id="hangupBtn" class="btn btn-danger btn-sm"><i class="bi bi-telephone-x"></i> Hang up</button>
+            </div>
+          </div>
+        </div>`; document.body.insertAdjacentHTML('beforeend', html); document.getElementById('hangupBtn').addEventListener('click', endCall); }
+        const lv=document.getElementById('localVideo'); if(lv && !voice){ lv.srcObject=stream; }
+    }
+    $('#voiceCallBtn').on('click', function(){ startCall('voice'); });
+    $('#videoCallBtn').on('click', function(){ startCall('video'); });
+    socket.on('webrtc_offer', function(data){ handleOffer(data); });
+    socket.on('webrtc_answer', function(data){ handleAnswer(data); });
+    socket.on('webrtc_ice', function(data){ handleIce(data); });
+
+    // Socket listeners for messages
     socket.on('new_message', function(msg){
-        // if current conversation, append; otherwise refresh conversation list
         const other = (msg.sender_id == {{ current_user.id }}) ? msg.recipient_id : msg.sender_id;
         if(currentConversationUserId && (other == currentConversationUserId)){
-            const body = $('#chatBody'); const side = (msg.sender_id == {{ current_user.id }}) ? 'sent' : 'received'; const row = $(`<div class="msg-row ${side}"></div>`); const bubble = $(`<div class="msg-bubble ${side}">${msg.content}</div>`); const meta = $(`<div class="msg-meta">${msg.time}</div>`); bubble.append(meta); row.append(bubble); body.append(row); body.scrollTop(body[0].scrollHeight);
+            const body = $('#chatBody'); const side = (msg.sender_id == {{ current_user.id }}) ? 'sent' : 'received';
+            const row = $(`<div class="msg-row ${side}"></div>`);
+            const bubble = $(`<div class="msg-bubble ${side}">${renderMessageContent(msg.content)}</div>`);
+            const meta = $(`<div class="msg-meta">${msg.time}</div>`);
+            bubble.append(meta); row.append(bubble); body.append(row); body.scrollTop(body[0].scrollHeight);
         }
         loadConversations();
     });
-
     socket.on('message_edited', function(data){ loadMessages(currentConversationUserId, currentPage); loadConversations(); });
     socket.on('message_deleted', function(data){ loadMessages(currentConversationUserId, currentPage); loadConversations(); });
-    socket.on('messages_delivered', function(data){ /* could mark delivered checks visually */ loadMessages(currentConversationUserId, currentPage); });
-    socket.on('messages_read', function(data){ loadConversations(); });
+    socket.on('messages_delivered', function(data){ loadMessages(currentConversationUserId, currentPage); });
+    socket.on('messages_read', function(data){ loadMessages(currentConversationUserId, currentPage); loadConversations(); });
 
+    // Send controls
     $('#sendMessageBtn').click(sendMessage);
     $('#chatMessageInput').on('keydown', function(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); } });
     $('#conv-search').on('input', function(){ loadConversations($(this).val()); });
-    $('#startNewBtn').click(showNewConversationModal);
+
+    // Delegated click handler for conversation items
+    $('#conversationList').on('click', '.conversation-item', function(){
+        $('.conversation-item').removeClass('active');
+        $(this).addClass('active');
+        let userId = $(this).attr('data-user-id') || $(this).data('userId'); if(userId) userId=parseInt(userId,10);
+        if(!userId || isNaN(userId)){ console.error('conversation item clicked but userId is invalid', userId, this); return; }
+        let username = $(this).attr('data-username') || $(this).data('username'); if(!username){ username = $(this).find('.conv-name').clone().children().remove().end().text().trim(); }
+        openConversation(userId, username);
+    });
+
+    // New Conversation button
+    $('#startNewBtn').on('click', function(e){ e.preventDefault(); showNewConversationModal(); });
+
+    // Message actions (context menu)
+    $(document).on('contextmenu', '.msg-bubble', function(e){ e.preventDefault(); const id=$(this).data('id'); const raw=$(this).data('raw'); showMsgMenu(e.pageX, e.pageY, id, raw); });
+    let pressTimer=null; $(document).on('touchstart', '.msg-bubble', function(e){ const self=this; pressTimer=setTimeout(()=>{ const t=e.originalEvent.touches[0]; showMsgMenu(t.pageX,t.pageY,$(self).data('id'),$(self).data('raw')); }, 500); }).on('touchend touchmove', '.msg-bubble', function(){ clearTimeout(pressTimer); });
+    function showMsgMenu(x,y,id,raw){ $('.msg-menu').remove(); const menu=$(`<div class="msg-menu" style="position:absolute;left:${x}px;top:${y}px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.15);z-index:3000;">
+        <button class="dropdown-item" data-act="reply">Reply</button>
+        <button class="dropdown-item" data-act="forward">Forward</button>
+        <button class="dropdown-item" data-act="reshare">Reshare</button>
+        <button class="dropdown-item text-danger" data-act="delete">Delete</button>
+    </div>`); $('body').append(menu); menu.on('click','.dropdown-item',function(){ const act=$(this).data('act'); handleMsgAction(act,id,raw); menu.remove(); }); $(document).one('click',()=>menu.remove()); }
+    let replyTo=null; function handleMsgAction(act,id,raw){ if(act==='reply'){ replyTo={ id:id, snippet: $('<div>').html(raw).text().slice(0,140) }; showReplyBanner(replyTo.snippet); $('#chatMessageInput').focus(); } else if(act==='delete'){ $.ajax({ url:`/api/message/${id}`, method:'DELETE', headers:{'X-CSRFToken': csrfToken}, success:function(){ loadMessages(currentConversationUserId, currentPage); loadConversations(); }, error:function(){ showToast('Delete failed','error'); } }); } else if(act==='forward' || act==='reshare'){ ensureBootstrapLoaded(function(){ const modalHtml = `
+        <div class="modal fade" id="fwdModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+          <div class="modal-header"><h5 class="modal-title">${act==='forward'?'Forward':'Reshare'} message</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+          <div class="modal-body"><input id="fwdSearch" class="form-control" placeholder="Search user..."><div id="fwdResults" style="margin-top:10px;"></div></div>
+        </div></div></div>`; const $m=$(modalHtml); $('body').append($m); let bs=null; if(window.bootstrap&&bootstrap.Modal){ bs=new bootstrap.Modal($m[0]); $m.on('hidden.bs.modal',()=> $m.remove()); }
+        $m.find('#fwdSearch').on('input', function(){ const q=$(this).val(); if(!q){ $m.find('#fwdResults').empty(); return; } $.getJSON('/api/get_users',{q:q}, function(res){ const c=$m.find('#fwdResults'); c.empty(); res.results.forEach(u=>{ const b=$(`<button class="btn btn-sm btn-outline-primary w-100 mb-1">${u.text}</button>`); b.on('click', function(){ const prefix = act==='forward'?'[fwd] ':'[reshare] '; $.ajax({ url:'/api/send_message', method:'POST', contentType:'application/json', headers:{'X-CSRFToken': csrfToken}, data: JSON.stringify({ recipient_id: u.id, content: prefix + $('<div>').html(raw).text() }), success:function(){ showToast('Message forwarded','success'); } }); if(bs){ bs.hide(); } else { $m.remove(); } }); c.append(b); }); }); if(bs){ bs.show(); } else { $m.show(); } }); } }
+    function showReplyBanner(text){ let b=document.getElementById('replyBanner'); if(!b){ const html=`<div id="replyBanner" style="position:absolute;bottom:64px;left:16px;right:16px;background:#eef2ff;border-left:4px solid #4f46e5;padding:6px 10px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;"><div style="flex:1;color:#4b5563;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Replying to: ${$('<div>').text(text).html()}</div><button id="cancelReplyBtn" class="btn btn-sm btn-link">Cancel</button></div>`; document.body.insertAdjacentHTML('beforeend', html); document.getElementById('cancelReplyBtn').addEventListener('click', function(){ replyTo=null; $('#replyBanner').remove(); }); } else { b.querySelector('div').textContent='Replying to: '+text; } }
+    const __send = sendMessage; sendMessage = function(){ if(!currentConversationUserId) return; const text=$('#chatMessageInput').val().trim(); if(!text) return; let finalText=text; if(replyTo){ finalText = `[reply:${replyTo.id}]|${replyTo.snippet}|` + text; replyTo=null; $('#replyBanner').remove(); } $('#chatMessageInput').val(''); optimisticSend(finalText); };
+    // Swipe to reply
+    let touchStartX=0, touchStartY=0; $(document).on('touchstart','.msg-row', function(e){ const t=e.originalEvent.touches[0]; touchStartX=t.clientX; touchStartY=t.clientY; }).on('touchend','.msg-row', function(e){ const t=e.originalEvent.changedTouches[0]; const dx=t.clientX - touchStartX; const dy=Math.abs(t.clientY - touchStartY); if(dx>60 && dy<40){ const bubble=$(this).find('.msg-bubble'); handleMsgAction('reply', bubble.data('id'), bubble.data('raw')); } });
 
     loadConversations();
 });
