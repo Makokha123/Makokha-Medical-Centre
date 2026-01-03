@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Add this to the head section of all your base templates -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<div class="dashboard-container">
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Clinic Logo">
+            <h3>Receptionist Panel</h3>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="{{ url_for('receptionist_dashboard') }}"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+            <li><a href="{{ url_for('receptionist_patients') }}"><i class="fas fa-procedures"></i> Patients</a></li>
+            <li><a href="{{ url_for('receptionist_billing') }}" class="active"><i class="fas fa-cash-register"></i> Billing</a></li>
+            <li><a href="#"><i class="fas fa-calendar-alt"></i> Appointments</a></li>
+            <li><a href="#"><i class="fas fa-file-invoice"></i> Invoices</a></li>
+        </ul>
+    </div>
+    
+    <div class="main-content">
+        <div class="top-bar">
+            <button class="sidebar-toggle" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+            <div class="user-info">
+                <span>{{ current_user.username }}</span>
+                <div class="dropdown">
+                    <button class="dropbtn"><i class="fas fa-user-circle"></i></button>
+                    <div class="dropdown-content">
+                        <a href="#"><i class="fas fa-user"></i> Profile</a>
+                        <a href="{{ url_for('logout') }}"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="content">
+            <h2>Billing Management</h2>
+            
+            <div class="billing-container">
+                <div class="billing-search">
+                    <div class="search-box">
+                        <input type="text" id="patient-search" placeholder="Search patient by name or ID...">
+                        <button class="btn btn-primary"><i class="fas fa-search"></i> Search</button>
+                    </div>
+                    <div class="search-results" id="search-results">
+                        <!-- Search results will appear here -->
+                    </div>
+                </div>
+                
+                <div class="billing-form">
+                    <h3><i class="fas fa-file-invoice"></i> New Bill</h3>
+                    <form id="billing-form" method="POST" action="{{ url_for('create_bill') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="form-group">
+                            <label for="patient-id">Patient</label>
+                            <select id="patient-id" name="patient_id" class="form-control" required>
+                                <option value="">Select Patient</option>
+                                {% for patient in patients %}
+                                <option value="{{ patient.id }}">
+                                    {{ decrypt_data(patient.name) }} ({{ patient.op_number or patient.ip_number }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Services</label>
+                            <div class="service-list">
+                                {% for service in services %}
+                                <div class="service-item">
+                                    <input type="checkbox" id="service-{{ service.id }}" name="services" value="{{ service.id }}">
+                                    <label for="service-{{ service.id }}">
+                                        {{ service.name }} - ${{ "%.2f"|format(service.price) }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Lab Tests</label>
+                            <div class="lab-list">
+                                {% for test in lab_tests %}
+                                <div class="lab-item">
+                                    <input type="checkbox" id="test-{{ test.id }}" name="lab_tests" value="{{ test.id }}">
+                                    <label for="test-{{ test.id }}">
+                                        {{ test.name }} - ${{ "%.2f"|format(test.price) }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Prescriptions</label>
+                            <div class="prescription-list" id="prescription-list">
+                                <!-- Prescriptions will be loaded via AJAX when patient is selected -->
+                                <div class="alert alert-info">
+                                    Select a patient to view their prescriptions
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="payment-method">Payment Method</label>
+                            <select id="payment-method" name="payment_method" class="form-control" required>
+                                <option value="cash">Cash</option>
+                                <option value="card">Credit/Debit Card</option>
+                                <option value="insurance">Insurance</option>
+                                <option value="mpesa">M-Pesa</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="notes">Notes</label>
+                            <textarea id="notes" name="notes" class="form-control" rows="3"></textarea>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="reset" class="btn btn-secondary">
+                                <i class="fas fa-undo"></i> Reset
+                            </button>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save"></i> Create Bill
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                
+                <div class="billing-summary">
+                    <h3><i class="fas fa-calculator"></i> Bill Summary</h3>
+                    <div class="summary-details">
+                        <div class="summary-item">
+                            <span class="summary-label">Services:</span>
+                            <span class="summary-value" id="services-total">$0.00</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Lab Tests:</span>
+                            <span class="summary-value" id="labs-total">$0.00</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Medications:</span>
+                            <span class="summary-value" id="meds-total">$0.00</span>
+                        </div>
+                        <div class="summary-item total">
+                            <span class="summary-label">Total Amount:</span>
+                            <span class="summary-value" id="total-amount">$0.00</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- DataTables and other JS libraries -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
+
+
+<script>
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('collapsed');
+}
+
+// Patient search functionality
+document.getElementById('patient-search').addEventListener('input', function(e) {
+    const query = e.target.value.trim();
+    if (query.length > 2) {
+        fetch(`/api/patients?search=${encodeURIComponent(query)}`)
+            .then(response => response.json())
+            .then(data => {
+                const resultsContainer = document.getElementById('search-results');
+                resultsContainer.innerHTML = '';
+                
+                if (data.length > 0) {
+                    data.forEach(patient => {
+                        const patientElement = document.createElement('div');
+                        patientElement.className = 'search-result-item';
+                        patientElement.innerHTML = `
+                            <strong>${patient.name}</strong>
+                            <div>${patient.op_number || patient.ip_number}</div>
+                            <div>Age: ${patient.age || 'N/A'}, Gender: ${patient.gender || 'N/A'}</div>
+                            <button class="btn btn-sm btn-primary select-patient" 
+                                    data-id="${patient.id}">
+                                Select
+                            </button>
+                        `;
+                        resultsContainer.appendChild(patientElement);
+                    });
+                    
+                    // Add event listeners to select buttons
+                    document.querySelectorAll('.select-patient').forEach(button => {
+                        button.addEventListener('click', function() {
+                            document.getElementById('patient-id').value = this.getAttribute('data-id');
+                            loadPatientPrescriptions(this.getAttribute('data-id'));
+                            resultsContainer.innerHTML = '';
+                        });
+                    });
+                } else {
+                    resultsContainer.innerHTML = '<div class="alert alert-info">No patients found</div>';
+                }
+            });
+    }
+});
+
+// Load prescriptions when patient is selected
+function loadPatientPrescriptions(patientId) {
+    fetch(`/api/patient/${patientId}/prescriptions`)
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('prescription-list');
+            container.innerHTML = '';
+            
+            if (data.length > 0) {
+                data.forEach(prescription => {
+                    const prescriptionElement = document.createElement('div');
+                    prescriptionElement.className = 'prescription-item';
+                    prescriptionElement.innerHTML = `
+                        <h4>Prescription #${prescription.id}</h4>
+                        <div class="prescription-items">
+                            ${prescription.items.map(item => `
+                                <div class="prescription-line">
+                                    <input type="checkbox" name="prescription_items" 
+                                           value="${item.id}" id="item-${item.id}">
+                                    <label for="item-${item.id}">
+                                        ${item.drug_name} (${item.drug_number}) - 
+                                        ${item.quantity} x $${item.unit_price.toFixed(2)} = 
+                                        $${(item.quantity * item.unit_price).toFixed(2)}
+                                    </label>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                    container.appendChild(prescriptionElement);
+                });
+            } else {
+                container.innerHTML = '<div class="alert alert-info">No prescriptions found for this patient</div>';
+            }
+        });
+}
+
+// Calculate totals when items are selected
+document.getElementById('billing-form').addEventListener('change', function() {
+    let servicesTotal = 0;
+    let labsTotal = 0;
+    let medsTotal = 0;
+    
+    // Calculate services total
+    document.querySelectorAll('input[name="services"]:checked').forEach(checkbox => {
+        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/\$([\d.]+)/)[1]);
+        servicesTotal += price;
+    });
+    
+    // Calculate lab tests total
+    document.querySelectorAll('input[name="lab_tests"]:checked').forEach(checkbox => {
+        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/\$([\d.]+)/)[1]);
+        labsTotal += price;
+    });
+    
+    // Calculate medications total
+    document.querySelectorAll('input[name="prescription_items"]:checked').forEach(checkbox => {
+        const priceText = checkbox.nextElementSibling.textContent.match(/= \$([\d.]+)/)[1];
+        medsTotal += parseFloat(priceText);
+    });
+    
+    // Update the summary
+    document.getElementById('services-total').textContent = `$${servicesTotal.toFixed(2)}`;
+    document.getElementById('labs-total').textContent = `$${labsTotal.toFixed(2)}`;
+    document.getElementById('meds-total').textContent = `$${medsTotal.toFixed(2)}`;
+    
+    const totalAmount = servicesTotal + labsTotal + medsTotal;
+    document.getElementById('total-amount').textContent = `$${totalAmount.toFixed(2)}`;
+});
+</script>
+{% endblock %}

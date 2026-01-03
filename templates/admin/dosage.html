@@ -1,0 +1,469 @@
+{% extends "base.html" %}
+
+{% block content %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<div class="content">
+    <div class="page-header">
+        <h2><i class="fas fa-pills"></i> Drug Dosage Information</h2>
+        <div class="page-actions">
+            <button class="btn btn-primary" data-toggle="modal" data-target="#addDosageModal">
+                <i class="fas fa-plus"></i> Add New Dosage Info
+            </button>
+        </div>
+    </div>
+    
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    
+    <div class="table-responsive">
+        <table class="data-table" id="dosageTable">
+            <thead>
+                <tr>
+                    <th>Drug No.</th>
+                    <th>Drug Name</th>
+                    <th>Indication</th>
+                    <th>Dosage (Adults)</th>
+                    <th>Dosage (Peds)</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dosage in dosages %}
+                <tr>
+                    <td>{{ dosage.drug.drug_number }}</td>
+                    <td>{{ dosage.drug.name }}</td>
+                    <td>{{ dosage.indication|truncate(50) if dosage.indication else '-' }}</td>
+                    <td>{{ dosage.dosage_adults|truncate(50) if dosage.dosage_adults else '-' }}</td>
+                    <td>{{ dosage.dosage_peds|truncate(50) if dosage.dosage_peds else '-' }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-view" data-id="{{ dosage.id }}" data-toggle="modal" data-target="#viewDosageModal">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-sm btn-edit" data-id="{{ dosage.id }}" data-toggle="modal" data-target="#editDosageModal">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-sm btn-delete" data-id="{{ dosage.id }}" data-toggle="modal" data-target="#deleteDosageModal">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Dosage Modal -->
+<div class="modal fade" id="addDosageModal" tabindex="-1" role="dialog" aria-labelledby="addDosageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addDosageModalLabel">Add New Dosage Information</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <form method="POST" action="{{ url_for('manage_dosage') }}">  {# Changed to match error endpoint #}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>  {# Added CSRF token #}
+                <input type="hidden" name="action" value="add">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="drug_id">Select Drug</label>
+                        <select class="form-control" id="drug_id" name="drug_id" required>
+                            <option value="">-- Select Drug --</option>
+                            {% for drug in drugs %}
+                                {% if not drug.dosage %}
+                                    <option value="{{ drug.id }}">{{ drug.drug_number }} - {{ drug.name }}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">Only drugs without existing dosage information are listed</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="indication">Indication</label>
+                        <textarea class="form-control" id="indication" name="indication" rows="3" placeholder="Medical conditions this drug is used to treat"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="contraindication">Contraindication</label>
+                        <textarea class="form-control" id="contraindication" name="contraindication" rows="3" placeholder="Conditions where this drug should not be used"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="interaction">Drug Interaction</label>
+                        <textarea class="form-control" id="interaction" name="interaction" rows="3" placeholder="Other drugs that interact with this medication"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="side_effects">Side Effects</label>
+                        <textarea class="form-control" id="side_effects" name="side_effects" rows="3" placeholder="Potential adverse effects of this drug"></textarea>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="dosage_peds">Dosage (Pediatrics)</label>
+                                <textarea class="form-control" id="dosage_peds" name="dosage_peds" rows="3" placeholder="Dosage instructions for children"></textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="dosage_adults">Dosage (Adults)</label>
+                                <textarea class="form-control" id="dosage_adults" name="dosage_adults" rows="3" placeholder="Dosage instructions for adults"></textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="dosage_geriatrics">Dosage (Geriatrics)</label>
+                                <textarea class="form-control" id="dosage_geriatrics" name="dosage_geriatrics" rows="3" placeholder="Dosage instructions for elderly patients"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="important_notes">Important Notes</label>
+                        <textarea class="form-control" id="important_notes" name="important_notes" rows="3" placeholder="Special instructions, warnings, or precautions"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Dosage Information</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Dosage Modal -->
+<div class="modal fade" id="editDosageModal" tabindex="-1" role="dialog" aria-labelledby="editDosageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editDosageModalLabel">Edit Dosage Information</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <form method="POST" action="{{ url_for('manage_dosage') }}">  {# Changed to match error endpoint #}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>  {# Added CSRF token #}
+                <input type="hidden" name="action" value="edit">
+                <input type="hidden" id="edit_dosage_id" name="dosage_id">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Drug</label>
+                        <p class="form-control-static" id="edit_drug_info"></p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_indication">Indication</label>
+                        <textarea class="form-control" id="edit_indication" name="indication" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_contraindication">Contraindication</label>
+                        <textarea class="form-control" id="edit_contraindication" name="contraindication" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_interaction">Drug Interaction</label>
+                        <textarea class="form-control" id="edit_interaction" name="interaction" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_side_effects">Side Effects</label>
+                        <textarea class="form-control" id="edit_side_effects" name="side_effects" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="edit_dosage_peds">Dosage (Pediatrics)</label>
+                                <textarea class="form-control" id="edit_dosage_peds" name="dosage_peds" rows="3"></textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="edit_dosage_adults">Dosage (Adults)</label>
+                                <textarea class="form-control" id="edit_dosage_adults" name="dosage_adults" rows="3"></textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="edit_dosage_geriatrics">Dosage (Geriatrics)</label>
+                                <textarea class="form-control" id="edit_dosage_geriatrics" name="dosage_geriatrics" rows="3"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="edit_important_notes">Important Notes</label>
+                        <textarea class="form-control" id="edit_important_notes" name="important_notes" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Update Dosage Information</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- View Dosage Modal -->
+<div class="modal fade" id="viewDosageModal" tabindex="-1" role="dialog" aria-labelledby="viewDosageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="viewDosageModalLabel">Dosage Information Details</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Basic Information</h5>
+                        <table class="table table-bordered">
+                            <tr>
+                                <th>Drug Number</th>
+                                <td id="view_drug_number"></td>
+                            </tr>
+                            <tr>
+                                <th>Drug Name</th>
+                                <td id="view_drug_name"></td>
+                            </tr>
+                        </table>
+                        
+                        <h5>Medical Information</h5>
+                        <table class="table table-bordered">
+                            <tr>
+                                <th>Indication</th>
+                                <td id="view_indication"></td>
+                            </tr>
+                            <tr>
+                                <th>Contraindication</th>
+                                <td id="view_contraindication"></td>
+                            </tr>
+                            <tr>
+                                <th>Drug Interaction</th>
+                                <td id="view_interaction"></td>
+                            </tr>
+                            <tr>
+                                <th>Side Effects</th>
+                                <td id="view_side_effects"></td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>Dosage Information</h5>
+                        <div class="card mb-3">
+                            <div class="card-header bg-info text-white">
+                                Pediatrics
+                            </div>
+                            <div class="card-body">
+                                <p id="view_dosage_peds" class="card-text"></p>
+                            </div>
+                        </div>
+                        
+                        <div class="card mb-3">
+                            <div class="card-header bg-primary text-white">
+                                Adults
+                            </div>
+                            <div class="card-body">
+                                <p id="view_dosage_adults" class="card-text"></p>
+                            </div>
+                        </div>
+                        
+                        <div class="card">
+                            <div class="card-header bg-secondary text-white">
+                                Geriatrics
+                            </div>
+                            <div class="card-body">
+                                <p id="view_dosage_geriatrics" class="card-text"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <h5>Important Notes</h5>
+                    <div class="card">
+                        <div class="card-body">
+                            <p id="view_important_notes" class="card-text"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteDosageModal" tabindex="-1" role="dialog" aria-labelledby="deleteDosageModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteDosageModalLabel">Confirm Deletion</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <form method="POST" action="{{ url_for('manage_dosage') }}">  {# Changed to match error endpoint #}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>  {# Added CSRF token #}
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" id="delete_dosage_id" name="dosage_id">
+                <div class="modal-body">
+                    <p>Are you sure you want to delete this dosage information? This action cannot be undone.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Delete Information</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
+
+<!-- JavaScript for handling modals -->
+<script>
+$(document).ready(function() { 
+    // Edit dosage modal handler
+    $(document).on('click', '.btn-edit', function() {
+        const dosageId = $(this).data('id');
+        $.get('/admin/dosage/' + dosageId, function(data) {
+            $('#edit_dosage_id').val(data.id);
+            $('#edit_drug_info').text(data.drug.drug_number + ' - ' + data.drug.name);
+            $('#edit_indication').val(data.indication || '');
+            $('#edit_contraindication').val(data.contraindication || '');
+            $('#edit_interaction').val(data.interaction || '');
+            $('#edit_side_effects').val(data.side_effects || '');
+            $('#edit_dosage_peds').val(data.dosage_peds || '');
+            $('#edit_dosage_adults').val(data.dosage_adults || '');
+            $('#edit_dosage_geriatrics').val(data.dosage_geriatrics || '');
+            $('#edit_important_notes').val(data.important_notes || '');
+        }).fail(function() {
+            alert('Failed to load dosage information');
+        });
+    });
+    
+    // View dosage modal handler
+    $(document).on('click', '.btn-view', function() {
+        const dosageId = $(this).data('id');
+        $.get('/admin/dosage/' + dosageId, function(data) {
+            $('#view_drug_number').text(data.drug.drug_number);
+            $('#view_drug_name').text(data.drug.name);
+            $('#view_indication').text(data.indication || 'Not specified');
+            $('#view_contraindication').text(data.contraindication || 'Not specified');
+            $('#view_interaction').text(data.interaction || 'Not specified');
+            $('#view_side_effects').text(data.side_effects || 'Not specified');
+            $('#view_dosage_peds').text(data.dosage_peds || 'Not specified');
+            $('#view_dosage_adults').text(data.dosage_adults || 'Not specified');
+            $('#view_dosage_geriatrics').text(data.dosage_geriatrics || 'Not specified');
+            $('#view_important_notes').text(data.important_notes || 'Not specified');
+        }).fail(function() {
+            alert('Failed to load dosage information');
+        });
+    });
+    
+    // Delete dosage modal handler
+    $(document).on('click', '.btn-delete', function() {
+        $('#delete_dosage_id').val($(this).data('id'));
+    });
+    
+    // Show only drugs without dosage info in add modal
+    $('#addDosageModal').on('show.bs.modal', function() {
+        $.get('/admin/drugs/without-dosage', function(data) {
+            $('#drug_id').empty().append('<option value="">-- Select Drug --</option>');
+            data.forEach(function(drug) {
+                $('#drug_id').append(`<option value="${drug.id}">${drug.drug_number} - ${drug.name}</option>`);
+            });
+        }).fail(function() {
+            alert('Failed to load drugs without dosage information');
+        });
+    });
+});
+</script>
+
+<style>
+    /* Table styling */
+    .data-table {
+        width: 100%;
+        margin-bottom: 1rem;
+        background-color: transparent;
+    }
+    
+    .data-table th {
+        background-color: #116cc2;
+        color: white;
+        padding: 0.75rem;
+    }
+    
+    .data-table td {
+        padding: 0.5rem;
+        vertical-align: middle;
+    }
+    
+    .data-table tbody tr:nth-child(odd) {
+        background-color: rgba(0, 0, 0, 0.05);
+    }
+    
+    /* Button styling */
+    .btn-sm {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+        line-height: 1.5;
+    }
+    
+    .btn-view {
+        color: #17a2b8;
+        background-color: transparent;
+        border-color: #17a2b8;
+    }
+    
+    .btn-view:hover {
+        color: #fff;
+        background-color: #17a2b8;
+        border-color: #17a2b8;
+    }
+    
+    /* Modal styling */
+    .modal-lg {
+        max-width: 900px;
+    }
+    
+    /* Card styling for view modal */
+    .card-header {
+        font-weight: bold;
+    }
+    
+    .card-text {
+        white-space: pre-line;
+    }
+    
+    /* Responsive table */
+    .table-responsive {
+        display: block;
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+</style>
+{% endblock %}

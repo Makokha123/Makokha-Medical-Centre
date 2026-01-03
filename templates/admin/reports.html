@@ -1,0 +1,1507 @@
+{% extends "base.html" %}
+
+{% block content %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
+<div class="container-fluid mt-4">
+    <!-- Report Generation Panel -->
+    <div id="generationPanel" class="card mb-4 shadow-sm">
+        <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+            <div class="d-flex justify-content-between align-items-center">
+                <h4 class="mb-0"><i class="fas fa-file-alt"></i> Reports Dashboard</h4>
+                <div class="btn-group">
+                    <button id="drugReportBtn" class="btn btn-light active" style="font-weight: 600;">
+                        <i class="fas fa-pills"></i> Drug Sales
+                    </button>
+                    <button id="labReportBtn" class="btn btn-light" style="font-weight: 600;">
+                        <i class="fas fa-microscope"></i> Lab Reports
+                    </button>
+                    <button id="generalReportBtn" class="btn btn-light" style="font-weight: 600;">
+                        <i class="fas fa-layer-group"></i> General
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row mb-4 align-items-end">
+                <div class="col-md-3">
+                    <label for="startDate" class="form-label fw-bold">Start Date</label>
+                    <input type="date" id="startDate" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label for="endDate" class="form-label fw-bold">End Date</label>
+                    <input type="date" id="endDate" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label for="granularitySelect" class="form-label fw-bold">Granularity</label>
+                    <select id="granularitySelect" class="form-select">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button id="generateBtn" class="btn btn-primary w-100 shadow-sm" style="font-weight: 600;">
+                        <i class="fas fa-chart-bar"></i> Generate
+                    </button>
+                </div>
+            </div>
+
+            <!-- Detailed Granularity Options -->
+            <div id="granularityDetails" class="row mb-4" style="display: none;">
+                <div class="col-12">
+                    <div class="alert alert-light border">
+                        <div id="granularityContent"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="reportResults">
+                <div class="alert alert-info text-center py-4">
+                    <i class="fas fa-info-circle fa-2x"></i>
+                    <p class="mt-2 mb-0">Select report type, date range, granularity, and click Generate</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Report Display Area (Hidden until generated) -->
+    <div id="reportDisplay" style="display: none;">
+        <!-- SUMMARY SECTION AT TOP -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                        <h5 class="mb-0"><i class="fas fa-chart-pie"></i> Financial Summary</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row text-center">
+                            <div class="col-md-4 mb-3">
+                                <div class="summary-box">
+                                    <div class="summary-icon" style="background-color: #0d6efd;">
+                                        <i class="fas fa-dollar-sign"></i>
+                                    </div>
+                                    <div class="summary-label" id="summaryLabel1">Total Sales Revenue</div>
+                                    <div class="summary-value" id="summaryTotalSales">Ksh.0.00</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="summary-box">
+                                    <div class="summary-icon" style="background-color: #ffc107;">
+                                        <i class="fas fa-cube"></i>
+                                    </div>
+                                    <div class="summary-label" id="summaryLabel2">Cost of Goods Sold</div>
+                                    <div class="summary-value" id="summaryCOGS">Ksh.0.00</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="summary-box">
+                                    <div class="summary-icon" style="background-color: #198754;">
+                                        <i class="fas fa-chart-line"></i>
+                                    </div>
+                                    <div class="summary-label" id="summaryLabel3">Drug Profit</div>
+                                    <div class="summary-value" id="summaryProfit">Ksh.0.00</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRAPHS SECTION -->
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <div class="card shadow-sm border-0 h-100">
+                    <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                        <h6 class="mb-0"><i class="fas fa-chart-bar"></i> Sales Trend</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-wrapper">
+                            <canvas id="timeseriesChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card shadow-sm border-0 h-100">
+                    <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                        <h6 class="mb-0"><i class="fas fa-chart-pie"></i> Distribution</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-wrapper">
+                            <canvas id="pieChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DRUG SALES SPECIFIC SECTIONS -->
+        <div id="drugSalesGraphs">
+            <!-- Top 10 Most Sold Drugs -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm border-0">
+                        <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #f77f00 0%, #fcbf49 100%);">
+                            <h6 class="mb-0"><i class="fas fa-fire"></i> Top 10 Most Sold Drugs</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <div class="chart-wrapper-small">
+                                        <h6 class="chart-subtitle">Daily</h6>
+                                        <canvas id="top10DailyChart"></canvas>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="chart-wrapper-small">
+                                        <h6 class="chart-subtitle">Weekly</h6>
+                                        <canvas id="top10WeeklyChart"></canvas>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="chart-wrapper-small">
+                                        <h6 class="chart-subtitle">Monthly</h6>
+                                        <canvas id="top10MonthlyChart"></canvas>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="chart-wrapper-small">
+                                        <h6 class="chart-subtitle">Yearly</h6>
+                                        <canvas id="top10YearlyChart"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sales by Customer Type -->
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="card shadow-sm border-0 h-100">
+                        <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #4361ee 0%, #f77f00 100%);">
+                            <h6 class="mb-0"><i class="fas fa-users"></i> Patient vs Over-the-Counter</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-wrapper">
+                                <canvas id="customerTypeChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card shadow-sm border-0 h-100">
+                        <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #4361ee 0%, #f77f00 100%);">
+                            <h6 class="mb-0"><i class="fas fa-chart-column"></i> Sales Breakdown</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="stats-container">
+                                <div class="stat-box stat-patient">
+                                    <div class="stat-label"><i class="fas fa-hospital-user"></i> Patient Sales</div>
+                                    <div class="stat-value" id="patientSalesValue">Ksh.0.00</div>
+                                    <div class="stat-units" id="patientUnitsValue">0 units</div>
+                                </div>
+                                <div class="stat-box stat-counter">
+                                    <div class="stat-label"><i class="fas fa-shopping-cart"></i> Over-the-Counter</div>
+                                    <div class="stat-value" id="overthecounterSalesValue">Ksh.0.00</div>
+                                    <div class="stat-units" id="overthecounterUnitsValue">0 units</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LAB REPORTS SPECIFIC SECTIONS -->
+        <div id="labGraphs" style="display: none;">
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="card shadow-sm border-0 h-100">
+                        <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);">
+                            <h6 class="mb-0"><i class="fas fa-vials"></i> Top Lab Tests (Revenue)</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-wrapper">
+                                <canvas id="labTopTestsChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card shadow-sm border-0 h-100">
+                        <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #4361ee 0%, #3a86ff 100%);">
+                            <h6 class="mb-0"><i class="fas fa-user-injured"></i> Top Patients (Lab Spend)</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-wrapper">
+                                <canvas id="labTopPatientsChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GENERAL REPORT (DRUGS + LABS) -->
+        <div id="generalGraphs" style="display: none;">
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <div class="card shadow-sm border-0 h-100">
+                        <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #f77f00 0%, #fcbf49 100%);">
+                            <h6 class="mb-0"><i class="fas fa-pills"></i> Top Drugs (Revenue)</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-wrapper">
+                                <canvas id="generalTopDrugsChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card shadow-sm border-0 h-100">
+                        <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);">
+                            <h6 class="mb-0"><i class="fas fa-microscope"></i> Top Lab Tests (Revenue)</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-wrapper">
+                                <canvas id="generalTopLabTestsChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DATA TABLE FOR DRUG/PATIENT RECORDS -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);">
+                        <h5 class="mb-0" id="dataTableTitle"><i class="fas fa-table"></i> Detailed Records</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive" id="dataTableContainer">
+                            <table class="table table-hover table-striped">
+                                <tbody id="dataTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Chart.js CDN (loaded before DOM ready)
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const startDateInput = document.getElementById('startDate');
+    const endDateInput = document.getElementById('endDate');
+    const granularitySelect = document.getElementById('granularitySelect');
+
+    function startOfLocalDay(date) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    }
+
+    function applyGranularityPreset(granularity) {
+        const today = startOfLocalDay(new Date());
+        const presetEnd = today;
+        const presetStart = new Date(today);
+
+        // Inclusive ranges ending today.
+        if (granularity === 'daily') {
+            // today -> today
+        } else if (granularity === 'weekly') {
+            // last 7 days including today
+            presetStart.setDate(presetStart.getDate() - 6);
+        } else if (granularity === 'monthly') {
+            // last 30 days including today
+            presetStart.setDate(presetStart.getDate() - 29);
+        } else if (granularity === 'yearly') {
+            // last 1 year (365 days) including today
+            presetStart.setDate(presetStart.getDate() - 364);
+        }
+
+        startDateInput.valueAsDate = presetStart;
+        endDateInput.valueAsDate = presetEnd;
+    }
+
+    // Granularity selection and presets
+    let selectedGranularity = granularitySelect.value || 'daily';
+    applyGranularityPreset(selectedGranularity);
+    
+    granularitySelect.addEventListener('change', function(e) {
+        selectedGranularity = e.target.value;
+        applyGranularityPreset(selectedGranularity);
+        updateGranularityDetails();
+    });
+    
+    function updateGranularityDetails() {
+        const startDate = startDateInput.valueAsDate;
+        const endDate = endDateInput.valueAsDate;
+        
+        if (!startDate || !endDate) return;
+
+        const msPerDay = 1000 * 60 * 60 * 24;
+        const daysInclusive = Math.max(1, Math.floor((endDate - startDate) / msPerDay) + 1);
+        
+        const detailsDiv = document.getElementById('granularityContent');
+        let html = '<strong>Statistics Preview:</strong><br>';
+        
+        if (selectedGranularity === 'daily') {
+            html += `Showing statistics for <strong>${daysInclusive}</strong> days`;
+        } else if (selectedGranularity === 'weekly') {
+            const weeks = Math.ceil(daysInclusive / 7);
+            html += `Showing statistics for <strong>${weeks}</strong> weeks (${daysInclusive} days)`;
+        } else if (selectedGranularity === 'monthly') {
+            const rawMonths = (endDate.getFullYear() - startDate.getFullYear()) * 12 +
+                              (endDate.getMonth() - startDate.getMonth());
+            const months = Math.max(1, rawMonths + 1);
+            html += `Showing statistics for <strong>${months}</strong> months`;
+            html += '<div class="mt-2"><small class="text-muted">Select report to view details for each month</small></div>';
+        } else if (selectedGranularity === 'yearly') {
+            const years = Math.max(1, endDate.getFullYear() - startDate.getFullYear() + 1);
+            html += `Showing statistics for <strong>${years}</strong> years`;
+            html += '<div class="mt-2"><small class="text-muted">Select report to view detailed yearly breakdown</small></div>';
+        }
+        
+        detailsDiv.innerHTML = html;
+        document.getElementById('granularityDetails').style.display = 'block';
+    }
+    
+    // Update granularity details when dates change
+    startDateInput.addEventListener('change', updateGranularityDetails);
+    endDateInput.addEventListener('change', updateGranularityDetails);
+
+    // Initial preview
+    updateGranularityDetails();
+
+    // Report type management
+    let currentReportType = 'drug_sales';
+    const drugBtn = document.getElementById('drugReportBtn');
+    const labBtn = document.getElementById('labReportBtn');
+    const generalBtn = document.getElementById('generalReportBtn');
+    
+    drugBtn.addEventListener('click', function() {
+        currentReportType = 'drug_sales';
+        drugBtn.classList.add('active');
+        labBtn.classList.remove('active');
+        generalBtn.classList.remove('active');
+    });
+    
+    labBtn.addEventListener('click', function() {
+        currentReportType = 'lab_reports';
+        labBtn.classList.add('active');
+        drugBtn.classList.remove('active');
+        generalBtn.classList.remove('active');
+    });
+
+    generalBtn.addEventListener('click', function() {
+        currentReportType = 'general';
+        generalBtn.classList.add('active');
+        drugBtn.classList.remove('active');
+        labBtn.classList.remove('active');
+    });
+
+    function getReportDisplayName(reportType) {
+        if (reportType === 'drug_sales') return 'Drug Sales';
+        if (reportType === 'lab_reports') return 'Lab Reports';
+        if (reportType === 'general') return 'General';
+        return 'Report';
+    }
+    
+    // Generate report on button click
+    document.getElementById('generateBtn').addEventListener('click', async function() {
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+        
+        if (!startDate || !endDate) {
+            showError('Please select both start and end dates');
+            return;
+        }
+        
+        console.log('Generating report with:', {
+            type: currentReportType,
+            startDate: startDate,
+            endDate: endDate,
+            granularity: selectedGranularity
+        });
+        
+        // Show loading state
+        const resultsDiv = document.getElementById('reportResults');
+        resultsDiv.innerHTML = `
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                    <span class="sr-only">Loading...</span>
+                </div>
+                <p class="mt-3" style="font-size: 1.1rem;">Generating ${getReportDisplayName(currentReportType)} report...</p>
+            </div>
+        `;
+        
+        try {
+            const response = await fetch(
+                `/admin/reports/generate?type=${currentReportType}&start_date=${startDate}&end_date=${endDate}&granularity=${selectedGranularity}`
+            );
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Server error:', errorText);
+                throw new Error(`Server error: ${response.status} ${response.statusText}`);
+            }
+            
+            let data;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                console.error('Failed to parse JSON:', parseError);
+                const text = await response.text();
+                console.error('Response text:', text);
+                throw new Error('Invalid JSON response from server');
+            }
+            
+            // Hide generation panel and show report display
+            document.getElementById('generationPanel').style.display = 'none';
+            document.getElementById('reportDisplay').style.display = 'block';
+            document.getElementById('reportResults').style.display = 'none';
+            
+            renderReport(data);
+            
+            // Scroll to top of report
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            
+        } catch (error) {
+            showError(error.message);
+            console.error('Full error:', error);
+        }
+    });
+    
+    function renderReport(data) {
+        function formatMoney(value) {
+            const num = Number(value || 0);
+            return `Ksh.${num.toFixed(2)}`;
+        }
+
+        function setSummary(label1, value1, label2, value2, label3, value3, value2IsMoney = true, value3IsMoney = true) {
+            document.getElementById('summaryLabel1').textContent = label1;
+            document.getElementById('summaryLabel2').textContent = label2;
+            document.getElementById('summaryLabel3').textContent = label3;
+
+            document.getElementById('summaryTotalSales').textContent = formatMoney(value1);
+            document.getElementById('summaryCOGS').textContent = value2IsMoney ? formatMoney(value2) : String(value2 ?? 0);
+            document.getElementById('summaryProfit').textContent = value3IsMoney ? formatMoney(value3) : String(value3 ?? 0);
+        }
+
+        // Update Summary Section based on report type
+        const totals = data.charts?.totals || {};
+        if (data.report_type === 'drug_sales') {
+            setSummary(
+                'Total Sales Revenue', totals.sales_total || 0,
+                'Cost of Goods Sold', totals.cogs || 0,
+                'Drug Profit', totals.estimated_profit || 0,
+                true, true
+            );
+        } else if (data.report_type === 'lab_reports') {
+            const labRevenue = totals.lab_revenue || 0;
+            const labCount = totals.lab_count || 0;
+            const avg = labCount > 0 ? (labRevenue / labCount) : 0;
+            setSummary(
+                'Total Lab Revenue', labRevenue,
+                'Lab Tests (Count)', labCount,
+                'Avg Revenue / Test', avg,
+                false, true
+            );
+        } else if (data.report_type === 'general') {
+            setSummary(
+                'Total Revenue (Drugs + Labs)', totals.total_revenue || 0,
+                'Drug Revenue', totals.drug_revenue || 0,
+                'Lab Revenue', totals.lab_revenue || 0,
+                true, true
+            );
+        }
+
+        // Show/Hide drug sales specific graphs
+        document.getElementById('drugSalesGraphs').style.display = 
+            data.report_type === 'drug_sales' ? 'block' : 'none';
+
+        // Show/Hide lab/general graphs
+        document.getElementById('labGraphs').style.display =
+            data.report_type === 'lab_reports' ? 'block' : 'none';
+        document.getElementById('generalGraphs').style.display =
+            data.report_type === 'general' ? 'block' : 'none';
+
+        // Populate Data Table
+        const dataTableBody = document.getElementById('dataTableBody');
+        const dataTableTitle = document.getElementById('dataTableTitle');
+        
+        if (data.report_type === 'drug_sales') {
+            dataTableTitle.innerHTML = '<i class="fas fa-pills"></i> Drug Sales Details';
+            dataTableBody.innerHTML = '';
+            
+            if (data.data && data.data.length > 0) {
+                dataTableBody.innerHTML = `
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th>Drug Name</th>
+                        <th style="width: 100px; text-align: center;">Units Sold</th>
+                        <th style="width: 150px; text-align: right;">Total Sales</th>
+                        <th style="width: 150px; text-align: right;">Profit</th>
+                    </tr>
+                `;
+                data.data.forEach((item, idx) => {
+                    dataTableBody.innerHTML += `
+                        <tr>
+                            <td><span class="badge bg-primary">${idx + 1}</span></td>
+                            <td><strong>${item.name}</strong></td>
+                            <td style="text-align: center;"><span class="badge bg-info">${item.units_sold}</span></td>
+                            <td style="text-align: right;">Ksh.${item.total_sales.toFixed(2)}</td>
+                            <td style="text-align: right;"><strong style="color: #198754;">Ksh.${item.profit.toFixed(2)}</strong></td>
+                        </tr>
+                    `;
+                });
+            } else {
+                dataTableBody.innerHTML = `
+                    <tr><td colspan="5" class="text-center py-4">
+                        <i class="fas fa-exclamation-circle"></i> No drug sales found for this period
+                    </td></tr>
+                `;
+            }
+        } else if (data.report_type === 'lab_reports') {
+            dataTableTitle.innerHTML = '<i class="fas fa-microscope"></i> Lab Reports (By Patient)';
+            dataTableBody.innerHTML = '';
+
+            if (data.data && data.data.length > 0) {
+                dataTableBody.innerHTML = `
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th>Patient</th>
+                        <th>Labs Done</th>
+                        <th style="width: 120px; text-align: center;">Tests</th>
+                        <th style="width: 170px; text-align: right;">Total Revenue</th>
+                    </tr>
+                `;
+
+                data.data.forEach((item, idx) => {
+                    const tests = Array.isArray(item.tests) ? item.tests : [];
+                    const testsSummary = tests.length
+                        ? tests.map(t => `${t.test_name} ×${t.count} (Ksh.${Number(t.amount || 0).toFixed(2)})`).join('<br>')
+                        : '<span class="text-muted">No lab items</span>';
+
+                    dataTableBody.innerHTML += `
+                        <tr>
+                            <td><span class="badge bg-primary">${idx + 1}</span></td>
+                            <td><strong>${item.patient_name || 'Unknown'}</strong></td>
+                            <td>${testsSummary}</td>
+                            <td style="text-align: center;"><span class="badge bg-info">${item.total_count || 0}</span></td>
+                            <td style="text-align: right;"><strong style="color: #198754;">Ksh.${Number(item.total_revenue || 0).toFixed(2)}</strong></td>
+                        </tr>
+                    `;
+                });
+            } else {
+                dataTableBody.innerHTML = `
+                    <tr><td colspan="5" class="text-center py-4">
+                        <i class="fas fa-exclamation-circle"></i> No lab transactions found for this period
+                    </td></tr>
+                `;
+            }
+        } else if (data.report_type === 'general') {
+            dataTableTitle.innerHTML = '<i class="fas fa-layer-group"></i> General Report (Drugs + Labs)';
+            dataTableBody.innerHTML = '';
+
+            if (data.data && data.data.length > 0) {
+                dataTableBody.innerHTML = `
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th style="width: 90px;">Category</th>
+                        <th>Name</th>
+                        <th style="width: 120px; text-align: center;">Units/Count</th>
+                        <th style="width: 170px; text-align: right;">Total Revenue</th>
+                    </tr>
+                `;
+
+                data.data.forEach((item, idx) => {
+                    const category = item.category || '';
+                    const badge = category === 'Drug' ? 'bg-primary' : 'bg-success';
+                    dataTableBody.innerHTML += `
+                        <tr>
+                            <td><span class="badge bg-primary">${idx + 1}</span></td>
+                            <td><span class="badge ${badge}">${category}</span></td>
+                            <td><strong>${item.name || ''}</strong></td>
+                            <td style="text-align: center;"><span class="badge bg-info">${item.units || 0}</span></td>
+                            <td style="text-align: right;"><strong style="color: #198754;">Ksh.${Number(item.total_revenue || 0).toFixed(2)}</strong></td>
+                        </tr>
+                    `;
+                });
+            } else {
+                dataTableBody.innerHTML = `
+                    <tr><td colspan="5" class="text-center py-4">
+                        <i class="fas fa-exclamation-circle"></i> No data found for this period
+                    </td></tr>
+                `;
+            }
+        }
+
+        // Create Charts
+        if (data.charts && window.Chart) {
+            createTimeseriesChart(data);
+            createPieChart(data);
+
+            if (data.report_type === 'drug_sales') {
+                createTop10Charts(data);
+                createCustomerTypeChart(data);
+                updateStatBoxes(data);
+            } else if (data.report_type === 'lab_reports') {
+                createLabTopTestsChart(data);
+                createLabTopPatientsChart(data);
+            } else if (data.report_type === 'general') {
+                createGeneralTopCharts(data);
+            }
+        }
+    }
+    
+    function createTimeseriesChart(data) {
+        const ctx = document.getElementById('timeseriesChart');
+        if (!ctx) return;
+        if (window._timeseriesChart) window._timeseriesChart.destroy();
+        
+        const labels = data.charts.labels || [];
+        if (data.report_type === 'general') {
+            const drugAmounts = data.charts.drug_amounts || [];
+            const labAmounts = data.charts.lab_amounts || [];
+            window._timeseriesChart = new Chart(ctx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Drug Revenue (Ksh)',
+                            data: drugAmounts,
+                            backgroundColor: '#667eea',
+                            borderColor: '#667eea',
+                            borderWidth: 1
+                        },
+                        {
+                            label: 'Lab Revenue (Ksh)',
+                            data: labAmounts,
+                            backgroundColor: '#2ecc71',
+                            borderColor: '#2ecc71',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: { legend: { display: true, position: 'bottom' } },
+                    scales: {
+                        x: { stacked: true },
+                        y: { stacked: true, beginAtZero: true, grid: { color: '#e0e0e0' } }
+                    }
+                }
+            });
+        } else {
+            const amounts = data.charts.amounts || data.charts.lab_amounts || data.charts.drug_amounts || [];
+            const units = data.charts.units || data.charts.lab_counts || data.charts.drug_units || [];
+
+            window._timeseriesChart = new Chart(ctx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { 
+                            label: 'Amount (Ksh)', 
+                            data: amounts, 
+                            backgroundColor: '#667eea',
+                            borderColor: '#667eea',
+                            borderWidth: 1
+                        },
+                        { 
+                            label: 'Units/Count', 
+                            data: units, 
+                            backgroundColor: '#f77f00',
+                            borderColor: '#f77f00',
+                            borderWidth: 1
+                        }
+                    ]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: true, position: 'bottom' }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#e0e0e0' }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    function createPieChart(data) {
+        const ctx = document.getElementById('pieChart');
+        if (!ctx) return;
+        if (window._pieChart) window._pieChart.destroy();
+
+        // Lab breakdown pie
+        if (data.report_type === 'lab_reports') {
+            const breakdown = data.charts.lab_breakdown || { labels: [], amounts: [] };
+            const labels = (breakdown.labels || []).slice(0, 8);
+            const amounts = (breakdown.amounts || []).slice(0, 8);
+
+            const remaining = (breakdown.amounts || []).slice(8).reduce((a, b) => a + (Number(b) || 0), 0);
+            if (remaining > 0) {
+                labels.push('Other');
+                amounts.push(remaining);
+            }
+
+            window._pieChart = new Chart(ctx.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: amounts,
+                        backgroundColor: ['#667eea', '#2ecc71', '#f77f00', '#4361ee', '#ffc107', '#dc3545', '#9b59b6', '#3a86ff', '#adb5bd'],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: { legend: { display: true, position: 'bottom' } }
+                }
+            });
+            return;
+        }
+
+        // General pie: drugs vs labs
+        if (data.report_type === 'general') {
+            const totals = data.charts.totals || {};
+            const drug = Number(totals.drug_revenue || 0);
+            const lab = Number(totals.lab_revenue || 0);
+            window._pieChart = new Chart(ctx.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: [`Drugs - Ksh.${drug.toFixed(2)}`, `Labs - Ksh.${lab.toFixed(2)}`],
+                    datasets: [{
+                        data: [drug, lab],
+                        backgroundColor: ['#667eea', '#2ecc71'],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: { legend: { display: true, position: 'bottom' } }
+                }
+            });
+            return;
+        }
+        
+        const totals = data.charts.totals || {};
+        const sales = totals.sales_total || 0;
+        const cogs = totals.cogs || 0;
+        const expenses = totals.expenses || 0;
+        const profit = totals.estimated_profit || 0;
+        
+        // Calculate percentages
+        const total = sales + cogs + expenses;
+        const salesPct = total > 0 ? (sales / total * 100).toFixed(1) : 0;
+        const cogsPct = total > 0 ? (cogs / total * 100).toFixed(1) : 0;
+        const expensesPct = total > 0 ? (expenses / total * 100).toFixed(1) : 0;
+        
+        window._pieChart = new Chart(ctx.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: [
+                    `Sales (${salesPct}%) - Ksh.${sales.toFixed(2)}`,
+                    `COGS (${cogsPct}%) - Ksh.${cogs.toFixed(2)}`,
+                    `Expenses (${expensesPct}%) - Ksh.${expenses.toFixed(2)}`
+                ],
+                datasets: [{ 
+                    data: [sales, cogs, expenses], 
+                    backgroundColor: ['#667eea', '#ffc107', '#dc3545'],
+                    borderColor: ['#667eea', '#ffc107', '#dc3545'],
+                    borderWidth: 2
+                }]
+            },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: true, position: 'bottom' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.label;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function createLabTopTestsChart(data) {
+        const ctx = document.getElementById('labTopTestsChart');
+        if (!ctx) return;
+        if (window._labTopTestsChart) window._labTopTestsChart.destroy();
+
+        const top = data.charts.top_tests || { labels: [], amounts: [] };
+        window._labTopTestsChart = new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: top.labels || [],
+                datasets: [{
+                    label: 'Revenue (Ksh)',
+                    data: top.amounts || [],
+                    backgroundColor: '#2ecc71',
+                    borderColor: '#2ecc71',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: { legend: { display: false } },
+                scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+            }
+        });
+    }
+
+    function createLabTopPatientsChart(data) {
+        const ctx = document.getElementById('labTopPatientsChart');
+        if (!ctx) return;
+        if (window._labTopPatientsChart) window._labTopPatientsChart.destroy();
+
+        const top = data.charts.top_patients || { labels: [], amounts: [] };
+        window._labTopPatientsChart = new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: top.labels || [],
+                datasets: [{
+                    label: 'Revenue (Ksh)',
+                    data: top.amounts || [],
+                    backgroundColor: '#4361ee',
+                    borderColor: '#4361ee',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: { legend: { display: false } },
+                scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+            }
+        });
+    }
+
+    function createGeneralTopCharts(data) {
+        const topDrugsCtx = document.getElementById('generalTopDrugsChart');
+        if (topDrugsCtx) {
+            if (window._generalTopDrugsChart) window._generalTopDrugsChart.destroy();
+            const top = data.charts.top_drugs || { labels: [], amounts: [] };
+            window._generalTopDrugsChart = new Chart(topDrugsCtx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: top.labels || [],
+                    datasets: [{
+                        label: 'Revenue (Ksh)',
+                        data: top.amounts || [],
+                        backgroundColor: '#667eea',
+                        borderColor: '#667eea',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                }
+            });
+        }
+
+        const topLabsCtx = document.getElementById('generalTopLabTestsChart');
+        if (topLabsCtx) {
+            if (window._generalTopLabTestsChart) window._generalTopLabTestsChart.destroy();
+            const top = data.charts.top_tests || { labels: [], amounts: [] };
+            window._generalTopLabTestsChart = new Chart(topLabsCtx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: top.labels || [],
+                    datasets: [{
+                        label: 'Revenue (Ksh)',
+                        data: top.amounts || [],
+                        backgroundColor: '#2ecc71',
+                        borderColor: '#2ecc71',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                }
+            });
+        }
+    }
+
+    function createTop10Charts(data) {
+        if (!data.charts.top10_daily) return;
+
+        // Daily Top 10
+        const top10DailyCtx = document.getElementById('top10DailyChart');
+        if (top10DailyCtx) {
+            if (window._top10DailyChart) window._top10DailyChart.destroy();
+            const dailyLabels = data.charts.top10_daily.labels.map((label, idx) => 
+                `${label} (${data.charts.top10_daily.percentages[idx]}%) - Ksh.${data.charts.top10_daily.amounts[idx].toFixed(2)}`
+            );
+            window._top10DailyChart = new Chart(top10DailyCtx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: dailyLabels,
+                    datasets: [{ 
+                        label: 'Amount Sold (Ksh)', 
+                        data: data.charts.top10_daily.amounts,
+                        backgroundColor: '#667eea',
+                        borderColor: '#667eea',
+                        borderWidth: 1
+                    }]
+                },
+                options: { 
+                    indexAxis: 'y',
+                    responsive: true, 
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                afterLabel: function(context) {
+                                    const idx = context.dataIndex;
+                                    const profit = data.charts.top10_daily.profits[idx];
+                                    return `Profit: Ksh.${profit.toFixed(2)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                }
+            });
+        }
+
+        // Weekly Top 10
+        const top10WeeklyCtx = document.getElementById('top10WeeklyChart');
+        if (top10WeeklyCtx) {
+            if (window._top10WeeklyChart) window._top10WeeklyChart.destroy();
+            const weeklyLabels = data.charts.top10_weekly.labels.map((label, idx) => 
+                `${label} (${data.charts.top10_weekly.percentages[idx]}%) - Ksh.${data.charts.top10_weekly.amounts[idx].toFixed(2)}`
+            );
+            window._top10WeeklyChart = new Chart(top10WeeklyCtx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: weeklyLabels,
+                    datasets: [{ 
+                        label: 'Amount Sold (Ksh)', 
+                        data: data.charts.top10_weekly.amounts,
+                        backgroundColor: '#f77f00',
+                        borderColor: '#f77f00',
+                        borderWidth: 1
+                    }]
+                },
+                options: { 
+                    indexAxis: 'y',
+                    responsive: true, 
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                afterLabel: function(context) {
+                                    const idx = context.dataIndex;
+                                    const profit = data.charts.top10_weekly.profits[idx];
+                                    return `Profit: Ksh.${profit.toFixed(2)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                }
+            });
+        }
+
+        // Monthly Top 10
+        const top10MonthlyCtx = document.getElementById('top10MonthlyChart');
+        if (top10MonthlyCtx) {
+            if (window._top10MonthlyChart) window._top10MonthlyChart.destroy();
+            const monthlyLabels = data.charts.top10_monthly.labels.map((label, idx) => 
+                `${label} (${data.charts.top10_monthly.percentages[idx]}%) - Ksh.${data.charts.top10_monthly.amounts[idx].toFixed(2)}`
+            );
+            window._top10MonthlyChart = new Chart(top10MonthlyCtx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: monthlyLabels,
+                    datasets: [{ 
+                        label: 'Amount Sold (Ksh)', 
+                        data: data.charts.top10_monthly.amounts,
+                        backgroundColor: '#2ecc71',
+                        borderColor: '#2ecc71',
+                        borderWidth: 1
+                    }]
+                },
+                options: { 
+                    indexAxis: 'y',
+                    responsive: true, 
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                afterLabel: function(context) {
+                                    const idx = context.dataIndex;
+                                    const profit = data.charts.top10_monthly.profits[idx];
+                                    return `Profit: Ksh.${profit.toFixed(2)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                }
+            });
+        }
+
+        // Yearly Top 10
+        const top10YearlyCtx = document.getElementById('top10YearlyChart');
+        if (top10YearlyCtx && data.charts.top10_yearly) {
+            if (window._top10YearlyChart) window._top10YearlyChart.destroy();
+            const yearlyLabels = data.charts.top10_yearly.labels.map((label, idx) => 
+                `${label} (${data.charts.top10_yearly.percentages[idx]}%) - Ksh.${data.charts.top10_yearly.amounts[idx].toFixed(2)}`
+            );
+            window._top10YearlyChart = new Chart(top10YearlyCtx.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: yearlyLabels,
+                    datasets: [{ 
+                        label: 'Amount Sold (Ksh)', 
+                        data: data.charts.top10_yearly.amounts,
+                        backgroundColor: '#9b59b6',
+                        borderColor: '#9b59b6',
+                        borderWidth: 1
+                    }]
+                },
+                options: { 
+                    indexAxis: 'y',
+                    responsive: true, 
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                afterLabel: function(context) {
+                                    const idx = context.dataIndex;
+                                    const profit = data.charts.top10_yearly.profits[idx];
+                                    return `Profit: Ksh.${profit.toFixed(2)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                }
+            });
+        }
+    }
+
+    function createCustomerTypeChart(data) {
+        const ctx = document.getElementById('customerTypeChart');
+        if (!ctx) return;
+        if (window._customerTypeChart) window._customerTypeChart.destroy();
+        
+        const patientAmount = data.charts.patient_sales || 0;
+        const counterAmount = data.charts.overcounter_sales || 0;
+        const patientPct = data.charts.patient_percentage || 0;
+        const counterPct = data.charts.overcounter_percentage || 0;
+        
+        window._customerTypeChart = new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: [
+                    `Patient Sales (${patientPct}%)`,
+                    `Over-the-Counter (${counterPct}%)`
+                ],
+                datasets: [
+                    { 
+                        label: 'Amount (Ksh)', 
+                        data: [patientAmount, counterAmount],
+                        backgroundColor: ['#4361ee', '#3a86ff'],
+                        borderColor: ['#4361ee', '#3a86ff'],
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: true, position: 'bottom' },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const amounts = [patientAmount, counterAmount];
+                                return `Amount: Ksh.${amounts[context.dataIndex].toFixed(2)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: '#e0e0e0' }
+                    }
+                }
+            }
+        });
+    }
+
+    function updateStatBoxes(data) {
+        const patientPct = data.charts.patient_percentage || 0;
+        const counterPct = data.charts.overcounter_percentage || 0;
+        
+        document.getElementById('patientSalesValue').textContent = `Ksh.${(data.charts.patient_sales || 0).toFixed(2)}`;
+        document.getElementById('patientUnitsValue').innerHTML = `${data.charts.patient_units || 0} units <span style="color: #667eea; font-weight: bold;">(${patientPct}%)</span>`;
+        document.getElementById('overthecounterSalesValue').textContent = `Ksh.${(data.charts.overcounter_sales || 0).toFixed(2)}`;
+        document.getElementById('overthecounterUnitsValue').innerHTML = `${data.charts.overcounter_units || 0} units <span style="color: #f77f00; font-weight: bold;">(${counterPct}%)</span>`;
+    }
+    
+    function showError(message) {
+        document.getElementById('reportResults').style.display = 'block';
+        document.getElementById('reportDisplay').style.display = 'none';
+        document.getElementById('reportResults').innerHTML = `
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="fas fa-exclamation-circle"></i> <strong>Error:</strong> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        `;
+    }
+});
+</script>
+
+<style>
+/* Report Generation Panel */
+#generationPanel .card-body {
+    background: #ffffff;
+}
+
+#generationPanel .row.mb-4.align-items-end {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    padding: 16px;
+    margin-left: 0;
+    margin-right: 0;
+}
+
+#generationPanel .form-label {
+    color: #495057;
+    letter-spacing: 0.2px;
+}
+
+#generationPanel .form-control,
+#generationPanel .form-select {
+    border-radius: 10px;
+    padding: 10px 12px;
+    border-color: #dee2e6;
+}
+
+#generationPanel .form-control:focus,
+#generationPanel .form-select:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.18);
+}
+
+#generationPanel .btn-group {
+    background: rgba(255, 255, 255, 0.18);
+    padding: 4px;
+    border-radius: 12px;
+}
+
+#generationPanel .btn-group .btn {
+    border-radius: 10px !important;
+}
+
+#generateBtn {
+    border-radius: 10px;
+}
+
+#granularityDetails .alert {
+    border-radius: 12px;
+}
+
+/* Button Styles */
+.btn-group .btn.active {
+    background-color: #e9ecef;
+    border-color: #dee2e6;
+    color: #495057;
+    font-weight: 600;
+}
+
+/* Summary Box Styles */
+.summary-box {
+    background: white;
+    border: 2px solid #e9ecef;
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.3s ease;
+    height: 100%;
+}
+
+.summary-box:hover {
+    border-color: #667eea;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+    transform: translateY(-2px);
+}
+
+.summary-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 10px;
+    color: white;
+    font-size: 1.5rem;
+}
+
+.summary-label {
+    font-size: 0.85rem;
+    color: #6c757d;
+    font-weight: 600;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #333;
+}
+
+/* Chart Wrapper Styles */
+.chart-wrapper {
+    position: relative;
+    width: 100%;
+    height: 350px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.chart-wrapper canvas {
+    flex: 1;
+    max-height: 330px !important;
+    width: 100% !important;
+}
+
+.chart-wrapper-small {
+    position: relative;
+    width: 100%;
+    height: 250px;
+    display: flex;
+    flex-direction: column;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.chart-wrapper-small canvas {
+    flex: 1;
+    max-height: 210px !important;
+    width: 100% !important;
+}
+
+.chart-subtitle {
+    color: #667eea;
+    font-weight: 600;
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+}
+
+/* Stat Box Styles */
+.stats-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.stat-box {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-left: 4px solid;
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.stat-box.stat-patient {
+    border-left-color: #4361ee;
+}
+
+.stat-box.stat-counter {
+    border-left-color: #f77f00;
+}
+
+.stat-box:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+}
+
+.stat-label {
+    font-size: 0.85rem;
+    color: #6c757d;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.stat-value {
+    font-size: 1.3rem;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.stat-box.stat-patient .stat-value {
+    color: #4361ee;
+}
+
+.stat-box.stat-counter .stat-value {
+    color: #f77f00;
+}
+
+.stat-units {
+    font-size: 0.8rem;
+    color: #495057;
+}
+
+/* Card Styles */
+.card {
+    transition: all 0.3s ease;
+    border: 1px solid #e9ecef !important;
+}
+
+.card:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1) !important;
+}
+
+.card-header {
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1) !important;
+    font-weight: 600;
+}
+
+/* Reports: chart section spacing */
+#labGraphs .card,
+#generalGraphs .card {
+    border-radius: 14px;
+}
+
+#labGraphs .card-body,
+#generalGraphs .card-body {
+    padding: 18px;
+}
+
+/* Table Styles */
+.table {
+    border-collapse: collapse;
+}
+
+.table thead th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    color: #333;
+    border-top: none;
+    padding: 12px;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    letter-spacing: 0.5px;
+}
+
+.table tbody td {
+    padding: 12px;
+    vertical-align: middle;
+    border-color: #e9ecef;
+}
+
+.table tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+.table tfoot td {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    padding: 12px;
+    border-color: #e9ecef;
+}
+
+/* Badge Styles */
+.badge {
+    padding: 6px 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+/* Loading Spinner */
+.spinner-border {
+    color: #667eea;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .chart-wrapper {
+        height: 280px;
+    }
+    
+    .chart-wrapper-small {
+        height: 200px;
+    }
+    
+    .summary-box {
+        margin-bottom: 10px;
+    }
+    
+    .stat-box {
+        margin-bottom: 10px;
+    }
+}
+
+/* Print Styles */
+@media print {
+    #generationPanel {
+        display: none !important;
+    }
+    
+    .btn, button {
+        display: none !important;
+    }
+    
+    .card {
+        page-break-inside: avoid;
+        box-shadow: none;
+        border: 1px solid #ddd !important;
+    }
+}
+</style>
+{% endblock %}
