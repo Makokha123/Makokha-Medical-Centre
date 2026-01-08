@@ -1,0 +1,342 @@
+/* ===== PROFESSIONAL TABLE STYLING ===== */
+/* Table Container with Overflow Management */
+.table-container {
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column;
+}
+
+/* Modern Table Styling */
+.modern-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0;
+    font-size: 0.95rem;
+    color: #333;
+}
+
+/* Table Header - Sticky with Professional Appearance */
+.modern-table thead {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.modern-table thead th {
+    padding: 16px;
+    text-align: left;
+    color: white;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    border: none;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.modern-table thead th:last-child {
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* Table Body Styling */
+.modern-table tbody {
+    max-height: 600px;
+    overflow-y: auto;
+    overflow-x: auto;
+    display: block;
+}
+
+.modern-table thead {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+}
+
+.modern-table tbody tr {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.modern-table tbody tr:hover {
+    background-color: #f8f9ff;
+    box-shadow: inset 0 0 0 1px rgba(102, 126, 234, 0.1);
+}
+
+.modern-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.modern-table tbody td {
+    padding: 14px 16px;
+    vertical-align: middle;
+    border: none;
+    color: #555;
+}
+
+.modern-table tbody td:last-child {
+    text-align: center;
+}
+
+/* Amount Cell Styling */
+.modern-table .amount-cell {
+    color: #2d5f2e;
+    font-weight: 600;
+    font-family: 'Courier New', monospace;
+}
+
+/* Action Buttons Container */
+.modern-table .action-btns {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.modern-table .btn-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.modern-table .action-btn {
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.modern-table .action-btn.btn-primary {
+    background-color: #667eea;
+    color: white;
+}
+
+.modern-table .action-btn.btn-primary:hover {
+    background-color: #5568d3;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.modern-table .action-btn.btn-danger {
+    background-color: #dc3545;
+    color: white;
+}
+
+.modern-table .action-btn.btn-danger:hover {
+    background-color: #c82333;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+}
+
+.modern-table .action-btn.btn-success {
+    background-color: #28a745;
+    color: white;
+}
+
+.modern-table .action-btn.btn-success:hover {
+    background-color: #218838;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
+}
+
+.modern-table .action-btn.btn-info {
+    background-color: #17a2b8;
+    color: white;
+}
+
+.modern-table .action-btn.btn-info:hover {
+    background-color: #138496;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(23, 162, 184, 0.4);
+}
+
+/* Responsive Tables - Hide actions on very small screens */
+@media (max-width: 576px) {
+    .modern-table thead th {
+        padding: 12px 8px;
+        font-size: 0.9rem;
+    }
+    
+    .modern-table tbody td {
+        padding: 10px 8px;
+        font-size: 0.9rem;
+    }
+    
+    .modern-table .action-btn {
+        padding: 4px 8px;
+        font-size: 0.75rem;
+    }
+}
+
+/* ===== MOBILE-FIRST STYLES ===== */
+@media (max-width: 768px) {
+    /* Make tables scroll horizontally */
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    /* Table Container Mobile */
+    .table-container {
+        border-radius: 6px;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    
+    /* Adjust form layout */
+    .row.g-3 > [class^="col-"] {
+        margin-bottom: 1rem;
+    }
+    
+    /* Make buttons full width */
+    .btn {
+        width: 100%;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Adjust card padding */
+    .card-body {
+        padding: 1rem;
+    }
+    
+    /* Make navigation more compact */
+    .navbar-brand {
+        font-size: 1.1rem;
+    }
+}
+
+/* Payroll Table Specific Styling */
+#payroll-table thead th {
+    padding: 10px 8px;
+    font-size: 0.85rem;
+    white-space: normal;
+    word-break: break-word;
+}
+
+#payroll-table tbody tr {
+    height: auto;
+}
+
+#payroll-table tbody td {
+    padding: 8px 6px;
+    font-size: 0.9rem;
+    text-align: left;
+    vertical-align: middle;
+    word-break: break-word;
+}
+
+#payroll-table {
+    table-layout: auto;
+    min-width: 100%;
+}
+
+#payroll-table thead {
+    display: table;
+    width: 100%;
+    table-layout: auto;
+}
+
+#payroll-table tbody {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 600px;
+}
+
+#payroll-table tbody tr {
+    display: table;
+    width: 100%;
+    table-layout: auto;
+}
+
+/* Column width adjustments for payroll table */
+#payroll-table th:nth-child(1),
+#payroll-table td:nth-child(1) {
+    min-width: 40px;
+    width: 3%;
+}
+
+#payroll-table th:nth-child(2),
+#payroll-table td:nth-child(2) {
+    min-width: 120px;
+    width: 12%;
+}
+
+#payroll-table th:nth-child(3),
+#payroll-table td:nth-child(3) {
+    min-width: 100px;
+    width: 10%;
+}
+
+#payroll-table th:nth-child(4),
+#payroll-table td:nth-child(4) {
+    min-width: 100px;
+    width: 10%;
+}
+
+#payroll-table th:nth-child(5),
+#payroll-table td:nth-child(5) {
+    min-width: 100px;
+    width: 10%;
+}
+
+#payroll-table th:nth-child(6),
+#payroll-table td:nth-child(6) {
+    min-width: 100px;
+    width: 10%;
+}
+
+#payroll-table th:nth-child(7),
+#payroll-table td:nth-child(7) {
+    min-width: 100px;
+    width: 10%;
+}
+
+#payroll-table th:nth-child(8),
+#payroll-table td:nth-child(8) {
+    min-width: 100px;
+    width: 10%;
+}
+
+#payroll-table th:nth-child(9),
+#payroll-table td:nth-child(9) {
+    min-width: 100px;
+    width: 10%;
+}
+
+#payroll-table th:nth-child(10),
+#payroll-table td:nth-child(10) {
+    min-width: 120px;
+    width: 15%;
+}
+
+/* General improvements */
+.btn-group-sm .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+/* Make sure alerts are visible */
+.alert {
+    margin-bottom: 1rem;
+}
+
+/* Improve form input sizes */
+.form-control, .form-select {
+    padding: 0.375rem 0.75rem;
+}
