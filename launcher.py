@@ -14,9 +14,10 @@ from app import app
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', '5000'))
-    print("Starting application on port", port)
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() in ['true', '1', 't']
+    print(f"Starting application on port {port} with debug mode {'on' if debug_mode else 'off'}")
     app.run(
         host='0.0.0.0',
         port=port,
-        debug=True,
+        debug=debug_mode,
     )

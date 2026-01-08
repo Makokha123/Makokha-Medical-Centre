@@ -27,7 +27,10 @@
                     <button class="dropbtn"><i class="fas fa-user-circle"></i></button>
                     <div class="dropdown-content">
                         <a href="#"><i class="fas fa-user"></i> Profile</a>
-                        <a href="{{ url_for('logout') }}"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                        <form id="logout-form" action="{{ url_for('logout') }}" method="POST" style="display: none;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+</form>
+<a href="#" onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><i class="fas fa-sign-out-alt"></i> Logout</a>
                     </div>
                 </div>
             </div>
@@ -90,6 +93,27 @@
                                 {% endfor %}
                             </div>
                         </div>
+
+                        <div class="form-group">
+                            <label>Imaging Tests</label>
+                            <div class="lab-list">
+                                {% for test in imaging_tests %}
+                                <div class="lab-item">
+                                    <input type="checkbox" id="imaging-{{ test.id }}" name="imaging_tests" value="{{ test.id }}">
+                                    <label for="imaging-{{ test.id }}">
+                                        {{ test.name }} - ${{ "%.2f"|format(test.price) }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Ward Stay</label>
+                            <div id="ward-stay-container" class="alert alert-info">
+                                Select a patient to view ward stay charges
+                            </div>
+                        </div>
                         
                         <div class="form-group">
                             <label>Prescriptions</label>
@@ -139,8 +163,16 @@
                             <span class="summary-value" id="labs-total">$0.00</span>
                         </div>
                         <div class="summary-item">
+                            <span class="summary-label">Imaging:</span>
+                            <span class="summary-value" id="imaging-total">$0.00</span>
+                        </div>
+                        <div class="summary-item">
                             <span class="summary-label">Medications:</span>
                             <span class="summary-value" id="meds-total">$0.00</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Ward Stay:</span>
+                            <span class="summary-value" id="ward-total">$0.00</span>
                         </div>
                         <div class="summary-item total">
                             <span class="summary-label">Total Amount:</span>
@@ -197,6 +229,7 @@ document.getElementById('patient-search').addEventListener('input', function(e) 
                         button.addEventListener('click', function() {
                             document.getElementById('patient-id').value = this.getAttribute('data-id');
                             loadPatientPrescriptions(this.getAttribute('data-id'));
+                            loadPatientWardStay(this.getAttribute('data-id'));
                             resultsContainer.innerHTML = '';
                         });
                     });
@@ -205,6 +238,13 @@ document.getElementById('patient-search').addEventListener('input', function(e) 
                 }
             });
     }
+});
+
+document.getElementById('patient-id').addEventListener('change', function() {
+    const patientId = this.value;
+    if (!patientId) return;
+    loadPatientPrescriptions(patientId);
+    loadPatientWardStay(patientId);
 });
 
 // Load prescriptions when patient is selected
@@ -243,11 +283,59 @@ function loadPatientPrescriptions(patientId) {
         });
 }
 
+function loadPatientWardStay(patientId) {
+    const container = document.getElementById('ward-stay-container');
+    container.className = 'alert alert-info';
+    container.textContent = 'Loading ward stay charges...';
+
+    fetch(`/api/patient/${patientId}/ward-stay-preview`)
+        .then(response => response.json())
+        .then(data => {
+            if (data && data.error) {
+                container.className = 'alert alert-danger';
+                container.textContent = data.error;
+                return;
+            }
+            if (!data || !data.assigned) {
+                container.className = 'alert alert-info';
+                container.textContent = 'No occupied bed assigned for this patient.';
+                return;
+            }
+
+            const amount = Number(data.amount || 0);
+            const days = Number(data.days || 0);
+            const rate = Number(data.daily_rate || 0);
+
+            if (amount <= 0 || days <= 0 || rate <= 0) {
+                container.className = 'alert alert-warning';
+                container.innerHTML = `Ward stay detected (${data.ward_name} - Bed ${data.bed_number}), but daily rate is 0 or nothing is due.`;
+                return;
+            }
+
+            container.className = '';
+            container.innerHTML = `
+                <div class="service-item">
+                    <input type="checkbox" id="ward-stay" name="include_ward_stay" value="1" data-amount="${amount.toFixed(2)}">
+                    <label for="ward-stay">
+                        ${data.ward_name} - Bed ${data.bed_number}: ${days} day(s) x $${rate.toFixed(2)} = $${amount.toFixed(2)}
+                        <small>(${data.start_date} to ${data.end_date})</small>
+                    </label>
+                </div>
+            `;
+        })
+        .catch(() => {
+            container.className = 'alert alert-danger';
+            container.textContent = 'Failed to load ward stay charges.';
+        });
+}
+
 // Calculate totals when items are selected
 document.getElementById('billing-form').addEventListener('change', function() {
     let servicesTotal = 0;
     let labsTotal = 0;
+    let imagingTotal = 0;
     let medsTotal = 0;
+    let wardTotal = 0;
     
     // Calculate services total
     document.querySelectorAll('input[name="services"]:checked').forEach(checkbox => {
@@ -260,19 +348,34 @@ document.getElementById('billing-form').addEventListener('change', function() {
         const price = parseFloat(checkbox.nextElementSibling.textContent.match(/\$([\d.]+)/)[1]);
         labsTotal += price;
     });
+
+    // Calculate imaging tests total
+    document.querySelectorAll('input[name="imaging_tests"]:checked').forEach(checkbox => {
+        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/\$([\d.]+)/)[1]);
+        imagingTotal += price;
+    });
     
     // Calculate medications total
     document.querySelectorAll('input[name="prescription_items"]:checked').forEach(checkbox => {
         const priceText = checkbox.nextElementSibling.textContent.match(/= \$([\d.]+)/)[1];
         medsTotal += parseFloat(priceText);
     });
+
+    // Calculate ward stay total
+    const wardCheckbox = document.getElementById('ward-stay');
+    if (wardCheckbox && wardCheckbox.checked) {
+        const amt = parseFloat(wardCheckbox.dataset.amount || '0');
+        if (!Number.isNaN(amt)) wardTotal += amt;
+    }
     
     // Update the summary
     document.getElementById('services-total').textContent = `$${servicesTotal.toFixed(2)}`;
     document.getElementById('labs-total').textContent = `$${labsTotal.toFixed(2)}`;
+    document.getElementById('imaging-total').textContent = `$${imagingTotal.toFixed(2)}`;
     document.getElementById('meds-total').textContent = `$${medsTotal.toFixed(2)}`;
+    document.getElementById('ward-total').textContent = `$${wardTotal.toFixed(2)}`;
     
-    const totalAmount = servicesTotal + labsTotal + medsTotal;
+    const totalAmount = servicesTotal + labsTotal + imagingTotal + medsTotal + wardTotal;
     document.getElementById('total-amount').textContent = `$${totalAmount.toFixed(2)}`;
 });
 </script>

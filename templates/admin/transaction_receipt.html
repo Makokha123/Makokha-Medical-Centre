@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transaction Receipt</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .receipt-container { max-width: 700px; margin: 0 auto; }
+    .receipt-header { text-align: center; margin-bottom: 20px; }
+    .receipt-details { margin-bottom: 20px; }
+    .receipt-items table { width: 100%; border-collapse: collapse; }
+    .receipt-items th, .receipt-items td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    .receipt-items th { background-color: #f2f2f2; }
+    .receipt-total { margin-top: 20px; text-align: right; font-weight: bold; }
+    .no-print { margin-bottom: 15px; text-align: right; }
+    .btn { display: inline-block; padding: 10px 16px; border: 1px solid #333; background: #fff; color: #333; text-decoration: none; cursor: pointer; }
+    .btn + .btn { margin-left: 8px; }
+    @media print {
+      .no-print { display: none !important; }
+      body { margin: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt-container">
+    <div class="no-print">
+      <button class="btn" onclick="window.print()">Print / Save PDF</button>
+    </div>
+
+    <div class="receipt-header">
+      <h2>Makokha Medical Centre</h2>
+      <h3>Transaction Receipt</h3>
+    </div>
+
+    <div class="receipt-details">
+      <p><strong>Receipt #:</strong> {{ transaction.receipt_number or ('TX-' ~ transaction.id) }}</p>
+      <p><strong>Transaction #:</strong> {{ transaction.transaction_number }}</p>
+      <p><strong>Type:</strong> {{ transaction.transaction_type|capitalize }}</p>
+      <p><strong>Date:</strong> {{ transaction.created_at.strftime('%Y-%m-%d %H:%M') if transaction.created_at else '' }}</p>
+      {% if transaction.receipt_reprinted_at %}
+        <p><strong>Reprinted:</strong> {{ transaction.receipt_reprinted_at.strftime('%Y-%m-%d %H:%M') }}</p>
+      {% endif %}
+      <p><strong>Processed By:</strong> {{ transaction.user.username if transaction.user else '' }}</p>
+      {% if transaction.notes %}
+        <p><strong>Notes:</strong> {{ transaction.notes }}</p>
+      {% endif %}
+    </div>
+
+    {% if sale %}
+      <div class="receipt-items">
+        <h4>Sale Items</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>Drug</th>
+              <th>Qty</th>
+              <th>Unit Price</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in sale.items %}
+              <tr>
+                <td>{{ item.drug_name }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>KSh {{ "%.2f"|format(item.unit_price) }}</td>
+                <td>KSh {{ "%.2f"|format(item.total_price) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="receipt-total">Total: KSh {{ "%.2f"|format(sale.total_amount) }}</div>
+
+    {% elif refund %}
+      <div class="receipt-items">
+        <h4>Refund Items</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>Unit Price</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in refund.items %}
+              <tr>
+                <td>{{ item.sale_item.drug_name if item.sale_item else 'Item' }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>KSh {{ "%.2f"|format(item.unit_price) }}</td>
+                <td>KSh {{ "%.2f"|format(item.total_price) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="receipt-total">Refund Total: KSh {{ "%.2f"|format(refund.total_amount) }}</div>
+
+    {% elif expense %}
+      <div class="receipt-details">
+        <h4>Expense</h4>
+        <p><strong>Category:</strong> {{ expense.category if expense else '' }}</p>
+        <p><strong>Description:</strong> {{ expense.description if expense else '' }}</p>
+      </div>
+      <div class="receipt-total">Amount: KSh {{ "%.2f"|format(transaction.amount) }}</div>
+
+    {% elif purchase %}
+      <div class="receipt-details">
+        <h4>Purchase</h4>
+        <p><strong>Supplier:</strong> {{ purchase.supplier if purchase else '' }}</p>
+        <p><strong>Invoice #:</strong> {{ purchase.invoice_number if purchase else '' }}</p>
+      </div>
+      <div class="receipt-total">Amount: KSh {{ "%.2f"|format(transaction.amount) }}</div>
+
+    {% else %}
+      <div class="receipt-total">Amount: KSh {{ "%.2f"|format(transaction.amount) }}</div>
+    {% endif %}
+
+  </div>
+</body>
+</html>

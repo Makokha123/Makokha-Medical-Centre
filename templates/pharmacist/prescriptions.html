@@ -77,7 +77,10 @@
                         <a class="nav-link" href="#"><i class="fas fa-user me-1"></i> Pharmacist</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="#"><i class="fas fa-sign-out-alt me-1"></i> Logout</a>
+                        <form id="logout-form" action="{{ url_for('logout') }}" method="POST" style="display: none;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+</form>
+<a class="nav-link" href="#" onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><i class="fas fa-sign-out-alt me-1"></i> Logout</a>
                     </li>
                 </ul>
             </div>

@@ -5,7 +5,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
 
-<div class="doctor-patient-container">
+<div class="doctor-patient-container" data-patient-id="{{ patient.id }}">
     <!-- Patient Header -->
     <div class="patient-header">
         <div class="header-content">
@@ -47,6 +47,9 @@
                     </button>
                 </form>
                 {% endif %}
+                <a href="{{ url_for('patient_ward_bill', patient_id=patient.id) }}" class="btn btn-secondary">
+                    <i class="fas fa-bed"></i> Ward Bill
+                </a>
                 <button class="btn btn-info" onclick="printPatientSummary()">
                     <i class="fas fa-print"></i> Print Summary
                 </button>
@@ -54,23 +57,24 @@
         </div>
     </div>
 
+    {% if is_embed %}
     <div id="alert-container">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
-                    <div class="alert alert-{{ category }} animate__animated animate__fadeIn">
-                        <div class="alert-content">
-                            <span class="alert-message">{{ message }}</span>
-                            <button class="close-alert">&times;</button>
-                        </div>
-                    </div>
+                    <div class="alert alert-{{ category }} alert-auto-close" role="alert">{{ message }}</div>
                 {% endfor %}
             {% endif %}
         {% endwith %}
     </div>
+    {% endif %}
 
     <!-- Navigation Tabs -->
     <div class="navigation-tabs">
+        <div class="tab" data-tab="biodata">
+            <i class="fas fa-id-card"></i>
+            <span>Biodata</span>
+        </div>
         <div class="tab active" data-tab="chief-complaint">
             <i class="fas fa-stethoscope"></i>
             <span>Chief Complaint</span>
@@ -109,10 +113,131 @@
         </div>
     </div>
 
+    <!-- Biodata Tab -->
+    <div class="tab-content" id="biodata-tab">
+        <div class="section-header">
+            <h2><i class="fas fa-id-card"></i> Biodata</h2>
+            {% if biodata_nav and biodata_nav.total %}
+            <div class="section-version-nav">
+                <span class="text-muted">Updated: {{ biodata_entry.created_at.strftime('%Y-%m-%d %H:%M') if biodata_entry and biodata_entry.created_at else 'N/A' }} ({{ biodata_nav.index }}/{{ biodata_nav.total }})</span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, biodata_id=biodata_nav.prev_id) if biodata_nav.prev_id else '#' }}" {% if not biodata_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    <i class="fas fa-chevron-left"></i> Prev
+                </a>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, biodata_id=biodata_nav.next_id) if biodata_nav.next_id else '#' }}" {% if not biodata_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+            </div>
+            {% endif %}
+        </div>
+
+        <form method="POST" class="biodata-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="section" value="biodata">
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" name="name" class="form-control" value="{{ patient.decrypted_name }}" required>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-group">
+                        <label>Age</label>
+                        <input type="number" name="age" class="form-control" value="{{ patient.age or '' }}">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-group">
+                        <label>Gender</label>
+                        <select name="gender" class="form-control">
+                            <option value="" {% if not patient.gender %}selected{% endif %}>Select</option>
+                            <option value="Male" {% if patient.gender == 'Male' %}selected{% endif %}>Male</option>
+                            <option value="Female" {% if patient.gender == 'Female' %}selected{% endif %}>Female</option>
+                            <option value="Other" {% if patient.gender == 'Other' %}selected{% endif %}>Other</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label>Address</label>
+                        <input type="text" name="address" class="form-control" value="{{ patient.decrypted_address }}">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-group">
+                        <label>Phone</label>
+                        <input type="text" name="phone" class="form-control" value="{{ biodata_view.phone or '' }}">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-group">
+                        <label>TCA</label>
+                        <input type="date" name="tca" class="form-control" value="{{ biodata_view.tca.strftime('%Y-%m-%d') if biodata_view.tca else '' }}">
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="form-group">
+                        <label>Destination</label>
+                        <input type="text" name="destination" class="form-control" value="{{ patient.destination or '' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="form-group">
+                        <label>Occupation</label>
+                        <input type="text" name="occupation" class="form-control" value="{{ patient.decrypted_occupation }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="form-group">
+                        <label>Religion</label>
+                        <input type="text" name="religion" class="form-control" value="{{ biodata_view.religion or '' }}">
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label>Next of Kin Name</label>
+                        <input type="text" name="nok_name" class="form-control" value="{{ biodata_view.nok_name or '' }}">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label>Next of Kin Contact</label>
+                        <input type="text" name="nok_contact" class="form-control" value="{{ biodata_view.nok_contact or '' }}">
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">
+                <i class="fas fa-save"></i> Save Biodata
+            </button>
+        </form>
+    </div>
+
     <!-- Chief Complaint Tab -->
     <div class="tab-content active" id="chief-complaint-tab">
         <div class="section-header">
             <h2><i class="fas fa-stethoscope"></i> Chief Complaint</h2>
+            {% if chief_complaint_nav and chief_complaint_nav.total %}
+            <div class="section-version-nav">
+                <span class="text-muted">Updated: {{ chief_complaint_entry.created_at.strftime('%Y-%m-%d %H:%M') if chief_complaint_entry and chief_complaint_entry.created_at else 'N/A' }} ({{ chief_complaint_nav.index }}/{{ chief_complaint_nav.total }})</span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, complaint_id=chief_complaint_nav.prev_id) if chief_complaint_nav.prev_id else '#' }}" {% if not chief_complaint_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    <i class="fas fa-chevron-left"></i> Prev
+                </a>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, complaint_id=chief_complaint_nav.next_id) if chief_complaint_nav.next_id else '#' }}" {% if not chief_complaint_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+            </div>
+            {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openChiefComplaintModal()">
                 <i class="fas fa-plus"></i> Add New Entry
             </button>
@@ -120,20 +245,20 @@
         
         <div class="complaint-history">
             <h3>Complaint History</h3>
-            {% if patient.chief_complaint %}
+            {% if chief_complaint_text %}
                 <div class="complaint-entry current">
                     <div class="complaint-header">
-                        <span class="complaint-date">Current</span>
+                        <span class="complaint-date">{{ chief_complaint_entry.created_at.strftime('%Y-%m-%d %H:%M') if chief_complaint_entry and chief_complaint_entry.created_at else 'Current' }}</span>
                         <span class="complaint-author">Latest Entry</span>
                     </div>
                     <div class="complaint-content">
-                        {{ patient.chief_complaint }}
+                        {{ chief_complaint_text }}
                     </div>
                 </div>
             {% endif %}
             
             <!-- Historical entries would be displayed here -->
-            {% if not patient.chief_complaint %}
+            {% if not chief_complaint_text %}
                 <div class="empty-state">
                     <i class="fas fa-stethoscope"></i>
                     <p>No chief complaint entries recorded yet</p>
@@ -146,6 +271,17 @@
     <div class="tab-content" id="hpi-tab">
         <div class="section-header">
             <h2><i class="fas fa-history"></i> History of Present Illness</h2>
+            {% if hpi_nav and hpi_nav.total %}
+            <div class="section-version-nav">
+                <span class="text-muted">Updated: {{ hpi_entry.created_at.strftime('%Y-%m-%d %H:%M') if hpi_entry and hpi_entry.created_at else 'N/A' }} ({{ hpi_nav.index }}/{{ hpi_nav.total }})</span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, hpi_id=hpi_nav.prev_id) if hpi_nav.prev_id else '#' }}" {% if not hpi_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    <i class="fas fa-chevron-left"></i> Prev
+                </a>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, hpi_id=hpi_nav.next_id) if hpi_nav.next_id else '#' }}" {% if not hpi_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+            </div>
+            {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openHPIModal()">
                 <i class="fas fa-plus"></i> Add New Entry
             </button>
@@ -153,19 +289,19 @@
         
         <div class="hpi-history">
             <h3>HPI History</h3>
-            {% if patient.history_present_illness %}
+            {% if hpi_text %}
                 <div class="hpi-entry current">
                     <div class="hpi-header">
-                        <span class="hpi-date">Current</span>
+                        <span class="hpi-date">{{ hpi_entry.created_at.strftime('%Y-%m-%d %H:%M') if hpi_entry and hpi_entry.created_at else 'Current' }}</span>
                         <span class="hpi-author">Latest Entry</span>
                     </div>
                     <div class="hpi-content">
-                        {{ patient.history_present_illness }}
+                        {{ hpi_text }}
                     </div>
                 </div>
             {% endif %}
             
-            {% if not patient.history_present_illness %}
+            {% if not hpi_text %}
                 <div class="empty-state">
                     <i class="fas fa-history"></i>
                     <p>No HPI entries recorded yet</p>
@@ -178,6 +314,17 @@
     <div class="tab-content" id="review-systems-tab">
         <div class="section-header">
             <h2><i class="fas fa-clipboard-list"></i> Review of Systems</h2>
+            {% if review_nav and review_nav.total %}
+            <div class="section-version-nav">
+                <span class="text-muted">Updated: {{ review_systems.created_at.strftime('%Y-%m-%d %H:%M') if review_systems and review_systems.created_at else 'N/A' }} ({{ review_nav.index }}/{{ review_nav.total }})</span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, review_id=review_nav.prev_id) if review_nav.prev_id else '#' }}" {% if not review_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    <i class="fas fa-chevron-left"></i> Prev
+                </a>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, review_id=review_nav.next_id) if review_nav.next_id else '#' }}" {% if not review_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+            </div>
+            {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openReviewSystemsModal()">
                 <i class="fas fa-edit"></i> Update Review
             </button>
@@ -227,6 +374,17 @@
     <div class="tab-content" id="history-tab">
         <div class="section-header">
             <h2><i class="fas fa-book-medical"></i> Medical History</h2>
+            {% if history_nav and history_nav.total %}
+            <div class="section-version-nav">
+                <span class="text-muted">Updated: {{ history.created_at.strftime('%Y-%m-%d %H:%M') if history and history.created_at else 'N/A' }} ({{ history_nav.index }}/{{ history_nav.total }})</span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, history_id=history_nav.prev_id) if history_nav.prev_id else '#' }}" {% if not history_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    <i class="fas fa-chevron-left"></i> Prev
+                </a>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, history_id=history_nav.next_id) if history_nav.next_id else '#' }}" {% if not history_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+            </div>
+            {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openHistoryModal()">
                 <i class="fas fa-edit"></i> Update History
             </button>
@@ -264,6 +422,17 @@
     <div class="tab-content" id="examination-tab">
         <div class="section-header">
             <h2><i class="fas fa-heartbeat"></i> Physical Examination</h2>
+            {% if examination_nav and examination_nav.total %}
+            <div class="section-version-nav">
+                <span class="text-muted">Updated: {{ examination.created_at.strftime('%Y-%m-%d %H:%M') if examination and examination.created_at else 'N/A' }} ({{ examination_nav.index }}/{{ examination_nav.total }})</span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, exam_id=examination_nav.prev_id) if examination_nav.prev_id else '#' }}" {% if not examination_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    <i class="fas fa-chevron-left"></i> Prev
+                </a>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, exam_id=examination_nav.next_id) if examination_nav.next_id else '#' }}" {% if not examination_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+            </div>
+            {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openExaminationModal()">
                 <i class="fas fa-edit"></i> Update Examination
             </button>
@@ -344,6 +513,17 @@
     <div class="tab-content" id="diagnosis-tab">
         <div class="section-header">
             <h2><i class="fas fa-diagnoses"></i> Diagnosis</h2>
+            {% if diagnosis_nav and diagnosis_nav.total %}
+            <div class="section-version-nav">
+                <span class="text-muted">Updated: {{ diagnosis.created_at.strftime('%Y-%m-%d %H:%M') if diagnosis and diagnosis.created_at else 'N/A' }} ({{ diagnosis_nav.index }}/{{ diagnosis_nav.total }})</span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, diagnosis_id=diagnosis_nav.prev_id) if diagnosis_nav.prev_id else '#' }}" {% if not diagnosis_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    <i class="fas fa-chevron-left"></i> Prev
+                </a>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, diagnosis_id=diagnosis_nav.next_id) if diagnosis_nav.next_id else '#' }}" {% if not diagnosis_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+            </div>
+            {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openDiagnosisModal()">
                 <i class="fas fa-edit"></i> Update Diagnosis
             </button>
@@ -369,6 +549,17 @@
     <div class="tab-content" id="management-tab">
         <div class="section-header">
             <h2><i class="fas fa-tasks"></i> Management Plan</h2>
+            {% if management_nav and management_nav.total %}
+            <div class="section-version-nav">
+                <span class="text-muted">Updated: {{ management.created_at.strftime('%Y-%m-%d %H:%M') if management and management.created_at else 'N/A' }} ({{ management_nav.index }}/{{ management_nav.total }})</span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, management_id=management_nav.prev_id) if management_nav.prev_id else '#' }}" {% if not management_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    <i class="fas fa-chevron-left"></i> Prev
+                </a>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, management_id=management_nav.next_id) if management_nav.next_id else '#' }}" {% if not management_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+            </div>
+            {% endif %}
             <div class="management-actions">
                 <button class="btn btn-primary" onclick="doctorPatient.openManagementModal()">
                     <i class="fas fa-edit"></i> Update Management
@@ -423,7 +614,7 @@
                         </div>
                         {% if prescription.status == 'pending' %}
                         <div class="prescription-actions">
-                            <button class="btn btn-success btn-sm" onclick="doctorPatient.dispensePrescription({{ prescription.id }})">
+                            <button type="button" class="btn btn-success btn-sm" data-action="dispense-prescription" data-prescription-id="{{ prescription.id }}">
                                 <i class="fas fa-check"></i> Mark as Dispensed
                             </button>
                         </div>
@@ -438,6 +629,39 @@
                     <button class="btn btn-primary" onclick="doctorPatient.openPrescriptionModal()">
                         <i class="fas fa-plus"></i> Create First Prescription
                     </button>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Controlled Prescriptions -->
+            <div class="management-section">
+                <div class="section-header-inline">
+                    <h4>Controlled Prescriptions</h4>
+                </div>
+                {% if controlled_prescriptions %}
+                <div class="prescriptions-list">
+                    {% for prescription in controlled_prescriptions %}
+                    <div class="prescription-card">
+                        <div class="prescription-header">
+                            <span class="prescription-date">{{ prescription.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                            <span class="prescription-status status-{{ prescription.status }}">{{ prescription.status|title }}</span>
+                        </div>
+                        <div class="prescription-items">
+                            {% for item in prescription.items %}
+                            <div class="prescription-item">
+                                <strong>{{ item.controlled_drug.name }}</strong> -
+                                {{ item.quantity }} units, {{ item.dosage }}, {{ item.frequency }} for {{ item.duration }}
+                                {% if item.notes %}<br><small>{{ item.notes }}</small>{% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <i class="fas fa-prescription"></i>
+                    <p>No controlled prescriptions yet</p>
                 </div>
                 {% endif %}
             </div>
@@ -494,14 +718,14 @@
                                 </span>
                             </div>
                             <div class="summary-actions">
-                                <button class="btn btn-outline-primary btn-sm" onclick="doctorPatient.viewSummary({{ summary.id }}, `{{ summary.summary_text|replace('`', '\\`') if summary.summary_text else '' }}`)">
+                                <button type="button" class="btn btn-outline-primary btn-sm" data-action="view-summary" data-summary-id="{{ summary.id }}">
                                     <i class="fas fa-eye"></i> View
                                 </button>
-                                <button class="btn btn-outline-danger btn-sm" onclick="doctorPatient.deleteSummary({{ summary.id }})">
+                                <button type="button" class="btn btn-outline-danger btn-sm" data-action="delete-summary" data-summary-id="{{ summary.id }}">
                                     <i class="fas fa-trash"></i> Delete
                                 </button>
                                 {% if summary.summary_type == 'ai_generated' %}
-                                <button class="btn btn-outline-warning btn-sm" onclick="doctorPatient.generateDiagnosisFromSummary({{ summary.id }})">
+                                <button type="button" class="btn btn-outline-warning btn-sm" data-action="generate-diagnosis-from-summary" data-summary-id="{{ summary.id }}">
                                     <i class="fas fa-stethoscope"></i> Generate Diagnosis
                                 </button>
                                 {% endif %}
@@ -510,6 +734,7 @@
                         <div class="summary-preview">
                             {{ summary.summary_text|truncate(200) if summary.summary_text else 'No summary text' }}
                         </div>
+                        <textarea class="d-none summary-text" data-summary-id="{{ summary.id }}">{{ summary.summary_text or '' }}</textarea>
                     </div>
                     {% endfor %}
                 </div>
@@ -555,6 +780,16 @@
                         <div class="request-details">
                             <span class="request-date">Requested: {{ request.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
                             {% if request.notes %}<div class="request-notes">{{ request.notes }}</div>{% endif %}
+                            {% if request.status == 'completed' and request.result %}
+                                <div class="request-notes"><strong>Result:</strong> {{ request.result }}</div>
+                            {% endif %}
+                            {% if request.status != 'completed' %}
+                                <div style="margin-top: 8px;">
+                                    <button type="button" class="btn btn-success" onclick="doctorPatient.openLabResultModal({{ request.id }}, '{{ (request.test.name or '')|replace("'", "\\'") }}')">
+                                        <i class="fas fa-check-circle"></i> Record Result
+                                    </button>
+                                </div>
+                            {% endif %}
                         </div>
                     </div>
                     {% endfor %}
@@ -581,6 +816,16 @@
                         <div class="request-details">
                             <span class="request-date">Requested: {{ request.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
                             {% if request.notes %}<div class="request-notes">{{ request.notes }}</div>{% endif %}
+                            {% if request.status == 'completed' and request.result %}
+                                <div class="request-notes"><strong>Result:</strong> {{ request.result }}</div>
+                            {% endif %}
+                            {% if request.status != 'completed' %}
+                                <div style="margin-top: 8px;">
+                                    <button type="button" class="btn btn-success" onclick="doctorPatient.openImagingResultModal({{ request.id }}, '{{ (request.test.name or '')|replace("'", "\\'") }}')">
+                                        <i class="fas fa-check-circle"></i> Record Result
+                                    </button>
+                                </div>
+                            {% endif %}
                         </div>
                     </div>
                     {% endfor %}
@@ -609,7 +854,7 @@
             <div class="form-group">
                 <label for="chief-complaint">Chief Complaint *</label>
                 <textarea id="chief-complaint" name="chief_complaint" rows="4" required 
-                          placeholder="Enter the patient's current chief complaint...">{{ patient.chief_complaint or '' }}</textarea>
+                          placeholder="Enter the patient's current chief complaint...">{{ chief_complaint_text or '' }}</textarea>
                 <small class="form-help">Current complaint is pre-loaded. Add new information to update.</small>
             </div>
             <div class="form-actions">
@@ -633,7 +878,7 @@
             <div class="form-group">
                 <label for="history-present-illness">History of Present Illness *</label>
                 <textarea id="history-present-illness" name="history_present_illness" rows="6" required
-                          placeholder="Document the history of present illness...">{{ patient.history_present_illness or '' }}</textarea>
+                          placeholder="Document the history of present illness...">{{ hpi_text or '' }}</textarea>
                 <small class="form-help">Current HPI is pre-loaded. Add new information to update.</small>
             </div>
             <div class="form-actions">
@@ -969,6 +1214,9 @@
                                     {% endfor %}
                                 </select>
                                 <div class="stock-warning" id="stock-warning-0"></div>
+                                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.openDosageLookup(this)">
+                                    <i class="fas fa-info-circle"></i> View Dosage
+                                </button>
                             </div>
                             <div class="form-group">
                                 <label>Quantity *</label>
@@ -1010,6 +1258,23 @@
                 </button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- Dosage Modal -->
+<div class="modal" id="dosage-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Dosage Information</h2>
+            <button class="close-btn" onclick="doctorPatient.closeModal('dosage')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="text-muted" id="dosageSourceText" style="margin-bottom: 10px;"></div>
+            <div id="dosageContent" style="white-space: pre-wrap; line-height: 1.6;"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn" onclick="doctorPatient.closeModal('dosage')">Close</button>
+        </div>
     </div>
 </div>
 
@@ -1070,6 +1335,48 @@
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('imaging-request')">Cancel</button>
                 <button type="submit" class="btn btn-primary">Request Imaging</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Record Lab Result Modal -->
+<div class="modal" id="lab-result-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="labResultTitle">Record Lab Result</h2>
+            <button class="close-btn" onclick="doctorPatient.closeModal('lab-result')">&times;</button>
+        </div>
+        <form method="POST" id="lab-result-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="lab-result-text">Result *</label>
+                <textarea id="lab-result-text" name="result" rows="6" required placeholder="Enter lab results..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="doctorPatient.closeModal('lab-result')">Cancel</button>
+                <button type="submit" class="btn btn-success">Save Result</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Record Imaging Result Modal -->
+<div class="modal" id="imaging-result-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="imagingResultTitle">Record Imaging Result</h2>
+            <button class="close-btn" onclick="doctorPatient.closeModal('imaging-result')">&times;</button>
+        </div>
+        <form method="POST" id="imaging-result-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="imaging-result-text">Result *</label>
+                <textarea id="imaging-result-text" name="result" rows="6" required placeholder="Enter imaging report..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="doctorPatient.closeModal('imaging-result')">Cancel</button>
+                <button type="submit" class="btn btn-success">Save Result</button>
             </div>
         </form>
     </div>
@@ -1234,22 +1541,12 @@
 
 .alert-danger {
     background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
-}
-
+   
+   
 .alert-warning {
     background-color: #fff3cd;
     color: #856404;
     border: 1px solid #ffeaa7;
-}
-
-.close-alert {
-    background: none;
-    border: none;
-    font-size: 20px;
-    cursor: pointer;
-    color: inherit;
 }
 
 .navigation-tabs {
@@ -1997,9 +2294,16 @@
 <script>
 class DoctorPatientManagement {
     constructor() {
-        this.patientId = {{ patient.id }};
+        const root = document.querySelector('.doctor-patient-container');
+        const patientIdRaw = root ? root.getAttribute('data-patient-id') : null;
+        this.patientId = patientIdRaw ? Number(patientIdRaw) : null;
         this.prescriptionItemCount = 1;
         this.init();
+    }
+
+    getCsrfToken() {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? (meta.getAttribute('content') || '') : '';
     }
 
     init() {
@@ -2016,19 +2320,38 @@ class DoctorPatientManagement {
             });
         });
 
-        // Close alert buttons
-        document.querySelectorAll('.close-alert').forEach(button => {
-            button.addEventListener('click', () => {
-                button.closest('.alert').remove();
-            });
-        });
+        // Action buttons (avoid Jinja inside onclick handlers)
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-action]');
+            if (!btn) return;
 
-        // Auto-remove alerts after 5 seconds
-        setTimeout(() => {
-            document.querySelectorAll('.alert').forEach(alert => {
-                alert.remove();
-            });
-        }, 5000);
+            const action = btn.getAttribute('data-action');
+            if (!action) return;
+
+            if (action === 'dispense-prescription') {
+                const id = Number(btn.getAttribute('data-prescription-id'));
+                if (Number.isFinite(id)) this.dispensePrescription(id);
+                return;
+            }
+
+            if (action === 'view-summary') {
+                const id = Number(btn.getAttribute('data-summary-id'));
+                if (Number.isFinite(id)) this.viewSummary(id);
+                return;
+            }
+
+            if (action === 'delete-summary') {
+                const id = Number(btn.getAttribute('data-summary-id'));
+                if (Number.isFinite(id)) this.deleteSummary(id);
+                return;
+            }
+
+            if (action === 'generate-diagnosis-from-summary') {
+                const id = Number(btn.getAttribute('data-summary-id'));
+                if (Number.isFinite(id)) this.generateDiagnosisFromSummary(id);
+                return;
+            }
+        });
     }
 
     setupFormHandlers() {
@@ -2117,6 +2440,26 @@ class DoctorPatientManagement {
         this.openModal('imaging-request');
     }
 
+    openLabResultModal(requestId, testName) {
+        const form = document.getElementById('lab-result-form');
+        const title = document.getElementById('labResultTitle');
+        const textarea = document.getElementById('lab-result-text');
+        if (title) title.textContent = `Record Lab Result: ${testName || ''}`;
+        if (form) form.action = `/doctor/lab-request/${requestId}/complete`;
+        if (textarea) textarea.value = '';
+        this.openModal('lab-result');
+    }
+
+    openImagingResultModal(requestId, testName) {
+        const form = document.getElementById('imaging-result-form');
+        const title = document.getElementById('imagingResultTitle');
+        const textarea = document.getElementById('imaging-result-text');
+        if (title) title.textContent = `Record Imaging Result: ${testName || ''}`;
+        if (form) form.action = `/doctor/imaging-request/${requestId}/complete`;
+        if (textarea) textarea.value = '';
+        this.openModal('imaging-result');
+    }
+
     openModal(modalId) {
         const modal = document.getElementById(`${modalId}-modal`);
         if (modal) {
@@ -2154,7 +2497,7 @@ class DoctorPatientManagement {
             const formData = new FormData();
             formData.append('action', 'add_manual');
             formData.append('summary_text', summaryText);
-            formData.append('csrf_token', '{{ csrf_token() }}');
+            formData.append('csrf_token', this.getCsrfToken());
 
             const response = await fetch(`/doctor/patient/${this.patientId}/summary`, {
                 method: 'POST',
@@ -2185,7 +2528,7 @@ class DoctorPatientManagement {
             
             const formData = new FormData();
             formData.append('action', 'generate_ai');
-            formData.append('csrf_token', '{{ csrf_token() }}');
+            formData.append('csrf_token', this.getCsrfToken());
 
             const response = await fetch(`/doctor/patient/${this.patientId}/summary`, {
                 method: 'POST',
@@ -2227,7 +2570,7 @@ class DoctorPatientManagement {
             
             const formData = new FormData();
             formData.append('action', 'generate_diagnosis');
-            formData.append('csrf_token', '{{ csrf_token() }}');
+            formData.append('csrf_token', this.getCsrfToken());
 
             const response = await fetch(`/doctor/patient/${this.patientId}/summary`, {
                 method: 'POST',
@@ -2259,7 +2602,7 @@ class DoctorPatientManagement {
             // You might want to implement a specific endpoint for this
             const formData = new FormData();
             formData.append('summary_id', summaryId);
-            formData.append('csrf_token', '{{ csrf_token() }}');
+            formData.append('csrf_token', this.getCsrfToken());
 
             const response = await fetch(`/doctor/patient/${this.patientId}/summary/generate-diagnosis`, {
                 method: 'POST',
@@ -2280,7 +2623,9 @@ class DoctorPatientManagement {
         }
     }
 
-    viewSummary(summaryId, summaryText) {
+    viewSummary(summaryId) {
+        const source = document.querySelector(`.summary-text[data-summary-id="${summaryId}"]`);
+        const summaryText = source ? source.value : '';
         document.getElementById('viewSummaryContent').textContent = summaryText;
         this.openModal('view-summary');
     }
@@ -2292,7 +2637,7 @@ class DoctorPatientManagement {
             const response = await fetch(`/doctor/patient/${this.patientId}/summary/${summaryId}`, {
                 method: 'DELETE',
                 headers: {
-                    'X-CSRFToken': '{{ csrf_token() }}'
+                    'X-CSRFToken': this.getCsrfToken()
                 }
             });
 
@@ -2354,6 +2699,9 @@ class DoctorPatientManagement {
                         {% endfor %}
                     </select>
                     <div class="stock-warning" id="stock-warning-${this.prescriptionItemCount}"></div>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.openDosageLookup(this)">
+                        <i class="fas fa-info-circle"></i> View Dosage
+                    </button>
                 </div>
                 <div class="form-group">
                     <label>Quantity *</label>
@@ -2425,6 +2773,9 @@ class DoctorPatientManagement {
                             {% endfor %}
                         </select>
                         <div class="stock-warning" id="stock-warning-1"></div>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.openDosageLookup(this)">
+                            <i class="fas fa-info-circle"></i> View Dosage
+                        </button>
                     </div>
                     <div class="form-group">
                         <label>Quantity *</label>
@@ -2454,6 +2805,100 @@ class DoctorPatientManagement {
                 </button>
             </div>
         `;
+    }
+
+    async openDosageLookup(buttonElement) {
+        const row = buttonElement.closest('.prescription-item-form');
+        const select = row ? row.querySelector('select[name="drug_id"]') : null;
+        const drugId = select ? select.value : null;
+
+        if (!drugId) {
+            this.showAlert('Please select a drug first', 'warning');
+            return;
+        }
+
+            const contentEl = document.getElementById('dosageContent');
+        const sourceEl = document.getElementById('dosageSourceText');
+        if (contentEl) contentEl.innerHTML = '<div class="text-muted">Loading...</div>';
+        if (sourceEl) sourceEl.textContent = '';
+        this.openModal('dosage');
+
+        try {
+            const response = await fetch(`/doctor/drugs/${drugId}/dosage`);
+            const data = await response.json();
+
+            if (!response.ok) {
+                if (contentEl) contentEl.textContent = data.error || 'Failed to load dosage information.';
+                return;
+            }
+
+            const src = data.source === 'db' ? 'Database' : (data.source === 'index' ? 'Dosage index book' : 'Not available');
+            if (sourceEl) sourceEl.textContent = `Source: ${src}`;
+
+            if (!data.dosage) {
+                if (contentEl) contentEl.textContent = 'No dosage information found (DB or index book).';
+                return;
+            }
+
+            const escapeHtml = (value) => String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+
+            const splitToBulletItems = (text) => {
+                const raw = (text === null || text === undefined) ? '' : String(text);
+                let t = raw.replace(/\r/g, '').trim();
+                if (!t) return [];
+                t = t.replace(/\s*•\s*/g, '\n• ');
+                const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
+                const items = [];
+                for (const line of lines) {
+                    const cleaned = line
+                        .replace(/^([•\u2022\-*]+\s*)/, '')
+                        .replace(/^\d+[\).]\s*/, '')
+                        .trim();
+                    if (cleaned) items.push(cleaned);
+                }
+                return items.length ? items : [t];
+            };
+
+            const renderBullets = (text) => {
+                const items = splitToBulletItems(text);
+                if (!items.length) return '<span class="text-muted">-</span>';
+                const lis = items.map(i => `<li>${escapeHtml(i)}</li>`).join('');
+                return `<ul class="mb-0" style="padding-left: 1.25rem;">${lis}</ul>`;
+            };
+
+            const d = data.dosage;
+            const safe = (v) => (v === null || v === undefined || v === '') ? '-' : String(v);
+            const rows = (label, value) => `
+                <div style="margin-bottom: 10px;">
+                    <div style="font-weight: 600;">${escapeHtml(label)}</div>
+                    <div class="text-muted">${renderBullets(value)}</div>
+                </div>
+            `;
+
+            const html = `
+                <div style="margin-bottom: 10px;"><strong>Drug:</strong> ${escapeHtml(safe(data.drug.drug_number))} - ${escapeHtml(safe(data.drug.name))}</div>
+                <hr/>
+                ${rows('Indication', d.indication)}
+                ${rows('Contraindication', d.contraindication)}
+                ${rows('Interaction', d.interaction)}
+                ${rows('Side Effects', d.side_effects)}
+                <hr/>
+                ${rows('Dosage (Pediatrics)', d.dosage_peds)}
+                ${rows('Dosage (Adults)', d.dosage_adults)}
+                ${rows('Dosage (Geriatrics)', d.dosage_geriatrics)}
+                <hr/>
+                ${rows('Important Notes', d.important_notes)}
+            `;
+
+            if (contentEl) contentEl.innerHTML = html;
+        } catch (e) {
+            if (contentEl) contentEl.textContent = 'Failed to load dosage information.';
+        }
     }
 
      validateDrugStock(selectElement) {
@@ -2495,105 +2940,110 @@ class DoctorPatientManagement {
 
     async completePrescription() {
         const form = document.getElementById('prescription-form');
-        const formData = new FormData(form);
-        
-        // Validate required fields
-        const drugSelects = form.querySelectorAll('.drug-select');
-        let isValid = true;
-        
-        drugSelects.forEach((select, index) => {
-            if (!select.value) {
-                isValid = false;
-                this.showAlert(`Please select a drug for item ${index + 1}`, 'error');
-                select.focus();
-            }
-        });
-        
-        if (!isValid) return;
+        const csrfToken = (form.querySelector('input[name="csrf_token"]') || {}).value || this.getCsrfToken();
+        const patientIdRaw = (form.querySelector('input[name="patient_id"]') || {}).value || this.patientId;
+        const patientId = patientIdRaw ? Number(patientIdRaw) : null;
 
+        if (!patientId) {
+            this.showAlert('Patient ID missing; reload the page and try again.', 'error');
+            return;
+        }
+
+        const container = document.getElementById('prescription-items-container');
+        const rows = container ? container.querySelectorAll('.prescription-item-form') : [];
+        const prescriptions = [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const drugId = (row.querySelector('select[name="drug_id"]') || {}).value;
+            const quantityRaw = (row.querySelector('input[name="quantity"]') || {}).value;
+            const dosage = (row.querySelector('input[name="dosage"]') || {}).value;
+            const frequency = (row.querySelector('input[name="frequency"]') || {}).value;
+            const duration = (row.querySelector('input[name="duration"]') || {}).value;
+            const notes = (row.querySelector('input[name="notes"]') || {}).value;
+
+            if (!drugId) {
+                this.showAlert(`Please select a drug for item ${i + 1}`, 'error');
+                const select = row.querySelector('select[name="drug_id"]');
+                if (select) select.focus();
+                return;
+            }
+
+            const quantity = Number(quantityRaw);
+            if (!Number.isFinite(quantity) || quantity <= 0) {
+                this.showAlert(`Please enter a valid quantity for item ${i + 1}`, 'error');
+                const qty = row.querySelector('input[name="quantity"]');
+                if (qty) qty.focus();
+                return;
+            }
+
+            if (!dosage || !frequency || !duration) {
+                this.showAlert(`Please fill dosage, frequency, and duration for item ${i + 1}`, 'error');
+                return;
+            }
+
+            prescriptions.push({
+                drug_id: Number(drugId),
+                quantity,
+                dosage,
+                frequency,
+                duration,
+                notes,
+            });
+        }
+
+        if (!prescriptions.length) {
+            this.showAlert('No prescription items to save.', 'error');
+            return;
+        }
+
+        const submitBtn = form.querySelector('.btn-success');
         try {
-            const submitBtn = form.querySelector('.btn-success');
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
             submitBtn.disabled = true;
 
-            const response = await fetch('/api/prescriptions', {
+            const response = await fetch('/doctor/patient/complete_prescription', {
                 method: 'POST',
                 headers: {
-                    'X-CSRFToken': formData.get('csrf_token')
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
                 },
-                body: formData
+                body: JSON.stringify({
+                    patient_id: patientId,
+                    prescriptions,
+                    csrf_token: csrfToken,
+                })
             });
 
-            const result = await response.json();
+            const result = await response.json().catch(() => ({}));
 
-            if (response.ok) {
+            if (response.ok && result && result.success) {
                 this.showAlert('Prescription created successfully!', 'success');
                 this.closeModal('prescription');
-                // Reload the page to show the new prescription
-                setTimeout(() => location.reload(), 1500);
-            } else {
-                this.showAlert(result.error || 'Failed to create prescription', 'error');
-                submitBtn.innerHTML = '<i class="fas fa-check-circle"></i> Complete Prescription';
-                submitBtn.disabled = false;
+                setTimeout(() => location.reload(), 1200);
+                return;
             }
+
+            this.showAlert((result && result.error) || 'Failed to create prescription', 'error');
         } catch (error) {
             this.showAlert('Network error occurred. Please try again.', 'error');
-            const submitBtn = form.querySelector('.btn-success');
+        } finally {
             submitBtn.innerHTML = '<i class="fas fa-check-circle"></i> Complete Prescription';
             submitBtn.disabled = false;
         }
     }
 
     async dispensePrescription(prescriptionId) {
-        if (!confirm('Mark this prescription as dispensed?')) return;
-
-        try {
-            const response = await fetch(`/api/prescriptions/${prescriptionId}/dispense`, {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': '{{ csrf_token() }}',
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            const result = await response.json();
-
-            if (response.ok) {
-                this.showAlert('Prescription marked as dispensed!', 'success');
-                setTimeout(() => location.reload(), 1000);
-            } else {
-                this.showAlert(result.error || 'Failed to update prescription', 'error');
-            }
-        } catch (error) {
-            this.showAlert('Network error occurred. Please try again.', 'error');
-        }
+        this.showAlert('Dispensing is done by the pharmacist in the pharmacy module.', 'info');
     }
 
     showAlert(message, type = 'info') {
-        const alertContainer = document.getElementById('alert-container');
-        const alertId = 'alert-' + Date.now();
-        
-        const alert = document.createElement('div');
-        alert.id = alertId;
-        alert.className = `alert alert-${type} animate__animated animate__fadeIn`;
-        alert.innerHTML = `
-            <div class="alert-content">
-                <span class="alert-message">${message}</span>
-                <button class="close-alert" onclick="document.getElementById('${alertId}').remove()">&times;</button>
-            </div>
-        `;
-        
-        alertContainer.appendChild(alert);
-        
-        // Auto-remove after 5 seconds
-        setTimeout(() => {
-            const alertElement = document.getElementById(alertId);
-            if (alertElement) {
-                alertElement.classList.remove('animate__fadeIn');
-                alertElement.classList.add('animate__fadeOut');
-                setTimeout(() => alertElement.remove(), 300);
-            }
-        }, 5000);
+        if (typeof window.showAlert === 'function') {
+            window.showAlert(message, type);
+            return;
+        }
+        // Fallback to native alert only if global helper is unavailable
+        window.alert(message);
     }
 
     // Form validation helpers
@@ -2701,6 +3151,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     .tab-content { display: block !important; margin-bottom: 30px; }
                     .navigation-tabs, .btn, .modal, .alert { display: none !important; }
                     .section-header { border-bottom: 2px solid #333; margin-bottom: 15px; }
+                    i.fas, i.far, i.fa { font-size: 12px !important; }
                     @media print {
                         .no-print { display: none !important; }
                     }
@@ -2776,6 +3227,9 @@ document.addEventListener('DOMContentLoaded', function() {
         </button>
     </form>
     {% endif %}
+    <a href="{{ url_for('patient_ward_bill', patient_id=patient.id) }}" class="btn btn-secondary">
+        <i class="fas fa-bed"></i> Ward Bill
+    </a>
     <button class="btn btn-info" onclick="printPatientSummary()">
         <i class="fas fa-print"></i> Print Summary
     </button>

@@ -33,7 +33,7 @@
         <h1 class="display-4">401 - Unauthorized Access</h1>
         <p class="lead">You need to authenticate to access this page.</p>
         <div class="error-actions">
-            <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg">
+                <a href="{{ url_for('auth.login') }}" class="btn btn-primary btn-lg">
                 <i class="fas fa-sign-in-alt"></i> Login
             </a>
             <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary btn-lg ms-2">

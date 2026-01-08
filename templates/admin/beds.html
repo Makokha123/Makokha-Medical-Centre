@@ -19,20 +19,17 @@
         </div>
     </div>
 
+    {% if is_embed %}
     <div id="alert-container">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
-                    <div class="alert alert-{{ category }} animate__animated animate__fadeIn">
-                        <div class="alert-content">
-                            <span class="alert-message">{{ message }}</span>
-                            <button class="close-alert">&times;</button>
-                        </div>
-                    </div>
+                    <div class="alert alert-{{ category }} alert-auto-close" role="alert">{{ message }}</div>
                 {% endfor %}
             {% endif %}
         {% endwith %}
     </div>
+    {% endif %}
 
     <div class="summary-cards-grid">
         <div class="summary-card total-beds">
@@ -112,6 +109,7 @@
                     <tr>
                         <th>Ward Name</th>
                         <th>Description</th>
+                        <th>Daily Rate</th>
                         <th>Total Beds</th>
                         <th>Occupied Beds</th>
                         <th>Available Beds</th>
@@ -130,13 +128,17 @@
                             </div>
                         </td>
                         <td>{{ ward.description or 'No description' }}</td>
+                        <td class="amount-cell">{{ "%.2f"|format(ward.daily_rate or 0) }}</td>
                         <td class="amount-cell">{{ ward_beds|length }}</td>
                         <td class="amount-cell">{{ occupied_ward_beds|length }}</td>
                         <td class="amount-cell">{{ ward_beds|length - occupied_ward_beds|length }}</td>
                         <td class="action-btns">
                             <div class="btn-group">
-                                <button class="action-btn btn-primary" 
-                                        onclick="bedManagement.editWard({{ ward.id }}, '{{ ward.name | replace("'", "\\'") }}', '{{ ward.description | replace("'", "\\'") if ward.description else '' }}')">
+                                <button class="action-btn btn-primary btn-edit-ward" 
+                                        data-ward-id="{{ ward.id }}"
+                                        data-ward-name="{{ ward.name }}"
+                                        data-ward-description="{{ ward.description if ward.description else '' }}"
+                                        data-ward-daily-rate="{{ ward.daily_rate or 0 }}">
                                     <i class="fas fa-edit"></i>
                                 </button>
                                 <button class="action-btn btn-danger" 
@@ -214,13 +216,17 @@
                         <td class="action-btns">
                             <div class="btn-group">
                                 {% if bed.status == 'available' %}
-                                <button class="action-btn btn-success" 
-                                        onclick="bedManagement.assignBed({{ bed.id }}, '{{ bed.bed_number }}', '{{ ward.name if ward else 'Unknown' | replace("'", "\\'") }}')">
+                                <button class="action-btn btn-success btn-assign-bed" 
+                                        data-bed-id="{{ bed.id }}"
+                                        data-bed-number="{{ bed.bed_number }}"
+                                        data-ward-name="{{ ward.name if ward else 'Unknown' }}">
                                     <i class="fas fa-user-plus"></i>
                                 </button>
                                 {% else %}
-                                <button class="action-btn btn-warning" 
-                                        onclick="bedManagement.releaseBed({{ bed.id }}, '{{ bed.bed_number }}', '{{ ward.name if ward else 'Unknown' | replace("'", "\\'") }}')">
+                                <button class="action-btn btn-warning btn-release-bed" 
+                                        data-bed-id="{{ bed.id }}"
+                                        data-bed-number="{{ bed.bed_number }}"
+                                        data-ward-name="{{ ward.name if ward else 'Unknown' }}">
                                     <i class="fas fa-user-minus"></i>
                                 </button>
                                 {% endif %}
@@ -264,7 +270,7 @@
                 <div class="beds-grid">
                     {% for bed in beds if bed.status == 'available' %}
                     {% set ward = wards|selectattr("id", "equalto", bed.ward_id)|first %}
-                    <div class="bed-card available" onclick="bedManagement.prepareAssignment({{ bed.id }})">
+                    <div class="bed-card available bed-card-clickable" data-bed-id="{{ bed.id }}">
                         <div class="bed-header">
                             <i class="fas fa-bed"></i>
                             <span class="bed-number">Bed {{ bed.bed_number }}</span>
@@ -307,8 +313,10 @@
                             </div>
                         </div>
                         <div class="bed-action">
-                            <button class="btn btn-sm btn-warning" 
-                                    onclick="bedManagement.releaseBed({{ bed.id }}, '{{ bed.bed_number }}', '{{ ward.name if ward else 'Unknown' | replace("'", "\\'") }}')">
+                            <button class="btn btn-sm btn-warning btn-release-bed" 
+                                    data-bed-id="{{ bed.id }}"
+                                    data-bed-number="{{ bed.bed_number }}"
+                                    data-ward-name="{{ ward.name if ward else 'Unknown' }}">
                                 Release
                             </button>
                         </div>
@@ -341,6 +349,10 @@
                 <input type="text" id="ward-name" name="ward_name" required>
             </div>
             <div class="form-group">
+                <label for="ward-daily-rate">Daily Rate *</label>
+                <input type="number" id="ward-daily-rate" name="ward_daily_rate" step="0.01" min="0" value="0" required>
+            </div>
+            <div class="form-group">
                 <label for="ward-description">Description</label>
                 <textarea id="ward-description" name="ward_description" placeholder="Optional description of the ward"></textarea>
             </div>
@@ -366,6 +378,10 @@
             <div class="form-group">
                 <label for="edit-ward-name">Ward Name *</label>
                 <input type="text" id="edit-ward-name" name="ward_name" required>
+            </div>
+            <div class="form-group">
+                <label for="edit-ward-daily-rate">Daily Rate *</label>
+                <input type="number" id="edit-ward-daily-rate" name="ward_daily_rate" step="0.01" min="0" required>
             </div>
             <div class="form-group">
                 <label for="edit-ward-description">Description</label>
@@ -586,14 +602,6 @@
     background-color: #f8d7da;
     color: #721c24;
     border: 1px solid #f5c6cb;
-}
-
-.close-alert {
-    background: none;
-    border: none;
-    font-size: 20px;
-    cursor: pointer;
-    color: inherit;
 }
 
 .summary-cards-grid {
@@ -1166,7 +1174,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
 
 <script>
-
+// eslint-disable-next-line no-undef
 window.bedManagement = {
     init: function() {
         this.setCurrentDate();
@@ -1182,9 +1190,35 @@ window.bedManagement = {
     },
 
     setupEventListeners: function() {
-        // Close alert buttons
-        $(document).on('click', '.close-alert', function() {
-            $(this).closest('.alert').remove();
+        // Edit ward buttons
+        $(document).on('click', '.btn-edit-ward', function() {
+            const id = $(this).data('ward-id');
+            const name = $(this).data('ward-name');
+            const desc = $(this).data('ward-description');
+            const rate = $(this).data('ward-daily-rate');
+            bedManagement.editWard(id, name, desc, rate);
+        });
+
+        // Assign bed buttons
+        $(document).on('click', '.btn-assign-bed', function() {
+            const id = $(this).data('bed-id');
+            const num = $(this).data('bed-number');
+            const ward = $(this).data('ward-name');
+            bedManagement.assignBed(id, num, ward);
+        });
+
+        // Release bed buttons
+        $(document).on('click', '.btn-release-bed', function() {
+            const id = $(this).data('bed-id');
+            const num = $(this).data('bed-number');
+            const ward = $(this).data('ward-name');
+            bedManagement.releaseBed(id, num, ward);
+        });
+
+        // Bed card clicks for assignment
+        $(document).on('click', '.bed-card-clickable', function() {
+            const bedId = $(this).data('bed-id');
+            bedManagement.prepareAssignment(bedId);
         });
 
         // Tab switching
@@ -1309,10 +1343,11 @@ window.bedManagement = {
     },
 
     // Ward functions
-    editWard: function(id, name, description) {
+    editWard: function(id, name, description, dailyRate) {
         $('#edit-ward-id').val(id);
         $('#edit-ward-name').val(name);
         $('#edit-ward-description').val(description || '');
+        $('#edit-ward-daily-rate').val(dailyRate ?? 0);
         $('#edit-ward-form').attr('action', '/admin/beds');
         this.openModal('edit-ward');
     },
@@ -1417,20 +1452,11 @@ window.bedManagement = {
     },
     
     showAlert: function(type, message) {
-        const container = document.getElementById('alert-container');
-        if (!container) return alert(message);
-        const div = document.createElement('div');
-        div.className = `alert alert-${type} animate__animated animate__fadeIn`;
-        div.innerHTML = `
-            <div class="alert-content">
-                <span class="alert-message">${message}</span>
-                <button class="close-alert">&times;</button>
-            </div>
-        `;
-        container.prepend(div);
-        setTimeout(() => {
-            if (div && div.parentNode) div.parentNode.removeChild(div);
-        }, 4000);
+        if (typeof window.showAlert === 'function') {
+            window.showAlert(String(message ?? ''), type || 'info');
+            return;
+        }
+        window.alert(String(message ?? ''));
     }
 };
 

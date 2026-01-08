@@ -8,20 +8,21 @@
             <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Makokha Medical Logo" class="header-logo">
         </div>
         
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ category }}">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
+        {# Flash Messages (embed only; base.html already renders flashes) #}
+        {% if is_embed %}
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }} alert-auto-close" role="alert">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+        {% endif %}
         
         <form method="POST" action="{{ url_for('auth.login') }}" class="login-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
-                <input type="text" id="email" name="email" required>
+                <input type="text" id="email" name="email" value="{{ prefill_email|default('') }}" required>
                 <label for="email">Username</label>
             </div>
             
@@ -38,10 +39,10 @@
             <div class="form-group role-selector">
                 <select id="role" name="role" required>
                     <option value="" disabled selected></option>
-                    <option value="admin">Administrator</option>
-                    <option value="doctor">Doctor</option>
-                    <option value="pharmacist">Pharmacist</option>
-                    <option value="receptionist">Receptionist</option>
+                    <option value="admin" {% if prefill_role|default('') == 'admin' %}selected{% endif %}>Administrator</option>
+                    <option value="doctor" {% if prefill_role|default('') == 'doctor' %}selected{% endif %}>Doctor</option>
+                    <option value="pharmacist" {% if prefill_role|default('') == 'pharmacist' %}selected{% endif %}>Pharmacist</option>
+                    <option value="receptionist" {% if prefill_role|default('') == 'receptionist' %}selected{% endif %}>Receptionist</option>
                 </select>
                 <label for="role">Select Role</label>
             </div>
@@ -61,6 +62,33 @@
                 <a href="{{ url_for('auth.reset_password') }}">Forgot Password?</a>
             </div>
         </form>
+
+        {% if show_email_verification %}
+        <div class="email-verify-box" style="position: relative; z-index: 1; margin-top: 1.25rem;">
+            <div class="email-verify-title" style="font-weight: 600; margin-bottom: .5rem;">Email verification required</div>
+            <div class="email-verify-text" style="font-size: .95rem; color: var(--dark-gray); margin-bottom: .75rem;">
+                Request a 6-digit OTP, then enter it to verify your email.
+            </div>
+
+            <form method="POST" action="{{ url_for('auth.resend_verify_email') }}" class="login-form" style="gap: .75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="login">
+                <input type="hidden" name="email" value="{{ prefill_email|default('') }}">
+                <button type="submit" class="login-button" style="width: 100%;">Request OTP</button>
+            </form>
+
+            <form method="POST" action="{{ url_for('auth.verify_email') }}" class="login-form" style="margin-top: .75rem; gap: .75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="login">
+                <input type="hidden" name="email" value="{{ prefill_email|default('') }}">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <input type="text" id="verify_code" name="code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" required>
+                    <label for="verify_code">OTP Code</label>
+                </div>
+                <button type="submit" class="login-button" style="width: 100%;">Verify OTP</button>
+            </form>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -354,7 +382,7 @@ body {
 .login-button {
     width: 100%;
     padding: 1rem;
-    background none;
+    background: var(--primary-blue);
     border: none;
     border-radius: 8px;
     font-size: 1rem;

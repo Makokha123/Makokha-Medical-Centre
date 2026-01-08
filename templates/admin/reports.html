@@ -13,6 +13,9 @@
                     <button id="drugReportBtn" class="btn btn-light active" style="font-weight: 600;">
                         <i class="fas fa-pills"></i> Drug Sales
                     </button>
+                    <button id="controlledDrugReportBtn" class="btn btn-light" style="font-weight: 600;">
+                        <i class="fas fa-capsules"></i> Controlled Drug Sales
+                    </button>
                     <button id="labReportBtn" class="btn btn-light" style="font-weight: 600;">
                         <i class="fas fa-microscope"></i> Lab Reports
                     </button>
@@ -110,28 +113,45 @@
             </div>
         </div>
 
-        <!-- GRAPHS SECTION -->
+        <!-- STATISTICS CHARTS (single container immediately after summaries) -->
         <div class="row mb-4">
-            <div class="col-md-8">
-                <div class="card shadow-sm border-0 h-100">
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
                     <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-                        <h6 class="mb-0"><i class="fas fa-chart-bar"></i> Sales Trend</h6>
+                        <h6 class="mb-0"><i class="fas fa-chart-area"></i> Statistics Charts</h6>
                     </div>
                     <div class="card-body">
-                        <div class="chart-wrapper">
-                            <canvas id="timeseriesChart"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card shadow-sm border-0 h-100">
-                    <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-                        <h6 class="mb-0"><i class="fas fa-chart-pie"></i> Distribution</h6>
-                    </div>
-                    <div class="card-body">
-                        <div class="chart-wrapper">
-                            <canvas id="pieChart"></canvas>
+                        <div class="row g-3">
+                            <div class="col-lg-6">
+                                <div id="timeseriesTitle" class="fw-semibold mb-2"><i class="fas fa-chart-bar"></i> Bar Trend</div>
+                                <div class="chart-wrapper">
+                                    <canvas id="timeseriesChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div id="trendLineTitle" class="fw-semibold mb-2"><i class="fas fa-chart-line"></i> Line Trend</div>
+                                <div class="chart-wrapper">
+                                    <canvas id="trendLineChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div id="histogramUnitsTitle" class="fw-semibold mb-2"><i class="fas fa-chart-column"></i> Histogram (Units/Count)</div>
+                                <div class="chart-wrapper">
+                                    <canvas id="histogramUnitsChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div id="histogramAmountsTitle" class="fw-semibold mb-2"><i class="fas fa-chart-column"></i> Histogram (Amounts)</div>
+                                <div class="chart-wrapper">
+                                    <canvas id="histogramAmountsChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="col-lg-12">
+                                <div id="distributionTitle" class="fw-semibold mb-2"><i class="fas fa-chart-pie"></i> Distribution</div>
+                                <div class="chart-wrapper">
+                                    <canvas id="pieChart"></canvas>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -140,6 +160,57 @@
 
         <!-- DRUG SALES SPECIFIC SECTIONS -->
         <div id="drugSalesGraphs">
+            <!-- Controlled drugs extra summary (only shown for Controlled Drug Sales report) -->
+            <div id="controlledDrugExtras" style="display: none;">
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                <h6 class="mb-0"><i class="fas fa-capsules"></i> Controlled Overview</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <div class="fw-semibold mb-2">Inventory Snapshot</div>
+                                        <div class="d-flex flex-wrap gap-2">
+                                            <span class="badge bg-dark">Total: <span id="ciTotal">0</span></span>
+                                            <span class="badge bg-success">In Stock: <span id="ciInStock">0</span></span>
+                                            <span class="badge bg-warning text-dark">Low Stock: <span id="ciLowStock">0</span></span>
+                                            <span class="badge bg-danger">Out of Stock: <span id="ciOutStock">0</span></span>
+                                            <span class="badge bg-info">Expiring Soon: <span id="ciExpSoon">0</span></span>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="fw-semibold mb-2">Controlled Prescriptions (Period)</div>
+                                        <div class="d-flex flex-wrap gap-2">
+                                            <span class="badge bg-primary">Total: <span id="cpTotal">0</span></span>
+                                            <span class="badge bg-secondary">Pending: <span id="cpPending">0</span></span>
+                                            <span class="badge bg-success">Dispensed: <span id="cpDispensed">0</span></span>
+                                            <span class="badge bg-danger">Cancelled: <span id="cpCancelled">0</span></span>
+                                            <span class="badge bg-info">Units Prescribed: <span id="cpUnits">0</span></span>
+                                        </div>
+                                        <div class="table-responsive mt-3">
+                                            <table class="table table-sm mb-0">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th>Top Prescribed Controlled Drugs</th>
+                                                        <th style="width: 120px; text-align: right;">Units</th>
+                                                        <th style="width: 140px; text-align: right;">Prescriptions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="cpTopPrescribedBody">
+                                                    <tr><td colspan="3" class="text-center text-muted py-2">No data</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Top 10 Most Sold Drugs -->
             <div class="row mb-4">
                 <div class="col-12">
@@ -148,29 +219,32 @@
                             <h6 class="mb-0"><i class="fas fa-fire"></i> Top 10 Most Sold Drugs</h6>
                         </div>
                         <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-3">
-                                    <div class="chart-wrapper-small">
-                                        <h6 class="chart-subtitle">Daily</h6>
-                                        <canvas id="top10DailyChart"></canvas>
+                            <!-- Selected Period Top 10 (drugs + controlled drugs) -->
+                            <div id="top10PeriodContainer" class="mb-4" style="display:none;">
+                                <div class="row g-3 align-items-stretch">
+                                    <div class="col-lg-7">
+                                        <div class="fw-semibold mb-2"><i class="fas fa-chart-bar"></i> Selected Period Top 10</div>
+                                        <div class="chart-wrapper">
+                                            <canvas id="top10PeriodChart"></canvas>
+                                        </div>
                                     </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="chart-wrapper-small">
-                                        <h6 class="chart-subtitle">Weekly</h6>
-                                        <canvas id="top10WeeklyChart"></canvas>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="chart-wrapper-small">
-                                        <h6 class="chart-subtitle">Monthly</h6>
-                                        <canvas id="top10MonthlyChart"></canvas>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="chart-wrapper-small">
-                                        <h6 class="chart-subtitle">Yearly</h6>
-                                        <canvas id="top10YearlyChart"></canvas>
+                                    <div class="col-lg-5">
+                                        <div class="fw-semibold mb-2"><i class="fas fa-list"></i> Summary (Sales, % & Profit)</div>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-striped mb-0">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th id="top10PeriodItemLabel">Item</th>
+                                                        <th id="top10PeriodSalesLabel" style="width: 120px; text-align:right;">Sales</th>
+                                                        <th id="top10PeriodPctLabel" style="width: 90px; text-align:right;">%</th>
+                                                        <th id="top10PeriodProfitLabel" style="width: 120px; text-align:right;">Profit</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="top10PeriodSummaryBody">
+                                                    <tr><td colspan="4" class="text-center text-muted py-2">No data</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -211,6 +285,89 @@
                                     <div class="stat-units" id="overthecounterUnitsValue">0 units</div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PERIOD BREAKDOWN (all reports) -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #4361ee 0%, #3a86ff 100%);">
+                        <h6 id="periodBreakdownTitle" class="mb-0"><i class="fas fa-calendar-alt"></i> Period Breakdown</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th id="periodBreakdownPeriodLabel">Period</th>
+                                        <th style="width: 160px; text-align:right;">Amount</th>
+                                        <th id="periodBreakdownUnitsLabel" style="width: 140px; text-align:right;">Units/Count</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="periodBreakdownBody">
+                                    <tr><td colspan="3" class="text-center text-muted py-2">No data</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RECEIPTS (period) -->
+        <div id="periodReceiptsSection" class="row mb-4" style="display:none;">
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);">
+                        <h6 id="periodReceiptsTitle" class="mb-0"><i class="fas fa-receipt"></i> Receipts (Period)</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th id="receiptsDateLabel" style="width: 160px;">Date</th>
+                                        <th id="receiptsRefLabel" style="width: 160px;">Reference</th>
+                                        <th id="receiptsNameLabel">Customer / Patient</th>
+                                        <th id="receiptsAmountLabel" style="width: 160px; text-align:right;">Amount</th>
+                                        <th id="receiptsPaymentLabel" style="width: 140px;">Payment</th>
+                                        <th id="receiptsLinkLabel" style="width: 120px;">Link</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="periodReceiptsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- EXPENSES (period) - General only -->
+        <div id="periodExpensesSection" class="row mb-4" style="display:none;">
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #f77f00 0%, #fcbf49 100%);">
+                        <h6 id="periodExpensesTitle" class="mb-0"><i class="fas fa-file-invoice-dollar"></i> Expenses (Period)</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th id="expensesDateLabel" style="width: 160px;">Date</th>
+                                        <th id="expensesNoLabel" style="width: 170px;">Expense #</th>
+                                        <th id="expensesTypeLabel" style="width: 160px;">Type</th>
+                                        <th id="expensesDescLabel">Description</th>
+                                        <th id="expensesAmountLabel" style="width: 160px; text-align:right;">Amount</th>
+                                        <th id="expensesStatusLabel" style="width: 140px;">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="periodExpensesBody"></tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -282,7 +439,12 @@
             <div class="col-12">
                 <div class="card shadow-sm border-0">
                     <div class="card-header bg-gradient text-white" style="background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);">
-                        <h5 class="mb-0" id="dataTableTitle"><i class="fas fa-table"></i> Detailed Records</h5>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0" id="dataTableTitle"><i class="fas fa-table"></i> Detailed Records</h5>
+                            <a id="controlledSalesExportBtn" class="btn btn-light btn-sm" style="display:none; font-weight:600;" href="#">
+                                <i class="fas fa-download"></i> Download CSV
+                            </a>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div class="table-responsive" id="dataTableContainer">
@@ -387,12 +549,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // Report type management
     let currentReportType = 'drug_sales';
     const drugBtn = document.getElementById('drugReportBtn');
+    const controlledDrugBtn = document.getElementById('controlledDrugReportBtn');
     const labBtn = document.getElementById('labReportBtn');
     const generalBtn = document.getElementById('generalReportBtn');
     
     drugBtn.addEventListener('click', function() {
         currentReportType = 'drug_sales';
         drugBtn.classList.add('active');
+        controlledDrugBtn.classList.remove('active');
+        labBtn.classList.remove('active');
+        generalBtn.classList.remove('active');
+    });
+
+    controlledDrugBtn.addEventListener('click', function() {
+        currentReportType = 'controlled_drug_sales';
+        controlledDrugBtn.classList.add('active');
+        drugBtn.classList.remove('active');
         labBtn.classList.remove('active');
         generalBtn.classList.remove('active');
     });
@@ -401,6 +573,7 @@ document.addEventListener('DOMContentLoaded', function() {
         currentReportType = 'lab_reports';
         labBtn.classList.add('active');
         drugBtn.classList.remove('active');
+        controlledDrugBtn.classList.remove('active');
         generalBtn.classList.remove('active');
     });
 
@@ -408,11 +581,13 @@ document.addEventListener('DOMContentLoaded', function() {
         currentReportType = 'general';
         generalBtn.classList.add('active');
         drugBtn.classList.remove('active');
+        controlledDrugBtn.classList.remove('active');
         labBtn.classList.remove('active');
     });
 
     function getReportDisplayName(reportType) {
         if (reportType === 'drug_sales') return 'Drug Sales';
+        if (reportType === 'controlled_drug_sales') return 'Controlled Drug Sales';
         if (reportType === 'lab_reports') return 'Lab Reports';
         if (reportType === 'general') return 'General';
         return 'Report';
@@ -501,7 +676,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Update Summary Section based on report type
         const totals = data.charts?.totals || {};
-        if (data.report_type === 'drug_sales') {
+        if (data.report_type === 'drug_sales' || data.report_type === 'controlled_drug_sales') {
             setSummary(
                 'Total Sales Revenue', totals.sales_total || 0,
                 'Cost of Goods Sold', totals.cogs || 0,
@@ -521,21 +696,90 @@ document.addEventListener('DOMContentLoaded', function() {
         } else if (data.report_type === 'general') {
             setSummary(
                 'Total Revenue (Drugs + Labs)', totals.total_revenue || 0,
-                'Drug Revenue', totals.drug_revenue || 0,
-                'Lab Revenue', totals.lab_revenue || 0,
+                'Total Expenses', totals.expenses_total || 0,
+                'Net Income', totals.net_income || 0,
                 true, true
             );
         }
 
         // Show/Hide drug sales specific graphs
         document.getElementById('drugSalesGraphs').style.display = 
-            data.report_type === 'drug_sales' ? 'block' : 'none';
+            (data.report_type === 'drug_sales' || data.report_type === 'controlled_drug_sales') ? 'block' : 'none';
+
+        // Controlled extras
+        const controlledExtras = document.getElementById('controlledDrugExtras');
+        if (controlledExtras) {
+            controlledExtras.style.display = data.report_type === 'controlled_drug_sales' ? 'block' : 'none';
+            if (data.report_type === 'controlled_drug_sales') {
+                const inv = data.controlled_inventory || {};
+                const rx = data.controlled_prescriptions || {};
+
+                const setText = (id, value) => {
+                    const el = document.getElementById(id);
+                    if (el) el.textContent = String(value ?? 0);
+                };
+
+                setText('ciTotal', inv.total);
+                setText('ciInStock', inv.in_stock);
+                setText('ciLowStock', inv.low_stock);
+                setText('ciOutStock', inv.out_of_stock);
+                setText('ciExpSoon', inv.expiring_soon);
+
+                setText('cpTotal', rx.total);
+                setText('cpPending', rx.pending);
+                setText('cpDispensed', rx.dispensed);
+                setText('cpCancelled', rx.cancelled);
+                setText('cpUnits', rx.prescribed_units);
+
+                const topBody = document.getElementById('cpTopPrescribedBody');
+                if (topBody) {
+                    const rows = Array.isArray(rx.top_prescribed) ? rx.top_prescribed : [];
+                    topBody.innerHTML = '';
+
+                    if (rows.length === 0) {
+                        topBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-2">No data</td></tr>';
+                    } else {
+                        rows.forEach((r) => {
+                            const tr = document.createElement('tr');
+
+                            const nameTd = document.createElement('td');
+                            nameTd.textContent = String(r.drug_name || r.name || '');
+
+                            const unitsTd = document.createElement('td');
+                            unitsTd.style.textAlign = 'right';
+                            unitsTd.textContent = Number((r.total_units ?? r.units) || 0).toString();
+
+                            const rxTd = document.createElement('td');
+                            rxTd.style.textAlign = 'right';
+                            rxTd.textContent = Number((r.prescription_count ?? r.prescriptions) || 0).toString();
+
+                            tr.appendChild(nameTd);
+                            tr.appendChild(unitsTd);
+                            tr.appendChild(rxTd);
+                            topBody.appendChild(tr);
+                        });
+                    }
+                }
+            }
+        }
 
         // Show/Hide lab/general graphs
         document.getElementById('labGraphs').style.display =
             data.report_type === 'lab_reports' ? 'block' : 'none';
         document.getElementById('generalGraphs').style.display =
             data.report_type === 'general' ? 'block' : 'none';
+
+        // Controlled sales export button
+        const exportBtn = document.getElementById('controlledSalesExportBtn');
+        if (exportBtn) {
+            if (data.report_type === 'controlled_drug_sales') {
+                exportBtn.style.display = 'inline-block';
+                exportBtn.href = `/admin/reports/controlled-sales/export?start_date=${encodeURIComponent(data.start_date)}&end_date=${encodeURIComponent(data.end_date)}`;
+            } else {
+                exportBtn.style.display = 'none';
+                exportBtn.href = '#';
+            }
+        }
 
         // Populate Data Table
         const dataTableBody = document.getElementById('dataTableBody');
@@ -646,14 +890,78 @@ document.addEventListener('DOMContentLoaded', function() {
                     </td></tr>
                 `;
             }
+        } else if (data.report_type === 'controlled_drug_sales') {
+            dataTableTitle.innerHTML = '<i class="fas fa-capsules"></i> Controlled Drug Sale Items';
+            dataTableBody.innerHTML = '';
+
+            if (data.data && data.data.length > 0) {
+                dataTableBody.innerHTML = `
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th style="width: 160px;">Sale #</th>
+                        <th style="width: 150px;">Date</th>
+                        <th>Customer / Patient</th>
+                        <th>Drug</th>
+                        <th style="width: 90px; text-align: center;">Qty</th>
+                        <th style="width: 140px; text-align: right;">Unit</th>
+                        <th style="width: 150px; text-align: right;">Line Total</th>
+                        <th style="width: 220px;">Links</th>
+                    </tr>
+                `;
+
+                data.data.forEach((s, idx) => {
+                    const name = (s.customer_name || s.patient_name || '').trim() || 'Unknown';
+                    const receiptUrl = s.receipt_url || '#';
+                    const imgPath = s.prescription_image_path || '';
+                    const imgUrl = imgPath ? `/${imgPath}` : '';
+                    const links = `
+                        <a class="btn btn-sm btn-outline-primary" href="${receiptUrl}" target="_blank">Receipt</a>
+                        ${imgUrl ? `<a class="btn btn-sm btn-outline-secondary" href="${imgUrl}" target="_blank">Prescription</a>` : ''}
+                    `;
+
+                    dataTableBody.innerHTML += `
+                        <tr>
+                            <td><span class="badge bg-primary">${idx + 1}</span></td>
+                            <td><strong>${s.sale_number || ''}</strong></td>
+                            <td>${s.created_at || ''}</td>
+                            <td>${name}</td>
+                            <td>${s.drug_name || ''}</td>
+                            <td style="text-align: center;"><span class="badge bg-info">${Number(s.quantity || 0)}</span></td>
+                            <td style="text-align: right;">Ksh.${Number(s.unit_price || 0).toFixed(2)}</td>
+                            <td style="text-align: right;"><strong style="color:#198754;">Ksh.${Number(s.line_total || 0).toFixed(2)}</strong></td>
+                            <td>${links}</td>
+                        </tr>
+                    `;
+                });
+            } else {
+                dataTableBody.innerHTML = `
+                    <tr><td colspan="9" class="text-center py-4">
+                        <i class="fas fa-exclamation-circle"></i> No controlled drug sales found for this period
+                    </td></tr>
+                `;
+            }
         }
+
+        // Headings/labels based on selected granularity and effective breakdown level
+        applyPresentationLabels(data);
+
+        // Period Breakdown (uses the already bucketed series in data.charts)
+        renderPeriodBreakdown(data);
+
+        // Receipts + Expenses (period)
+        renderPeriodReceipts(data);
+        renderPeriodExpenses(data);
 
         // Create Charts
         if (data.charts && window.Chart) {
             createTimeseriesChart(data);
+            createTrendLineChart(data);
+            createHistogramUnitsChart(data);
+            createHistogramAmountsChart(data);
             createPieChart(data);
 
-            if (data.report_type === 'drug_sales') {
+            if (data.report_type === 'drug_sales' || data.report_type === 'controlled_drug_sales') {
+                createTop10PeriodChart(data);
                 createTop10Charts(data);
                 createCustomerTypeChart(data);
                 updateStatBoxes(data);
@@ -665,93 +973,629 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     }
+
+    function applyPresentationLabels(data) {
+        const effective = String(data.effective_granularity || '').toLowerCase();
+        const selected = String(data.granularity || '').toLowerCase();
+
+        const effectiveName = (g) => {
+            if (g === 'daily') return 'Day-by-day';
+            if (g === 'weekly') return 'Week-by-week';
+            if (g === 'monthly') return 'Month-by-month';
+            if (g === 'yearly') return 'Year-by-year';
+            return 'Period';
+        };
+
+        const periodLabel = (g) => {
+            if (g === 'daily') return 'Date';
+            if (g === 'weekly') return 'Week';
+            if (g === 'monthly') return 'Month';
+            if (g === 'yearly') return 'Year';
+            return 'Period';
+        };
+
+        const unitLabel = () => {
+            if (data.report_type === 'lab_reports') return 'Tests (Count)';
+            if (data.report_type === 'general') return 'Units/Count';
+            return 'Units';
+        };
+
+        const reportName = (typeof getReportDisplayName === 'function')
+            ? getReportDisplayName(data.report_type)
+            : 'Report';
+
+        const top10ItemLabel = () => {
+            if (data.report_type === 'controlled_drug_sales') return 'Controlled Drug';
+            return 'Drug';
+        };
+
+        // Breakdown section
+        const breakdownTitle = document.getElementById('periodBreakdownTitle');
+        if (breakdownTitle) {
+            // Keep the wording strict for the requested behavior
+            breakdownTitle.innerHTML = `<i class="fas fa-calendar-alt"></i> ${reportName} — ${effectiveName(effective)} Breakdown`;
+        }
+
+        const periodTh = document.getElementById('periodBreakdownPeriodLabel');
+        if (periodTh) periodTh.textContent = periodLabel(effective);
+
+        const unitsTh = document.getElementById('periodBreakdownUnitsLabel');
+        if (unitsTh) unitsTh.textContent = unitLabel();
+
+        // Top 10 (selected period) table labels
+        const t10Item = document.getElementById('top10PeriodItemLabel');
+        if (t10Item) t10Item.textContent = top10ItemLabel();
+        const t10Sales = document.getElementById('top10PeriodSalesLabel');
+        if (t10Sales) t10Sales.textContent = 'Sales (Ksh)';
+        const t10Pct = document.getElementById('top10PeriodPctLabel');
+        if (t10Pct) t10Pct.textContent = 'Share (%)';
+        const t10Profit = document.getElementById('top10PeriodProfitLabel');
+        if (t10Profit) t10Profit.textContent = 'Profit (Ksh)';
+
+        // Stats chart titles
+        const suffix = `(${effectiveName(effective)})`;
+        const setTitle = (id, base) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = `${base} ${suffix}`;
+        };
+        setTitle('timeseriesTitle', 'Sales Amount vs Period');
+        setTitle('trendLineTitle', 'Goods (Units/Count) vs Period');
+        setTitle('histogramUnitsTitle', 'Goods Histogram (Units/Count)');
+        setTitle('histogramAmountsTitle', 'Sales Histogram (Amounts)');
+        setTitle('distributionTitle', 'Distribution');
+
+        // Receipts/Expenses titles include selected period granularity context
+        const receiptsTitle = document.getElementById('periodReceiptsTitle');
+        if (receiptsTitle) {
+            receiptsTitle.innerHTML = `<i class="fas fa-receipt"></i> ${reportName} Receipts (Selected Period: ${selected || 'daily'})`;
+        }
+
+        const expensesTitle = document.getElementById('periodExpensesTitle');
+        if (expensesTitle) {
+            expensesTitle.innerHTML = `<i class="fas fa-file-invoice-dollar"></i> Expenses (Selected Period: ${selected || 'daily'})`;
+        }
+
+        // Receipts table header labels
+        const setText = (id, text) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = text;
+        };
+
+        setText('receiptsDateLabel', 'Date');
+        setText('receiptsRefLabel', data.report_type === 'lab_reports' ? 'Sale #' : 'Sale #');
+        setText('receiptsNameLabel', data.report_type === 'lab_reports' ? 'Patient' : 'Customer / Patient');
+        setText('receiptsAmountLabel', 'Amount (Ksh)');
+        setText('receiptsPaymentLabel', 'Payment');
+        setText('receiptsLinkLabel', 'Receipt');
+
+        // Expenses table header labels (General)
+        setText('expensesDateLabel', 'Date');
+        setText('expensesNoLabel', 'Expense #');
+        setText('expensesTypeLabel', 'Type');
+        setText('expensesDescLabel', 'Description');
+        setText('expensesAmountLabel', 'Amount (Ksh)');
+        setText('expensesStatusLabel', 'Status');
+    }
+
+    function createTop10PeriodChart(data) {
+        const container = document.getElementById('top10PeriodContainer');
+        if (!container) return;
+
+        const top = data?.charts?.top10_current;
+        const has = top && Array.isArray(top.labels) && top.labels.length;
+        container.style.display = (has && (data.report_type === 'drug_sales' || data.report_type === 'controlled_drug_sales')) ? 'block' : 'none';
+        if (!has) {
+            const body = document.getElementById('top10PeriodSummaryBody');
+            if (body) body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-2">No data</td></tr>';
+            return;
+        }
+
+        // Summary table
+        const summaryBody = document.getElementById('top10PeriodSummaryBody');
+        if (summaryBody) {
+            summaryBody.innerHTML = '';
+            top.labels.forEach((label, idx) => {
+                const sales = Number(top.amounts?.[idx] || 0);
+                const pct = Number(top.percentages?.[idx] || 0);
+                const profit = Number(top.profits?.[idx] || 0);
+                summaryBody.innerHTML += `
+                    <tr>
+                        <td>${label}</td>
+                        <td style="text-align:right;">Ksh.${sales.toFixed(2)}</td>
+                        <td style="text-align:right;">${pct.toFixed(2)}%</td>
+                        <td style="text-align:right;"><strong style="color:#198754;">Ksh.${profit.toFixed(2)}</strong></td>
+                    </tr>
+                `;
+            });
+            if (!top.labels.length) {
+                summaryBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-2">No data</td></tr>';
+            }
+        }
+
+        // Chart
+        const ctx = document.getElementById('top10PeriodChart');
+        if (!ctx || !window.Chart) return;
+        if (window._top10PeriodChart) window._top10PeriodChart.destroy();
+
+        window._top10PeriodChart = new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: top.labels,
+                datasets: [
+                    {
+                        label: 'Sales (Ksh)',
+                        data: (top.amounts || []).map(v => Number(v || 0)),
+                        backgroundColor: 'rgba(247, 127, 0, 0.18)',
+                        borderColor: 'rgba(247, 127, 0, 0.55)',
+                        borderWidth: 1,
+                        borderRadius: 6,
+                        maxBarThickness: 28
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        titleFont: { size: 11 },
+                        bodyFont: { size: 10 },
+                        callbacks: {
+                            label: function(context) {
+                                const i = context.dataIndex;
+                                const sales = Number(top.amounts?.[i] || 0);
+                                const units = Number(top.units?.[i] || 0);
+                                const pct = Number(top.percentages?.[i] || 0);
+                                const profit = Number(top.profits?.[i] || 0);
+                                return [
+                                    `Sales: Ksh.${sales.toFixed(2)}`,
+                                    `Units: ${units}`,
+                                    `Share: ${pct.toFixed(2)}%`,
+                                    `Profit: Ksh.${profit.toFixed(2)}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 45 } },
+                    y: { beginAtZero: true, ticks: { font: { size: 10 } } }
+                }
+            }
+        });
+    }
+
+    function renderPeriodBreakdown(data) {
+        const body = document.getElementById('periodBreakdownBody');
+        if (!body) return;
+
+        const labels = Array.isArray(data?.charts?.labels) ? data.charts.labels : [];
+        if (!labels.length) {
+            body.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-2">No data</td></tr>';
+            return;
+        }
+
+        // Derive amounts + units/count across report types
+        let amounts = [];
+        let units = [];
+
+        if (data.report_type === 'general') {
+            const drugAmounts = Array.isArray(data?.charts?.drug_amounts) ? data.charts.drug_amounts : [];
+            const labAmounts = Array.isArray(data?.charts?.lab_amounts) ? data.charts.lab_amounts : [];
+            const drugUnits = Array.isArray(data?.charts?.drug_units) ? data.charts.drug_units : [];
+            const labCounts = Array.isArray(data?.charts?.lab_counts) ? data.charts.lab_counts : [];
+            amounts = labels.map((_, i) => Number(drugAmounts[i] || 0) + Number(labAmounts[i] || 0));
+            units = labels.map((_, i) => Number(drugUnits[i] || 0) + Number(labCounts[i] || 0));
+        } else {
+            amounts = Array.isArray(data?.charts?.amounts) ? data.charts.amounts.map(v => Number(v || 0)) : [];
+            units = Array.isArray(data?.charts?.units) ? data.charts.units.map(v => Number(v || 0)) : [];
+        }
+
+        body.innerHTML = '';
+        labels.forEach((lbl, idx) => {
+            const a = Number(amounts[idx] || 0);
+            const u = Number(units[idx] || 0);
+            body.innerHTML += `
+                <tr>
+                    <td><strong>${lbl}</strong></td>
+                    <td style="text-align:right;">Ksh.${a.toFixed(2)}</td>
+                    <td style="text-align:right;">${u}</td>
+                </tr>
+            `;
+        });
+    }
+
+    function renderPeriodReceipts(data) {
+        const section = document.getElementById('periodReceiptsSection');
+        const body = document.getElementById('periodReceiptsBody');
+        if (!section || !body) return;
+
+        const receipts = Array.isArray(data.receipts) ? data.receipts : [];
+        section.style.display = receipts.length ? 'block' : 'none';
+        body.innerHTML = '';
+        if (!receipts.length) return;
+
+        receipts.forEach((r) => {
+            const when = r.created_at || '';
+            const ref = r.sale_number || r.transaction_number || r.reference || '';
+            const name = (r.customer_name || r.patient_name || 'Unknown');
+            const amount = Number(r.total_amount || 0);
+            const pm = r.payment_method || '';
+            const url = r.receipt_url || '';
+            const linkHtml = url ? `<a class="btn btn-sm btn-outline-primary" href="${url}" target="_blank">Receipt</a>` : '<span class="text-muted">—</span>';
+
+            body.innerHTML += `
+                <tr>
+                    <td>${when}</td>
+                    <td><strong>${ref}</strong></td>
+                    <td>${name}</td>
+                    <td style="text-align:right;"><strong style="color:#198754;">Ksh.${amount.toFixed(2)}</strong></td>
+                    <td>${pm}</td>
+                    <td>${linkHtml}</td>
+                </tr>
+            `;
+        });
+    }
+
+    function renderPeriodExpenses(data) {
+        const section = document.getElementById('periodExpensesSection');
+        const body = document.getElementById('periodExpensesBody');
+        if (!section || !body) return;
+
+        const isGeneral = data.report_type === 'general';
+        const expenses = Array.isArray(data.expenses) ? data.expenses : [];
+
+        section.style.display = (isGeneral && expenses.length) ? 'block' : 'none';
+        body.innerHTML = '';
+        if (!(isGeneral && expenses.length)) return;
+
+        expenses.forEach((ex) => {
+            const when = ex.created_at || '';
+            const no = ex.expense_number || '';
+            const type = ex.expense_type || '';
+            const desc = ex.description || '';
+            const amount = Number(ex.amount || 0);
+            const status = ex.status || '';
+
+            body.innerHTML += `
+                <tr>
+                    <td>${when}</td>
+                    <td><strong>${no}</strong></td>
+                    <td>${type}</td>
+                    <td>${desc}</td>
+                    <td style="text-align:right;"><strong style="color:#dc3545;">Ksh.${amount.toFixed(2)}</strong></td>
+                    <td>${status}</td>
+                </tr>
+            `;
+        });
+    }
+
+    function _getTimeseriesSeries(data) {
+        const labels = (data.charts && data.charts.labels) ? data.charts.labels : [];
+        if (data.report_type === 'general') {
+            const drugAmounts = data.charts.drug_amounts || [];
+            const labAmounts = data.charts.lab_amounts || [];
+            const amounts = labels.map((_, i) => Number(drugAmounts[i] || 0) + Number(labAmounts[i] || 0));
+            const drugUnits = data.charts.drug_units || [];
+            const labCounts = data.charts.lab_counts || [];
+            const units = labels.map((_, i) => Number(drugUnits[i] || 0) + Number(labCounts[i] || 0));
+            return { labels, amounts, units };
+        }
+
+        const amounts = (data.charts.amounts || data.charts.lab_amounts || data.charts.drug_amounts || []).map(v => Number(v || 0));
+        const units = (data.charts.units || data.charts.lab_counts || data.charts.drug_units || []).map(v => Number(v || 0));
+        return { labels, amounts, units };
+    }
+
+    function createTrendLineChart(data) {
+        const ctx = document.getElementById('trendLineChart');
+        if (!ctx) return;
+        if (window._trendLineChart) window._trendLineChart.destroy();
+
+        const series = _getTimeseriesSeries(data);
+        if (!series.labels.length) return;
+
+        window._trendLineChart = new Chart(ctx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: series.labels,
+                datasets: [
+                    {
+                        label: 'Amount (Ksh)',
+                        data: series.amounts,
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.12)',
+                        fill: true,
+                        tension: 0.25,
+                        pointRadius: 2,
+                        pointHoverRadius: 3,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Units/Count',
+                        data: series.units,
+                        borderColor: '#f77f00',
+                        backgroundColor: 'rgba(247, 127, 0, 0.10)',
+                        fill: false,
+                        tension: 0.25,
+                        pointRadius: 2,
+                        pointHoverRadius: 3,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } },
+                    tooltip: { titleFont: { size: 11 }, bodyFont: { size: 10 } }
+                },
+                scales: {
+                    x: { ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 45 } },
+                    y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } },
+                    y1: {
+                        beginAtZero: true,
+                        position: 'right',
+                        ticks: { font: { size: 10 } },
+                        grid: { drawOnChartArea: false }
+                    }
+                }
+            }
+        });
+    }
+
+    function _renderHistogram(canvasId, values, labelPrefix) {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return null;
+
+        const clean = (values || []).map(v => Number(v || 0)).filter(v => Number.isFinite(v));
+        if (clean.length === 0) return null;
+
+        const binCount = 8;
+        const minVal = Math.min(...clean);
+        const maxVal = Math.max(...clean);
+        const span = Math.max(1, maxVal - minVal);
+        const step = span / binCount;
+
+        const bins = new Array(binCount).fill(0);
+        for (const v of clean) {
+            const idx = Math.min(binCount - 1, Math.max(0, Math.floor((v - minVal) / step)));
+            bins[idx] += 1;
+        }
+
+        const labels = bins.map((_, i) => {
+            const a = minVal + (i * step);
+            const b = minVal + ((i + 1) * step);
+            return `${labelPrefix}${a.toFixed(0)}-${labelPrefix}${b.toFixed(0)}`;
+        });
+
+        return new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Days/Periods',
+                    data: bins,
+                    backgroundColor: '#4361ee',
+                    borderColor: '#4361ee',
+                    borderWidth: 1,
+                    barThickness: 14,
+                    maxBarThickness: 18,
+                    categoryPercentage: 0.8,
+                    barPercentage: 0.8
+                }]
+            },
+            options: {
+                indexAxis: 'x',
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { titleFont: { size: 11 }, bodyFont: { size: 10 } }
+                },
+                scales: {
+                    x: { ticks: { font: { size: 9 }, maxRotation: 45, minRotation: 45 } },
+                    y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                }
+            }
+        });
+    }
+
+    function createHistogramUnitsChart(data) {
+        if (window._histogramUnitsChart) window._histogramUnitsChart.destroy();
+        const series = _getTimeseriesSeries(data);
+        window._histogramUnitsChart = _renderHistogram('histogramUnitsChart', series.units || [], '');
+    }
+
+    function createHistogramAmountsChart(data) {
+        if (window._histogramAmountsChart) window._histogramAmountsChart.destroy();
+        const series = _getTimeseriesSeries(data);
+        window._histogramAmountsChart = _renderHistogram('histogramAmountsChart', series.amounts || [], '');
+    }
     
     function createTimeseriesChart(data) {
         const ctx = document.getElementById('timeseriesChart');
         if (!ctx) return;
         if (window._timeseriesChart) window._timeseriesChart.destroy();
+
+        const CHART_FONTS = {
+            tick: 10,
+            legend: 10,
+            tooltipTitle: 11,
+            tooltipBody: 10,
+        };
+        const BAR_STYLE = {
+            barThickness: 14,
+            maxBarThickness: 18,
+            categoryPercentage: 0.7,
+            barPercentage: 0.7,
+        };
         
-        const labels = data.charts.labels || [];
+        const series = _getTimeseriesSeries(data);
+        const labels = series.labels || [];
+        if (!labels.length) return;
+
+        // Diagramatic trend chart:
+        // - X axis: day/week/month labels (from backend effective bucketing)
+        // - Y axis: Amount (Ksh)
+        // - Y1 axis: Units/Count
         if (data.report_type === 'general') {
-            const drugAmounts = data.charts.drug_amounts || [];
-            const labAmounts = data.charts.lab_amounts || [];
-            window._timeseriesChart = new Chart(ctx.getContext('2d'), {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: 'Drug Revenue (Ksh)',
-                            data: drugAmounts,
-                            backgroundColor: '#667eea',
-                            borderColor: '#667eea',
-                            borderWidth: 1
-                        },
-                        {
-                            label: 'Lab Revenue (Ksh)',
-                            data: labAmounts,
-                            backgroundColor: '#2ecc71',
-                            borderColor: '#2ecc71',
-                            borderWidth: 1
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    plugins: { legend: { display: true, position: 'bottom' } },
-                    scales: {
-                        x: { stacked: true },
-                        y: { stacked: true, beginAtZero: true, grid: { color: '#e0e0e0' } }
-                    }
-                }
-            });
-        } else {
-            const amounts = data.charts.amounts || data.charts.lab_amounts || data.charts.drug_amounts || [];
-            const units = data.charts.units || data.charts.lab_counts || data.charts.drug_units || [];
+            const drugAmounts = (data.charts.drug_amounts || []).map(v => Number(v || 0));
+            const labAmounts = (data.charts.lab_amounts || []).map(v => Number(v || 0));
+            const units = (series.units || []).map(v => Number(v || 0));
 
             window._timeseriesChart = new Chart(ctx.getContext('2d'), {
                 type: 'bar',
                 data: {
                     labels: labels,
                     datasets: [
-                        { 
-                            label: 'Amount (Ksh)', 
-                            data: amounts, 
+                        {
+                            type: 'bar',
+                            label: 'Drug Revenue (Ksh)',
+                            data: drugAmounts,
                             backgroundColor: '#667eea',
                             borderColor: '#667eea',
-                            borderWidth: 1
+                            borderWidth: 1,
+                            yAxisID: 'y',
+                            ...BAR_STYLE
                         },
-                        { 
-                            label: 'Units/Count', 
-                            data: units, 
-                            backgroundColor: '#f77f00',
+                        {
+                            type: 'bar',
+                            label: 'Lab Revenue (Ksh)',
+                            data: labAmounts,
+                            backgroundColor: '#2ecc71',
+                            borderColor: '#2ecc71',
+                            borderWidth: 1,
+                            yAxisID: 'y',
+                            ...BAR_STYLE
+                        },
+                        {
+                            type: 'line',
+                            label: 'Units/Count',
+                            data: units,
                             borderColor: '#f77f00',
-                            borderWidth: 1
+                            backgroundColor: 'rgba(247, 127, 0, 0.10)',
+                            pointRadius: 2,
+                            pointHoverRadius: 3,
+                            tension: 0.25,
+                            yAxisID: 'y1'
                         }
                     ]
                 },
-                options: { 
-                    responsive: true, 
+                options: {
+                    indexAxis: 'x',
+                    responsive: true,
                     maintainAspectRatio: true,
                     plugins: {
-                        legend: { display: true, position: 'bottom' }
+                        legend: {
+                            display: true,
+                            position: 'bottom',
+                            labels: { font: { size: CHART_FONTS.legend } }
+                        },
+                        tooltip: {
+                            titleFont: { size: CHART_FONTS.tooltipTitle },
+                            bodyFont: { size: CHART_FONTS.tooltipBody }
+                        }
                     },
                     scales: {
+                        x: {
+                            stacked: true,
+                            ticks: { font: { size: CHART_FONTS.tick }, maxRotation: 45, minRotation: 45 }
+                        },
                         y: {
+                            stacked: true,
                             beginAtZero: true,
+                            ticks: { font: { size: CHART_FONTS.tick } },
                             grid: { color: '#e0e0e0' }
+                        },
+                        y1: {
+                            beginAtZero: true,
+                            position: 'right',
+                            ticks: { font: { size: CHART_FONTS.tick } },
+                            grid: { drawOnChartArea: false }
                         }
                     }
                 }
             });
+            return;
         }
+
+        const amounts = (series.amounts || []).map(v => Number(v || 0));
+        const units = (series.units || []).map(v => Number(v || 0));
+
+        window._timeseriesChart = new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Amount (Ksh)',
+                        data: amounts,
+                        backgroundColor: '#667eea',
+                        borderColor: '#667eea',
+                        borderWidth: 1,
+                        yAxisID: 'y',
+                        ...BAR_STYLE
+                    },
+                    {
+                        type: 'line',
+                        label: 'Units/Count',
+                        data: units,
+                        borderColor: '#f77f00',
+                        backgroundColor: 'rgba(247, 127, 0, 0.10)',
+                        pointRadius: 2,
+                        pointHoverRadius: 3,
+                        tension: 0.25,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                indexAxis: 'x',
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        labels: { font: { size: CHART_FONTS.legend } }
+                    },
+                    tooltip: {
+                        titleFont: { size: CHART_FONTS.tooltipTitle },
+                        bodyFont: { size: CHART_FONTS.tooltipBody }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { font: { size: CHART_FONTS.tick }, maxRotation: 45, minRotation: 45 }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { font: { size: CHART_FONTS.tick } },
+                        grid: { color: '#e0e0e0' }
+                    },
+                    y1: {
+                        beginAtZero: true,
+                        position: 'right',
+                        ticks: { font: { size: CHART_FONTS.tick } },
+                        grid: { drawOnChartArea: false }
+                    }
+                }
+            }
+        });
     }
 
     function createPieChart(data) {
         const ctx = document.getElementById('pieChart');
         if (!ctx) return;
         if (window._pieChart) window._pieChart.destroy();
+
+        const PIE_LEGEND_FONT = 10;
+        const PIE_TOOLTIP_TITLE = 11;
+        const PIE_TOOLTIP_BODY = 10;
 
         // Lab breakdown pie
         if (data.report_type === 'lab_reports') {
@@ -778,7 +1622,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 options: {
                     responsive: true,
                     maintainAspectRatio: true,
-                    plugins: { legend: { display: true, position: 'bottom' } }
+                    plugins: {
+                        legend: { display: true, position: 'bottom', labels: { font: { size: PIE_LEGEND_FONT } } },
+                        tooltip: { titleFont: { size: PIE_TOOLTIP_TITLE }, bodyFont: { size: PIE_TOOLTIP_BODY } }
+                    }
                 }
             });
             return;
@@ -802,7 +1649,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 options: {
                     responsive: true,
                     maintainAspectRatio: true,
-                    plugins: { legend: { display: true, position: 'bottom' } }
+                    plugins: {
+                        legend: { display: true, position: 'bottom', labels: { font: { size: PIE_LEGEND_FONT } } },
+                        tooltip: { titleFont: { size: PIE_TOOLTIP_TITLE }, bodyFont: { size: PIE_TOOLTIP_BODY } }
+                    }
                 }
             });
             return;
@@ -839,8 +1689,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 responsive: true, 
                 maintainAspectRatio: true,
                 plugins: {
-                    legend: { display: true, position: 'bottom' },
+                    legend: { display: true, position: 'bottom', labels: { font: { size: PIE_LEGEND_FONT } } },
                     tooltip: {
+                        titleFont: { size: PIE_TOOLTIP_TITLE },
+                        bodyFont: { size: PIE_TOOLTIP_BODY },
                         callbacks: {
                             label: function(context) {
                                 return context.label;
@@ -867,15 +1719,25 @@ document.addEventListener('DOMContentLoaded', function() {
                     data: top.amounts || [],
                     backgroundColor: '#2ecc71',
                     borderColor: '#2ecc71',
-                    borderWidth: 1
+                    borderWidth: 1,
+                    barThickness: 14,
+                    maxBarThickness: 18,
+                    categoryPercentage: 0.7,
+                    barPercentage: 0.7
                 }]
             },
             options: {
-                indexAxis: 'y',
+                indexAxis: 'x',
                 responsive: true,
                 maintainAspectRatio: true,
-                plugins: { legend: { display: false } },
-                scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { titleFont: { size: 11 }, bodyFont: { size: 10 } }
+                },
+                scales: {
+                    x: { ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 45 } },
+                    y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                }
             }
         });
     }
@@ -895,15 +1757,25 @@ document.addEventListener('DOMContentLoaded', function() {
                     data: top.amounts || [],
                     backgroundColor: '#4361ee',
                     borderColor: '#4361ee',
-                    borderWidth: 1
+                    borderWidth: 1,
+                    barThickness: 14,
+                    maxBarThickness: 18,
+                    categoryPercentage: 0.7,
+                    barPercentage: 0.7
                 }]
             },
             options: {
-                indexAxis: 'y',
+                indexAxis: 'x',
                 responsive: true,
                 maintainAspectRatio: true,
-                plugins: { legend: { display: false } },
-                scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { titleFont: { size: 11 }, bodyFont: { size: 10 } }
+                },
+                scales: {
+                    x: { ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 45 } },
+                    y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                }
             }
         });
     }
@@ -922,15 +1794,25 @@ document.addEventListener('DOMContentLoaded', function() {
                         data: top.amounts || [],
                         backgroundColor: '#667eea',
                         borderColor: '#667eea',
-                        borderWidth: 1
+                        borderWidth: 1,
+                        barThickness: 14,
+                        maxBarThickness: 18,
+                        categoryPercentage: 0.7,
+                        barPercentage: 0.7
                     }]
                 },
                 options: {
-                    indexAxis: 'y',
+                    indexAxis: 'x',
                     responsive: true,
                     maintainAspectRatio: true,
-                    plugins: { legend: { display: false } },
-                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { titleFont: { size: 11 }, bodyFont: { size: 10 } }
+                    },
+                    scales: {
+                        x: { ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 45 } },
+                        y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                    }
                 }
             });
         }
@@ -948,15 +1830,25 @@ document.addEventListener('DOMContentLoaded', function() {
                         data: top.amounts || [],
                         backgroundColor: '#2ecc71',
                         borderColor: '#2ecc71',
-                        borderWidth: 1
+                        borderWidth: 1,
+                        barThickness: 14,
+                        maxBarThickness: 18,
+                        categoryPercentage: 0.7,
+                        barPercentage: 0.7
                     }]
                 },
                 options: {
-                    indexAxis: 'y',
+                    indexAxis: 'x',
                     responsive: true,
                     maintainAspectRatio: true,
-                    plugins: { legend: { display: false } },
-                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { titleFont: { size: 11 }, bodyFont: { size: 10 } }
+                    },
+                    scales: {
+                        x: { ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 45 } },
+                        y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                    }
                 }
             });
         }
@@ -981,16 +1873,22 @@ document.addEventListener('DOMContentLoaded', function() {
                         data: data.charts.top10_daily.amounts,
                         backgroundColor: '#667eea',
                         borderColor: '#667eea',
-                        borderWidth: 1
+                        borderWidth: 1,
+                        barThickness: 12,
+                        maxBarThickness: 16,
+                        categoryPercentage: 0.7,
+                        barPercentage: 0.7
                     }]
                 },
                 options: { 
-                    indexAxis: 'y',
+                    indexAxis: 'x',
                     responsive: true, 
                     maintainAspectRatio: true,
                     plugins: {
                         legend: { display: false },
                         tooltip: {
+                            titleFont: { size: 11 },
+                            bodyFont: { size: 10 },
                             callbacks: {
                                 afterLabel: function(context) {
                                     const idx = context.dataIndex;
@@ -1000,7 +1898,10 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                         }
                     },
-                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                    scales: {
+                        x: { ticks: { font: { size: 9 }, maxRotation: 60, minRotation: 60 } },
+                        y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                    }
                 }
             });
         }
@@ -1025,12 +1926,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     }]
                 },
                 options: { 
-                    indexAxis: 'y',
+                    indexAxis: 'x',
                     responsive: true, 
                     maintainAspectRatio: true,
                     plugins: {
                         legend: { display: false },
                         tooltip: {
+                            titleFont: { size: 11 },
+                            bodyFont: { size: 10 },
                             callbacks: {
                                 afterLabel: function(context) {
                                     const idx = context.dataIndex;
@@ -1040,7 +1943,10 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                         }
                     },
-                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                    scales: {
+                        x: { ticks: { font: { size: 9 }, maxRotation: 60, minRotation: 60 } },
+                        y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                    }
                 }
             });
         }
@@ -1065,12 +1971,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     }]
                 },
                 options: { 
-                    indexAxis: 'y',
+                    indexAxis: 'x',
                     responsive: true, 
                     maintainAspectRatio: true,
                     plugins: {
                         legend: { display: false },
                         tooltip: {
+                            titleFont: { size: 11 },
+                            bodyFont: { size: 10 },
                             callbacks: {
                                 afterLabel: function(context) {
                                     const idx = context.dataIndex;
@@ -1080,7 +1988,10 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                         }
                     },
-                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                    scales: {
+                        x: { ticks: { font: { size: 9 }, maxRotation: 60, minRotation: 60 } },
+                        y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                    }
                 }
             });
         }
@@ -1105,12 +2016,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     }]
                 },
                 options: { 
-                    indexAxis: 'y',
+                    indexAxis: 'x',
                     responsive: true, 
                     maintainAspectRatio: true,
                     plugins: {
                         legend: { display: false },
                         tooltip: {
+                            titleFont: { size: 11 },
+                            bodyFont: { size: 10 },
                             callbacks: {
                                 afterLabel: function(context) {
                                     const idx = context.dataIndex;
@@ -1120,7 +2033,10 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                         }
                     },
-                    scales: { x: { beginAtZero: true, grid: { color: '#e0e0e0' } } }
+                    scales: {
+                        x: { ticks: { font: { size: 9 }, maxRotation: 60, minRotation: 60 } },
+                        y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: '#e0e0e0' } }
+                    }
                 }
             });
         }
@@ -1149,7 +2065,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         data: [patientAmount, counterAmount],
                         backgroundColor: ['#4361ee', '#3a86ff'],
                         borderColor: ['#4361ee', '#3a86ff'],
-                        borderWidth: 1
+                        borderWidth: 1,
+                        barThickness: 16,
+                        maxBarThickness: 20,
+                        categoryPercentage: 0.7,
+                        barPercentage: 0.7
                     }
                 ]
             },
@@ -1157,8 +2077,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 responsive: true, 
                 maintainAspectRatio: true,
                 plugins: {
-                    legend: { display: true, position: 'bottom' },
+                    legend: { display: true, position: 'bottom', labels: { font: { size: 10 } } },
                     tooltip: {
+                        titleFont: { size: 11 },
+                        bodyFont: { size: 10 },
                         callbacks: {
                             afterLabel: function(context) {
                                 const amounts = [patientAmount, counterAmount];
@@ -1168,8 +2090,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 },
                 scales: {
+                    x: { ticks: { font: { size: 10 }, maxRotation: 30, minRotation: 30 } },
                     y: {
                         beginAtZero: true,
+                        ticks: { font: { size: 10 } },
                         grid: { color: '#e0e0e0' }
                     }
                 }

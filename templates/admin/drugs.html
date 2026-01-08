@@ -1297,25 +1297,13 @@ $(document).ready(function() {
         });
     }
 
-    // Show alert message
+    // Show alert message (delegates to global popup system)
     function showAlert(type, message) {
-        var alertHtml = `
-            <div class="alert alert-${type} animate__animated animate__fadeIn">
-                <div class="alert-content">
-                    <i class="fas fa-${getAlertIcon(type)} me-2"></i>
-                    <span class="alert-message">${message}</span>
-                    <button class="close-alert">&times;</button>
-                </div>
-            </div>
-        `;
-        
-        $('#alert-container').html(alertHtml);
-        setTimeout(function() {
-            $('.alert').addClass('animate__fadeOut');
-            setTimeout(function() {
-                $('.alert').remove();
-            }, 500);
-        }, 5000);
+        if (typeof window.showAlert === 'function') {
+            window.showAlert(String(message ?? ''), type || 'info');
+            return;
+        }
+        window.alert(String(message ?? ''));
     }
     
     // Get appropriate icon for alert type
@@ -1329,13 +1317,7 @@ $(document).ready(function() {
         }
     }
     
-    // Close alert handler
-    $(document).on('click', '.close-alert', function() {
-        $(this).closest('.alert').addClass('animate__fadeOut');
-        setTimeout(function() {
-            $(this).closest('.alert').remove();
-        }, 500);
-    });
+    // Local close buttons removed; global popup auto-closes
 
     // Add some CSS for the active filter state
     $('<style>')

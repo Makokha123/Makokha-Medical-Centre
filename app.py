@@ -1,16 +1,12 @@
-
-import eventlet
-from importlib.metadata.diagnose import inspect
 from logging.handlers import RotatingFileHandler
 from operator import and_
-from sqlalchemy import MetaData, Table
 from sqlalchemy import MetaData, Table
 import csv
 import io
 from threading import Thread
 from flask_migrate import Migrate
 import time
-from flask import Flask, abort, Blueprint, make_response, render_template, request, redirect, send_from_directory, url_for, flash, session, jsonify, send_file
+from flask import Flask, abort, Blueprint, make_response, render_template, request, redirect, send_from_directory, url_for, flash, session, jsonify, send_file, Response
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
@@ -19,11 +15,11 @@ import openai
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, date, timezone
 
-# EAT (East African Time) is UTC+3
+# EAT (East African Time) / Africa-Nairobi
 EAT = timezone(timedelta(hours=3))
 
 def get_eat_now():
-    """Get current time in EAT (East African Time - UTC+3)"""
+    """Get current time in EAT (Africa/Nairobi)."""
     return datetime.now(EAT)
 
 from sqlalchemy import create_engine, func, literal
@@ -38,20 +34,29 @@ from flask_migrate import Migrate
 import json
 from werkzeug.utils import secure_filename
 import os 
+from dotenv import load_dotenv
 from flask import send_file
 import tempfile
+import secrets
+import imaplib
+import email
+import smtplib
+import ssl
+from email.message import EmailMessage
 from botocore.exceptions import ClientError
 from cryptography.fernet import Fernet
 import boto3 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import zipfile
 import hashlib
 from sqlalchemy import text
+import base64
 from apscheduler.schedulers.background import BackgroundScheduler
-from openai import OpenAI, APITimeoutError, APIError
+from openai import OpenAI, APITimeoutError, APIError, APIConnectionError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import logging
+from sqlalchemy.exc import OperationalError, DBAPIError
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from flask_mail import Mail, Message
@@ -64,20 +69,67 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, Length
 from sqlalchemy import event, text as sa_text
+from sqlalchemy import inspect as sa_inspect
 import uuid as _uuid
 import re
 from markupsafe import Markup, escape
+from utils.encryption import EncryptionUtils
+import bleach
+
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+from time import monotonic
+
+import html as html_lib
+
+from utils.encrypted_type import EncryptedType
+
+from typing import Optional
+
+# Load environment variables from .env for local/dev runs (debugger, python app.py).
+# This is a no-op if variables are already set in the process environment.
+load_dotenv()
+from pathlib import Path
 
 # Initialize Flask app
 app = Flask(__name__)
 
+# Respect reverse-proxy headers (Render / Nginx). This keeps url_for(_external=True)
+# and HTTPS-aware redirects working correctly behind a proxy.
+_is_render = bool(os.environ.get('RENDER'))
+_trust_proxy = (os.getenv('TRUST_PROXY', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on'))
+if _is_render or _trust_proxy:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
+
+
+@app.after_request
+def _set_security_headers(response):
+    """Set conservative security headers.
+
+    Avoids heavy CSP changes that could break templates; focuses on safe defaults.
+    """
+    try:
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+        response.headers.setdefault('Referrer-Policy', 'same-origin')
+
+        enable_hsts = (os.getenv('ENABLE_HSTS', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on'))
+        if not enable_hsts and _is_render:
+            enable_hsts = True
+
+        if enable_hsts and request.is_secure:
+            response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    except Exception:
+        pass
+    return response
+
 def nl2br(value):
-    """Convert newlines to <br> tags"""
+    """Converts newlines to <br> tags, ensuring the input is escaped."""
     if not value:
         return ""
-    # Normalize line endings and convert to <br> tags
-    value = re.sub(r'\r\n|\r|\n', '\n', str(value))
-    return Markup(value.replace('\n', '<br>\n'))
+    # Escape the input to prevent XSS, then convert newlines
+    escaped_value = escape(value)
+    return Markup(escaped_value.replace('\\n', '<br>\\n'))
 
 app.jinja_env.filters['nl2br'] = nl2br
 
@@ -108,25 +160,36 @@ else:
     # Development settings
     app.config.update(
         DEBUG=True,
-        TESTING=True,
+        TESTING=False,
         PREFERRED_URL_SCHEME='http'
     )
     app.logger.setLevel(logging.DEBUG)
     app.logger.info('Clinic Management System starting in development mode')
 
 app.config.from_object('config.Config')
+Config.init_secrets(app)
 Config.init_fernet(app)
-db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
-migrate = Migrate(app, db)
+EncryptionUtils.init_fernet(app)
 # Socket.IO removed - using standard Flask dev server
 
 auth_bp = Blueprint('auth', __name__)
 csrf = CSRFProtect()
-# Configure rate limit storage backend via env or config; default to in-memory for development
-app.config['RATELIMIT_STORAGE_URI'] = os.getenv(
-    'RATELIMIT_STORAGE_URI',
-    app.config.get('RATELIMIT_STORAGE_URI', 'memory://')
-)
+
+# Configure rate limit storage backend. Use Redis in production.
+# In a production environment with multiple workers, using in-memory storage for rate limiting is not effective.
+# It's recommended to use a centralized backend like Redis.
+# You can set the REDIS_URL environment variable to point to your Redis instance.
+ratelimit_storage_uri = os.getenv('REDIS_URL') or os.getenv('RATELIMIT_STORAGE_URI')
+
+if not ratelimit_storage_uri:
+    ratelimit_storage_uri = 'memory://'
+    if os.getenv('FLASK_ENV') == 'production':
+        app.logger.warning(
+            'Rate limiting is using in-memory storage, which is not suitable for production with multiple workers. '
+            'Please configure a REDIS_URL or RATELIMIT_STORAGE_URI for persistent storage.'
+        )
+
+app.config['RATELIMIT_STORAGE_URI'] = ratelimit_storage_uri
 limiter = Limiter(key_func=get_remote_address, storage_uri=app.config['RATELIMIT_STORAGE_URI'])
 # Ensure CSRF and Limiter are initialized on the app
 csrf.init_app(app)
@@ -137,32 +200,128 @@ PROFILE_PICTURE_FOLDER = os.path.join(UPLOAD_FOLDER, 'profile_pictures')
 os.makedirs(PROFILE_PICTURE_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'U3VwZXJTZWNyZXRBZG1pblRva2VuMTIzIQ')  # Provide default only for development
 def get_database_uri():
-    database_url = os.getenv('DATABASE_URL')
-    
-    if database_url:
+    is_render = bool(os.environ.get('RENDER'))
+
+    def _sqlite_fallback_url() -> str:
+        fallback = os.getenv('SQLITE_FALLBACK_URL', '').strip()
+        if fallback:
+            return fallback
+        # Stable SQLite path for local development.
+        # Use an absolute path so running via debugger/other CWDs doesn't create multiple DB files.
+        instance_db_path = Path(app.root_path) / 'instance' / 'clinic.db'
+        instance_db_path.parent.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{instance_db_path.resolve().as_posix()}"
+
+    def _normalize_database_url(raw: str) -> str:
+        database_url = (raw or '').strip()
+
         # Handle both PostgreSQL URL formats
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
+        # If a relative SQLite path is provided, make it absolute under the app instance folder.
+        # This prevents creating different DB files depending on the current working directory.
+        if database_url.startswith('sqlite:///'):
+            sqlite_path = database_url[len('sqlite:///'):]
+            # Windows absolute paths look like C:/... or C:\...
+            is_windows_abs = bool(re.match(r'^[A-Za-z]:[\\/]', sqlite_path))
+            if sqlite_path and (not Path(sqlite_path).is_absolute()) and (not is_windows_abs):
+                instance_dir = Path(app.root_path) / 'instance'
+                instance_dir.mkdir(parents=True, exist_ok=True)
+                if sqlite_path.replace('\\', '/').startswith('instance/'):
+                    abs_path = (Path(app.root_path) / sqlite_path).resolve()
+                else:
+                    abs_path = (instance_dir / sqlite_path).resolve()
+                database_url = f"sqlite:///{abs_path.as_posix()}"
+
         return database_url
-    else:
-        # Fallback to SQLite for local development
-        return 'sqlite:///clinic.db'
+
+    def _safe_db_url_for_logging(url: str) -> str:
+        # Avoid leaking credentials in logs.
+        try:
+            from urllib.parse import urlsplit
+            parts = urlsplit(url)
+            netloc = parts.netloc
+            if '@' in netloc:
+                # strip userinfo
+                netloc = netloc.split('@', 1)[1]
+            return f"{parts.scheme}://{netloc}{parts.path}"
+        except Exception:
+            return '<redacted>'
+
+    database_url_raw = os.getenv('DATABASE_URL', '').strip()
+    if not database_url_raw:
+        if is_render:
+            raise RuntimeError('DATABASE_URL is required in production (Render).')
+        return _sqlite_fallback_url()
+
+    database_url = _normalize_database_url(database_url_raw)
+
+    # If the configured DB is SQLite, just use it.
+    if database_url.startswith('sqlite:'):
+        return database_url
+
+    # Prefer DATABASE_URL, but only fall back to SQLite in local development.
+    try:
+        connect_args = {}
+        # Short startup timeout for Postgres-compatible drivers.
+        if database_url.startswith('postgresql://'):
+            connect_args = {'connect_timeout': 3}
+        engine = create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
+        with engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+        return database_url
+    except Exception as e:
+        if is_render:
+            app.logger.error(
+                "DATABASE_URL unreachable (%s). Refusing to fall back to SQLite in production.",
+                _safe_db_url_for_logging(database_url),
+            )
+            app.logger.debug("DATABASE_URL connect error: %s", str(e), exc_info=True)
+            raise
+
+        app.logger.warning(
+            "DATABASE_URL unreachable (%s). Falling back to SQLite (development only).",
+            _safe_db_url_for_logging(database_url),
+        )
+        app.logger.debug("DATABASE_URL connect error: %s", str(e), exc_info=True)
+        return _sqlite_fallback_url()
 app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Harden DB pooling for long-running processes (APScheduler) where connections may go idle
+# while waiting on external APIs. Particularly important for Postgres + SSL.
+_db_uri = (app.config.get('SQLALCHEMY_DATABASE_URI') or '').strip().lower()
+if _db_uri.startswith('postgresql://'):
+    # Defaults are conservative and can be overridden via env.
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        # Recycle periodically to avoid server-side idle timeout drops.
+        'pool_recycle': int(os.getenv('SQLALCHEMY_POOL_RECYCLE', '300')),
+        'pool_timeout': int(os.getenv('SQLALCHEMY_POOL_TIMEOUT', '30')),
+        'pool_size': int(os.getenv('SQLALCHEMY_POOL_SIZE', '5')),
+        'max_overflow': int(os.getenv('SQLALCHEMY_MAX_OVERFLOW', '10')),
+        'connect_args': {
+            # psycopg2 connect args
+            'connect_timeout': int(os.getenv('PG_CONNECT_TIMEOUT', '10')),
+            # TCP keepalives help prevent silent mid-run disconnects.
+            'keepalives': 1,
+            'keepalives_idle': int(os.getenv('PG_KEEPALIVES_IDLE', '30')),
+            'keepalives_interval': int(os.getenv('PG_KEEPALIVES_INTERVAL', '10')),
+            'keepalives_count': int(os.getenv('PG_KEEPALIVES_COUNT', '5')),
+        },
+    }
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', UPLOAD_FOLDER)
 app.config['BACKUP_FOLDER'] = os.getenv('BACKUP_FOLDER', 'backups')
 app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 16 * 1024 * 1024))  # 16MB max upload size
-app.config.from_object(Config)
-app.config['FERNET_KEY'] = os.getenv('FERNET_KEY')
-app.config['DEEPSEEK_API_KEY'] = os.getenv('DEEPSEEK_API_KEY')
-app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
-app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
-app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'true').lower() == 'true'
-app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME', 'your.email@gmail.com')
-app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD', 'your-password-or-app-password')
-app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', 'your.email@gmail.com')
+
+# Keep a top-level DEEPSEEK_API_KEY for legacy call sites.
+app.config['DEEPSEEK_API_KEY'] = (app.config.get('DEEPSEEK_API_KEY') or os.getenv('DEEPSEEK_API_KEY') or '').strip()
+
+# Initialize database extensions AFTER configuration is finalized.
+db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
+migrate = Migrate(app, db)
 
 
 
@@ -193,15 +352,24 @@ class User(db.Model, UserMixin):
     __tablename__ = 'user'
     
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(255), unique=True, nullable=False)  # Increased from 50
-    email = db.Column(db.String(255), unique=True, nullable=False)    # Increased from 100
-    password = db.Column(db.String(255), nullable=False)              # Increased from 200
-    role = db.Column(db.String(50), nullable=False, default='user')   # Increased from 20
+    username = db.Column(EncryptedType, unique=True, nullable=False)
+    email = db.Column(EncryptedType, unique=True, nullable=False)
+    password = db.Column(db.String(255), nullable=False)              # Hashed, not encrypted
+    role = db.Column(EncryptedType, nullable=False)
+    # These columns are BOOLEAN/TIMESTAMP/VARCHAR in the existing Postgres schema.
+    # Do not store them via EncryptedType to avoid BYTEA type mismatches.
     is_active = db.Column(db.Boolean, default=True)
     last_login = db.Column(db.DateTime)
-    profile_picture = db.Column(db.Text)  # Changed from String(255) to Text for long URLs
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    profile_picture = db.Column(db.String(500))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    # Email verification & password reset (stored unencrypted; safe metadata)
+    is_email_verified = db.Column(db.Boolean, nullable=False, default=True)
+    email_otp_hash = db.Column(db.String(128))
+    email_otp_expires_at = db.Column(db.DateTime)
+    password_reset_nonce = db.Column(db.String(64))
+    password_reset_sent_at = db.Column(db.DateTime)
 
     def set_password(self, password):
         self.password = generate_password_hash(password)
@@ -215,6 +383,44 @@ class User(db.Model, UserMixin):
     def update_last_login(self):
         self.last_login = get_eat_now()
         db.session.commit()
+
+    @property
+    def last_login_dt(self):
+        """Best-effort datetime view of last_login.
+
+        Historical data and encrypted storage may return a string.
+        """
+        value = getattr(self, 'last_login', None)
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if not isinstance(value, str):
+            return None
+
+        s = value.strip()
+        if not s:
+            return None
+
+        # Try ISO first (handles timezone offsets too)
+        try:
+            return datetime.fromisoformat(s)
+        except Exception:
+            pass
+
+        # Common fallback formats
+        for fmt in (
+            '%Y-%m-%d %H:%M:%S.%f%z',
+            '%Y-%m-%d %H:%M:%S%z',
+            '%Y-%m-%d %H:%M:%S.%f',
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M',
+        ):
+            try:
+                return datetime.strptime(s, fmt)
+            except Exception:
+                continue
+        return None
     # Relationships 
     generated_summaries = db.relationship('PatientSummary', back_populates='generator', lazy=True)
 
@@ -223,7 +429,7 @@ class BackupRecord(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     backup_id = db.Column(db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
-    timestamp = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    timestamp = db.Column(db.DateTime, nullable=False, default=get_eat_now)
     backup_type = db.Column(db.String(20), nullable=False)  # 'manual', 'scheduled', 'disaster_recovery'
     status = db.Column(db.String(20), nullable=False, default='pending')  # 'pending', 'in_progress', 'completed', 'failed'
     size_bytes = db.Column(db.Integer)
@@ -237,6 +443,145 @@ class BackupRecord(db.Model):
     def __repr__(self):
         return f'<BackupRecord {self.backup_id}>'
 
+
+_BACKUP_STATS_MARKER = "\n\n__BACKUP_STATS__:\n"
+_RESTORE_STATUS_MARKER = "\n\n__RESTORE_STATUS__:\n"
+
+
+def _backup_notes_with_stats(notes: str | None, stats: dict) -> str:
+    """Append structured backup stats to notes without breaking legacy display."""
+    base = (notes or '').rstrip()
+    try:
+        payload = json.dumps(stats or {}, ensure_ascii=False, separators=(',', ':'))
+    except Exception:
+        payload = '{}'
+    if not base:
+        return _BACKUP_STATS_MARKER + payload
+    return base + _BACKUP_STATS_MARKER + payload
+
+
+def _backup_extract_stats(notes: str | None) -> dict | None:
+    if not notes:
+        return None
+    try:
+        if _BACKUP_STATS_MARKER not in notes:
+            return None
+        _, raw = notes.split(_BACKUP_STATS_MARKER, 1)
+        raw = (raw or '').strip()
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _backup_strip_stats(notes: str | None) -> str | None:
+    if not notes:
+        return notes
+    if _BACKUP_STATS_MARKER not in notes:
+        return notes
+    return notes.split(_BACKUP_STATS_MARKER, 1)[0].strip() or None
+
+
+def _backup_notes_with_restore_status(notes: str | None, restore_status: dict) -> str:
+    """Append structured restore status to notes.
+
+    Keeps existing text and backup stats, and replaces any existing restore marker.
+    """
+    base = (notes or '').rstrip()
+    # Drop any existing restore marker to keep only the latest restore status.
+    if _RESTORE_STATUS_MARKER in base:
+        base = base.split(_RESTORE_STATUS_MARKER, 1)[0].rstrip()
+    try:
+        payload = json.dumps(restore_status or {}, ensure_ascii=False, separators=(',', ':'))
+    except Exception:
+        payload = '{}'
+    if not base:
+        return _RESTORE_STATUS_MARKER + payload
+    return base + _RESTORE_STATUS_MARKER + payload
+
+
+def _backup_extract_restore_status(notes: str | None) -> dict | None:
+    if not notes:
+        return None
+    try:
+        if _RESTORE_STATUS_MARKER not in notes:
+            return None
+        _, raw = notes.split(_RESTORE_STATUS_MARKER, 1)
+        raw = (raw or '').strip()
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _backup_strip_restore_status(notes: str | None) -> str | None:
+    if not notes:
+        return notes
+    if _RESTORE_STATUS_MARKER not in notes:
+        return notes
+    return notes.split(_RESTORE_STATUS_MARKER, 1)[0].rstrip() or None
+
+
+class BackupAccessCredential(db.Model):
+    __tablename__ = 'backup_access_credentials'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+
+class BackupScheduleConfig(db.Model):
+    __tablename__ = 'backup_schedule_config'
+
+    id = db.Column(db.Integer, primary_key=True)
+    daily_enabled = db.Column(db.Boolean, default=True)
+    daily_time = db.Column(db.String(5), default='02:00')  # HH:MM
+    disaster_enabled = db.Column(db.Boolean, default=True)
+    disaster_interval_minutes = db.Column(db.Integer, default=30)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+
+class BackupLoginUser(db.Model):
+    """User credentials for backup feature access (separate from main system login)."""
+    __tablename__ = 'backup_login_users'
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)  # Hospital email for backup
+    password_hash = db.Column(db.String(255), nullable=True)  # Set after OTP verification
+    is_verified = db.Column(db.Boolean, default=False)  # Email verified via OTP
+    verified_at = db.Column(db.DateTime)
+    otp_hash = db.Column(db.String(128))  # Hash of OTP sent for verification
+    otp_expires_at = db.Column(db.DateTime)
+    is_active = db.Column(db.Boolean, default=True)
+
+    
+    # Linkage to admin user who created/registered
+    created_by_admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    # For security tracking - log failed attempts
+    last_login_attempt = db.Column(db.DateTime)
+    last_successful_login = db.Column(db.DateTime)
+    failed_attempts = db.Column(db.Integer, default=0)
+    
+    # NOTE: created_by_admin_id is used as the *linked admin user_id* for backup-login restriction.
+    # The system requires the currently logged-in admin to match this id to use the backup credentials.
+    created_by_admin = db.relationship('User', foreign_keys=[created_by_admin_id], backref='backup_login_users_created')
+
+    @property
+    def created_by(self):
+        # Backward-compat alias used by older templates/tests
+        return self.created_by_admin
+    
+    def __repr__(self):
+        return f'<BackupLoginUser {self.email}>'
+
+
 class DisasterRecoveryPlan(db.Model):
     __tablename__ = 'disaster_recovery_plans'
     
@@ -246,7 +591,7 @@ class DisasterRecoveryPlan(db.Model):
     recovery_point_objective = db.Column(db.Integer)  # in minutes
     recovery_time_objective = db.Column(db.Integer)  # in minutes
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
     last_tested = db.Column(db.DateTime)
     test_results = db.Column(db.Text)
     
@@ -259,8 +604,9 @@ class Ward(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    daily_rate = db.Column(db.Float, default=0.0)  # Ward bed charge per day
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     
     beds = db.relationship('Bed', backref='ward', lazy=True)
@@ -273,12 +619,298 @@ class Bed(db.Model):
     ward_id = db.Column(db.Integer, db.ForeignKey('wards.id'), nullable=False)
     status = db.Column(db.String(20), default='available')  # available, occupied, maintenance
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'))
+    assigned_at = db.Column(db.DateTime)
+    released_at = db.Column(db.DateTime)
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     
     patient = db.relationship('Patient', backref='bed_assignment')
+
+
+class BedAssignment(db.Model):
+    """Historical record of bed occupancy.
+
+    Used so ward stay charges can still be billed after a bed is released (when
+    Bed.patient_id is cleared).
+    """
+
+    __tablename__ = 'bed_assignments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    bed_id = db.Column(db.Integer, db.ForeignKey('beds.id'), nullable=False)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    assigned_at = db.Column(db.DateTime, nullable=False)
+    released_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    __table_args__ = (
+        db.Index('ix_bed_assignments_patient_id', 'patient_id'),
+        db.Index('ix_bed_assignments_bed_id', 'bed_id'),
+        db.Index('ix_bed_assignments_assigned_at', 'assigned_at'),
+    )
+
+    bed = db.relationship('Bed', backref='assignments')
+    patient = db.relationship('Patient', backref='bed_assignments')
+
+
+class BedStayCharge(db.Model):
+    """Tracks ward-stay periods already billed for a patient.
+
+    This lets ward stay totals "auto-update" daily by billing only the unbilled
+    date range since assignment.
+    """
+
+    __tablename__ = 'bed_stay_charges'
+
+    id = db.Column(db.Integer, primary_key=True)
+    bed_id = db.Column(db.Integer, db.ForeignKey('beds.id'), nullable=False)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    charge_start_date = db.Column(db.Date, nullable=False)
+    charge_end_date = db.Column(db.Date, nullable=False)
+    days = db.Column(db.Integer, nullable=False)
+    daily_rate = db.Column(db.Float, nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    sale_id = db.Column(db.Integer, db.ForeignKey('sales.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    __table_args__ = (
+        db.UniqueConstraint('bed_id', 'patient_id', 'charge_end_date', name='uq_bed_stay_charge_end'),
+        db.Index('ix_bed_stay_charges_patient_id', 'patient_id'),
+        db.Index('ix_bed_stay_charges_bed_id', 'bed_id'),
+    )
+
+    bed = db.relationship('Bed', backref='stay_charges')
+    patient = db.relationship('Patient', backref='stay_charges')
+    sale = db.relationship('Sale', backref='bed_stay_charges', uselist=False)
+
+
+def update_ward_stay_bill_for_patient(patient_id: int, context: dict):
+    """Idempotent ward stay bill updater.
+
+    - Calculates unbilled days since the last charge.
+    - Creates BedStayCharge, Sale, and Transaction records.
+    - Returns (BedStayCharge, unbilled_days) tuple.
+    """
+    if not patient_id or not context:
+        return None, 0
+
+    today = date.today()
+    start_date = context.get('start_date')
+    end_date = context.get('end_date')
+    bed_id = context.get('bed_id')
+    daily_rate = float(context.get('daily_rate') or 0)
+
+    if not all([start_date, end_date, bed_id, daily_rate > 0]):
+        return None, 0
+
+    # Find the last date a charge was recorded for this stay
+    last_charge = (
+        BedStayCharge.query
+        .filter_by(patient_id=patient_id, bed_id=bed_id)
+        .order_by(BedStayCharge.charge_end_date.desc())
+        .first()
+    )
+    
+    charge_from_date = last_charge.charge_end_date + timedelta(days=1) if last_charge else start_date
+    
+    if charge_from_date > end_date:
+        return None, 0 # Already billed up to date
+
+    unbilled_days = (end_date - charge_from_date).days + 1
+    if unbilled_days <= 0:
+        return None, 0
+
+    amount = daily_rate * unbilled_days
+    patient = Patient.query.get(patient_id)
+    ward_name = context.get('ward_name', 'Ward')
+
+    # Create Sale and Transaction first
+    sale = Sale(
+        sale_number=generate_sale_number(),
+        patient_id=patient_id,
+        user_id=current_user.id,
+        pharmacist_name=current_user.username,
+        total_amount=amount,
+        payment_method='internal',
+        status='completed',
+        notes=f"Ward stay charge for {patient.name if patient else 'patient'} in {ward_name} for {unbilled_days} days."
+    )
+    db.session.add(sale)
+    db.session.flush() # Flush to get sale.id
+
+    sale_item = SaleItem(
+        sale_id=sale.id,
+        description=f"Ward Stay: {ward_name} ({unbilled_days} days)",
+        quantity=unbilled_days,
+        unit_price=daily_rate,
+        total_price=amount
+    )
+    db.session.add(sale_item)
+
+    transaction = Transaction(
+        transaction_number=generate_transaction_number(),
+        transaction_type='sale',
+        amount=amount,
+        user_id=current_user.id,
+        reference_id=sale.id,
+        reference_table='sales',
+        direction='IN',
+        status='posted',
+        department='in-patient',
+        category='accommodation',
+        payer=patient.name if patient else 'Patient',
+        notes=f"Ward stay: {patient.name if patient else 'patient'} - {unbilled_days} days"
+    )
+    db.session.add(transaction)
+
+    # Now create the BedStayCharge and link it to the sale
+    charge = BedStayCharge(
+        bed_id=bed_id,
+        patient_id=patient_id,
+        charge_start_date=charge_from_date,
+        charge_end_date=end_date,
+        days=unbilled_days,
+        daily_rate=daily_rate,
+        amount=amount,
+        sale_id=sale.id
+    )
+    db.session.add(charge)
+    
+    try:
+        db.session.commit()
+        return charge, unbilled_days
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Failed to update ward stay bill: {e}")
+        return None, 0
+
+
+def get_ward_stay_bill(patient_id: int, context: dict):
+    """Get total ward stay bill and any unbilled portion."""
+    if not patient_id or not context:
+        return None, None
+
+    bed_id = context.get('bed_id')
+    daily_rate = float(context.get('daily_rate') or 0)
+    start_date = context.get('start_date')
+    end_date = context.get('end_date')
+
+    if not all([bed_id, daily_rate > 0, start_date, end_date]):
+        return None, None
+
+    # Get all historical charges for this stay
+    all_charges = BedStayCharge.query.filter_by(patient_id=patient_id, bed_id=bed_id).all()
+    
+    total_billed_days = sum(c.days for c in all_charges)
+    total_billed_amount = sum(c.amount for c in all_charges)
+
+    # Calculate unbilled portion
+    last_charge_date = max(c.charge_end_date for c in all_charges) if all_charges else start_date - timedelta(days=1)
+    
+    unbilled_start_date = last_charge_date + timedelta(days=1)
+    unbilled_days = 0
+    if end_date >= unbilled_start_date:
+        unbilled_days = (end_date - unbilled_start_date).days + 1
+
+    unbilled_amount = unbilled_days * daily_rate if unbilled_days > 0 else 0
+
+    total_stay_days = total_billed_days + unbilled_days
+    total_stay_amount = total_billed_amount + unbilled_amount
+
+    bill_summary = {
+        'context': context,
+        'total_stay_days': total_stay_days,
+        'total_stay_amount': total_stay_amount,
+        'billed_days': total_billed_days,
+        'billed_amount': total_billed_amount,
+        'unbilled_days': unbilled_days,
+        'unbilled_amount': unbilled_amount,
+        'charges': all_charges
+    }
+
+    unbilled_summary = {
+        'days': unbilled_days,
+        'amount': unbilled_amount,
+        'from': unbilled_start_date.isoformat(),
+        'to': end_date.isoformat()
+    } if unbilled_days > 0 else None
+
+    return bill_summary, unbilled_summary
+
+
+
+def _get_patient_bed_stay_context(patient_id: int):
+    """Return (bed, ward, start_date, end_date) for ward-stay billing.
+
+    Prefers the currently occupied bed. If none, falls back to the most recent
+    BedAssignment so billing still works after bed release.
+    """
+    if not patient_id:
+        return None
+
+    today = date.today()
+
+    bed = Bed.query.filter_by(patient_id=patient_id, status='occupied').first()
+    if bed and getattr(bed, 'ward', None):
+        assigned_at = getattr(bed, 'assigned_at', None)
+        start_date = assigned_at.date() if assigned_at else today
+        end_date = today
+        return {
+            'bed_id': bed.id,
+            'bed_number': bed.bed_number,
+            'ward_name': bed.ward.name,
+            'daily_rate': float(getattr(bed.ward, 'daily_rate', 0) or 0),
+            'start_date': start_date,
+            'end_date': end_date,
+            'source': 'current',
+        }
+
+    # Fallback: last known assignment
+    last = (
+        BedAssignment.query
+        .filter_by(patient_id=patient_id)
+        .order_by(BedAssignment.assigned_at.desc())
+        .first()
+    )
+    if not last or not getattr(last, 'bed', None) or not getattr(last.bed, 'ward', None):
+        return None
+
+    start_date = last.assigned_at.date()
+    end_date = (last.released_at.date() if last.released_at else today)
+    return {
+        'bed_id': last.bed.id,
+        'bed_number': last.bed.bed_number,
+        'ward_name': last.bed.ward.name,
+        'daily_rate': float(getattr(last.bed.ward, 'daily_rate', 0) or 0),
+        'start_date': start_date,
+        'end_date': end_date,
+        'source': 'history',
+    }
+
+
+def _ward_stay_is_paid_through(patient_id: int, bed_id: int, through_date: 'date') -> bool:
+    """Return True if ward stay charges are posted through the given date."""
+    if not patient_id or not bed_id or not through_date:
+        return True
+
+    # Find the latest charge whose end_date covers the requested through_date
+    charges = (
+        BedStayCharge.query
+        .filter_by(patient_id=patient_id, bed_id=bed_id)
+        .filter(BedStayCharge.charge_end_date >= through_date)
+        .order_by(BedStayCharge.charge_end_date.desc())
+        .all()
+    )
+    for ch in charges or []:
+        sale_id = getattr(ch, 'sale_id', None)
+        if not sale_id:
+            continue
+        tx = _get_transaction_for_sale(int(sale_id))
+        if tx:
+            return True
+    return False
 
 def get_total_beds():
     return Bed.query.count()
@@ -299,8 +931,8 @@ class Drug(db.Model):
     stocked_quantity = db.Column(db.Integer, nullable=False)
     sold_quantity = db.Column(db.Integer, default=0)
     expiry_date = db.Column(db.Date, nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     @hybrid_property
     def remaining_quantity(self):
@@ -357,11 +989,11 @@ class ControlledDrug(db.Model):
     stocked_quantity = db.Column(db.Integer, nullable=False)
     sold_quantity = db.Column(db.Integer, default=0)
     expiry_date = db.Column(db.Date, nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=get_eat_now,
+        onupdate=get_eat_now,
     )
 
     @hybrid_property
@@ -392,11 +1024,11 @@ class ControlledPrescription(db.Model):
     doctor_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     notes = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending')  # pending, dispensed, cancelled
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=get_eat_now,
+        onupdate=get_eat_now,
     )
 
     items = db.relationship('ControlledPrescriptionItem', backref='controlled_prescription', lazy=True, cascade='all, delete-orphan')
@@ -416,11 +1048,11 @@ class ControlledPrescriptionItem(db.Model):
     duration = db.Column(db.String(50))
     notes = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending')
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=get_eat_now,
+        onupdate=get_eat_now,
     )
 
     controlled_drug = db.relationship('ControlledDrug', backref='controlled_prescription_items')
@@ -434,15 +1066,32 @@ class ControlledSale(db.Model):
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'))
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     pharmacist_name = db.Column(db.String(100))
-    total_amount = db.Column(db.Float, nullable=False)
+    total_amount = db.Column(db.Numeric(10, 2), nullable=False)
     payment_method = db.Column(db.String(20))
     status = db.Column(db.String(20), default='completed')
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    transaction_id = db.Column(db.Integer, db.ForeignKey('transaction.id'), nullable=True)
+    transaction = db.relationship('Transaction', backref='controlled_sale', uselist=False)
+
+
+    # Walk-in / external controlled sale metadata (captured by pharmacist)
+    customer_name = db.Column(db.String(255))
+    customer_age = db.Column(db.Integer)
+    customer_gender = db.Column(db.String(50))
+    diagnosis = db.Column(db.String(255))
+    customer_phone = db.Column(db.String(100))
+    destination = db.Column(db.String(255))
+
+    # Prescription image/photo for external controlled sales
+    prescription_image_path = db.Column(db.String(500))
+
+    # Stored receipt copy (HTML)
+    receipt_html = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=get_eat_now,
+        onupdate=get_eat_now,
     )
 
     patient = db.relationship('Patient', backref='controlled_sales')
@@ -462,14 +1111,21 @@ class ControlledSaleItem(db.Model):
     description = db.Column(db.String(255), nullable=False, default='Controlled drug sale')
     prescription_source = db.Column(db.String(20), nullable=False, default='external')  # internal, external
     prescription_sheet_path = db.Column(db.String(500))
+
+    # Optional Rx instructions captured at point of sale
+    dosage = db.Column(db.Text)
+    frequency = db.Column(db.String(50))
+    duration = db.Column(db.String(50))
+    notes = db.Column(db.Text)
+
     quantity = db.Column(db.Integer, default=1)
     unit_price = db.Column(db.Float, nullable=False)
     total_price = db.Column(db.Float, nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(
         db.DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=get_eat_now,
+        onupdate=get_eat_now,
     )
 
     controlled_drug = db.relationship('ControlledDrug', backref='controlled_sale_items')
@@ -484,6 +1140,7 @@ class ControlledSaleItem(db.Model):
 class DrugDosage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     drug_id = db.Column(db.Integer, db.ForeignKey('drug.id'), nullable=False)
+    source = db.Column(db.String(20), default='manual')  # manual|ai
     indication = db.Column(db.Text)
     contraindication = db.Column(db.Text)
     interaction = db.Column(db.Text)
@@ -492,11 +1149,912 @@ class DrugDosage(db.Model):
     dosage_adults = db.Column(db.Text)
     dosage_geriatrics = db.Column(db.Text)
     important_notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     
     drug = db.relationship('Drug', backref='dosage')
+
+
+class ControlledDrugDosage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    controlled_drug_id = db.Column(db.Integer, db.ForeignKey('controlled_drugs.id'), nullable=False)
+    source = db.Column(db.String(20), default='manual')  # manual|ai
+    indication = db.Column(db.Text)
+    contraindication = db.Column(db.Text)
+    interaction = db.Column(db.Text)
+    side_effects = db.Column(db.Text)
+    dosage_peds = db.Column(db.Text)
+    dosage_adults = db.Column(db.Text)
+    dosage_geriatrics = db.Column(db.Text)
+    important_notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    controlled_drug = db.relationship('ControlledDrug', backref='dosage')
+
+
+def _normalize_drug_name(name: str) -> str:
+    return (name or '').strip().lower()
+
+
+def _load_dosage_index_book():
+    """Load dosage index book JSON if present.
+
+    Expected format:
+      {"entries": [{"name": "Paracetamol", "indication": "...", "dosage_adults": "...", ...}]}
+    """
+    candidates = [
+        os.path.join(app.instance_path, 'dosage_index.json'),
+        os.path.join(app.root_path, 'static', 'dosage_index.json'),
+        os.path.join(app.root_path, 'dosage_index.json'),
+    ]
+    for path in candidates:
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f) or {}
+                entries = data.get('entries')
+                if isinstance(entries, list):
+                    return entries
+        except Exception as e:
+            current_app.logger.error(f"Failed to load dosage index book from {path}: {str(e)}", exc_info=True)
+    return []
+
+
+def _lookup_index_dosage_by_name(drug_name: str):
+    key = _normalize_drug_name(drug_name)
+    if not key:
+        return None
+    for entry in _load_dosage_index_book():
+        if _normalize_drug_name(entry.get('name')) == key:
+            return {
+                'indication': entry.get('indication'),
+                'contraindication': entry.get('contraindication'),
+                'interaction': entry.get('interaction'),
+                'side_effects': entry.get('side_effects'),
+                'dosage_peds': entry.get('dosage_peds'),
+                'dosage_adults': entry.get('dosage_adults'),
+                'dosage_geriatrics': entry.get('dosage_geriatrics'),
+                'important_notes': entry.get('important_notes'),
+            }
+    return None
+
+
+def _get_dosage_ai_client():
+    """Get OpenAI client for dosage generation (separate from doctor AIService)"""
+    api_key = current_app.config.get('DEEPSEEK_API_KEY')
+    if not api_key:
+        return None
+    try:
+        # Allow environment/config overrides; normalize base URL to include /v1.
+        base_url = (
+            os.getenv('DEEPSEEK_BASE_URL')
+            or (Config.DEEPSEEK_CONFIG.get('base_url') if isinstance(getattr(Config, 'DEEPSEEK_CONFIG', None), dict) else None)
+            or 'https://api.deepseek.com'
+        )
+        base_url = (base_url or '').strip().rstrip('/')
+        if base_url and not base_url.endswith('/v1'):
+            base_url = f"{base_url}/v1"
+
+        timeout = os.getenv('DEEPSEEK_DOSAGE_TIMEOUT')
+        if timeout is None:
+            timeout = os.getenv('DEEPSEEK_TIMEOUT')
+        try:
+            timeout_f = float(timeout) if timeout is not None else float(Config.DEEPSEEK_CONFIG.get('timeout', 30.0))
+        except Exception:
+            timeout_f = 30.0
+
+        max_retries = os.getenv('DEEPSEEK_MAX_RETRIES')
+        try:
+            max_retries_i = int(max_retries) if max_retries is not None else int(Config.DEEPSEEK_CONFIG.get('max_retries', 3))
+        except Exception:
+            max_retries_i = 3
+
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout_f,
+            max_retries=max_retries_i,
+        )
+    except Exception as e:
+        app.logger.error(f"Failed to create dosage AI client: {e}")
+        return None
+
+
+def _ai_generate_dosage_fields_from_name(drug_name: str, context_entry: dict | None = None):
+    """Generate dosage/monograph fields using the configured AI service.
+
+    This is AI-generated content. Admin review is required before clinical use.
+    Returns dict with our standard keys or None.
+    """
+    name = (drug_name or '').strip()
+    if not name:
+        return None
+
+    api_key = current_app.config.get('DEEPSEEK_API_KEY')
+    if not api_key:
+        return None
+
+    client = _get_dosage_ai_client()
+    if not client:
+        app.logger.error(f"Failed to get dosage AI client for '{name}'")
+        return None
+
+    # NOTE: Per admin requirement, dosage generation is AI-only.
+    # We intentionally do not use any external/index-book context here.
+
+    prompt = (
+        "You are an expert clinical pharmacist and physician with 20+ years of experience in clinical medicine, pharmacology, and drug therapy.\n"
+        "You have extensive knowledge from medical textbooks, clinical guidelines, peer-reviewed journals, and pharmaceutical references.\n"
+        "Generate a comprehensive, professional drug monograph summary for the given medicine.\n\n"
+        "INSTRUCTIONS:\n"
+        "For each section, provide detailed, evidence-based information appropriate for healthcare providers:\n\n"
+        "INDICATION:\n"
+        "- List primary therapeutic uses and clinical indications\n"
+        "- Include approved indications and common off-label uses when evidence-supported\n"
+        "- Be specific about conditions and diseases\n"
+        "- Format as bullet points or numbered list for clarity\n\n"
+        "CONTRAINDICATION:\n"
+        "- List absolute contraindications (conditions where drug must NOT be used)\n"
+        "- Include relative contraindications (conditions requiring careful consideration)\n"
+        "- Mention contraindications related to drug class, allergy history, and specific patient populations\n"
+        "- Include cautionary notes for special populations (pregnancy, lactation, renal/hepatic impairment)\n\n"
+        "INTERACTION:\n"
+        "- List major and clinically significant drug-drug interactions\n"
+        "- Include cytochrome P450 interactions (CYP3A4, CYP2D6, etc.) if applicable\n"
+        "- Mention food interactions and significant supplement interactions\n"
+        "- Include mechanism and clinical significance of major interactions\n"
+        "- Format interactions clearly with drug names and expected effects\n\n"
+        "SIDE_EFFECTS:\n"
+        "- List common (>10%) and serious adverse effects\n"
+        "- Organize by frequency/severity (most frequent/serious first)\n"
+        "- Include system-based organization when helpful (GI, CNS, cardiac, etc.)\n"
+        "- Mention black box warnings and serious adverse reactions\n"
+        "- Include manifestations of overdose or toxicity\n\n"
+        "DOSAGE_PEDS (Pediatric dosing):\n"
+        "- Provide age-specific or weight-based dosing guidelines\n"
+        "- Include neonatal dosing if applicable\n"
+        "- Specify routes (oral, IV, IM, etc.) and frequency\n"
+        "- Include maximum daily doses for children\n"
+        "- Format clearly: 'Age/Weight range: Dose, Route, Frequency'\n\n"
+        "DOSAGE_ADULTS (Adult dosing):\n"
+        "- Provide standard adult dosing regimens\n"
+        "- Include initial, maintenance, and maximum doses\n"
+        "- Specify routes (oral, IV, IM, etc.) and frequency\n"
+        "- Include dosing adjustments for renal/hepatic impairment if needed\n"
+        "- Format clearly: 'Indication: Dose, Route, Frequency'\n\n"
+        "DOSAGE_GERIATRICS (Elderly dosing):\n"
+        "- Provide age-specific dosing for patients >65-75 years\n"
+        "- Include dose reductions when necessary\n"
+        "- Mention special considerations (polypharmacy, reduced renal function, etc.)\n"
+        "- Include monitoring parameters for elderly patients\n"
+        "- Format clearly: 'Starting dose: X, Maintenance dose: Y, Notes on adjustments'\n\n"
+        "IMPORTANT_NOTES:\n"
+        "- Mechanism of action and pharmacokinetic highlights\n"
+        "- Key monitoring parameters (labs, vital signs, clinical signs)\n"
+        "- Therapeutic drug levels/monitoring if applicable\n"
+        "- Patient counseling points\n"
+        "- Stability, storage, and administration considerations\n"
+        "- Risk assessment and special precautions\n"
+        "- Use in pregnancy/lactation classification if applicable\n\n"
+        "SAFETY REQUIREMENTS:\n"
+        "- Base all information on established pharmaceutical references and clinical guidelines\n"
+        "- If uncertain about specific details, either provide general information or set field to null\n"
+        "- Prefer evidence-based, peer-reviewed sources\n"
+        "- Do not invent dosages or clinical information\n"
+        "- Include appropriate cautions and warnings\n\n"
+        f"Drug name: {name}\n"
+        "\n"
+        "Output STRICT JSON (no markdown) with exactly these keys and no extras: "
+        "indication, contraindication, interaction, side_effects, dosage_peds, dosage_adults, dosage_geriatrics, important_notes. "
+        "Each value must be a string (formatted with bullet points, line breaks, and clear organization) or null.\n"
+        "Ensure the response is comprehensive yet concise, formatted for easy reading by healthcare providers."
+    )
+
+    def _generate_field_via_ai(field_key: str) -> str | None:
+        """Generate one field as JSON {field_key: <string|null>} to avoid truncation."""
+        field_prompt = (
+            "You are an expert clinical pharmacist writing content for a clinic management system.\n"
+            "Return STRICT JSON (no markdown) with exactly one key and no extras.\n"
+            f"Key: {field_key}\n"
+            "Value rules: a clinically useful but concise string (use bullet points and line breaks) OR null.\n"
+            "Hard limit: keep the value under ~1200 characters to ensure the JSON completes.\n\n"
+            f"Drug name: {name}\n"
+        )
+        try:
+            resp = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": field_prompt}],
+                temperature=0.2,
+                max_tokens=600,
+                timeout=float(os.getenv('DEEPSEEK_TIMEOUT') or Config.DEEPSEEK_CONFIG.get('timeout', 30.0)),
+            )
+            field_content = (resp.choices[0].message.content or '').strip()
+            field_payload = _extract_json_object(field_content)
+            if isinstance(field_payload, dict):
+                v = field_payload.get(field_key)
+                return v.strip() if isinstance(v, str) and v.strip() else None
+            return None
+        except Exception as e:
+            app.logger.warning(
+                f"AI per-field generation failed for '{name}' field '{field_key}': {type(e).__name__}: {str(e)}"
+            )
+            return None
+
+    try:
+        app.logger.debug(f"Calling AI for drug '{name}'...")
+        response = None
+        last_exception: Exception | None = None
+        # First attempt: enough tokens for a professional monograph.
+        # Retry: smaller output if the first call times out.
+        for attempt_max_tokens in (3000, 1800, 900):
+            try:
+                response = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=attempt_max_tokens,
+                    timeout=float(os.getenv('DEEPSEEK_DOSAGE_TIMEOUT') or os.getenv('DEEPSEEK_TIMEOUT') or Config.DEEPSEEK_CONFIG.get('timeout', 30.0)),
+                )
+                break
+            except (APIConnectionError, APITimeoutError) as e:
+                # Let callers decide whether to retry/skip and how to count errors.
+                app.logger.error(f"AI dosage generation exception for '{name}': {type(e).__name__}: {str(e)}")
+                raise
+            except Exception as e:
+                last_exception = e
+                err_name = type(e).__name__
+                err_text = str(e).lower()
+                is_timeout = ("timeout" in err_name.lower()) or ("timed out" in err_text) or ("timeout" in err_text)
+                if is_timeout and attempt_max_tokens != 900:
+                    app.logger.warning(
+                        f"AI call timed out for '{name}' at max_tokens={attempt_max_tokens}; retrying with fewer tokens"
+                    )
+                    continue
+                raise
+
+        if response is None:
+            if last_exception is not None:
+                raise last_exception
+            return None
+        content = (response.choices[0].message.content or '').strip()
+        app.logger.debug(f"AI response for '{name}': {content[:200]}...")
+        payload = _extract_json_object(content)
+        if not payload:
+            app.logger.warning(
+                f"AI returned non-dict or null payload for '{name}'; falling back to per-field generation"
+            )
+            payload = {}
+            for field_key in [
+                'indication',
+                'contraindication',
+                'interaction',
+                'side_effects',
+                'dosage_peds',
+                'dosage_adults',
+                'dosage_geriatrics',
+                'important_notes',
+            ]:
+                payload[field_key] = _generate_field_via_ai(field_key)
+        if not isinstance(payload, dict):
+            app.logger.warning(f"AI returned non-dict payload for '{name}': {type(payload).__name__}")
+            return None
+
+        out = {'source': 'ai'}
+        for key in [
+            'indication',
+            'contraindication',
+            'interaction',
+            'side_effects',
+            'dosage_peds',
+            'dosage_adults',
+            'dosage_geriatrics',
+            'important_notes',
+        ]:
+            v = payload.get(key)
+            if v is None:
+                out[key] = None
+                continue
+            if isinstance(v, str):
+                vv = v.strip()
+                out[key] = vv if vv else None
+            else:
+                out[key] = None
+        app.logger.info(f"AI generation success for '{name}': {out}")
+        return out
+    except (APIConnectionError, APITimeoutError):
+        # Already logged above; re-raise so callers can count/report appropriately.
+        raise
+    except Exception as e:
+        app.logger.error(f"AI dosage generation exception for '{name}': {type(e).__name__}: {str(e)}")
+        return None
+
+
+def _extract_json_object(text: str):
+    if not text:
+        return None
+    
+    # Remove markdown code block wrapper if present (LLMs sometimes ignore "no markdown").
+    cleaned_text = text.strip()
+    if cleaned_text.startswith('```'):
+        # Drop the first fence line (``` or ```json or ```JSON, etc.)
+        newline_index = cleaned_text.find('\n')
+        cleaned_text = cleaned_text[newline_index + 1 :] if newline_index != -1 else ''
+    if cleaned_text.endswith('```'):
+        cleaned_text = cleaned_text[:-3]
+    cleaned_text = cleaned_text.strip()
+
+    # Fast-path: sometimes the model returns raw JSON already.
+    if cleaned_text.startswith('{') and cleaned_text.endswith('}'):
+        try:
+            return json.loads(cleaned_text)
+        except Exception:
+            pass
+    
+    # Try to find a JSON object in a free-form response.
+    start = cleaned_text.find('{')
+    end = cleaned_text.rfind('}')
+    if start != -1 and end == -1:
+        # This almost always means the response was truncated before closing the JSON object.
+        app.logger.debug(
+            f"No JSON object found in text (missing closing brace). Start pos: {start}, End pos: {end}, Length: {len(cleaned_text)}"
+        )
+        return None
+    if start == -1 or end == -1 or end <= start:
+        app.logger.debug(
+            f"No JSON object found in text. Start pos: {start}, End pos: {end}, Length: {len(cleaned_text)}"
+        )
+        return None
+    
+    candidate = cleaned_text[start:end + 1]
+    try:
+        result = json.loads(candidate)
+        app.logger.debug(f"Successfully extracted JSON object from text")
+        return result
+    except Exception as e:
+        app.logger.error(f"Failed to parse extracted JSON: {type(e).__name__}: {str(e)}\nCandidate text (first 300 chars): {candidate[:300]}")
+        return None
+
+
+def _ai_structure_dosage_fields(drug_name: str, base_entry: dict | None):
+    """Use configured AI (DeepSeek via AIService) to structure label text into our dosage fields.
+
+    Safety: the model is instructed to ONLY reorganize/condense provided text (no invention).
+    If AI is not configured or fails, returns base_entry unchanged.
+    """
+    if not isinstance(base_entry, dict):
+        return base_entry
+
+    api_key = current_app.config.get('DEEPSEEK_API_KEY')
+    if not api_key:
+        return base_entry
+
+    try:
+        client = AIService.get_client()
+    except Exception:
+        return base_entry
+
+    prompt = (
+        "You are an expert clinical pharmacist reorganizing pharmaceutical documentation for a clinical management system.\n"
+        "Task: Extract and restructure the provided excerpts into structured database fields.\n\n"
+        "GUIDELINES FOR STRUCTURING:\n\n"
+        "INDICATION:\n"
+        "- Extract and reorganize approved indications and therapeutic uses\n"
+        "- Use bullet points or numbered format\n"
+        "- Be specific about conditions and patient populations\n\n"
+        "CONTRAINDICATION:\n"
+        "- Extract absolute and relative contraindications\n"
+        "- Clearly distinguish between absolute (must not use) and relative (use with caution)\n"
+        "- Include special population considerations\n\n"
+        "INTERACTION:\n"
+        "- List clinically significant drug-drug interactions\n"
+        "- Include mechanism if provided in excerpts\n"
+        "- Format clearly with interacting drug and clinical significance\n\n"
+        "SIDE_EFFECTS:\n"
+        "- Organize by frequency or severity\n"
+        "- Include serious adverse reactions and black box warnings\n"
+        "- Use clear formatting for easy scanning\n\n"
+        "DOSAGE_PEDS:\n"
+        "- Extract pediatric dosing with age/weight parameters\n"
+        "- Include all dosage forms and routes mentioned\n"
+        "- Format as: 'Age/Weight: Dose, Route, Frequency'\n\n"
+        "DOSAGE_ADULTS:\n"
+        "- Extract standard adult dosing with clear indications\n"
+        "- Include initial, maintenance, and maximum doses\n"
+        "- Format as: 'Indication: Dose, Route, Frequency'\n\n"
+        "DOSAGE_GERIATRICS:\n"
+        "- Extract geriatric-specific dosing and adjustments\n"
+        "- Include age-related considerations and monitoring\n\n"
+        "IMPORTANT_NOTES:\n"
+        "- Extract mechanism of action\n"
+        "- Include key monitoring parameters and therapeutic levels\n"
+        "- Add storage, administration, and clinical considerations\n"
+        "- Include pregnancy/lactation information if available\n\n"
+        "CRITICAL RULES:\n"
+        "- Do NOT invent or add information not in the excerpts\n"
+        "- Do NOT use general medical knowledge beyond text reorganization\n"
+        "- Use verbatim phrases when possible; light reformatting is acceptable\n"
+        "- Preserve all clinical details and numerical values exactly\n"
+        "- If an excerpt doesn't contain enough information for a field, return null\n"
+        "- Organize for clarity and clinical utility\n\n"
+        f"Drug name: {drug_name}\n\n"
+        "Provided excerpts (may be incomplete):\n"
+        f"INDICATIONS_AND_USAGE:\n{base_entry.get('indication') or '[Not provided]'}\n\n"
+        f"CONTRAINDICATIONS:\n{base_entry.get('contraindication') or '[Not provided]'}\n\n"
+        f"DRUG_INTERACTIONS:\n{base_entry.get('interaction') or '[Not provided]'}\n\n"
+        f"ADVERSE_REACTIONS:\n{base_entry.get('side_effects') or '[Not provided]'}\n\n"
+        f"DOSAGE_AND_ADMINISTRATION:\n{base_entry.get('dosage_adults') or '[Not provided]'}\n\n"
+        f"PEDIATRIC_DOSING:\n{base_entry.get('dosage_peds') or '[Not provided]'}\n\n"
+        f"WARNINGS_AND_PRECAUTIONS:\n{base_entry.get('important_notes') or '[Not provided]'}\n\n"
+        "Output format:\n"
+        "Return STRICT JSON (no markdown) with these exact keys only: "
+        "indication, contraindication, interaction, side_effects, dosage_peds, dosage_adults, dosage_geriatrics, important_notes.\n"
+        "Each value must be a well-formatted string (with bullet points, line breaks for readability) or null.\n"
+        "Ensure organized, professional formatting suitable for healthcare provider reference."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=AIService.MODELS.get('primary', 'deepseek-chat'),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=700,
+        )
+        content = (response.choices[0].message.content or '').strip()
+        payload = _extract_json_object(content)
+        if not isinstance(payload, dict):
+            return base_entry
+
+        out = dict(base_entry)
+        for key in [
+            'indication',
+            'contraindication',
+            'interaction',
+            'side_effects',
+            'dosage_peds',
+            'dosage_adults',
+            'dosage_geriatrics',
+            'important_notes',
+        ]:
+            v = payload.get(key)
+            if v is None:
+                continue
+            if isinstance(v, str) and v.strip():
+                out[key] = v.strip()
+        out['source'] = f"{base_entry.get('source') or 'index'}+ai"
+        return out
+    except Exception as e:
+        try:
+            current_app.logger.warning(f"AI dosage structuring failed for '{drug_name}': {str(e)}")
+        except Exception:
+            pass
+        return base_entry
+
+
+def _is_blank(value):
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _ai_dosage_agent_state_path():
+    try:
+        os.makedirs(app.instance_path, exist_ok=True)
+    except Exception:
+        pass
+    return os.path.join(app.instance_path, 'ai_dosage_agent.json')
+
+
+def _get_ai_dosage_agent_enabled() -> bool:
+    """Returns True if the background dosage agent is enabled."""
+    path = _ai_dosage_agent_state_path()
+    try:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+            return bool(data.get('enabled', False))
+    except Exception:
+        return False
+    return False
+
+
+def _set_ai_dosage_agent_enabled(enabled: bool):
+    path = _ai_dosage_agent_state_path()
+    try:
+        payload = {
+            'enabled': bool(enabled),
+            'updated_at': get_eat_now().isoformat(),
+        }
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        try:
+            current_app.logger.error(f"Failed to persist AI dosage agent state: {str(e)}", exc_info=True)
+        except Exception:
+            pass
+
+
+def _apply_dosage_suggestion_to_model(dosage_obj, suggestion: dict):
+    """Apply suggestion onto dosage model, but only for empty fields."""
+    changed = 0
+    if not isinstance(suggestion, dict):
+        return 0
+
+    if _is_blank(dosage_obj.indication) and suggestion.get('indication'):
+        dosage_obj.indication = suggestion.get('indication'); changed += 1
+    if _is_blank(dosage_obj.contraindication) and suggestion.get('contraindication'):
+        dosage_obj.contraindication = suggestion.get('contraindication'); changed += 1
+    if _is_blank(dosage_obj.interaction) and suggestion.get('interaction'):
+        dosage_obj.interaction = suggestion.get('interaction'); changed += 1
+    if _is_blank(dosage_obj.side_effects) and suggestion.get('side_effects'):
+        dosage_obj.side_effects = suggestion.get('side_effects'); changed += 1
+    if _is_blank(dosage_obj.dosage_peds) and suggestion.get('dosage_peds'):
+        dosage_obj.dosage_peds = suggestion.get('dosage_peds'); changed += 1
+    if _is_blank(dosage_obj.dosage_adults) and suggestion.get('dosage_adults'):
+        dosage_obj.dosage_adults = suggestion.get('dosage_adults'); changed += 1
+    if _is_blank(dosage_obj.dosage_geriatrics) and suggestion.get('dosage_geriatrics'):
+        dosage_obj.dosage_geriatrics = suggestion.get('dosage_geriatrics'); changed += 1
+    if _is_blank(dosage_obj.important_notes) and suggestion.get('important_notes'):
+        dosage_obj.important_notes = suggestion.get('important_notes'); changed += 1
+
+    return changed
+
+
+def _dosage_missing_filter(model_cls):
+    # Filter rows that have at least one empty/null field.
+    return or_(
+        model_cls.indication.is_(None), model_cls.indication == '',
+        model_cls.contraindication.is_(None), model_cls.contraindication == '',
+        model_cls.interaction.is_(None), model_cls.interaction == '',
+        model_cls.side_effects.is_(None), model_cls.side_effects == '',
+        model_cls.dosage_peds.is_(None), model_cls.dosage_peds == '',
+        model_cls.dosage_adults.is_(None), model_cls.dosage_adults == '',
+        model_cls.dosage_geriatrics.is_(None), model_cls.dosage_geriatrics == '',
+        model_cls.important_notes.is_(None), model_cls.important_notes == '',
+    )
+
+
+def run_ai_dosage_agent_once(
+    kind: str = 'both',
+    create_limit: int = 50,
+    update_limit: int = 50,
+    ai_generation_limit: int = 50,
+    max_run_seconds: int = 300,
+    created_at: Optional[datetime] = None,
+    **_ignored_kwargs,
+):
+    """Creates missing dosage rows and fills missing fields (does not overwrite existing values).
+
+    kind: 'drug' | 'controlled' | 'both'
+
+    Notes on scaling:
+    - create/update limits can be large (e.g., 10,000) because DB operations are local.
+    - ai_generation_limit and max_run_seconds prevent runaway background runs.
+    """
+    if not _get_ai_dosage_agent_enabled():
+        return {'enabled': False, 'created': 0, 'updated_records': 0, 'filled_fields': 0, 'reason': 'Agent is disabled.'}
+
+    created = 0
+    updated_records = 0
+    filled_fields = 0
+
+    errors = 0
+    ai_budget = max(0, int(ai_generation_limit or 0))
+    started = monotonic()
+
+    last_ai_error: str | None = None
+
+    if not current_app.config.get('DEEPSEEK_API_KEY'):
+        msg = 'DEEPSEEK_API_KEY not configured. Set it in environment/config to use AI generation.'
+        try:
+            current_app.logger.warning(msg)
+        except Exception:
+            pass
+        return {
+            'enabled': True,
+            'created': 0,
+            'updated_records': 0,
+            'filled_fields': 0,
+            'errors': 1,
+            'reason': msg,
+        }
+
+    kind_norm = (kind or 'both').strip().lower()
+    if kind_norm not in ('drug', 'controlled', 'both'):
+        kind_norm = 'both'
+
+    def get_suggestion(name: str):
+        nonlocal ai_budget, errors, last_ai_error
+        if ai_budget <= 0:
+            return None
+        try:
+            suggestion = _ai_generate_dosage_fields_from_name(name, context_entry=None)
+            return suggestion
+        except (APIConnectionError, APITimeoutError) as e:
+            errors += 1
+            last_ai_error = f"{type(e).__name__}: {str(e)}"
+            return None
+        except Exception as e:
+            errors += 1
+            last_ai_error = f"{type(e).__name__}: {str(e)}"
+            return None
+        finally:
+            ai_budget -= 1
+
+    # 1) Create missing dosage rows for normal drugs
+    if kind_norm in ('drug', 'both'):
+        missing_drugs = Drug.query.filter(~Drug.dosage.any()).limit(max(0, int(create_limit or 0))).all()
+        app.logger.info(f"Agent: Found {len(missing_drugs)} drugs without dosage (kind=drug)")
+        for drug in missing_drugs:
+            if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                break
+            try:
+                suggestion = get_suggestion(drug.name)
+                app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
+                if not suggestion:
+                    app.logger.info(f"Skipped {drug.name}: AI returned None")
+                    continue
+                dosage = DrugDosage(drug_id=drug.id, source='ai')
+                changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                app.logger.debug(f"Applied {changed} fields to {drug.name} dosage")
+                if changed:
+                    try:
+                        dosage.source = 'ai'
+                    except Exception:
+                        pass
+                    filled_fields += changed
+                    db.session.add(dosage)
+                    created += 1
+                    app.logger.info(f"Created dosage for {drug.name} (fields: {changed})")
+                else:
+                    app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
+            except Exception as e:
+                app.logger.error(f"Error creating dosage for {drug.name}: {e}")
+                errors += 1
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+                continue
+
+            if created % 200 == 0:
+                db.session.flush()
+
+    # 2) Create missing dosage rows for controlled drugs
+    if kind_norm in ('controlled', 'both'):
+        missing_controlled = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).limit(max(0, int(create_limit or 0))).all()
+        app.logger.info(f"Agent: Found {len(missing_controlled)} controlled drugs without dosage (kind=controlled)")
+        for drug in missing_controlled:
+            if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                break
+            try:
+                suggestion = get_suggestion(drug.name)
+                app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
+                if not suggestion:
+                    app.logger.info(f"Skipped {drug.name}: AI returned None")
+                    continue
+                dosage = ControlledDrugDosage(controlled_drug_id=drug.id, source='ai')
+                changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                app.logger.debug(f"Applied {changed} fields to {drug.name} dosage")
+                if changed:
+                    try:
+                        dosage.source = 'ai'
+                    except Exception:
+                        pass
+                    filled_fields += changed
+                    db.session.add(dosage)
+                    created += 1
+                    app.logger.info(f"Created dosage for {drug.name} (fields: {changed})")
+                else:
+                    app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
+            except Exception as e:
+                app.logger.error(f"Error creating dosage for {drug.name}: {e}")
+                errors += 1
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+                continue
+
+            if created % 200 == 0:
+                db.session.flush()
+
+    # 3) Fill missing fields for existing rows
+    # Normal
+    if update_limit and int(update_limit) > 0:
+        if kind_norm in ('drug', 'both'):
+            candidates = (
+                DrugDosage.query.join(Drug)
+                .filter(_dosage_missing_filter(DrugDosage))
+                .limit(int(update_limit))
+                .all()
+            )
+            for dosage in candidates:
+                if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                    break
+                try:
+                    drug = dosage.drug
+                    suggestion = get_suggestion(drug.name)
+                    if not suggestion:
+                        continue
+                    before = filled_fields
+                    changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                    if changed:
+                        try:
+                            dosage.source = 'ai'
+                        except Exception:
+                            pass
+                    filled_fields += changed
+                    if filled_fields > before:
+                        updated_records += 1
+                except Exception:
+                    errors += 1
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+                    continue
+
+        if kind_norm in ('controlled', 'both'):
+            candidates = (
+                ControlledDrugDosage.query.join(ControlledDrug)
+                .filter(_dosage_missing_filter(ControlledDrugDosage))
+                .limit(int(update_limit))
+                .all()
+            )
+            for dosage in candidates:
+                if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                    break
+                try:
+                    drug = dosage.controlled_drug
+                    suggestion = get_suggestion(drug.name)
+                    if not suggestion:
+                        continue
+                    before = filled_fields
+                    changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                    if changed:
+                        try:
+                            dosage.source = 'ai'
+                        except Exception:
+                            pass
+                    filled_fields += changed
+                    if filled_fields > before:
+                        updated_records += 1
+                except Exception:
+                    errors += 1
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+                    continue
+
+    try:
+        db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        errors += 1
+    
+    reason = None
+    if created == 0 and updated_records == 0 and filled_fields == 0:
+        # Check why nothing was done
+        try:
+            drug_total = Drug.query.count()
+            drug_missing = Drug.query.filter(~Drug.dosage.any()).count()
+            controlled_total = ControlledDrug.query.count()
+            controlled_missing = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).count()
+            
+            app.logger.info(f"Diagnostic: Drug total={drug_total}, missing={drug_missing} | Controlled total={controlled_total}, missing={controlled_missing} | kind={kind}")
+            
+            if kind in ('drug', 'both') and drug_missing == 0:
+                reason = f'No drug dosages missing. ({drug_total} drugs, all have dosage)'
+            elif kind in ('controlled', 'both') and controlled_missing == 0:
+                reason = f'No controlled drug dosages missing. ({controlled_total} controlled drugs, all have dosage)'
+            elif drug_missing == 0 and controlled_missing == 0:
+                reason = f'No missing dosages found. (Drug: {drug_total}, Controlled: {controlled_total})'
+            elif ai_budget == 0:
+                reason = 'AI generation budget exhausted.'
+        except Exception as e:
+            app.logger.error(f"Diagnostic check failed: {e}")
+    
+    result = {
+        'enabled': True,
+        'created': created,
+        'updated_records': updated_records,
+        'filled_fields': filled_fields,
+        'ai_generation_remaining': ai_budget,
+        'errors': errors,
+    }
+    if reason:
+        result['reason'] = reason
+    elif errors and last_ai_error:
+        result['reason'] = f"AI encountered {errors} error(s). Last error: {last_ai_error}"
+    return result
+
+
+def _is_transient_db_disconnect(exc: Exception) -> bool:
+    """Best-effort detection of stale/closed DB connections worth retrying."""
+    if isinstance(exc, OperationalError):
+        return True
+    if isinstance(exc, DBAPIError) and bool(getattr(exc, 'connection_invalidated', False)):
+        return True
+    msg = (str(exc) or '').lower()
+    return (
+        'ssl connection has been closed unexpectedly' in msg
+        or 'server closed the connection unexpectedly' in msg
+        or 'connection reset by peer' in msg
+        or 'broken pipe' in msg
+    )
+
+
+def _run_ai_dosage_agent_once_with_db_retry(**kwargs):
+    """Run the agent with a small retry if the DB connection was dropped."""
+    max_attempts = int(os.getenv('AI_DOSAGE_DB_RETRY_ATTEMPTS', '2'))
+    max_attempts = max(1, min(max_attempts, 3))
+    last_exc: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return run_ai_dosage_agent_once(**kwargs)
+        except Exception as e:
+            last_exc = e
+            if not _is_transient_db_disconnect(e) or attempt >= max_attempts:
+                raise
+
+            # Reset session + pool so next attempt uses a fresh connection.
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            try:
+                db.session.close()
+            except Exception:
+                pass
+            try:
+                db.engine.dispose()
+            except Exception:
+                pass
+
+            backoff = min(5, attempt)
+            try:
+                app.logger.warning(
+                    f"Transient DB disconnect during AI dosage agent (attempt {attempt}/{max_attempts}): {type(e).__name__}: {e}. Retrying in {backoff}s..."
+                )
+            except Exception:
+                pass
+            time.sleep(backoff)
+
+    # Should not reach here.
+    if last_exc:
+        raise last_exc
+    raise RuntimeError('AI dosage agent retry loop ended unexpectedly')
+
+
+def scheduled_ai_dosage_agent():
+    """Background job runner; safe to run periodically."""
+    with app.app_context():
+        try:
+            if not _get_ai_dosage_agent_enabled():
+                return
+            # Aggressive DB processing, bounded external/API usage.
+            result = _run_ai_dosage_agent_once_with_db_retry(
+                kind='both',
+                create_limit=50,
+                update_limit=50,
+                ai_generation_limit=50,
+                max_run_seconds=300,
+            )
+            app.logger.info(f"AI dosage agent ran: {result}")
+        except Exception as e:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            app.logger.error(f"AI dosage agent error: {str(e)}", exc_info=True)
+
+
+
 
 
 class Patient(db.Model):
@@ -526,8 +2084,8 @@ class Patient(db.Model):
     ai_last_updated = db.Column(db.DateTime)
     ai_confidence_score = db.Column(db.Float)
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     # Relationships
     reviews = db.relationship('PatientReviewSystem', backref='patient', lazy=True)
@@ -539,55 +2097,80 @@ class Patient(db.Model):
     imaging_requests = db.relationship('ImagingRequest', backref='patient', lazy=True)
     summaries = db.relationship('PatientSummary', back_populates='patient', lazy=True)
 
-    # Use methods instead of properties for decrypted data
-    def get_decrypted_name(self):
-        if not self.name:
-            return None
-        try:
-            return Config.decrypt_data_static(self.name)
-        except Exception:
-            return "[Decryption Error]"
+    @staticmethod
+    def _safe_decrypt(value) -> str:
+        """Best-effort decrypt for fields stored via Config.encrypt_data_static.
 
-    def get_decrypted_address(self):
-        if not self.address:
-            return None
-        try:
-            return Config.decrypt_data_static(self.address)
-        except Exception:
-            return "[Decryption Error]"
+        Handles mixed datasets where older rows may be plaintext.
+        """
+        if value is None:
+            return ""
+        s = str(value)
+        if not s:
+            return ""
 
-    def get_decrypted_phone(self):
-        if not self.phone:
-            return None
-        try:
-            return Config.decrypt_data_static(self.phone)
-        except Exception:
-            return "[Decryption Error]"
+        # Fernet tokens generated by cryptography typically start with 'gAAAA'.
+        # If it doesn't look like a token, treat as plaintext.
+        if not s.startswith("gAAAA"):
+            return s
 
-    def get_decrypted_occupation(self):
-        if not self.occupation:
-            return None
         try:
-            return Config.decrypt_data_static(self.occupation)
+            decrypted = Config.decrypt_data_static(s)
+            if decrypted.startswith("[Decryption Error"):
+                return s
+            return decrypted
         except Exception:
-            return "[Decryption Error]"
+            return s
 
-    def get_decrypted_nok_name(self):
-        if not self.nok_name:
-            return None
-        try:
-            return Config.decrypt_data_static(self.nok_name)
-        except Exception:
-            return "[Decryption Error]"
+    @property
+    def get_decrypted_name(self) -> str:
+        return self._safe_decrypt(self.name)
 
-    def get_decrypted_nok_contact(self):
-        if not self.nok_contact:
-            return None
-        try:
-            return Config.decrypt_data_static(self.nok_contact)
-        except Exception:
-            return "[Decryption Error]"
-    
+    # Template-friendly aliases (older templates reference `patient.decrypted_*`).
+    @property
+    def decrypted_name(self) -> str:
+        return self.get_decrypted_name
+
+    @property
+    def get_decrypted_address(self) -> str:
+        return self._safe_decrypt(self.address)
+
+    @property
+    def decrypted_address(self) -> str:
+        return self.get_decrypted_address
+
+    @property
+    def get_decrypted_phone(self) -> str:
+        return self._safe_decrypt(self.phone)
+
+    @property
+    def decrypted_phone(self) -> str:
+        return self.get_decrypted_phone
+
+    @property
+    def get_decrypted_occupation(self) -> str:
+        return self._safe_decrypt(self.occupation)
+
+    @property
+    def decrypted_occupation(self) -> str:
+        return self.get_decrypted_occupation
+
+    @property
+    def get_decrypted_nok_name(self) -> str:
+        return self._safe_decrypt(self.nok_name)
+
+    @property
+    def decrypted_nok_name(self) -> str:
+        return self.get_decrypted_nok_name
+
+    @property
+    def get_decrypted_nok_contact(self) -> str:
+        return self._safe_decrypt(self.nok_contact)
+
+    @property
+    def decrypted_nok_contact(self) -> str:
+        return self.get_decrypted_nok_contact
+
     def get_ai_recommendations(self):
         """Return formatted AI recommendations if available"""
         if not self.ai_assistance_enabled or not self.ai_diagnosis:
@@ -631,8 +2214,8 @@ class PatientReviewSystem(db.Model):
     ai_suggested_questions = db.Column(db.Text)  # Stores AI-generated questions for review of systems
     ai_last_updated = db.Column(db.DateTime)
 
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 
 class PatientHistory(db.Model):
@@ -648,8 +2231,8 @@ class PatientHistory(db.Model):
     # AI fields
     ai_identified_risk_factors = db.Column(db.Text)
     
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 class PatientExamination(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -681,8 +2264,8 @@ class PatientExamination(db.Model):
     # AI fields
     ai_identified_red_flags = db.Column(db.Text)
 
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 class PatientSummary(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -690,8 +2273,8 @@ class PatientSummary(db.Model):
     summary_text = db.Column(db.Text, nullable=False)
     summary_type = db.Column(db.String(20), default='manual')  # 'manual' or 'ai_generated'
     generated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     # FIXED: Use back_populates instead of backref to avoid naming conflicts
     patient = db.relationship('Patient', back_populates='summaries')
@@ -707,8 +2290,8 @@ class PatientDiagnosis(db.Model):
     ai_supported_diagnosis = db.Column(db.Boolean, default=False)
     ai_alternative_diagnoses = db.Column(db.Text)
     
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 class PatientManagement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -721,8 +2304,59 @@ class PatientManagement(db.Model):
     ai_generated_plan = db.Column(db.Boolean, default=False)
     ai_alternative_treatments = db.Column(db.Text)
     
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+
+class PatientBiodataEntry(db.Model):
+    """Append-only snapshots of key biodata fields that change over time."""
+    __tablename__ = 'patient_biodata_entries'
+
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+
+    # Store PII encrypted (consistent with Patient fields)
+    phone = db.Column(db.Text)
+    nok_name = db.Column(db.Text)
+    nok_contact = db.Column(db.Text)
+
+    # Non-encrypted fields
+    tca = db.Column(db.Date)
+    religion = db.Column(db.String(500))
+
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    patient = db.relationship('Patient', backref=db.backref('biodata_entries', lazy=True, cascade='all, delete-orphan'))
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+
+class PatientChiefComplaintEntry(db.Model):
+    """Append-only chief complaint entries."""
+    __tablename__ = 'patient_chief_complaint_entries'
+
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    complaint_text = db.Column(db.Text, nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    patient = db.relationship('Patient', backref=db.backref('chief_complaint_entries', lazy=True, cascade='all, delete-orphan'))
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+
+class PatientHPIEntry(db.Model):
+    """Append-only HPI entries."""
+    __tablename__ = 'patient_hpi_entries'
+
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    hpi_text = db.Column(db.Text, nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    patient = db.relationship('Patient', backref=db.backref('hpi_entries', lazy=True, cascade='all, delete-orphan'))
+    creator = db.relationship('User', foreign_keys=[created_by])
 
 class LabRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -730,13 +2364,18 @@ class LabRequest(db.Model):
     test_id = db.Column(db.Integer, db.ForeignKey('lab_test.id'), nullable=False)
     requested_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     status = db.Column(db.String(20), default='pending')  # pending, completed, cancelled
+    # Completion/result fields (nullable for backward-compat; migrations add columns)
+    result = db.Column(db.Text)
+    performed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    performed_at = db.Column(db.DateTime)
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     # Relationships for template access
     test = db.relationship('LabTest', backref='lab_requests')
-    requester = db.relationship('User', backref='created_lab_requests')
+    requester = db.relationship('User', foreign_keys=[requested_by], backref='created_lab_requests')
+    performer = db.relationship('User', foreign_keys=[performed_by])
 
 class ImagingRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -744,13 +2383,18 @@ class ImagingRequest(db.Model):
     test_id = db.Column(db.Integer, db.ForeignKey('imaging_test.id'), nullable=False)
     requested_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     status = db.Column(db.String(20), default='pending')  # pending, completed, cancelled
+    # Completion/result fields (nullable for backward-compat; migrations add columns)
+    result = db.Column(db.Text)
+    performed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    performed_at = db.Column(db.DateTime)
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     # Relationships for template access
     test = db.relationship('ImagingTest', backref='imaging_requests')
-    requester = db.relationship('User', backref='created_imaging_requests')
+    requester = db.relationship('User', foreign_keys=[requested_by], backref='created_imaging_requests')
+    performer = db.relationship('User', foreign_keys=[performed_by])
 
 class ImagingTest(db.Model):
     """Model for imaging tests available in the clinic"""
@@ -759,8 +2403,8 @@ class ImagingTest(db.Model):
     description = db.Column(db.Text)
     price = db.Column(db.Float, nullable=False, default=0.0)
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     def __repr__(self):
         return f'<ImagingTest {self.name}>'
@@ -775,8 +2419,8 @@ class LabRequestItem(db.Model):
     comments = db.Column(db.Text)
     performed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     performed_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     # Relationships
     test = db.relationship('LabTest', backref='request_items')
@@ -790,8 +2434,8 @@ class LabTest(db.Model):
     name = db.Column(db.String(100), nullable=False)
     price = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 class PatientLab(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -801,8 +2445,8 @@ class PatientLab(db.Model):
     comments = db.Column(db.Text)
     performed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     reviewed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
         
     patient = db.relationship('Patient', backref='labs')
     test = db.relationship('LabTest', backref='patient_labs')
@@ -814,7 +2458,7 @@ class ExaminationFinding(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
     note = db.Column(db.Text, nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=get_eat_now)
 
     patient = db.relationship('Patient', back_populates='examination_findings')
 
@@ -853,39 +2497,74 @@ class AIService:
     @staticmethod
     def generate_review_systems_questions(patient_data):
         """Generate focused review of systems questions based on chief complaint and biodata"""
+        age = patient_data.get('age', 'Not specified')
+        gender = patient_data.get('gender', 'Not specified')
+        chief_complaint = patient_data.get('chief_complaint', 'Not specified')
+        occupation = patient_data.get('occupation', 'Not specified')
+
         prompt = f"""
-        As an experienced physician, suggest the most relevant review of systems questions for this patient:
-        
-        Patient: {patient_data.get('age')}
-        Patient: {patient_data.get('address', 'Not specified')}
-        Patient: {patient_data['age']} year old {patient_data['gender']}
-        Chief Complaint: {patient_data['chief_complaint']}
-        Occupation: {patient_data.get('occupation', 'Not specified')}
-        
-        Provide:
-        1. 3-5 most relevant systems to review based on the chief complaint
-        2. 2-3 specific questions for each relevant system
-        3. Format as a bulleted list with clear system headings
-        
-        Focus on questions that would help identify important positives/negatives basing on the most likeley differentials diagnosis according to patient data in age, gender, occupation, address and chief complain.
-        """
-        
+You are a competent, experienced clinician.
+
+Task: Suggest targeted Review of Systems (ROS) questions to quickly identify clinically important positives/negatives.
+
+Patient context:
+- Age: {age}
+- Gender: {gender}
+- Occupation: {occupation}
+- Chief complaint: {chief_complaint}
+
+Output requirements:
+- Choose the 4-6 most relevant systems.
+- For each system, provide 2-4 specific questions.
+- Keep questions short, patient-friendly, and clinically precise.
+- Include red-flag screening where appropriate.
+- Format strictly as:
+SYSTEM: <name>
+- Q1
+- Q2
+"""
+
         try:
-            response = deepseek_client.chat.completions.create(
-                model="deepseek-chat",  # Changed from "deepseek-medical"
+            client = AIService.get_client()
+            response = client.chat.completions.create(
+                model=AIService.MODELS['primary'],
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=500
+                max_tokens=600,
             )
             return response.choices[0].message.content
         except Exception as e:
-            current_app.logger.error(f"AI Review Systems Error: {str(e)}")
+            AIService.log_ai_error("review_systems_questions", e, patient_data=patient_data)
             return None
+
+    @staticmethod
+    def _build_hpi_questions_prompt(patient_data) -> str:
+        age = patient_data.get('age', 'Not specified')
+        gender = patient_data.get('gender', 'Not specified')
+        chief_complaint = patient_data.get('chief_complaint', 'Not specified')
+        ros = patient_data.get('review_systems', 'Not documented')
+        return f"""
+You are an experienced clinician.
+
+Task: Generate HPI clarification questions using SOCRATES/OPQRST where appropriate.
+
+Patient context:
+- Age: {age}
+- Gender: {gender}
+- Chief complaint: {chief_complaint}
+- ROS summary:
+{ros}
+
+Output requirements:
+- Provide 8-12 high-yield questions.
+- Group by headings: Onset/Timing, Character/Severity, Associated symptoms, Exposures/Risk factors, Red flags.
+- Questions must be concise.
+"""
 
     @staticmethod
     def generate_hpi_questions(patient_data):
         """Generate HPI questions using SOCRATES framework with retries and fallbacks"""
-        prompt = AIService._build_hpi_prompt(patient_data)
+        prompt = AIService._build_hpi_questions_prompt(patient_data)
         
         for model_name in AIService.MODELS.values():
             try:
@@ -909,7 +2588,7 @@ class AIService:
             "error": str(error),
             "type": type(error).__name__,
             "patient_data": patient_data,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": get_eat_now().isoformat()
         }
         current_app.logger.error(
             f"AI {method_name} Error",
@@ -1080,8 +2759,6 @@ class AIService:
         Generate differential diagnosis based on clinical summary
         """
         try:
-            # Use the client that's already initialized in the class
-            client = AIService.get_client()
             model = AIService.MODELS['primary']
             
             # Build patient context
@@ -1132,18 +2809,39 @@ class AIService:
             Format your response in clear, clinical language suitable for medical records.
             Be concise but comprehensive.
             """
-            
-            response = client.chat.completions.create(
+
+            # Explicit timeout + retries to reduce intermittent 503s.
+            # Diagnosis generation can be slower than ROS/HPI due to longer output.
+            response = AIService._chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=1200,
-                temperature=0.7
+                max_tokens=900,
+                temperature=0.4,
+                timeout=60,
             )
-            
+
             return response.choices[0].message.content
         except Exception as e:
             current_app.logger.error(f"AI Diagnosis from Summary Error: {str(e)}")
             return None
+
+    @staticmethod
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=(retry_if_exception_type(APITimeoutError) |
+              retry_if_exception_type(APIError)),
+        reraise=True,
+    )
+    def _chat_completion(*, model: str, messages: list[dict], max_tokens: int, temperature: float, timeout: int):
+        client = AIService.get_client()
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+        )
 
 
     # Keep your existing methods but update the main diagnosis method to use summary
@@ -1173,7 +2871,7 @@ class AIService:
         Original detailed diagnosis method (fallback)
         """
         try:
-            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            model = AIService.MODELS.get('primary') or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
             
             prompt = f"""
             Based on the following patient information, generate a differential diagnosis:
@@ -1207,16 +2905,17 @@ class AIService:
             4. Suggested diagnostic tests to confirm
             """
             
-            response = deepseek_client.chat.completions.create(
+            client = AIService.get_client()
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1000,
-                temperature=0.7
+                temperature=0.7,
             )
             
             return response.choices[0].message.content
         except Exception as e:
-            current_app.logger.error(f"AI Diagnosis Error: {str(e)}")
+            AIService.log_ai_error("detailed_diagnosis", e, patient_data=patient_data)
             return None
         
     @staticmethod
@@ -1246,18 +2945,52 @@ class AIService:
         6. Patient education points
         7. Follow-up plan
         """
-        
-        try:
-            response = deepseek_client.chat.completions.create(
-                model="deepseek-medical",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1200
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            current_app.logger.error(f"AI Treatment Plan Error: {str(e)}")
-            return None
+
+        # NOTE: "deepseek-medical" is not available on many DeepSeek accounts and
+        # causes 400 "Model Not Exist". Use configured model, with safe fallbacks.
+        model_candidates = [
+            (os.getenv("DEEPSEEK_MODEL") or '').strip(),
+            AIService.MODELS.get('primary') or 'deepseek-chat',
+            'deepseek-chat',
+            'deepseek-reasoner',
+        ]
+        # De-dupe while preserving order
+        seen = set()
+        models_to_try = []
+        for m in model_candidates:
+            if not m:
+                continue
+            if m in seen:
+                continue
+            seen.add(m)
+            models_to_try.append(m)
+
+        last_error = None
+        for model_name in models_to_try:
+            try:
+                response = AIService._chat_completion(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=900,
+                    timeout=60,
+                )
+                return response.choices[0].message.content
+            except APIError as e:
+                last_error = e
+                msg = str(e)
+                if 'Model Not Exist' in msg or 'invalid_request_error' in msg:
+                    continue
+                AIService.log_ai_error("treatment_plan", e, patient_data=patient_data)
+                return None
+            except Exception as e:
+                last_error = e
+                AIService.log_ai_error("treatment_plan", e, patient_data=patient_data)
+                return None
+
+        if last_error is not None:
+            AIService.log_ai_error("treatment_plan", last_error, patient_data=patient_data)
+        return None
 
 class DebtPayment(db.Model):
     __tablename__ = 'debt_payments'
@@ -1269,8 +3002,8 @@ class DebtPayment(db.Model):
     payment_method = db.Column(db.String(50), nullable=False)
     notes = db.Column(db.Text)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))  # Added this line
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     user = db.relationship('User', backref='debt_payments')
 
@@ -1279,16 +3012,16 @@ class Service(db.Model):
     name = db.Column(db.String(100), nullable=False)
     price = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 class Prescription(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
     doctor_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     notes = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending')  # pending, dispensed, cancelled
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
   
     items = db.relationship('PrescriptionItem', backref='prescription', lazy=True)  
     patient = db.relationship('Patient', backref='prescriptions')
@@ -1304,8 +3037,8 @@ class PrescriptionItem(db.Model):
     duration = db.Column(db.String(50))
     notes = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending')  # pending, dispensed, cancelled
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     drug = db.relationship('Drug', backref='prescription_items')
 
@@ -1323,8 +3056,8 @@ class Sale(db.Model):
     payment_method = db.Column(db.String(20))
     status = db.Column(db.String(20), default='completed')
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     # Relationships
     patient = db.relationship('Patient', backref='patient_sales')
@@ -1343,17 +3076,19 @@ class SaleItem(db.Model):
     individual_sale_number = db.Column(db.String(100))
     service_id = db.Column(db.Integer, db.ForeignKey('service.id'))
     lab_test_id = db.Column(db.Integer, db.ForeignKey('lab_test.id'))
+    imaging_test_id = db.Column(db.Integer, db.ForeignKey('imaging_test.id'))
     description = db.Column(db.String(200), nullable=False, default="Drug sale")
     quantity = db.Column(db.Integer, default=1)
     unit_price = db.Column(db.Float, nullable=False)
     total_price = db.Column(db.Float, nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     # Relationships
     drug = db.relationship('Drug', backref='sale_items')
     service = db.relationship('Service', backref='sale_items')
     lab_test = db.relationship('LabTest', backref='sale_items')
+    imaging_test = db.relationship('ImagingTest', backref='sale_items')
     sale = db.relationship('Sale', back_populates='items')
 
     def __init__(self, **kwargs):
@@ -1372,7 +3107,7 @@ class Refund(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     total_amount = db.Column(db.Float, nullable=False)
     reason = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
     status = db.Column(db.String(20), default='completed')
     
     # Relationships
@@ -1401,14 +3136,326 @@ class Transaction(db.Model):
     amount = db.Column(db.Float, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     reference_id = db.Column(db.Integer)  # ID of related record (sale, expense, etc.)
+    # Optional metadata to make the ledger self-describing (kept nullable for backward-compat)
+    reference_table = db.Column(db.String(80))
+    direction = db.Column(db.String(3))  # IN / OUT
+    status = db.Column(db.String(20))  # posted, void, draft
+    department = db.Column(db.String(100))
+    category = db.Column(db.String(100))
+    payer = db.Column(db.String(120))
+    payment_method = db.Column(db.String(50))
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    # Receipt storage for reprinting / audit
+    receipt_number = db.Column(db.String(50))
+    receipt_html = db.Column(db.Text)
+    receipt_created_at = db.Column(db.DateTime)
+    receipt_reprinted_at = db.Column(db.DateTime)
+    receipt_reprint_count = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     user = db.relationship('User', backref='transactions')
 
 def generate_transaction_number():
     return f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+
+
+def generate_receipt_number(prefix: str = 'RCPT'):
+    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+
+
+def _inject_reprint_banner(html, reprinted_at=None, reprint_count=None):
+    if not html:
+        return html
+    stamp = ''
+    try:
+        if reprinted_at:
+            stamp = reprinted_at.strftime('%Y-%m-%d %H:%M')
+    except Exception:
+        stamp = ''
+    count = int(reprint_count or 0)
+    parts = [
+        "<div class='no-print' style='max-width:700px;margin:0 auto 10px auto;'>",
+        "<div style='border:1px solid #ffc107;background:#fff8e1;color:#7a5a00;padding:10px;border-radius:6px;'>",
+        "<strong>REPRINT COPY</strong>",
+    ]
+    if stamp:
+        parts.append(f" &mdash; Reprinted: {stamp}")
+    if count:
+        parts.append(f" &mdash; Reprint count: {count}")
+    parts.append("</div></div>")
+    banner = "".join(parts)
+    return banner + html
+
+
+_TX_META_SUPPORTED = None
+
+
+_SALE_ITEM_IMAGING_ID_SUPPORTED = None
+
+
+def _sale_item_supports_imaging_test_id() -> bool:
+    """Return True if the database has SaleItem.imaging_test_id.
+
+    Keeps the app from breaking when code is deployed before the migration is applied.
+    """
+    global _SALE_ITEM_IMAGING_ID_SUPPORTED
+    if _SALE_ITEM_IMAGING_ID_SUPPORTED is not None:
+        return bool(_SALE_ITEM_IMAGING_ID_SUPPORTED)
+    try:
+        from sqlalchemy import inspect as sqlalchemy_inspect
+
+        inspector = sqlalchemy_inspect(db.engine)
+        cols = [c.get('name') for c in (inspector.get_columns('sale_items') or [])]
+        _SALE_ITEM_IMAGING_ID_SUPPORTED = ('imaging_test_id' in cols)
+        return bool(_SALE_ITEM_IMAGING_ID_SUPPORTED)
+    except Exception:
+        _SALE_ITEM_IMAGING_ID_SUPPORTED = False
+        return False
+
+
+def _transaction_supports_metadata() -> bool:
+    """Return True if the database has the new Transaction metadata columns.
+
+    This keeps the app from breaking when code is deployed before the migration is applied.
+    """
+    global _TX_META_SUPPORTED
+    if _TX_META_SUPPORTED is not None:
+        return bool(_TX_META_SUPPORTED)
+    try:
+        from sqlalchemy import inspect as sqlalchemy_inspect
+
+        inspector = sqlalchemy_inspect(db.engine)
+        cols = [c.get('name') for c in (inspector.get_columns('transaction') or [])]
+        _TX_META_SUPPORTED = ('reference_table' in cols)
+        return bool(_TX_META_SUPPORTED)
+    except Exception:
+        _TX_META_SUPPORTED = False
+        return False
+
+
+def _maybe_set_transaction_meta(transaction: 'Transaction', **fields):
+    if not transaction:
+        return
+    if not _transaction_supports_metadata():
+        return
+    for key, value in (fields or {}).items():
+        try:
+            setattr(transaction, key, value)
+        except Exception:
+            pass
+
+
+def _get_transaction_for_sale(sale_id: int):
+    q = Transaction.query.filter(
+        Transaction.transaction_type == 'sale',
+        Transaction.reference_id == sale_id,
+    )
+    if _transaction_supports_metadata():
+        # Legacy rows may not have reference_table set.
+        q = q.filter(db.or_(Transaction.reference_table.is_(None), Transaction.reference_table == 'sales'))
+    return q.order_by(Transaction.created_at.desc()).first()
+
+
+def _get_transaction_for_refund(refund_id: int):
+    q = Transaction.query.filter(
+        Transaction.transaction_type == 'refund',
+        Transaction.reference_id == refund_id,
+    )
+    if _transaction_supports_metadata():
+        q = q.filter(db.or_(Transaction.reference_table.is_(None), Transaction.reference_table == 'refunds'))
+    return q.order_by(Transaction.created_at.desc()).first()
+
+
+def _ensure_controlled_sale_transaction(sale: 'ControlledSale', receipt_html: Optional[str] = None):
+    """Ensure controlled-drug sales are posted into Transaction (golden rule).
+
+    Uses transaction_type='sale' but sets reference_table='controlled_sales' to avoid
+    colliding with normal pharmacy sales.
+    """
+    if not sale:
+        return None
+
+    meta_supported = _transaction_supports_metadata()
+    tx_type = 'sale' if meta_supported else 'controlled_sale'
+
+    try:
+        q = Transaction.query.filter(
+            Transaction.transaction_type == tx_type,
+            Transaction.reference_id == sale.id,
+        )
+        if meta_supported:
+            q = q.filter(Transaction.reference_table == 'controlled_sales')
+        existing = q.order_by(Transaction.created_at.desc()).first()
+        if existing:
+            if receipt_html:
+                if not existing.receipt_number:
+                    existing.receipt_number = getattr(sale, 'sale_number', None) or existing.receipt_number
+                _ensure_transaction_receipt(existing, receipt_html, prefix='CTRL', force=False)
+            db.session.add(existing)
+            db.session.commit()
+            return existing
+
+        tx = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type=tx_type,
+            amount=float(getattr(sale, 'total_amount', 0) or 0),
+            user_id=int(getattr(sale, 'user_id', None) or 0) or (
+                current_user.id
+                if current_user and getattr(current_user, 'is_authenticated', False)
+                else None
+            ),
+            reference_id=sale.id,
+            notes=f"Controlled sale #{getattr(sale, 'sale_number', sale.id)}",
+            created_at=getattr(sale, 'created_at', None) or get_eat_now(),
+        )
+        if meta_supported:
+            _maybe_set_transaction_meta(
+                tx,
+                reference_table='controlled_sales',
+                direction='IN',
+                status='posted',
+                department='pharmacy',
+                category='controlled_drugs',
+            )
+
+            pay_method = None
+            payer = None
+            try:
+                pay_method = getattr(sale, 'payment_method', None)
+            except Exception:
+                pay_method = None
+            try:
+                payer = getattr(sale, 'customer_name', None) or (sale.patient.name if getattr(sale, 'patient', None) else None)
+            except Exception:
+                payer = None
+            _maybe_set_transaction_meta(tx, payment_method=pay_method, payer=payer)
+
+        try:
+            if getattr(sale, 'sale_number', None):
+                tx.receipt_number = sale.sale_number
+        except Exception:
+            pass
+
+        if receipt_html:
+            _ensure_transaction_receipt(tx, receipt_html, prefix='CTRL', force=True)
+        db.session.add(tx)
+        db.session.commit()
+        return tx
+    except Exception as e:
+        db.session.rollback()
+        raise
+
+
+def _ensure_sale_transaction(sale, receipt_html=None):
+    """Ensure sales are posted into Transaction (golden rule).
+    
+    For lab tests, imaging tests, and other service sales.
+    """
+    if not sale:
+        return None
+
+    meta_supported = _transaction_supports_metadata()
+    tx_type = 'sale'
+
+    try:
+        q = Transaction.query.filter(
+            Transaction.transaction_type == tx_type,
+            Transaction.reference_id == sale.id,
+        )
+        if meta_supported:
+            q = q.filter(Transaction.reference_table == 'sales')
+        existing = q.order_by(Transaction.created_at.desc()).first()
+        if existing:
+            if receipt_html:
+                if not existing.receipt_number:
+                    existing.receipt_number = getattr(sale, 'sale_number', None) or existing.receipt_number
+                _ensure_transaction_receipt(existing, receipt_html, prefix='SALE', force=False)
+            db.session.add(existing)
+            db.session.commit()
+            return existing
+
+        tx = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type=tx_type,
+            amount=float(getattr(sale, 'total_amount', 0) or 0),
+            user_id=int(getattr(sale, 'user_id', None) or 0) or (
+                current_user.id
+                if current_user and getattr(current_user, 'is_authenticated', False)
+                else None
+            ),
+            reference_id=sale.id,
+            notes=f"Sale #{getattr(sale, 'sale_number', sale.id)}",
+            created_at=getattr(sale, 'created_at', None) or get_eat_now(),
+        )
+        if meta_supported:
+            _maybe_set_transaction_meta(
+                tx,
+                reference_table='sales',
+                direction='IN',
+                status='posted',
+            )
+
+        try:
+            if getattr(sale, 'sale_number', None):
+                tx.receipt_number = sale.sale_number
+        except Exception:
+            pass
+
+        if receipt_html:
+            _ensure_transaction_receipt(tx, receipt_html, prefix='SALE', force=True)
+        db.session.add(tx)
+        db.session.commit()
+        return tx
+    except Exception as e:
+        current_app.logger.error(f'Failed to ensure sale transaction: {str(e)}', exc_info=True)
+        db.session.rollback()
+        return None
+
+
+_RECEIPT_ALLOWED_TAGS = [
+    'html', 'head', 'body', 'meta', 'title', 'style', 'link',
+    'p', 'br', 'b', 'i', 'u', 'strong', 'small',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'div', 'span',
+    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+    'hr',
+    'img',
+    'button',
+    'script',
+]
+
+_RECEIPT_ALLOWED_ATTRS = {
+    '*': ['style', 'class', 'id'],
+    'img': ['src', 'alt'],
+    'link': ['rel', 'href'],
+    'meta': ['name', 'content', 'charset'],
+    'button': ['type', 'id'],
+    'script': ['type'],
+}
+
+
+def _sanitize_receipt_html(raw_html: str) -> str:
+    return bleach.clean(
+        raw_html or '',
+        tags=_RECEIPT_ALLOWED_TAGS,
+        attributes=_RECEIPT_ALLOWED_ATTRS,
+        strip=True,
+        strip_comments=True,
+    )
+
+
+def _ensure_transaction_receipt(transaction: 'Transaction', html: str, prefix: str = 'RCPT', force: bool = False):
+    if not transaction:
+        return
+    if not transaction.receipt_number:
+        transaction.receipt_number = generate_receipt_number(prefix=prefix)
+    if not transaction.receipt_created_at:
+        transaction.receipt_created_at = get_eat_now()
+    if html and (force or not transaction.receipt_html):
+        transaction.receipt_html = _sanitize_receipt_html(html)
+    db.session.add(transaction)
+
 
 class Appointment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -1419,8 +3466,8 @@ class Appointment(db.Model):
     purpose = db.Column(db.String(200))
     status = db.Column(db.String(20), default='scheduled')  # scheduled, confirmed, cancelled, completed
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     patient = db.relationship('Patient', backref='appointments')
     doctor = db.relationship('User', backref='appointments')
@@ -1438,10 +3485,32 @@ class Debt(db.Model):
     description = db.Column(db.Text)
     status = db.Column(db.String(20), default='active')
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     payments = db.relationship('DebtPayment', backref='debt', lazy=True)
+
+    @property
+    def amount_paid(self):
+        try:
+            return float(sum([(p.amount or 0) for p in (self.payments or [])]))
+        except Exception:
+            return 0.0
+
+    @property
+    def balance(self):
+        try:
+            return max(0.0, float(self.amount or 0) - float(self.amount_paid or 0))
+        except Exception:
+            return 0.0
+
+    @property
+    def last_payment_date(self):
+        try:
+            dates = [p.payment_date for p in (self.payments or []) if getattr(p, 'payment_date', None)]
+            return max(dates) if dates else None
+        except Exception:
+            return None
 
 
 def generate_debt_number():
@@ -1460,10 +3529,20 @@ class Expense(db.Model):
     payment_method = db.Column(db.String(20))
     status = db.Column(db.String(20), default='paid')  # paid, pending, cancelled
     paid_date = db.Column(db.Date)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     user = db.relationship('User', backref='expenses')
+    vendor = db.relationship('Vendor', backref='expenses')
+
+    @property
+    def date(self):
+        return self.paid_date or self.created_at
+
+    @property
+    def category(self):
+        return self.expense_type
 
 def generate_expense_number():
     return f"EXP-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
@@ -1479,8 +3558,8 @@ class Purchase(db.Model):
     supplier = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 def generate_purchase_number():
     return f"PUR-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
@@ -1495,8 +3574,8 @@ class Employee(db.Model):
     hire_date = db.Column(db.Date)
     contact = db.Column(db.String(100))
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     payrolls = db.relationship('Payroll', backref='employee', lazy=True)
     user = db.relationship('User', backref='employee')
@@ -1514,8 +3593,31 @@ class Payroll(db.Model):
     notes = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending')
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    # Backward-compatible aliases used by templates/older UI.
+    @property
+    def salary(self) -> float:
+        return float(self.amount or 0.0)
+
+    @property
+    def amount_paid(self) -> float:
+        try:
+            if getattr(self, 'payments', None):
+                return float(sum([p.amount for p in self.payments]))
+        except Exception:
+            pass
+        return 0.0
+
+    @property
+    def arrears(self) -> float:
+        try:
+            due = float(self.amount or 0.0)
+            paid = float(self.amount_paid or 0.0)
+            return float(max(0.0, due - paid))
+        except Exception:
+            return 0.0
 
 
 def generate_payroll_number():
@@ -1533,8 +3635,8 @@ class Debtor(db.Model):
     amount_owed = db.Column(db.Float, default=0.0)
     last_payment_date = db.Column(db.Date)
     next_payment_date = db.Column(db.Date)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     payments = db.relationship('DebtorPayment', backref='debtor', lazy=True)
 
@@ -1546,7 +3648,7 @@ class PayrollPayment(db.Model):
     payroll_id = db.Column(db.Integer, db.ForeignKey('payrolls.id'), nullable=False)
     amount = db.Column(db.Float, nullable=False)
     paid_by = db.Column(db.Integer, db.ForeignKey('user.id'))
-    payment_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    payment_date = db.Column(db.DateTime, default=get_eat_now)
     notes = db.Column(db.Text)
 
     payroll = db.relationship('Payroll', backref=db.backref('payments', lazy=True))
@@ -1563,8 +3665,8 @@ class DebtorPayment(db.Model):
     reference = db.Column(db.String(100))
     notes = db.Column(db.Text)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 class PatientService(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -1572,8 +3674,8 @@ class PatientService(db.Model):
     service_id = db.Column(db.Integer, db.ForeignKey('service.id'), nullable=False)
     notes = db.Column(db.Text)
     performed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     patient = db.relationship('Patient', backref='services')
     service = db.relationship('Service', backref='patient_services')
@@ -1593,7 +3695,7 @@ class AuditLog(db.Model):
     old_values = db.Column(db.JSON)        # Previous values before change
     new_values = db.Column(db.JSON)        # Values after change
     ip_address = db.Column(db.String(50))  # IP address of the requester
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
 
 
     # Relationship
@@ -1632,6 +3734,66 @@ def generate_random_string(length=6):
 
 # ==================== REPORTING ENHANCEMENT MODELS ====================
 
+class Invoice(db.Model):
+    __tablename__ = 'invoices'
+
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_number = db.Column(db.String(80), unique=True, nullable=False)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    date_issued = db.Column(db.DateTime, default=get_eat_now)
+    due_date = db.Column(db.DateTime)
+    total_amount = db.Column(db.Numeric(10, 2), nullable=False)
+    paid_amount = db.Column(db.Numeric(10, 2), default=0.0)
+    status = db.Column(db.String(20), default='unpaid')  # unpaid, paid, overdue, void
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    patient = db.relationship('Patient', backref='invoices')
+    items = db.relationship('InvoiceItem', backref='invoice', lazy=True, cascade='all, delete-orphan')
+
+class InvoiceItem(db.Model):
+    __tablename__ = 'invoice_items'
+
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_id = db.Column(db.Integer, db.ForeignKey('invoices.id'), nullable=False)
+    description = db.Column(db.String(255), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    unit_price = db.Column(db.Numeric(10, 2), nullable=False)
+    total_price = db.Column(db.Numeric(10, 2), nullable=False)
+
+class FinancialReport(db.Model):
+    __tablename__ = 'financial_reports'
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_type = db.Column(db.String(50), nullable=False)  # e.g., 'daily', 'monthly', 'yearly'
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    total_revenue = db.Column(db.Numeric(10, 2), default=0.0)
+    total_expenses = db.Column(db.Numeric(10, 2), default=0.0)
+    net_profit = db.Column(db.Numeric(10, 2), default=0.0)
+    generated_at = db.Column(db.DateTime, default=get_eat_now)
+    generated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+
+    generated_by = db.relationship('User', backref='financial_reports')
+    items = db.relationship('ReportItem', backref='financial_report', lazy=True, cascade='all, delete-orphan')
+
+class ReportItem(db.Model):
+    __tablename__ = 'report_items'
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey('financial_reports.id'), nullable=False)
+    item_type = db.Column(db.String(50), nullable=False)  # 'revenue', 'expense'
+    description = db.Column(db.String(255))
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    reference_id = db.Column(db.Integer)
+    reference_table = db.Column(db.String(50))
+    
+# =================================================================================================
+# INSURANCE MODELS
+# =================================================================================================
+
 class ReportAuditLog(db.Model):
     """Logs all report generation for compliance and audit trails"""
     __tablename__ = 'report_audit_logs'
@@ -1641,7 +3803,7 @@ class ReportAuditLog(db.Model):
     report_type = db.Column(db.String(50), nullable=False)  # drug_sales, patients, department, etc
     filters = db.Column(db.JSON)  # {"start_date": "2026-01-01", "end_date": "2026-01-03", "granularity": "daily", ...}
     data_count = db.Column(db.Integer)  # Number of records in report
-    generated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    generated_at = db.Column(db.DateTime, default=get_eat_now)
     ip_address = db.Column(db.String(50))
     status = db.Column(db.String(20), default='success')  # success, error, timeout
     error_message = db.Column(db.Text)  # If status is error
@@ -1652,17 +3814,221 @@ class ReportAuditLog(db.Model):
 class DepartmentBudget(db.Model):
     """Tracks budgets per department for variance analysis"""
     __tablename__ = 'department_budgets'
+    __table_args__ = (
+        db.UniqueConstraint('department_name', 'fiscal_year', name='uq_department_budgets_department_year'),
+    )
     
     id = db.Column(db.Integer, primary_key=True)
-    department_name = db.Column(db.String(100), nullable=False, unique=True)
+    department_name = db.Column(db.String(100), nullable=False)
     fiscal_year = db.Column(db.Integer, nullable=False)
     budgeted_amount = db.Column(db.Float, nullable=False)
     actual_amount = db.Column(db.Float, default=0)
     variance = db.Column(db.Float, default=0)  # actual - budgeted
     variance_percentage = db.Column(db.Float, default=0)  # variance / budgeted * 100
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+
+class InsuranceProvider(db.Model):
+    __tablename__ = 'insurance_providers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False, unique=True)
+    phone = db.Column(db.String(50))
+    email = db.Column(db.String(120))
+    address = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+
+class InsurancePolicy(db.Model):
+    __tablename__ = 'insurance_policies'
+
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    provider_id = db.Column(db.Integer, db.ForeignKey('insurance_providers.id'), nullable=False)
+    policy_number = db.Column(db.String(80))
+    member_number = db.Column(db.String(80))
+    active = db.Column(db.Boolean, default=True)
+    start_date = db.Column(db.Date)
+    end_date = db.Column(db.Date)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    patient = db.relationship('Patient', backref='insurance_policies')
+    provider = db.relationship('InsuranceProvider', backref='policies')
+
+
+class InsuranceClaim(db.Model):
+    __tablename__ = 'insurance_claims'
+
+    id = db.Column(db.Integer, primary_key=True)
+    claim_number = db.Column(db.String(60), nullable=False, unique=True)
+    sale_id = db.Column(db.Integer, db.ForeignKey('sales.id'), nullable=False)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    provider_id = db.Column(db.Integer, db.ForeignKey('insurance_providers.id'), nullable=False)
+    policy_id = db.Column(db.Integer, db.ForeignKey('insurance_policies.id'))
+    status = db.Column(db.String(20), default='draft')  # draft, submitted, approved, rejected, paid
+    claimed_amount = db.Column(db.Float, default=0)
+    approved_amount = db.Column(db.Float)
+    paid_amount = db.Column(db.Float, default=0)
+    # Minimal approval/NHIF workflow fields (best-effort; migrations add columns)
+    external_reference = db.Column(db.String(80))
+    approved_by = db.Column(db.Integer)
+    approved_at = db.Column(db.DateTime)
+    rejected_at = db.Column(db.DateTime)
+    rejected_reason = db.Column(db.Text)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    submitted_at = db.Column(db.DateTime)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    sale = db.relationship('Sale', backref='insurance_claims')
+    patient = db.relationship('Patient', backref='insurance_claims')
+    provider = db.relationship('InsuranceProvider', backref='claims')
+    policy = db.relationship('InsurancePolicy', backref='claims')
+    creator = db.relationship('User', backref='insurance_claims_created', foreign_keys=[created_by])
+
+
+class InsuranceClaimItem(db.Model):
+    __tablename__ = 'insurance_claim_items'
+    __table_args__ = (
+        db.UniqueConstraint('claim_id', 'sale_item_id', name='uq_insurance_claim_items_claim_sale_item'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    claim_id = db.Column(db.Integer, db.ForeignKey('insurance_claims.id'), nullable=False)
+    sale_item_id = db.Column(db.Integer, db.ForeignKey('sale_items.id'), nullable=False)
+    item_type = db.Column(db.String(30))  # drug, service, lab_test, imaging_test, other
+    description = db.Column(db.String(255))
+    quantity = db.Column(db.Integer, default=1)
+    unit_price = db.Column(db.Float)
+    total_price = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    claim = db.relationship('InsuranceClaim', backref=db.backref('items', lazy=True, cascade='all, delete-orphan'))
+    sale_item = db.relationship('SaleItem', backref=db.backref('insurance_claim_items', lazy=True))
+
+
+class InsuranceClaimPayment(db.Model):
+    __tablename__ = 'insurance_claim_payments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    claim_id = db.Column(db.Integer, db.ForeignKey('insurance_claims.id'), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    payment_method = db.Column(db.String(50))
+    paid_at = db.Column(db.DateTime, default=get_eat_now)
+    received_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    claim = db.relationship('InsuranceClaim', backref='payments')
+    receiver = db.relationship('User', backref='insurance_claim_payments_received', foreign_keys=[received_by])
+
+
+# Model aliases for backwards compatibility
+PatientInsurance = InsurancePolicy
+Claim = InsuranceClaim
+
+
+# Notification model - create if it doesn't already exist
+class Notification(db.Model):
+    __tablename__ = 'notifications'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    
+    user = db.relationship('User', backref='notifications')
+
+
+# Vendor model - create if it doesn't already exist
+class Vendor(db.Model):
+    __tablename__ = 'vendors'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    contact = db.Column(db.String(50))
+    email = db.Column(db.String(120))
+    address = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+
+class PurchaseOrder(db.Model):
+    __tablename__ = 'purchase_orders'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    po_number = db.Column(db.String(50), unique=True, nullable=False)
+    vendor_id = db.Column(db.Integer, db.ForeignKey('vendors.id'), nullable=True)
+    date_ordered = db.Column(db.DateTime, default=get_eat_now)
+    total_amount = db.Column(db.Float, default=0.0)
+    status = db.Column(db.String(20), default='pending')  # pending, received, cancelled
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    
+    vendor = db.relationship('Vendor', backref=db.backref('purchase_orders', lazy=True))
+    items = db.relationship('PurchaseOrderItem', backref='purchase_order', cascade='all, delete-orphan')
+    creator = db.relationship('User', foreign_keys=[created_by_id])
+
+class PurchaseOrderItem(db.Model):
+    __tablename__ = 'purchase_order_items'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    purchase_order_id = db.Column(db.Integer, db.ForeignKey('purchase_orders.id'), nullable=False)
+    description = db.Column(db.String(255), nullable=False)
+    quantity = db.Column(db.Integer, default=1)
+    unit_price = db.Column(db.Float, default=0.0)
+    total_price = db.Column(db.Float, default=0.0)
+
+
+def generate_insurance_claim_number():
+    return f"CLM-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+
+
+def _ensure_insurance_claims_schema_best_effort():
+    """Best-effort schema patching for SQLite when migrations weren't run."""
+    try:
+        if getattr(db.engine, 'dialect', None) is None:
+            return
+        if (db.engine.dialect.name or '').lower() != 'sqlite':
+            return
+
+        with db.engine.connect() as conn:
+            res = conn.execute(text("PRAGMA table_info('insurance_claims')"))
+            cols = [r[1] for r in res.fetchall()]
+
+            if 'external_reference' not in cols:
+                conn.execute(text("ALTER TABLE insurance_claims ADD COLUMN external_reference VARCHAR(80)"))
+            if 'approved_by' not in cols:
+                conn.execute(text("ALTER TABLE insurance_claims ADD COLUMN approved_by INTEGER"))
+            if 'approved_at' not in cols:
+                conn.execute(text("ALTER TABLE insurance_claims ADD COLUMN approved_at DATETIME"))
+            if 'rejected_at' not in cols:
+                conn.execute(text("ALTER TABLE insurance_claims ADD COLUMN rejected_at DATETIME"))
+            if 'rejected_reason' not in cols:
+                conn.execute(text("ALTER TABLE insurance_claims ADD COLUMN rejected_reason TEXT"))
+    except Exception as schema_exc:
+        try:
+            current_app.logger.debug(f"Insurance claims schema check/alter failed: {schema_exc}")
+        except Exception:
+            pass
+
+
+def _insurance_claim_items_table_exists() -> bool:
+    try:
+        from sqlalchemy import inspect as sqlalchemy_inspect
+        inspector = sqlalchemy_inspect(db.engine)
+        return bool(inspector.has_table('insurance_claim_items'))
+    except Exception:
+        return False
 
 
 class PatientSegment(db.Model):
@@ -1671,14 +4037,14 @@ class PatientSegment(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False, unique=True)
-    insurance_type = db.Column(db.String(50))  # NHIF, private, uninsured, corporate, etc
+    insurance_type = db.Column(db.String(50))
     vip_status = db.Column(db.Boolean, default=False)
-    referral_source = db.Column(db.String(100))  # Self, referral, insurance, etc
-    patient_lifetime_value = db.Column(db.Float, default=0)  # Total spent lifetime
-    visit_frequency = db.Column(db.Integer, default=0)  # Number of visits
-    average_transaction = db.Column(db.Float, default=0)  # Average amount per visit
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    referral_source = db.Column(db.String(100)) 
+    patient_lifetime_value = db.Column(db.Float, default=0)
+    visit_frequency = db.Column(db.Integer, default=0)
+    average_transaction = db.Column(db.Float, default=0)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     patient = db.relationship('Patient', backref='segment')
 
@@ -1689,16 +4055,16 @@ class ProviderPerformance(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     provider_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    fiscal_period = db.Column(db.String(20), nullable=False)  # YYYY-MM or YYYY-Wnn
+    fiscal_period = db.Column(db.String(20), nullable=False)
     patients_seen = db.Column(db.Integer, default=0)
     total_revenue = db.Column(db.Float, default=0)
     average_patient_value = db.Column(db.Float, default=0)
     procedures_completed = db.Column(db.Integer, default=0)
     readmission_count = db.Column(db.Integer, default=0)
-    satisfaction_score = db.Column(db.Float)  # 1-5 scale
-    quality_score = db.Column(db.Float)  # Composite quality metric
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    satisfaction_score = db.Column(db.Float)
+    quality_score = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     provider = db.relationship('User', backref='performance_metrics')
 
@@ -1711,115 +4077,375 @@ class QualityMetric(db.Model):
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
     admission_date = db.Column(db.DateTime, nullable=False)
     discharge_date = db.Column(db.DateTime)
-    discharge_status = db.Column(db.String(20))  # discharged, died, referred, absconded
-    length_of_stay = db.Column(db.Integer)  # days
+    discharge_status = db.Column(db.String(20))
+    length_of_stay = db.Column(db.Integer)
     readmitted_within_30d = db.Column(db.Boolean, default=False)
     readmission_date = db.Column(db.DateTime)
     primary_diagnosis = db.Column(db.String(200))
-    adverse_events = db.Column(db.Integer, default=0)  # Count of adverse events
+    adverse_events = db.Column(db.Integer, default=0)
     infections_acquired = db.Column(db.Boolean, default=False)
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
     
     patient = db.relationship('Patient', backref='quality_metrics')
 
-
-# ==================== END REPORTING MODELS ====================
-
-# Replace with this:
-_first_request = True
-from flask import current_app
-
-_first_request = True
-
-# Replace with this:
-_first_request = True
-
-@app.before_request
-def initialize_data():
-    global _first_request
-    if not _first_request:
-        return
-    _first_request = False
-    
-    # Use application context
-    with app.app_context():
-        try:
-            # Create all database tables
-            db.create_all()
-
-            # Create default admin if not exists
-            admin_exists = db.session.execute(
-                db.select(User).filter_by(role='admin')
-            ).scalar()
-            
-            if not admin_exists:
-                admin = User(
-                    username='Makokha Nelson',
-                    email='makokhanelson4@gmail.com',
-                    role='admin',
-                    is_active=True
-                )
-                admin.set_password('Doc.makokha@2024')
-                db.session.add(admin)
-            
-            # Create default doctor if not exists
-            doctor_exists = db.session.execute(
-                db.select(User).filter_by(role='doctor')
-            ).scalar()
-            
-            if not doctor_exists:
-                doctor = User(
-                    username='Default Doctor',
-                    email='doctor@clinic.com',
-                    role='doctor',
-                    is_active=True
-                )
-                doctor.set_password('Doctor@123')
-                db.session.add(doctor)
-            
-            # Create default pharmacist if not exists
-            pharmacist_exists = db.session.execute(
-                db.select(User).filter_by(role='pharmacist')
-            ).scalar()
-            
-            if not pharmacist_exists:
-                pharmacist = User(
-                    username='Default Pharmacist',
-                    email='pharmacist@clinic.com',
-                    role='pharmacist',
-                    is_active=True
-                )
-                pharmacist.set_password('Pharmacist@123')
-                db.session.add(pharmacist)
-            
-            # Create default receptionist if not exists
-            receptionist_exists = db.session.execute(
-                db.select(User).filter_by(role='receptionist')
-            ).scalar()
-            
-            if not receptionist_exists:
-                receptionist = User(
-                    username='Default Receptionist',
-                    email='receptionist@clinic.com',
-                    role='receptionist',
-                    is_active=True
-                )
-                receptionist.set_password('Receptionist@123')
-                db.session.add(receptionist)
-            
-            # Commit all changes at once
-            db.session.commit()
-            
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"Error initializing data: {str(e)}")
-            
-# Login ManagerT
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
+
+_db_initialized = False
+_db_schema_synced = False
+
+
+def _quote_ident(name: str) -> str:
+    # Safe for SQLite/PostgreSQL/MySQL identifier quoting.
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _ensure_all_tables_and_columns(engine) -> tuple[int, int]:
+    """Best-effort schema sync for existing DBs.
+
+    - Creates any missing tables declared in db.metadata
+    - Adds any missing columns declared in db.metadata tables
+
+    Important: for compatibility/safety, added columns are created WITHOUT
+    NOT NULL / UNIQUE / FK constraints, even if the ORM model has them.
+    This avoids breaking existing SQLite databases. Proper constraints should
+    still be managed via Alembic migrations in production.
+
+    Returns: (tables_created, columns_added)
+    """
+    tables_created = 0
+    columns_added = 0
+    try:
+        inspector = sa_inspect(engine)
+        existing_tables = set(inspector.get_table_names())
+        dialect = (getattr(engine, 'dialect', None) and engine.dialect.name) or ''
+
+        # 1) Ensure all tables exist
+        for table in db.metadata.sorted_tables:
+            if table.name in existing_tables:
+                continue
+            try:
+                table.create(bind=engine, checkfirst=True)
+                tables_created += 1
+            except Exception:
+                try:
+                    current_app.logger.exception('Schema sync: failed creating table %s', table.name)
+                except Exception:
+                    pass
+
+        # Refresh inspector after potential table creation
+        inspector = sa_inspect(engine)
+        existing_tables = set(inspector.get_table_names())
+
+        # 2) Ensure all columns exist for each table
+        for table in db.metadata.sorted_tables:
+            table_name = table.name
+            if table_name not in existing_tables:
+                continue
+
+            try:
+                existing_cols = {c.get('name') for c in inspector.get_columns(table_name)}
+            except Exception:
+                continue
+
+            for col in table.columns:
+                col_name = col.name
+                if col_name in existing_cols:
+                    continue
+
+                # Compile SQL type for this engine.
+                try:
+                    col_type_sql = col.type.compile(dialect=engine.dialect)
+                except Exception:
+                    col_type_sql = str(col.type)
+                if not col_type_sql:
+                    col_type_sql = 'TEXT'
+
+                table_sql = _quote_ident(table_name)
+                col_sql = _quote_ident(col_name)
+
+                try:
+                    with engine.begin() as conn:
+                        if dialect == 'postgresql':
+                            conn.execute(sa_text(
+                                f"ALTER TABLE {table_sql} ADD COLUMN IF NOT EXISTS {col_sql} {col_type_sql}"
+                            ))
+                        else:
+                            conn.execute(sa_text(
+                                f"ALTER TABLE {table_sql} ADD COLUMN {col_sql} {col_type_sql}"
+                            ))
+                    columns_added += 1
+                except Exception:
+                    # Don't block startup; log and continue.
+                    try:
+                        current_app.logger.exception(
+                            'Schema sync: failed adding column %s.%s', table_name, col_name
+                        )
+                    except Exception:
+                        pass
+
+        return tables_created, columns_added
+    except Exception:
+        try:
+            current_app.logger.exception('Schema sync failed')
+        except Exception:
+            pass
+        return tables_created, columns_added
+
+
+def _ensure_table_columns(engine, table_name: str, columns: dict[str, str]) -> int:
+    """Best-effort, idempotent column creation for existing tables.
+
+    This is primarily to keep older SQLite databases usable when we add new
+    nullable columns to models without running Alembic migrations.
+    """
+    try:
+        inspector = sa_inspect(engine)
+        existing_tables = set(inspector.get_table_names())
+        if table_name not in existing_tables:
+            return 0
+
+        existing_cols = {c.get('name') for c in inspector.get_columns(table_name)}
+        missing = [name for name in columns.keys() if name not in existing_cols]
+        if not missing:
+            return 0
+
+        dialect = (getattr(engine, 'dialect', None) and engine.dialect.name) or ''
+        preparer = getattr(engine.dialect, 'identifier_preparer', None)
+        quote = (preparer.quote if preparer else (lambda x: f'"{x}"'))
+        table_sql = quote(table_name)
+        with engine.begin() as conn:
+            for col_name in missing:
+                col_type = columns[col_name]
+                col_sql = quote(col_name)
+                if dialect == 'postgresql':
+                    conn.execute(sa_text(f"ALTER TABLE {table_sql} ADD COLUMN IF NOT EXISTS {col_sql} {col_type}"))
+                else:
+                    conn.execute(sa_text(f"ALTER TABLE {table_sql} ADD COLUMN {col_sql} {col_type}"))
+
+        return len(missing)
+    except Exception:
+        # Don't block app startup for best-effort schema fixes.
+        try:
+            current_app.logger.exception('Schema column ensure failed for %s', table_name)
+        except Exception:
+            pass
+        return 0
+
+
+def _ensure_known_backward_compat_columns(engine) -> None:
+    # Keep Bed model compatible with older DBs (common on SQLite deployments).
+    _ensure_table_columns(
+        engine,
+        'beds',
+        {
+            'assigned_at': 'DATETIME',
+            'released_at': 'DATETIME',
+        },
+    )
+
+    # Keep Ward model compatible.
+    _ensure_table_columns(
+        engine,
+        'wards',
+        {
+            'daily_rate': 'REAL',
+        },
+    )
+
+    # Keep Transaction model compatible.
+    _ensure_table_columns(
+        engine,
+        'transaction',
+        {
+            'reference_table': 'VARCHAR(80)',
+            'direction': 'VARCHAR(3)',
+            'status': 'VARCHAR(20)',
+            'department': 'VARCHAR(100)',
+            'category': 'VARCHAR(100)',
+            'payer': 'VARCHAR(120)',
+            'payment_method': 'VARCHAR(50)',
+            'notes': 'TEXT',
+            'receipt_number': 'VARCHAR(50)',
+            'receipt_html': 'TEXT',
+            'receipt_created_at': 'DATETIME',
+            'receipt_reprinted_at': 'DATETIME',
+            'receipt_reprint_count': 'INTEGER DEFAULT 0',
+            'updated_at': 'DATETIME',
+        },
+    )
+
+@app.before_request
+def ensure_database_initialized():
+    """Ensure database schema exists and default users are created before handling any request."""
+    global _db_initialized, _db_schema_synced
+    if not _db_initialized:
+        _db_initialized = True
+        try:
+            from sqlalchemy import inspect as sa_inspect
+            
+            engine = db.engine
+            inspector = sa_inspect(engine)
+            existing_tables = set(inspector.get_table_names())
+            expected_tables = set(db.metadata.tables.keys())
+            missing_tables = sorted(expected_tables - existing_tables)
+            
+            if missing_tables:
+                app.logger.warning(f"Database missing {len(missing_tables)} tables. Creating them now...")
+                # db.create_all()
+                inspector = sa_inspect(engine)
+                new_tables = set(inspector.get_table_names())
+                app.logger.info(f"✓ Database schema initialized successfully. Created {len(new_tables)} tables.")
+            else:
+                app.logger.info(f"✓ Database schema verified OK ({len(existing_tables)} tables exist).")
+
+            # Ensure all tables/columns exist (runtime-safe migration for older DBs).
+            if not _db_schema_synced:
+                _db_schema_synced = True
+                created_tables, added_cols = _ensure_all_tables_and_columns(engine)
+                if created_tables or added_cols:
+                    app.logger.info(
+                        "✓ Schema sync applied: created %d tables, added %d columns.",
+                        created_tables,
+                        added_cols,
+                    )
+                else:
+                    app.logger.info("✓ Schema sync: no changes needed.")
+            
+            # Create default users if they don't exist
+            _create_default_users()
+            
+        except Exception as e:
+            app.logger.error(f"✗ Database initialization failed: {str(e)}", exc_info=True)
+            # In development, show a clear error
+            if app.config.get('DEBUG'):
+                raise
+            # In production, try to continue but the app will likely fail on DB queries
+            abort(503)
+
+
+def _create_default_users():
+    """Optional seeding of initial users.
+
+    Disabled by default for production safety.
+    To enable, set SEED_DEFAULT_USERS=true and provide at least:
+      SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD
+    """
+    seed_enabled = (os.getenv('SEED_DEFAULT_USERS', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on'))
+    if not seed_enabled:
+        return
+
+    # Never seed implicitly on production platforms.
+    if os.getenv('RENDER') or (os.getenv('FLASK_ENV') or '').strip().lower() == 'production':
+        app.logger.warning('SEED_DEFAULT_USERS requested but ignored in production environment.')
+        return
+
+    try:
+        admin_email = (os.getenv('SEED_ADMIN_EMAIL') or '').strip()
+        admin_password = (os.getenv('SEED_ADMIN_PASSWORD') or '').strip()
+        admin_username = (os.getenv('SEED_ADMIN_USERNAME') or 'Admin').strip()
+
+        if not admin_email or not admin_password:
+            app.logger.warning('SEED_DEFAULT_USERS enabled but SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD not provided. Skipping seeding.')
+            return
+
+        default_users = [
+            {
+                'username': admin_username,
+                'email': admin_email,
+                'role': 'admin',
+                'password': admin_password,
+                'is_active': True,
+            }
+        ]
+        
+        created_count = 0
+        
+        for user_data in default_users:
+            # Check if user with this email already exists
+            # Use _find_user_by_email_plain for cross-DB compatibility.
+            existing_user = _find_user_by_email_plain(user_data['email'])
+            
+            if not existing_user:
+                user = User(
+                    username=user_data['username'],
+                    email=user_data['email'],
+                    role=user_data['role'],
+                    is_active=user_data['is_active'],
+                    is_email_verified=True  # Default users are pre-verified
+                )
+                user.set_password(user_data['password'])
+                db.session.add(user)
+                app.logger.info(f"  ✓ Created {user_data['role']} user: {user_data['email']}")
+                created_count += 1
+            else:
+                app.logger.debug(f"  - Skipped {user_data['role']} user: {user_data['email']} (already exists)")
+        
+        if created_count > 0:
+            db.session.commit()
+        
+        # Verify users and check for duplicates
+        user_count = User.query.count()
+        if user_count > 0:
+            app.logger.info(f"✓ Default users initialized ({user_count} users in database)")
+            
+            # Check for and remove duplicates
+            _remove_duplicate_users()
+        
+    except Exception as e:
+        app.logger.error(f"✗ Failed to create default users: {str(e)}")
+        db.session.rollback()
+
+
+def _remove_duplicate_users():
+    """Remove duplicate users keeping only the most recent one by ID."""
+    try:
+        # Get all users grouped by email
+        all_users = User.query.all()
+        emails_seen = {}
+        duplicates_to_delete = []
+        
+        for user in all_users:
+            try:
+                user_email = str(user.email).strip().lower()
+                
+                if user_email in emails_seen:
+                    # Keep the user with smaller ID (created first), delete the newer one
+                    existing_user = emails_seen[user_email]
+                    if user.id > existing_user.id:
+                        duplicates_to_delete.append(user)
+                    else:
+                        # Current user has smaller ID, so keep it and mark old one for deletion
+                        duplicates_to_delete.append(existing_user)
+                        emails_seen[user_email] = user
+                else:
+                    emails_seen[user_email] = user
+            except Exception as e:
+                app.logger.warning(f"Error processing user {user.id}: {e}")
+                continue
+        
+        # Delete duplicates
+        if duplicates_to_delete:
+            deleted_count = 0
+            for duplicate in duplicates_to_delete:
+                try:
+                    app.logger.warning(f"Removing duplicate user: ID={duplicate.id}, email={duplicate.email}")
+                    db.session.delete(duplicate)
+                    deleted_count += 1
+                except Exception as e:
+                    app.logger.error(f"Failed to delete duplicate user {duplicate.id}: {e}")
+                    db.session.rollback()
+            
+            if deleted_count > 0:
+                db.session.commit()
+                app.logger.info(f"✓ Removed {deleted_count} duplicate user(s)")
+    
+    except Exception as e:
+        app.logger.error(f"✗ Failed to remove duplicates: {str(e)}")
+        db.session.rollback()
 
 # Audit logging function
 def log_audit(action, table=None, record_id=None, user_id=None, changes=None, 
@@ -1844,22 +4470,45 @@ def log_audit(action, table=None, record_id=None, user_id=None, changes=None,
         
         ip_address = ip_address if ip_address is not None else request.remote_addr
         
-        changes_data = None
+        # Serialize changes to JSON if it's a dict
+        changes_json = None
         if changes:
-            changes_data = json.dumps(changes, default=str)
+            if isinstance(changes, dict):
+                changes_json = json.dumps(changes, default=str)
+            else:
+                changes_json = changes  # Already a string or JSON
         elif new_values is not None:
-            changes_data = json.dumps({'new_values': new_values}, default=str)
+            if isinstance(new_values, dict):
+                changes_json = json.dumps({'new_values': new_values}, default=str)
+            else:
+                changes_json = str(new_values)
+        
+        # Serialize old_values to JSON string if dict
+        old_values_json = None
+        if old_values:
+            if isinstance(old_values, dict):
+                old_values_json = json.dumps(old_values, default=str)
+            else:
+                old_values_json = str(old_values)
+        
+        # Serialize new_values to JSON string if dict
+        new_values_json = None
+        if new_values:
+            if isinstance(new_values, dict):
+                new_values_json = json.dumps(new_values, default=str)
+            else:
+                new_values_json = str(new_values)
         
         log = AuditLog(
             user_id=user_id,
             action=action,
             table_name=table,
             record_id=record_id,
-            changes=changes_data,
-            old_values=str(old_values) if old_values else None,
-            new_values=str(new_values) if new_values else None,
+            changes=changes_json,
+            old_values=old_values_json,
+            new_values=new_values_json,
             ip_address=ip_address,
-            created_at=datetime.now(timezone.utc)  # Changed from timestamp
+            created_at=get_eat_now()
         )
         
         db.session.add(log)
@@ -1939,21 +4588,21 @@ def generate_individual_sale_number():
 
 def database_is_sqlite():
     try:
-        inspector = inspect(db.engine)
+        inspector = sa_inspect(db.engine)
         return inspector.dialect.name == 'sqlite'
     except:
         return False
 
 def database_is_postgresql():
     try:
-        inspector = inspect(db.engine)
+        inspector = sa_inspect(db.engine)
         return inspector.dialect.name == 'postgresql'
     except:
         return False
 
 def get_database_dialect():
     try:
-        inspector = inspect(db.engine)
+        inspector = sa_inspect(db.engine)
         return inspector.dialect.name
     except:
         return 'unknown'
@@ -2019,6 +4668,7 @@ def allowed_file(filename):
 
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('home'))
@@ -2029,11 +4679,21 @@ def login():
         role = request.form.get('role')
         remember = True if request.form.get('remember') else False
         
-        user = User.query.filter((User.email == email) | (User.username == email)).first()
+        # Since email and username are encrypted, we must fetch all users and check in Python
+        user = None
+        for candidate in User.query.all():
+            if (candidate.email == email or candidate.username == email) and candidate.is_active and candidate.role == role:
+                if candidate.check_password(password):
+                    user = candidate
+                    break
         
-        if user and user.check_password(password) and user.is_active and user.role == role:
+        if user:
+            if not getattr(user, 'is_email_verified', True):
+                flash('Your email is not verified. Enter the OTP sent to your email.', 'warning')
+                return redirect(url_for('auth.verify_email'))
+
             login_user(user, remember=remember)
-            user.last_login = datetime.now(timezone.utc)
+            user.last_login = get_eat_now()
             db.session.commit()
             flash('Login successful!', 'success')
             return redirect(url_for('home'))
@@ -2049,14 +4709,14 @@ def inject_current_date():
 @app.context_processor
 def inject_csrf_token():
     """Expose csrf_token() in all Jinja templates"""
-    return dict(csrf_token=generate_csrf)
-@app.route('/logout')
+    return dict(csrf_token=generate_csrf, csrf_value=generate_csrf())
+@app.route('/logout', methods=['POST'])
 @login_required
 def logout():
     log_audit('logout')
     logout_user()
     flash('You have been logged out.', 'info')
-    return redirect(url_for('auth.login'))  # Changed from 'login' to 'auth.login'
+    return redirect(url_for('auth.login'))
 
 
 def send_async_email(app, msg):
@@ -2064,135 +4724,390 @@ def send_async_email(app, msg):
     with app.app_context():
         mail.send(msg)
 
-def send_password_reset_email(user_email, token):
-    reset_url = url_for('auth.reset_token', token=token, _external=True)
-    
+
+def _strip_env_value(val: str | None) -> str:
+    s = str(val or '').strip()
+    if len(s) >= 2 and (s[0] == s[-1]) and s[0] in ("'", '"'):
+        s = s[1:-1].strip()
+    return s
+
+
+def _normalize_smtp_password(pw: str | None) -> str:
+    """Normalize SMTP passwords copied from UIs.
+
+    Gmail App Passwords are often displayed in 4-char groups with spaces.
+    Those spaces must not be sent to SMTP AUTH.
+    """
+    s = _strip_env_value(pw)
+    s = s.replace('\t', '').strip()
+
+    if ' ' in s:
+        compact = s.replace(' ', '')
+        # Gmail App Passwords are 16 chars; allow common compact lengths.
+        if compact.isalnum() and len(compact) in (16, 20, 24, 32):
+            s = compact
+
+    return s
+
+
+def _send_system_email(*, recipient: str, subject: str, html: str, text_body: str | None = None) -> None:
+    """Send system emails (user OTP, password reset) using .env mail credentials.
+
+    Uses the SMTP helper when configured, else falls back to Flask-Mail.
+    """
+    smtp_user = _strip_env_value(app.config.get('MAIL_USERNAME'))
+    smtp_password = _normalize_smtp_password(app.config.get('MAIL_PASSWORD'))
+    if smtp_user and smtp_password:
+        _smtp_send_email(
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            recipient=recipient,
+            subject=subject,
+            html=html,
+            text_body=text_body or 'Your email client does not support HTML.',
+            attachments=None,
+            smtp_host=(app.config.get('MAIL_SERVER') or None),
+            smtp_port=int(app.config.get('MAIL_PORT') or 0) or None,
+            use_ssl=False,
+        )
+        return
+
+    # Flask-Mail fallback
     msg = Message(
-        "Reset Your Password",
-        recipients=[user_email],
-        html=f"""
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #2d3748;">Password Reset Request</h2>
-            <p>Click the button below to reset your password:</p>
-            <a href="{reset_url}" 
-               style="display: inline-block; padding: 10px 20px; 
-                      background-color: #4299e1; color: white; 
-                      text-decoration: none; border-radius: 4px;">
-                Reset Password
-            </a>
-            <p style="margin-top: 20px; color: #718096;">
-                This link expires in 1 hour. If you didn't request this, please ignore this email.
-            </p>
-        </div>
-        """
+        subject,
+        recipients=[recipient],
+        html=html,
+        sender=(app.config.get('MAIL_DEFAULT_SENDER') or None),
     )
+    if text_body:
+        msg.body = text_body
     Thread(target=send_async_email, args=(current_app._get_current_object(), msg)).start()
 
-# Generate token
-def generate_reset_token(email):
-    serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
-    return serializer.dumps(email, salt=current_app.config['SECURITY_PASSWORD_SALT'])
 
-# Verify token
-def verify_reset_token(token, max_age=3600):
+def _is_valid_email_address(value: str | None) -> bool:
+    s = (value or '').strip()
+    if not s or len(s) > 254:
+        return False
+    # Simple sanity check; avoid strict RFC validation.
+    return bool(re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', s))
+
+
+def _get_instance_path(filename: str) -> str:
+    instance_dir = Path(app.root_path) / 'instance'
+    instance_dir.mkdir(parents=True, exist_ok=True)
+    return str((instance_dir / filename).resolve())
+
+
+def _load_instance_json(filename: str, default):
+    path = _get_instance_path(filename)
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _save_instance_json(filename: str, data) -> None:
+    path = _get_instance_path(filename)
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _get_admin_recipient_emails() -> list[str]:
+    """Collect admin recipients.
+
+    Note: User.role/email are EncryptedType; queries may not be deterministic.
+    We scan in Python.
+    """
+    recipients: list[str] = []
+    try:
+        for u in User.query.all():
+            try:
+                role = str(getattr(u, 'role', '') or '').strip().lower()
+                if role != 'admin':
+                    continue
+                email_addr = str(getattr(u, 'email', '') or '').strip()
+                if _is_valid_email_address(email_addr):
+                    recipients.append(email_addr)
+            except Exception:
+                continue
+    except Exception:
+        return []
+    # De-dupe while preserving order
+    seen = set()
+    ordered: list[str] = []
+    for r in recipients:
+        key = r.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(r)
+    return ordered
+
+
+def _send_email_best_effort_async(*, recipient: str, subject: str, html: str, text_body: str | None = None) -> None:
+    """Best-effort email sender.
+
+    - Never raises
+    - Sends on a background thread to avoid delaying HTTP responses.
+    """
+    if not _is_valid_email_address(recipient):
+        return
+
+    def _worker():
+        try:
+            with app.app_context():
+                _send_system_email(recipient=recipient, subject=subject, html=html, text_body=text_body)
+        except Exception as e:
+            try:
+                app.logger.error(f"Email send failed to {recipient}: {e}")
+            except Exception:
+                pass
+
+    try:
+        Thread(target=_worker, daemon=True).start()
+    except Exception:
+        # If threads cannot start, just drop it.
+        return
+
+
+def _find_user_by_email_plain(email: str) -> User | None:
+    target = (email or '').strip().lower()
+    if not target:
+        return None
+    try:
+        # EncryptedType may not support deterministic query; fall back to Python scan.
+        for candidate in User.query.all():
+            try:
+                if (str(candidate.email or '').strip().lower()) == target:
+                    return candidate
+            except Exception:
+                continue
+    except Exception:
+        return None
+    return None
+
+
+def _user_otp_hash(*, user_id: int, code: str) -> str:
+    secret = (app.config.get('SECRET_KEY') or '').encode('utf-8')
+    payload = f"user-email-otp|{user_id}|{str(code or '').strip()}".encode('utf-8')
+    return hashlib.sha256(secret + b'|' + payload).hexdigest()
+
+
+def _admin_add_user_otp_hash(*, email: str, code: str) -> str:
+    secret = (app.config.get('SECRET_KEY') or '').encode('utf-8')
+    payload = f"admin-add-user-email-otp|{(email or '').strip().lower()}|{str(code or '').strip()}".encode('utf-8')
+    return hashlib.sha256(secret + b'|' + payload).hexdigest()
+
+
+def _parse_iso_dt(val: str | None) -> datetime | None:
+    if not val:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(val))
+        if dt.tzinfo is None:
+            # Treat stored naive timestamps as EAT.
+            dt = dt.replace(tzinfo=EAT)
+        return dt
+    except Exception:
+        return None
+
+
+def _as_eat_aware(dt: datetime | None) -> datetime | None:
+    """Coerce datetimes to EAT-aware for safe comparison.
+
+    Many DB DateTime columns are stored without tzinfo (naive). When loaded,
+    comparing against timezone-aware datetimes raises TypeError.
+    """
+    if dt is None:
+        return None
+    try:
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=EAT)
+        return dt.astimezone(EAT)
+    except Exception:
+        return None
+
+
+def _generate_user_otp_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _send_user_verification_otp(user: User) -> None:
+    code = _generate_user_otp_code()
+    user.is_email_verified = False
+    user.email_otp_hash = _user_otp_hash(user_id=int(user.id), code=code)
+    user.email_otp_expires_at = get_eat_now() + timedelta(minutes=10)
+    db.session.commit()
+
+    html = (
+        f"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>"
+        f"<h2 style='color:#2d3748;'>Email Verification</h2>"
+        f"<p>Your OTP code is:</p>"
+        f"<div style='font-size: 28px; letter-spacing: 4px; font-weight: 700; padding: 12px 16px; background:#f7fafc; border:1px solid #e2e8f0; display:inline-block;'>{code}</div>"
+        f"<p style='margin-top: 16px; color:#718096;'>This code expires in 10 minutes.</p>"
+        f"</div>"
+    )
+    _send_system_email(
+        recipient=str(user.email),
+        subject='Verify your email (OTP)',
+        html=html,
+        text_body=f"Your OTP code is {code}. It expires in 10 minutes.",
+    )
+
+def _generate_password_reset_token(user: User) -> str:
+    # Rotate per-user nonce to invalidate previous tokens.
+    user.password_reset_nonce = secrets.token_hex(16)
+    user.password_reset_sent_at = get_eat_now()
+    db.session.commit()
+    serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
+    return serializer.dumps(
+        {'uid': int(user.id), 'nonce': str(user.password_reset_nonce)},
+        salt=current_app.config['SECURITY_PASSWORD_SALT']
+    )
+
+
+def _verify_password_reset_token(token: str) -> User | None:
     serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
     try:
-        email = serializer.loads(
+        data = serializer.loads(
             token,
             salt=current_app.config['SECURITY_PASSWORD_SALT'],
-            max_age=max_age
+            max_age=int(current_app.config.get('RESET_TOKEN_EXPIRATION', 3600))
         )
-        return email
-    except:
-        return False
-@auth_bp.route('/reset-password', methods=['GET', 'POST'])
-def reset_request():
-    form = ResetPasswordRequestForm()  # Create form instance
-    
-    if form.validate_on_submit():  # Use validate_on_submit for proper form validation
-        email = form.email.data
-        user = User.query.filter_by(email=email).first()
-        if user:
-            token = generate_reset_token(user.email)
-            send_password_reset_email(user.email, token)
-            flash('Password reset link sent to your email', 'info')
-            return redirect(url_for('auth.login'))
-        flash('Email not found', 'danger')
-    
-    # Pass the form to the template
-    return render_template('auth/reset_request.html', form=form)
+        uid = int(data.get('uid'))
+        nonce = str(data.get('nonce') or '')
+    except Exception:
+        return None
 
-@auth_bp.route('/reset-password/<token>', methods=['GET', 'POST'])
-def reset_token(token):
-    email = verify_reset_token(token)
-    if not email:
-        flash('Invalid or expired token', 'danger')
-        return redirect(url_for('auth.reset_request'))
-    
-    user = User.query.filter_by(email=email).first()
+    user = db.session.get(User, uid)
     if not user:
-        flash('User not found', 'danger')
-        return redirect(url_for('auth.reset_request'))
-    
-    if request.method == 'POST':
-        password = request.form.get('password')
-        user.set_password(password)  # Your password hashing method
-        db.session.commit()
-        flash('Password updated successfully!', 'success')
-        return redirect(url_for('auth.login'))
-    
-    return render_template('auth/reset_token.html', token=token)
+        return None
+    if not user.password_reset_nonce or str(user.password_reset_nonce) != nonce:
+        return None
+    return user
+
+
+def send_password_reset_email(user_email: str, reset_url: str) -> None:
+    html = (
+        f"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>"
+        f"<h2 style='color: #2d3748;'>Password Reset Request</h2>"
+        f"<p>Click the button below to reset your password:</p>"
+        f"<a href='{reset_url}' style='display:inline-block;padding:10px 20px;background-color:#4299e1;color:white;text-decoration:none;border-radius:4px;'>Reset Password</a>"
+        f"<p style='margin-top: 20px; color: #718096;'>This link expires in 1 hour. If you didn't request this, please ignore this email.</p>"
+        f"</div>"
+    )
+    _send_system_email(
+        recipient=user_email,
+        subject='Reset your password',
+        html=html,
+        text_body=f"Reset your password using this link: {reset_url} (expires in 1 hour).",
+    )
+
+
 @auth_bp.route('/reset-password', methods=['GET', 'POST'])
 @limiter.limit("5 per minute")
 def reset_password():
     form = ResetPasswordRequestForm()
     if form.validate_on_submit():
-        email = form.email.data
-        user = User.query.filter_by(email=email).first()
-        
+        email = (form.email.data or '').strip()
+        user = _find_user_by_email_plain(email)
+
+        # Avoid email enumeration: always show generic success message.
         if user:
-            serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
-            token = serializer.dumps(email, salt=current_app.config['SECURITY_PASSWORD_SALT'])
+            token = _generate_password_reset_token(user)
             reset_url = url_for('auth.reset_with_token', token=token, _external=True)
-            
-            if send_password_reset_email(email, reset_url):
-                flash('A password reset link has been sent to your email.', 'info')
-            else:
-                flash('Failed to send email. Please try again later.', 'danger')
-            return redirect(url_for('auth.login'))
-        
+            try:
+                send_password_reset_email(str(user.email), reset_url)
+            except Exception as e:
+                current_app.logger.error(f'Password reset email send failed: {e}', exc_info=True)
+                flash('Failed to send reset email. Check email settings and try again.', 'danger')
+                return redirect(url_for('auth.reset_password'))
+
         flash('If this email exists in our system, a reset link has been sent.', 'info')
         return redirect(url_for('auth.login'))
-    
+
     return render_template('auth/reset.html', form=form)
+
 
 @auth_bp.route('/reset/<token>', methods=['GET', 'POST'])
 @limiter.limit("5 per minute")
 def reset_with_token(token):
-    try:
-        serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
-        email = serializer.loads(
-            token,
-            salt=current_app.config['SECURITY_PASSWORD_SALT'],
-            max_age=current_app.config['RESET_TOKEN_EXPIRATION']
-        )
-    except:
+    user = _verify_password_reset_token(token)
+    if not user:
         flash('The reset link is invalid or has expired.', 'danger')
         return redirect(url_for('auth.reset_password'))
-    
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        flash('Invalid user.', 'danger')
-        return redirect(url_for('auth.reset_password'))
-    
+
     form = ResetPasswordForm()
     if form.validate_on_submit():
         user.set_password(form.password.data)
+        # Invalidate token after use.
+        user.password_reset_nonce = None
+        user.password_reset_sent_at = None
         db.session.commit()
         flash('Your password has been updated successfully!', 'success')
         return redirect(url_for('auth.login'))
-    
+
     return render_template('auth/reset_with_token.html', form=form, token=token)
+
+
+@auth_bp.route('/verify-email', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")
+def verify_email():
+    if request.method == 'POST':
+        email = (request.form.get('email') or '').strip()
+        code = (request.form.get('code') or '').strip()
+        user = _find_user_by_email_plain(email)
+        if not user:
+            flash('Invalid email or OTP.', 'danger')
+            return redirect(url_for('auth.verify_email'))
+
+        if user.is_email_verified:
+            flash('Email already verified. You can login.', 'info')
+            return redirect(url_for('auth.login'))
+
+        now = get_eat_now()
+        expires_at = _as_eat_aware(user.email_otp_expires_at)
+        if not user.email_otp_hash or not expires_at or expires_at < now:
+            flash('OTP expired. Please request a new code.', 'danger')
+            return redirect(url_for('auth.verify_email'))
+
+        if _user_otp_hash(user_id=int(user.id), code=code) != (user.email_otp_hash or ''):
+            flash('Invalid OTP code. Please try again.', 'danger')
+            return redirect(url_for('auth.verify_email'))
+
+        user.is_email_verified = True
+        user.email_otp_hash = None
+        user.email_otp_expires_at = None
+        db.session.commit()
+        flash('Email verified successfully. Please login.', 'success')
+        return redirect(url_for('auth.login'))
+
+    # GET
+    return render_template('auth/verify_email.html')
+
+
+@auth_bp.route('/verify-email/resend', methods=['POST'])
+@limiter.limit("5 per minute")
+def resend_verify_email():
+    email = (request.form.get('email') or '').strip()
+    user = _find_user_by_email_plain(email)
+    if not user:
+        flash('If this email exists in our system, a new OTP has been sent.', 'info')
+        return redirect(url_for('auth.verify_email'))
+    if user.is_email_verified:
+        flash('Email already verified. You can login.', 'info')
+        return redirect(url_for('auth.login'))
+    try:
+        _send_user_verification_otp(user)
+    except Exception as e:
+        current_app.logger.error(f'User OTP send failed: {e}', exc_info=True)
+        flash('Failed to send OTP email. Check email settings and try again.', 'danger')
+        return redirect(url_for('auth.verify_email'))
+    flash('A new OTP has been sent to your email.', 'success')
+    return redirect(url_for('auth.verify_email'))
 
 
 
@@ -2352,111 +5267,7 @@ def get_doctor_stats(timeframe='daily'):
         'end_date': end_date - timedelta(days=1)  # Subtract 1 day to show inclusive end data
     }
 
-# Backup utility functions
-def create_backup(backup_id):
-    """Create a database backup in background"""
-    backup = BackupRecord.query.get(backup_id)
-    if not backup:
-        return
-    
-    try:
-        # Create a temporary file
-        temp_dir = tempfile.mkdtemp()
-        backup_file = os.path.join(temp_dir, f'backup_{backup.backup_id}.zip')
-        
-        # Create a ZIP file containing all table data as JSON
-        with zipfile.ZipFile(backup_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # Backup each table
-            for table_name in BACKUP_CONFIG['tables_to_backup']:
-                try:
-                    # Get table data
-                    result = db.engine.execute(text(f'SELECT * FROM {table_name}'))
-                    rows = [dict(row) for row in result]
-                    
-                    # Convert to JSON
-                    table_data = json.dumps(rows, indent=2, default=str)
-                    
-                    # Add to ZIP
-                    zipf.writestr(f'{table_name}.json', table_data)
-                except Exception as e:
-                    app.logger.error(f'Error backing up table {table_name}: {str(e)}')
-                    continue
-            
-            # Add metadata
-            metadata = {
-                'backup_id': backup.backup_id,
-                'timestamp': get_eat_now().isoformat(),
-                'database_url': str(db.engine.url),
-                'tables_backed_up': BACKUP_CONFIG['tables_to_backup'],
-                'app_version': '1.0.0'
-            }
-            zipf.writestr('metadata.json', json.dumps(metadata, indent=2))
-        
-        # Calculate checksum
-        with open(backup_file, 'rb') as f:
-            file_hash = hashlib.sha256()
-            while chunk := f.read(8192):
-                file_hash.update(chunk)
-            checksum = file_hash.hexdigest()
-        
-        # Encrypt the backup
-        cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
-        with open(backup_file, 'rb') as f:
-            encrypted_data = cipher_suite.encrypt(f.read())
-        
-        encrypted_file = backup_file + '.enc'
-        with open(encrypted_file, 'wb') as f:
-            f.write(encrypted_data)
-        
-        # Get file size
-        file_size = os.path.getsize(encrypted_file)
-        
-        # Store backup (local or S3)
-        if s3_client:
-            # Upload to S3
-            s3_key = f'backups/{backup.backup_id}.zip.enc'
-            s3_client.upload_file(
-                encrypted_file,
-                BACKUP_CONFIG['s3_bucket'],
-                s3_key,
-                ExtraArgs={
-                    'Metadata': {
-                        'backup-id': backup.backup_id,
-                        'checksum': checksum,
-                        'created-by': str(current_user.id)
-                    }
-                }
-            )
-            storage_location = f's3://{BACKUP_CONFIG["s3_bucket"]}/{s3_key}'
-        else:
-            # Store locally
-            local_backup_dir = BACKUP_CONFIG['local_storage_path']
-            os.makedirs(local_backup_dir, exist_ok=True)
-            local_path = os.path.join(local_backup_dir, f'{backup.backup_id}.zip.enc')
-            os.rename(encrypted_file, local_path)
-            storage_location = local_path
-        
-        # Update backup record
-        backup.status = 'completed'
-        backup.size_bytes = file_size
-        backup.storage_location = storage_location
-        backup.checksum = checksum
-        db.session.commit()
-        
-        # Clean up
-        try:
-            os.remove(backup_file)
-            if os.path.exists(encrypted_file):
-                os.remove(encrypted_file)
-            os.rmdir(temp_dir)
-        except:
-            pass
-        
-    except Exception as e:
-        app.logger.error(f'Backup failed: {str(e)}', exc_info=True)
-        backup.status = 'failed'
-        backup.notes = f'Error: {str(e)}'
-        db.session.commit()
+# Backup utility functions (implementation is below under BACKUP IMPLEMENTATION)
 
 @app.route('/admin/beds', methods=['GET', 'POST'])
 @login_required
@@ -2476,12 +5287,39 @@ def manage_beds():
                     name=request.form.get('ward_name'),
                     description=request.form.get('ward_description')
                 )
+                try:
+                    rate_raw = request.form.get('ward_daily_rate')
+                    if rate_raw is not None and str(rate_raw).strip() != '':
+                        ward.daily_rate = float(rate_raw)
+                except Exception:
+                    pass
                 db.session.add(ward)
                 db.session.commit()
                 flash('Ward added successfully!', 'success')
             except Exception as e:
                 db.session.rollback()
                 flash(f'Error adding ward: {str(e)}', 'danger')
+
+        elif action == 'edit_ward':
+            try:
+                ward_id = request.form.get('ward_id')
+                ward = Ward.query.get(ward_id)
+                if not ward:
+                    flash('Ward not found', 'danger')
+                else:
+                    ward.name = request.form.get('ward_name')
+                    ward.description = request.form.get('ward_description')
+                    try:
+                        rate_raw = request.form.get('ward_daily_rate')
+                        if rate_raw is not None and str(rate_raw).strip() != '':
+                            ward.daily_rate = float(rate_raw)
+                    except Exception:
+                        pass
+                    db.session.commit()
+                    flash('Ward updated successfully!', 'success')
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Error updating ward: {str(e)}', 'danger')
         
         elif action == 'add_bed':
             try:
@@ -2508,6 +5346,23 @@ def manage_beds():
                 else:
                     bed.status = 'occupied'
                     bed.patient_id = patient_id
+                    try:
+                        now = get_eat_now()
+                        bed.assigned_at = now
+                        bed.released_at = None
+                    except Exception:
+                        now = get_eat_now()
+                        pass
+
+                    try:
+                        db.session.add(BedAssignment(
+                            bed_id=int(bed.id),
+                            patient_id=int(patient_id),
+                            assigned_at=now,
+                            released_at=None,
+                        ))
+                    except Exception:
+                        pass
                     db.session.commit()
                     flash('Bed assigned successfully!', 'success')
             except Exception as e:
@@ -2519,12 +5374,66 @@ def manage_beds():
                 bed_id = request.form.get('bed_id')
                 bed = Bed.query.get(bed_id)
                 bed.status = 'available'
+                try:
+                    now = get_eat_now()
+                    bed.released_at = now
+                except Exception:
+                    now = get_eat_now()
+                    pass
+
+                # Capture the patient before clearing the bed assignment
+                released_patient_id = bed.patient_id
                 bed.patient_id = None
+
+                try:
+                    if released_patient_id:
+                        last_assign = (
+                            BedAssignment.query
+                            .filter_by(bed_id=bed.id, patient_id=released_patient_id)
+                            .filter(BedAssignment.released_at.is_(None))
+                            .order_by(BedAssignment.assigned_at.desc())
+                            .first()
+                        )
+                        if last_assign:
+                            last_assign.released_at = now
+                            db.session.add(last_assign)
+                except Exception:
+                    pass
                 db.session.commit()
                 flash('Bed released successfully!', 'success')
             except Exception as e:
                 db.session.rollback()
                 flash(f'Error releasing bed: {str(e)}', 'danger')
+
+        elif action == 'delete_ward':
+            try:
+                ward_id = request.form.get('ward_id')
+                ward = Ward.query.get(ward_id)
+                if not ward:
+                    flash('Ward not found', 'danger')
+                else:
+                    # Delete beds first (relationship may not be configured with cascade)
+                    Bed.query.filter_by(ward_id=ward.id).delete(synchronize_session=False)
+                    db.session.delete(ward)
+                    db.session.commit()
+                    flash('Ward deleted successfully!', 'success')
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Error deleting ward: {str(e)}', 'danger')
+
+        elif action == 'delete_bed':
+            try:
+                bed_id = request.form.get('bed_id')
+                bed = Bed.query.get(bed_id)
+                if not bed:
+                    flash('Bed not found', 'danger')
+                else:
+                    db.session.delete(bed)
+                    db.session.commit()
+                    flash('Bed deleted successfully!', 'success')
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Error deleting bed: {str(e)}', 'danger')
         
         return redirect(url_for('manage_beds'))
     
@@ -2926,7 +5835,7 @@ def get_user_details(user_id):
         'email': user.email,
         'role': user.role,
         'is_active': user.is_active,
-        'last_login': user.last_login.strftime('%Y-%m-%d %H:%M') if user.last_login else None
+        'last_login': (user.last_login_dt or user.last_login).strftime('%Y-%m-%d %H:%M') if user.last_login_dt else (user.last_login if user.last_login else None)
     }
 @app.route('/admin/users', methods=['GET', 'POST'])
 @login_required
@@ -2934,31 +5843,172 @@ def manage_users():
     if current_user.role != 'admin':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
+
+    def _render_users_with_add_modal(add_user_state: dict) -> str:
+        users = User.query.order_by(User.last_login.desc().nullslast(), User.username.asc()).all()
+        return render_template('admin/users.html', users=users, open_add_user_modal=True, add_user_state=add_user_state)
     
     if request.method == 'POST':
         action = request.form.get('action')
+
+        if action in {'add_request_otp', 'add_verify_otp'}:
+            email_in = (request.form.get('email') or '').strip()
+            email_norm = email_in.lower()
+
+            add_user_state: dict = {
+                'stage': 'start',
+                'email': email_in,
+                'username': (request.form.get('username') or '').strip(),
+                'role': (request.form.get('role') or '').strip(),
+                'is_active': bool(request.form.get('is_active')),
+            }
+
+            if not email_in or '@' not in email_in:
+                flash('Please enter a valid email address.', 'danger')
+                return _render_users_with_add_modal(add_user_state)
+
+            if User.query.filter_by(email=email_in).first() or any(str(u.email).strip().lower() == email_norm for u in User.query.all()):
+                flash('Email already exists', 'danger')
+                return _render_users_with_add_modal(add_user_state)
+
+            if action == 'add_request_otp':
+                code = _generate_user_otp_code()
+                now = get_eat_now()
+                expires_at = now + timedelta(minutes=10)
+
+                session['admin_add_user_otp_email'] = email_norm
+                session['admin_add_user_otp_hash'] = _admin_add_user_otp_hash(email=email_in, code=code)
+                session['admin_add_user_otp_expires_at'] = expires_at.isoformat()
+                session['admin_add_user_otp_verified'] = False
+                session.pop('admin_add_user_otp_verified_at', None)
+
+                try:
+                    _send_system_email(
+                        recipient=email_in,
+                        subject='Makokha Medical Centre - Email OTP Verification',
+                        html=(
+                            f"<p>Your OTP code is <b>{code}</b>.</p>"
+                            f"<p>This code expires in 10 minutes.</p>"
+                        ),
+                        text_body=f"Your OTP code is {code}. It expires in 10 minutes.",
+                    )
+                    flash('OTP sent to the entered email. Enter it to continue.', 'success')
+                except Exception as mail_exc:
+                    app.logger.error(f'Failed to send admin add-user OTP: {mail_exc}', exc_info=True)
+                    flash('Failed to send OTP email. Check email settings and try again.', 'danger')
+                    return _render_users_with_add_modal(add_user_state)
+
+                add_user_state['stage'] = 'otp_sent'
+                return _render_users_with_add_modal(add_user_state)
+
+            # add_verify_otp
+            otp_in = (request.form.get('otp') or '').strip()
+            if not otp_in or not otp_in.isdigit() or len(otp_in) != 6:
+                flash('Enter the 6-digit OTP sent to the email.', 'danger')
+                add_user_state['stage'] = 'otp_sent'
+                return _render_users_with_add_modal(add_user_state)
+
+            sess_email = (session.get('admin_add_user_otp_email') or '').strip().lower()
+            sess_hash = (session.get('admin_add_user_otp_hash') or '').strip()
+            expires_at = _parse_iso_dt(session.get('admin_add_user_otp_expires_at'))
+
+            if not sess_email or sess_email != email_norm or not sess_hash or not expires_at:
+                flash('OTP session not found. Please request a new OTP.', 'danger')
+                add_user_state['stage'] = 'start'
+                return _render_users_with_add_modal(add_user_state)
+
+            if get_eat_now() > expires_at:
+                flash('OTP expired. Please request a new OTP.', 'danger')
+                add_user_state['stage'] = 'start'
+                return _render_users_with_add_modal(add_user_state)
+
+            expected = _admin_add_user_otp_hash(email=email_in, code=otp_in)
+            if not secrets.compare_digest(expected, sess_hash):
+                flash('Invalid OTP. Please try again.', 'danger')
+                add_user_state['stage'] = 'otp_sent'
+                return _render_users_with_add_modal(add_user_state)
+
+            session['admin_add_user_otp_verified'] = True
+            session['admin_add_user_otp_verified_at'] = get_eat_now().isoformat()
+            flash('OTP confirmed. You can now finish adding the user.', 'success')
+            add_user_state['stage'] = 'verified'
+            return _render_users_with_add_modal(add_user_state)
         
         if action == 'add':
             try:
-                if User.query.filter_by(username=request.form.get('username')).first():
+                # NOTE: username/email are encrypted, so DB equality may not work reliably.
+                username_in = (request.form.get('username') or '').strip()
+                email_in = (request.form.get('email') or '').strip()
+
+                # Require admin OTP verification before creating the user.
+                verified = bool(session.get('admin_add_user_otp_verified'))
+                verified_email = (session.get('admin_add_user_otp_email') or '').strip().lower()
+                verified_at = _parse_iso_dt(session.get('admin_add_user_otp_verified_at'))
+                if (not verified) or (verified_email != email_in.strip().lower()) or (not verified_at) or (get_eat_now() - verified_at > timedelta(minutes=30)):
+                    flash('Verify the email by OTP before adding the user.', 'danger')
+                    add_user_state = {
+                        'stage': 'start',
+                        'email': email_in,
+                        'username': username_in,
+                        'role': (request.form.get('role') or '').strip(),
+                        'is_active': bool(request.form.get('is_active')),
+                    }
+                    return _render_users_with_add_modal(add_user_state)
+
+                if (request.form.get('password') or '') != (request.form.get('confirm_password') or ''):
+                    flash('Passwords do not match', 'danger')
+                    add_user_state = {
+                        'stage': 'verified',
+                        'email': email_in,
+                        'username': username_in,
+                        'role': (request.form.get('role') or '').strip(),
+                        'is_active': bool(request.form.get('is_active')),
+                    }
+                    return _render_users_with_add_modal(add_user_state)
+
+                if User.query.filter_by(username=username_in).first() or any(str(u.username) == username_in for u in User.query.all()):
                     flash('Username already exists', 'danger')
-                    return redirect(url_for('manage_users'))
+                    add_user_state = {
+                        'stage': 'verified',
+                        'email': email_in,
+                        'username': username_in,
+                        'role': (request.form.get('role') or '').strip(),
+                        'is_active': bool(request.form.get('is_active')),
+                    }
+                    return _render_users_with_add_modal(add_user_state)
                 
-                if User.query.filter_by(email=request.form.get('email')).first():
+                if User.query.filter_by(email=email_in).first() or any(str(u.email).strip().lower() == email_in.lower() for u in User.query.all()):
                     flash('Email already exists', 'danger')
-                    return redirect(url_for('manage_users'))
+                    add_user_state = {
+                        'stage': 'start',
+                        'email': email_in,
+                        'username': username_in,
+                        'role': (request.form.get('role') or '').strip(),
+                        'is_active': bool(request.form.get('is_active')),
+                    }
+                    return _render_users_with_add_modal(add_user_state)
                 
                 # Create new user
                 user = User(
-                    username=request.form.get('username'),
-                    email=request.form.get('email'),
-                    role=request.form.get('role'),
+                    username=username_in,
+                    email=email_in,
+                    role=(request.form.get('role') or '').strip(),
                     is_active=True if request.form.get('is_active') else False,
-                    last_login=None  # Initialize last_login as None for new users
+                    last_login=None,  # Initialize last_login as None for new users
+                    is_email_verified=True,
                 )
                 user.set_password(request.form.get('password'))
                 db.session.add(user)
                 db.session.commit()
+
+                # Clear admin add-user OTP session state after successful creation.
+                session.pop('admin_add_user_otp_email', None)
+                session.pop('admin_add_user_otp_hash', None)
+                session.pop('admin_add_user_otp_expires_at', None)
+                session.pop('admin_add_user_otp_verified', None)
+                session.pop('admin_add_user_otp_verified_at', None)
+
+                flash('User added successfully (email confirmed by OTP).', 'success')
                 
                 log_audit('create', 'User', user.id, None, {
                     'username': user.username,
@@ -2968,7 +6018,6 @@ def manage_users():
                     'last_login': user.last_login
                 })
                 
-                flash('User added successfully!', 'success')
             except Exception as e:
                 db.session.rollback()
                 flash(f'Error adding user: {str(e)}', 'danger')
@@ -2983,7 +6032,7 @@ def manage_users():
                         'email': user.email,
                         'role': user.role,
                         'is_active': user.is_active,
-                        'last_login': user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else None
+                        'last_login': (user.last_login_dt or user.last_login).strftime('%Y-%m-%d %H:%M:%S') if user.last_login_dt else (user.last_login if user.last_login else None)
                     }
                     
                     user.username = request.form.get('username')
@@ -3001,7 +6050,7 @@ def manage_users():
                         'email': user.email,
                         'role': user.role,
                         'is_active': user.is_active,
-                        'last_login': user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else None
+                        'last_login': (user.last_login_dt or user.last_login).strftime('%Y-%m-%d %H:%M:%S') if user.last_login_dt else (user.last_login if user.last_login else None)
                     })
                     
                     flash('User updated successfully!', 'success')
@@ -3024,7 +6073,7 @@ def manage_users():
                             'email': user.email,
                             'role': user.role,
                             'is_active': user.is_active,
-                            'last_login': user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else None
+                            'last_login': (user.last_login_dt or user.last_login).strftime('%Y-%m-%d %H:%M:%S') if user.last_login_dt else (user.last_login if user.last_login else None)
                         }, None)
                         
                         db.session.delete(user)
@@ -3180,6 +6229,217 @@ def manage_employees():
                         users=users,
                         User=User)
 
+
+@app.route('/admin/employees/add', methods=['GET', 'POST'])
+@login_required
+def add_employee():
+    """Render and handle the standalone 'Add Employee' form.
+
+    Some templates use a separate add page (admin/add_employee.html) while the
+    main employee management screen supports modal-based CRUD.
+    """
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    if request.method == 'POST':
+        try:
+            salary_raw = request.form.get('salary')
+            salary_value = float(salary_raw) if salary_raw and str(salary_raw).strip() else None
+
+            hire_date_raw = request.form.get('hire_date')
+            hire_date_value = (
+                datetime.strptime(hire_date_raw, '%Y-%m-%d').date()
+                if hire_date_raw and str(hire_date_raw).strip()
+                else None
+            )
+
+            employee = Employee(
+                name=request.form.get('name'),
+                position=request.form.get('position'),
+                salary=salary_value,
+                hire_date=hire_date_value,
+                contact=request.form.get('contact'),
+            )
+            db.session.add(employee)
+            db.session.commit()
+
+            try:
+                log_audit('create', 'Employee', employee.id, None, {
+                    'name': employee.name,
+                    'position': employee.position,
+                    'salary': employee.salary,
+                    'hire_date': str(employee.hire_date) if employee.hire_date else None,
+                    'contact': employee.contact,
+                    'user_id': employee.user_id,
+                })
+            except Exception:
+                # Audit logging should not block core flows.
+                pass
+
+            flash('Employee added successfully!', 'success')
+            return redirect(url_for('manage_employees'))
+        except ValueError as e:
+            db.session.rollback()
+            flash(f'Invalid data format: {str(e)}', 'danger')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error adding employee: {str(e)}', 'danger')
+
+    return render_template('admin/add_employee.html')
+
+
+@app.route('/admin/financial_reports', methods=['GET', 'POST'])
+@login_required
+def financial_reports():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    # Backwards-compatible: if something posts to this route directly,
+    # handle it the same way as `generate_financial_report`.
+    if request.method == 'POST':
+        return generate_financial_report()
+
+    reports = FinancialReport.query.order_by(FinancialReport.generated_at.desc()).all()
+    return render_template('admin/financial_reports.html', reports=reports)
+
+
+@app.route('/admin/financial_reports/generate', methods=['POST'])
+@login_required
+def generate_financial_report():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    report_type = (request.form.get('report_type') or 'custom').strip().lower()
+    start_date_str = request.form.get('start_date')
+    end_date_str = request.form.get('end_date')
+
+    try:
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+    except Exception:
+        flash('Invalid start/end date', 'danger')
+        return redirect(url_for('financial_reports'))
+
+    if start_date > end_date:
+        flash('Start date cannot be after end date', 'danger')
+        return redirect(url_for('financial_reports'))
+
+    # Use an exclusive end for DateTime filters.
+    end_dt_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    start_dt_inclusive = datetime.combine(start_date, datetime.min.time())
+
+    try:
+        total_sales = db.session.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(
+            Sale.created_at >= start_dt_inclusive,
+            Sale.created_at < end_dt_exclusive,
+        ).scalar()
+
+        total_invoices = db.session.query(func.coalesce(func.sum(Invoice.total_amount), 0)).filter(
+            Invoice.date_issued >= start_dt_inclusive,
+            Invoice.date_issued < end_dt_exclusive,
+        ).scalar()
+
+        expense_effective_date = func.coalesce(Expense.paid_date, func.date(Expense.created_at))
+        total_expenses = db.session.query(func.coalesce(func.sum(Expense.amount), 0)).filter(
+            expense_effective_date >= start_date,
+            expense_effective_date <= end_date,
+        ).scalar()
+
+        total_revenue = (total_sales or 0) + (total_invoices or 0)
+        net_profit = (total_revenue or 0) - (total_expenses or 0)
+
+        report = FinancialReport(
+            report_type=report_type,
+            start_date=start_date,
+            end_date=end_date,
+            total_revenue=total_revenue,
+            total_expenses=total_expenses,
+            net_profit=net_profit,
+            generated_by_id=current_user.id,
+        )
+        db.session.add(report)
+        db.session.flush()  # ensure report.id is available
+
+        # Keep items lightweight: aggregated categories.
+        if total_sales and float(total_sales) != 0.0:
+            db.session.add(ReportItem(
+                report_id=report.id,
+                item_type='revenue',
+                description='Sales',
+                amount=total_sales,
+                date=start_date,
+                reference_table='sales',
+            ))
+
+        if total_invoices and float(total_invoices) != 0.0:
+            db.session.add(ReportItem(
+                report_id=report.id,
+                item_type='revenue',
+                description='Invoices',
+                amount=total_invoices,
+                date=start_date,
+                reference_table='invoices',
+            ))
+
+        if total_expenses and float(total_expenses) != 0.0:
+            db.session.add(ReportItem(
+                report_id=report.id,
+                item_type='expense',
+                description='Expenses',
+                amount=total_expenses,
+                date=start_date,
+                reference_table='expenses',
+            ))
+
+        db.session.commit()
+        flash('Financial report generated successfully.', 'success')
+        return redirect(url_for('financial_reports'))
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error generating report: {str(e)}', 'danger')
+        return redirect(url_for('financial_reports'))
+
+
+@app.route('/admin/financial_reports/<int:report_id>', methods=['GET'])
+@login_required
+def view_financial_report(report_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    report = db.session.get(FinancialReport, report_id)
+    if not report:
+        flash('Financial report not found.', 'danger')
+        return redirect(url_for('financial_reports'))
+
+    return render_template('admin/view_financial_report.html', report=report)
+
+
+@app.route('/admin/financial_reports/<int:report_id>/delete', methods=['POST'])
+@login_required
+def delete_financial_report(report_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    report = db.session.get(FinancialReport, report_id)
+    if not report:
+        flash('Financial report not found.', 'danger')
+        return redirect(url_for('financial_reports'))
+
+    try:
+        db.session.delete(report)
+        db.session.commit()
+        flash('Financial report deleted successfully.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error deleting report: {str(e)}', 'danger')
+
+    return redirect(url_for('financial_reports'))
+
 @app.route('/admin/employees/<int:employee_id>')
 @login_required
 def get_employee(employee_id):
@@ -3319,6 +6579,27 @@ def log_report_access(report_type, filters, data_count=0, status='success', erro
         app.logger.error(f'Failed to log report access: {str(e)}')
 
 
+def log_audit_event(action, table_name=None, record_id=None, description=None, 
+                     old_values=None, new_values=None, changes=None):
+    """Log audit event for data modification tracking"""
+    try:
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            action=action,
+            table_name=table_name,
+            record_id=record_id,
+            description=description,
+            old_values=old_values,
+            new_values=new_values,
+            changes=changes,
+            ip_address=request.remote_addr
+        )
+        db.session.add(audit_log)
+        db.session.commit()
+    except Exception as e:
+        app.logger.error(f'Failed to log audit event: {str(e)}')
+
+
 def validate_report_data(data_dict):
     """Validate report output for data quality"""
     issues = []
@@ -3339,6 +6620,81 @@ def validate_report_data(data_dict):
         
         # Profit should equal sales - cogs - expenses (with small tolerance for rounding)
         calculated_profit = sales - cogs - expenses
+
+
+def _parse_year_month(value: str | None):
+    if not value:
+        return None
+    v = str(value).strip()
+    try:
+        return datetime.strptime(v, '%Y-%m').date().replace(day=1)
+    except Exception:
+        return None
+
+
+def _month_bounds(month_first_day: 'date'):
+    if not month_first_day:
+        return None, None
+    start = month_first_day.replace(day=1)
+    # next month
+    if start.month == 12:
+        next_month = date(start.year + 1, 1, 1)
+    else:
+        next_month = date(start.year, start.month + 1, 1)
+    end = next_month - timedelta(days=1)
+    return start, end
+
+
+def _dt_range_for_dates(start_d: 'date', end_d: 'date'):
+    if not start_d or not end_d:
+        return None, None
+    try:
+        start_dt = datetime(start_d.year, start_d.month, start_d.day, 0, 0, 0, tzinfo=EAT)
+    except Exception:
+        start_dt = datetime.combine(start_d, datetime.min.time())
+    # End is exclusive
+    try:
+        end_excl = datetime(end_d.year, end_d.month, end_d.day, 0, 0, 0, tzinfo=EAT) + timedelta(days=1)
+    except Exception:
+        end_excl = datetime.combine(end_d, datetime.min.time()) + timedelta(days=1)
+    return start_dt, end_excl
+
+
+def _outflow_transaction_types():
+    # Legacy fallbacks when direction/status/department aren't populated.
+    return ['expense', 'purchase', 'drawing', 'refund', 'debt_payment']
+
+
+def _sum_outflows_by_department(start_dt: 'datetime', end_dt: 'datetime') -> dict:
+    if not start_dt or not end_dt:
+        return {}
+
+    try:
+        q = db.session.query(Transaction.department, func.sum(Transaction.amount))
+        q = q.filter(Transaction.created_at >= start_dt, Transaction.created_at < end_dt)
+
+        if _transaction_supports_metadata():
+            # Prefer direction='OUT'. Allow legacy rows with null direction but recognizable types.
+            out_types = _outflow_transaction_types()
+            q = q.filter(
+                db.or_(
+                    Transaction.direction == 'OUT',
+                    db.and_(Transaction.direction.is_(None), Transaction.transaction_type.in_(out_types)),
+                )
+            )
+            q = q.filter(db.or_(Transaction.status.is_(None), Transaction.status == 'posted'))
+        else:
+            q = q.filter(Transaction.transaction_type.in_(_outflow_transaction_types()))
+
+        q = q.group_by(Transaction.department)
+        rows = q.all() or []
+        out = {}
+        for dept, total in rows:
+            key = (dept or '').strip() or 'unassigned'
+            out[key] = float(total or 0)
+        return out
+    except Exception:
+        return {}
         if abs(profit - calculated_profit) > 1:  # Allow 1 unit rounding error
             issues.append(f"Profit calculation mismatch: expected {calculated_profit}, got {profit}")
         
@@ -3347,6 +6703,120 @@ def validate_report_data(data_dict):
             issues.append(f"COGS ({cogs}) exceeds Sales ({sales})")
     
     return issues
+
+
+def _budget_enforcement_mode() -> str:
+    """Returns budget enforcement mode: warn (default), block, or off."""
+    try:
+        mode = (current_app.config.get('BUDGET_ENFORCEMENT_MODE') or '').strip().lower()
+    except Exception:
+        mode = ''
+    if not mode:
+        try:
+            mode = (os.getenv('BUDGET_ENFORCEMENT_MODE', 'warn') or 'warn').strip().lower()
+        except Exception:
+            mode = 'warn'
+    if mode not in ('warn', 'block', 'off'):
+        mode = 'warn'
+    return mode
+
+
+def _notify_budget_issue_best_effort(dept: str, status: str, month_str: str, budget_month: float, projected_month: float, created_after: Optional['datetime'] = None):
+    """Best-effort admin notification for budget warnings/exceedances."""
+    try:
+        admins = User.query.filter(User.role == 'admin').all()
+        if not admins:
+            return
+
+        title = f"Budget {status}: {dept} ({month_str})"
+        message = f"Projected spend {round(projected_month, 2)} / {round(budget_month, 2)} for {month_str}."
+
+        for admin_user in admins:
+            q = Notification.query.filter(
+                Notification.user_id == admin_user.id,
+                Notification.title == title,
+            )
+            if created_after is not None:
+                q = q.filter(Notification.created_at >= created_after)
+            if q.first():
+                continue
+            db.session.add(Notification(
+                user_id=admin_user.id,
+                title=title,
+                message=message,
+                is_read=False,
+                created_at=get_eat_now(),
+            ))
+        db.session.flush()
+    except Exception:
+        pass
+
+
+def _budget_check_outflow(department: str | None, amount: float, when_dt: Optional['datetime'] = None) -> dict | None:
+    """Checks current month budget status for an outgoing payment.
+
+    Returns a dict with status and optional block recommendation, or None if budgets are not configured.
+    """
+    try:
+        mode = _budget_enforcement_mode()
+        if mode == 'off':
+            return None
+
+        dept = (department or '').strip() or 'unassigned'
+        amt = float(amount or 0)
+        if amt <= 0:
+            return None
+
+        when_dt = when_dt or get_eat_now()
+        month_first = date(int(when_dt.year), int(when_dt.month), 1)
+        month_str = month_first.strftime('%Y-%m')
+        start_d, end_d = _month_bounds(month_first)
+        start_dt, end_excl = _dt_range_for_dates(start_d, end_d)
+        spend_by_dept = _sum_outflows_by_department(start_dt, end_excl)
+
+        budget = db.session.query(DepartmentBudget).filter(
+            DepartmentBudget.fiscal_year == int(when_dt.year),
+            DepartmentBudget.department_name == dept,
+        ).first()
+        if not budget:
+            return None
+
+        budget_year = float(budget.budgeted_amount or 0)
+        budget_month = float((budget_year / 12.0) if budget_year else 0.0)
+        if budget_month <= 0:
+            return None
+
+        actual_month = float((spend_by_dept or {}).get(dept, 0.0))
+        projected_month = actual_month + amt
+        ratio = projected_month / budget_month
+
+        warning_ratio = 0.80
+        if ratio >= 1.0:
+            status = 'EXCEEDED'
+        elif ratio >= warning_ratio:
+            status = 'WARNING'
+        else:
+            status = 'OK'
+
+        message = None
+        if status in ('WARNING', 'EXCEEDED'):
+            message = f"{dept} budget {status.lower()} for {month_str}. Projected {projected_month:.2f} / {budget_month:.2f}."
+            _notify_budget_issue_best_effort(dept, status, month_str, budget_month, projected_month, created_after=start_dt)
+
+        return {
+            'mode': mode,
+            'department': dept,
+            'month': month_str,
+            'budget_month': budget_month,
+            'actual_month': actual_month,
+            'projected_month': projected_month,
+            'ratio': ratio,
+            'status': status,
+            'message': message,
+            'block': bool(mode == 'block' and status == 'EXCEEDED'),
+        }
+    except Exception:
+        return None
 
 
 def calculate_trend_metrics(current_data, previous_data):
@@ -3423,16 +6893,37 @@ def generate_reports():
     # Reporting granularity
     granularity = request.args.get('granularity', 'daily')  # daily, weekly, monthly, yearly
 
+    # Use datetime windows for DateTime columns to avoid DB-specific date casting / timezone edge cases.
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date, datetime.min.time())
+
+    # For display breakdown:
+    # - weekly: show daily points
+    # - monthly: show weekly points
+    # - yearly: show monthly points
+    # - daily: show daily points
+    def _effective_bucket_granularity(gran: str) -> str:
+        g = (gran or 'daily').lower()
+        if g == 'weekly':
+            return 'daily'
+        if g == 'monthly':
+            return 'weekly'
+        if g == 'yearly':
+            return 'monthly'
+        return 'daily'
+
+    effective_granularity = _effective_bucket_granularity(granularity)
+
     # Precompute totals and expenses used across reports
     total_sales = db.session.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(
-        Sale.created_at >= start_date,
-        Sale.created_at <= end_date,
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
         Sale.status == 'completed'
     ).scalar() or 0
 
     cogs = db.session.query(func.coalesce(func.sum(SaleItem.quantity * Drug.buying_price), 0)).join(Drug).join(Sale).filter(
-        Sale.created_at >= start_date,
-        Sale.created_at <= end_date,
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
         Sale.status == 'completed',
         SaleItem.drug_id.isnot(None)
     ).scalar() or 0
@@ -3449,8 +6940,8 @@ def generate_reports():
             func.sum(SaleItem.total_price).label('total_sales'),
             func.sum((SaleItem.unit_price - Drug.buying_price) * SaleItem.quantity).label('profit')
         ).join(SaleItem).join(Sale).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed'
         ).group_by(Drug.name).all()
 
@@ -3460,8 +6951,8 @@ def generate_reports():
             func.coalesce(func.sum(SaleItem.total_price), 0).label('amount'),
             func.coalesce(func.sum(SaleItem.quantity), 0).label('units')
         ).join(SaleItem).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
             SaleItem.drug_id.isnot(None)
         ).group_by(func.date(Sale.created_at)).order_by(func.date(Sale.created_at)).all()
@@ -3503,7 +6994,14 @@ def generate_reports():
             units = [x['units'] for x in ordered]
             return labels, amounts, units
 
-        labels, amounts, units = bucket_dates(daily, granularity)
+        # Daily series for line chart (always show day-by-day)
+        daily_keys = sorted(daily.keys())
+        daily_labels = daily_keys
+        daily_amounts = [daily[k]['amount'] for k in daily_keys]
+        daily_units = [daily[k]['units'] for k in daily_keys]
+
+        # Bucketed series for the selected breakdown level
+        labels, amounts, units = bucket_dates(daily, effective_granularity)
         
         # Get Top 10 Most Sold Drugs (Daily, Weekly, Monthly, Yearly) with amounts and percentages
         def get_top_10_drugs(start_dt, end_dt, gran='daily'):
@@ -3515,7 +7013,7 @@ def generate_reports():
                     func.sum((SaleItem.unit_price - Drug.buying_price) * SaleItem.quantity).label('profit')
                 ).join(SaleItem, Drug.id == SaleItem.drug_id).join(Sale, SaleItem.sale_id == Sale.id).filter(
                     Sale.created_at >= start_dt,
-                    Sale.created_at <= end_dt,
+                    Sale.created_at < end_dt,
                     Sale.status == 'completed',
                     SaleItem.drug_id.isnot(None)
                 ).group_by(Drug.name).order_by(func.sum(SaleItem.quantity).desc()).limit(10).all()
@@ -3549,26 +7047,32 @@ def generate_reports():
                 }
 
         # Calculate top 10 for different granularities including yearly
+        def _as_dt(d):
+            return datetime.combine(d, datetime.min.time())
+
+        # Primary Top 10: always for the selected period
+        top10_current = get_top_10_drugs(start_dt, end_dt, 'period')
+
         if granularity == 'daily':
-            top10_daily = get_top_10_drugs(start_date, end_date, 'daily')
-            top10_weekly = get_top_10_drugs(start_date - timedelta(days=7), end_date, 'weekly')
-            top10_monthly = get_top_10_drugs(start_date - timedelta(days=30), end_date, 'monthly')
-            top10_yearly = get_top_10_drugs(start_date - timedelta(days=365), end_date, 'yearly')
+            top10_daily = get_top_10_drugs(_as_dt(start_date), end_dt, 'daily')
+            top10_weekly = get_top_10_drugs(_as_dt(start_date - timedelta(days=7)), end_dt, 'weekly')
+            top10_monthly = get_top_10_drugs(_as_dt(start_date - timedelta(days=30)), end_dt, 'monthly')
+            top10_yearly = get_top_10_drugs(_as_dt(start_date - timedelta(days=365)), end_dt, 'yearly')
         elif granularity == 'weekly':
-            top10_daily = get_top_10_drugs(start_date, end_date, 'daily')
-            top10_weekly = get_top_10_drugs(start_date - timedelta(days=14), end_date, 'weekly')
-            top10_monthly = get_top_10_drugs(start_date - timedelta(days=60), end_date, 'monthly')
-            top10_yearly = get_top_10_drugs(start_date - timedelta(days=365), end_date, 'yearly')
+            top10_daily = get_top_10_drugs(_as_dt(start_date), end_dt, 'daily')
+            top10_weekly = get_top_10_drugs(_as_dt(start_date - timedelta(days=14)), end_dt, 'weekly')
+            top10_monthly = get_top_10_drugs(_as_dt(start_date - timedelta(days=60)), end_dt, 'monthly')
+            top10_yearly = get_top_10_drugs(_as_dt(start_date - timedelta(days=365)), end_dt, 'yearly')
         elif granularity == 'monthly':
-            top10_daily = get_top_10_drugs(start_date - timedelta(days=1), end_date, 'daily')
-            top10_weekly = get_top_10_drugs(start_date - timedelta(days=7), end_date, 'weekly')
-            top10_monthly = get_top_10_drugs(start_date - timedelta(days=90), end_date, 'monthly')
-            top10_yearly = get_top_10_drugs(start_date - timedelta(days=365), end_date, 'yearly')
+            top10_daily = get_top_10_drugs(_as_dt(start_date - timedelta(days=1)), end_dt, 'daily')
+            top10_weekly = get_top_10_drugs(_as_dt(start_date - timedelta(days=7)), end_dt, 'weekly')
+            top10_monthly = get_top_10_drugs(_as_dt(start_date - timedelta(days=90)), end_dt, 'monthly')
+            top10_yearly = get_top_10_drugs(_as_dt(start_date - timedelta(days=365)), end_dt, 'yearly')
         else:  # yearly
-            top10_daily = get_top_10_drugs(start_date - timedelta(days=1), end_date, 'daily')
-            top10_weekly = get_top_10_drugs(start_date - timedelta(days=7), end_date, 'weekly')
-            top10_monthly = get_top_10_drugs(start_date - timedelta(days=30), end_date, 'monthly')
-            top10_yearly = get_top_10_drugs(start_date - timedelta(days=365), end_date, 'yearly')
+            top10_daily = get_top_10_drugs(_as_dt(start_date - timedelta(days=1)), end_dt, 'daily')
+            top10_weekly = get_top_10_drugs(_as_dt(start_date - timedelta(days=7)), end_dt, 'weekly')
+            top10_monthly = get_top_10_drugs(_as_dt(start_date - timedelta(days=30)), end_dt, 'monthly')
+            top10_yearly = get_top_10_drugs(_as_dt(start_date - timedelta(days=365)), end_dt, 'yearly')
 
         # Get Patient vs Over-the-Counter Sales
         # Patient sales: transactions linked to IP or OP patient numbers
@@ -3576,8 +7080,8 @@ def generate_reports():
             func.coalesce(func.sum(Sale.total_amount), 0).label('patient_amount'),
             func.coalesce(func.sum(SaleItem.quantity), 0).label('patient_units')
         ).join(SaleItem, Sale.id == SaleItem.sale_id).outerjoin(Patient, Sale.patient_id == Patient.id).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
             SaleItem.drug_id.isnot(None),
             ((Patient.ip_number.isnot(None)) | (Patient.op_number.isnot(None)))
@@ -3588,12 +7092,64 @@ def generate_reports():
             func.coalesce(func.sum(Sale.total_amount), 0).label('overcounter_amount'),
             func.coalesce(func.sum(SaleItem.quantity), 0).label('overcounter_units')
         ).join(SaleItem, Sale.id == SaleItem.sale_id).outerjoin(Patient, Sale.patient_id == Patient.id).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
             SaleItem.drug_id.isnot(None),
             Sale.patient_id.is_(None)
         ).first()
+
+        # Receipts list for the selected period
+        sales_rows = db.session.query(Sale).options(db.joinedload(Sale.patient)).filter(
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
+            Sale.status == 'completed'
+        ).order_by(Sale.created_at.desc()).all()
+
+        tx_by_sale_id = {}
+        try:
+            sale_ids = [s.id for s in sales_rows]
+            if sale_ids:
+                tx_q = Transaction.query.filter(
+                    Transaction.transaction_type == 'sale',
+                    Transaction.reference_id.in_(sale_ids),
+                )
+                if _transaction_supports_metadata():
+                    tx_q = tx_q.filter(db.or_(Transaction.reference_table.is_(None), Transaction.reference_table == 'sales'))
+                tx_rows = tx_q.order_by(Transaction.reference_id.asc(), Transaction.created_at.desc()).all()
+                for tx in tx_rows:
+                    if tx.reference_id not in tx_by_sale_id:
+                        tx_by_sale_id[tx.reference_id] = tx
+        except Exception:
+            tx_by_sale_id = {}
+
+        receipts = []
+        for s in sales_rows:
+            patient_name = None
+            patient_phone = None
+            try:
+                if s.patient:
+                    patient_name = (s.patient.name or '').strip() or None
+                    patient_phone = (s.patient.phone or '').strip() or None
+            except Exception:
+                patient_name = None
+                patient_phone = None
+
+            tx = tx_by_sale_id.get(s.id)
+            receipt_url = url_for('admin_transaction_receipt', transaction_id=tx.id) if tx else None
+
+            receipts.append({
+                'sale_id': s.id,
+                'sale_number': s.sale_number,
+                'created_at': s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '',
+                'pharmacist_name': s.pharmacist_name,
+                'payment_method': s.payment_method,
+                'total_amount': float(s.total_amount or 0),
+                'patient_name': patient_name,
+                'customer_name': patient_name,
+                'customer_phone': patient_phone,
+                'receipt_url': receipt_url,
+            })
 
         patient_amount = float(patient_sales_data.patient_amount or 0) if patient_sales_data else 0
         patient_units = int(patient_sales_data.patient_units or 0) if patient_sales_data else 0
@@ -3613,17 +7169,23 @@ def generate_reports():
             'granularity': granularity,
             'start_date': start_date_str,
             'end_date': end_date_str,
+            'effective_granularity': effective_granularity,
             'data': [{
                 'name': d.name,
                 'units_sold': int(d.units_sold or 0),
                 'total_sales': float(d.total_sales or 0),
                 'profit': float(d.profit or 0)
             } for d in drugs],
+            'receipts': receipts,
             'charts': {
                 'labels': labels,
                 'amounts': amounts,
                 'units': units,
+                'daily_labels': daily_labels,
+                'daily_amounts': daily_amounts,
+                'daily_units': daily_units,
                 'totals': totals,
+                'top10_current': top10_current,
                 'top10_daily': top10_daily,
                 'top10_weekly': top10_weekly,
                 'top10_monthly': top10_monthly,
@@ -3652,6 +7214,706 @@ def generate_reports():
         )
 
         return jsonify(response_data)
+
+# ==================== PAYROLL ROUTES ====================
+@app.route('/admin/payroll')
+@login_required
+def payroll_list():
+    if current_user.role != 'admin':
+        abort(403)
+    payrolls = Payroll.query.order_by(Payroll.pay_period.desc()).all()
+    return render_template('admin/payroll_list.html', payrolls=payrolls)
+
+@app.route('/admin/payroll/create', methods=['GET', 'POST'])
+@login_required
+def create_payroll():
+    if current_user.role != 'admin':
+        abort(403)
+    
+    employees = Employee.query.order_by(Employee.name).all()
+    
+    if request.method == 'POST':
+        employee_id = request.form.get('employee_id')
+        pay_period = request.form.get('pay_period')
+        amount = request.form.get('amount')
+        notes = request.form.get('notes')
+        
+        if not all([employee_id, pay_period, amount]):
+            flash('Please fill all required fields.', 'danger')
+            return render_template('admin/create_edit_payroll.html', employees=employees)
+            
+        try:
+            payroll = Payroll(
+                employee_id=employee_id,
+                pay_period=datetime.strptime(pay_period, '%Y-%m-%d').date(),
+                amount=float(amount),
+                notes=notes,
+                status='pending'
+            )
+            db.session.add(payroll)
+            db.session.commit()
+            flash('Payroll created successfully.', 'success')
+            return redirect(url_for('payroll_list'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error creating payroll: {str(e)}', 'danger')
+            
+    return render_template('admin/create_edit_payroll.html', employees=employees)
+
+@app.route('/admin/payroll/<int:payroll_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_payroll(payroll_id):
+    if current_user.role != 'admin':
+        abort(403)
+    
+    payroll = Payroll.query.get_or_404(payroll_id)
+    employees = Employee.query.order_by(Employee.name).all()
+    
+    if request.method == 'POST':
+        payroll.employee_id = request.form.get('employee_id')
+        payroll.pay_period = datetime.strptime(request.form.get('pay_period'), '%Y-%m-%d').date()
+        payroll.amount = float(request.form.get('amount'))
+        payroll.notes = request.form.get('notes')
+        payroll.status = request.form.get('status')
+        
+        try:
+            db.session.commit()
+            flash('Payroll updated successfully.', 'success')
+            return redirect(url_for('payroll_list'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error updating payroll: {str(e)}', 'danger')
+            
+    return render_template('admin/create_edit_payroll.html', payroll=payroll, employees=employees)
+
+@app.route('/admin/payroll/<int:payroll_id>')
+@login_required
+def view_payroll(payroll_id):
+    if current_user.role != 'admin':
+        abort(403)
+    payroll = Payroll.query.get_or_404(payroll_id)
+    return render_template('admin/view_payroll.html', payroll=payroll)
+
+@app.route('/admin/payroll/<int:payroll_id>/delete', methods=['POST'])
+@login_required
+def delete_payroll(payroll_id):
+    if current_user.role != 'admin':
+        abort(403)
+    payroll = Payroll.query.get_or_404(payroll_id)
+    try:
+        db.session.delete(payroll)
+        db.session.commit()
+        flash('Payroll deleted successfully.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error deleting payroll: {str(e)}', 'danger')
+    return redirect(url_for('payroll_list'))
+
+@app.route('/admin/payroll/<int:payroll_id>/make_payment', methods=['POST'])
+@login_required
+def make_payroll_payment(payroll_id):
+    payroll = Payroll.query.get_or_404(payroll_id)
+    payment_amount = float(request.form.get('amount', 0) or 0)
+    payment_date = request.form.get('payment_date')
+    payment_method = (request.form.get('payment_method') or '').strip() or None
+    notes = request.form.get('notes', '')
+
+    try:
+        if payment_amount <= 0:
+            flash('Payment amount must be positive.', 'danger')
+            return redirect(url_for('view_payroll', payroll_id=payroll_id))
+
+        # Calculate remaining balance
+        try:
+            total_paid_before = sum(float(p.amount or 0) for p in (payroll.payments or []))
+        except Exception:
+            total_paid_before = 0.0
+        remaining = float(payroll.amount or 0) - float(total_paid_before or 0)
+        if payment_amount > remaining + 0.0001:
+            flash(f'Payment amount exceeds remaining balance (Ksh {remaining:.2f}).', 'danger')
+            return redirect(url_for('view_payroll', payroll_id=payroll_id))
+
+        # Parse payment date (YYYY-MM-DD) when provided
+        payment_dt = get_eat_now()
+        if payment_date:
+            try:
+                pd = datetime.strptime(payment_date, '%Y-%m-%d')
+                payment_dt = datetime(pd.year, pd.month, pd.day, tzinfo=EAT)
+            except Exception:
+                payment_dt = get_eat_now()
+
+        # Budget enforcement (warn-only by default)
+        try:
+            budget_check = _budget_check_outflow('admin', float(payment_amount or 0), when_dt=payment_dt)
+            if budget_check and budget_check.get('block'):
+                flash(budget_check.get('message') or 'Budget exceeded for this month.', 'danger')
+                return redirect(url_for('view_payroll', payroll_id=payroll_id))
+        except Exception:
+            pass
+
+        payment = PayrollPayment(
+            payroll_id=payroll.id,
+            amount=payment_amount,
+            paid_by=current_user.id,
+            payment_date=payment_dt,
+            notes=notes
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        # Golden rule: every payroll payment must post to Transaction
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='expense',
+            amount=payment_amount,
+            user_id=current_user.id,
+            reference_id=payment.id,
+            notes=f"Payroll payment for {payroll.payroll_number}: {notes}",
+            created_at=get_eat_now(),
+        )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='payroll_payments',
+            direction='OUT',
+            status='posted',
+            department='admin',
+            category='payroll',
+            payment_method=payment_method,
+        )
+        db.session.add(transaction)
+
+        try:
+            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            employee_name = getattr(employee, 'name', None) if employee else None
+            receipt_html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 8px 0;'>Payroll Payment Receipt</h2>",
+                f"<div><strong>Payroll:</strong> {escape(str(payroll.payroll_number))}</div>",
+                (f"<div><strong>Employee:</strong> {escape(str(employee_name))}</div>" if employee_name else ""),
+                f"<div><strong>Amount:</strong> {escape(_money(payment_amount))}</div>",
+                f"<div><strong>Date:</strong> {escape(payment_dt.strftime('%Y-%m-%d %H:%M'))}</div>",
+                (f"<div><strong>Payment Method:</strong> {escape(str(payment_method))}</div>" if payment_method else ""),
+                (f"<div><strong>Notes:</strong> {escape(str(notes))}</div>" if notes else ""),
+                "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='PAY', force=True)
+        except Exception:
+            pass
+
+        # Update payroll status if fully paid
+        total_paid_after = float(total_paid_before) + float(payment_amount)
+        if total_paid_after >= float(payroll.amount or 0) - 0.005:
+            payroll.status = 'paid'
+
+        db.session.commit()
+        flash('Payment made successfully.', 'success')
+
+        # Log audit event (best-effort; keep payment+transaction atomic above)
+        try:
+            log_audit_event(
+                action='make_payroll_payment',
+                table_name='payroll_payments',
+                record_id=payment.id,
+                description=f"Made payroll payment of {payment.amount} for payroll {payroll.payroll_number}",
+                new_values={
+                    'payroll_payment_id': payment.id,
+                    'payroll_id': payroll.id,
+                    'amount': payment.amount
+                }
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error making payment: {str(e)}', 'danger')
+        
+    return redirect(url_for('view_payroll', payroll_id=payroll_id))
+    if current_user.role != 'admin':
+        abort(403)
+    
+    payroll = Payroll.query.get_or_404(payroll_id)
+    amount = request.form.get('amount')
+    notes = request.form.get('notes')
+    
+    if not amount:
+        flash('Payment amount is required.', 'danger')
+        return redirect(url_for('view_payroll', payroll_id=payroll_id))
+        
+    try:
+        payment_amount = float(amount)
+        payment = PayrollPayment(
+            payroll_id=payroll.id,
+            amount=payment_amount,
+            notes=notes,
+            paid_by=current_user.id
+        )
+        db.session.add(payment)
+        
+        # Update payroll status if fully paid
+        total_paid = sum(p.amount for p in payroll.payments) + payment_amount
+        if total_paid >= payroll.amount:
+            payroll.status = 'paid'
+            
+        db.session.commit()
+        flash('Payment made successfully.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error making payment: {str(e)}', 'danger')
+        
+    return redirect(url_for('view_payroll', payroll_id=payroll_id))
+
+    # ==================== CONTROLLED DRUG SALES REPORTS ====================
+    if report_type == 'controlled_drug_sales':
+        try:
+            # Use a robust datetime range to avoid timezone/date-cast edge cases.
+            # Note: end_date is already computed as (requested_end_date + 1 day).
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.min.time())
+
+            def _effective_bucket_granularity(gran: str) -> str:
+                g = (gran or 'daily').lower()
+                if g == 'weekly':
+                    return 'daily'
+                if g == 'monthly':
+                    return 'weekly'
+                if g == 'yearly':
+                    return 'monthly'
+                return 'daily'
+
+            effective_granularity = _effective_bucket_granularity(granularity)
+
+            # Totals
+            total_sales = db.session.query(func.coalesce(func.sum(ControlledSale.total_amount), 0)).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed'
+            ).scalar() or 0
+
+            cogs = db.session.query(
+                func.coalesce(
+                    func.sum(ControlledSaleItem.quantity * func.coalesce(ControlledDrug.buying_price, 0)),
+                    0
+                )
+            ).select_from(
+                ControlledSaleItem
+            ).join(
+                ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+            ).outerjoin(
+                ControlledDrug, ControlledDrug.id == ControlledSaleItem.controlled_drug_id
+            ).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed'
+            ).scalar() or 0
+
+            estimated_profit = float(total_sales) - float(cogs)
+
+            # Aggregate by controlled drug
+            drugs = db.session.query(
+                ControlledSaleItem.controlled_drug_name.label('name'),
+                func.sum(ControlledSaleItem.quantity).label('units_sold'),
+                func.sum(ControlledSaleItem.total_price).label('total_sales'),
+                func.sum((ControlledSaleItem.unit_price - func.coalesce(ControlledDrug.buying_price, 0)) * ControlledSaleItem.quantity).label('profit')
+            ).join(
+                ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+            ).outerjoin(
+                ControlledDrug, ControlledDrug.id == ControlledSaleItem.controlled_drug_id
+            ).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed'
+            ).group_by(ControlledSaleItem.controlled_drug_name).order_by(func.sum(ControlledSaleItem.quantity).desc()).all()
+
+            # Timeseries from sale items (avoids double-counting sale totals)
+            date_rows = db.session.query(
+                func.date(ControlledSale.created_at).label('d'),
+                func.coalesce(func.sum(ControlledSaleItem.total_price), 0).label('amount'),
+                func.coalesce(func.sum(ControlledSaleItem.quantity), 0).label('units')
+            ).join(
+                ControlledSaleItem, ControlledSale.id == ControlledSaleItem.sale_id
+            ).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed'
+            ).group_by(func.date(ControlledSale.created_at)).order_by(func.date(ControlledSale.created_at)).all()
+
+            daily = {}
+            for r in date_rows:
+                daily[str(r.d)] = {'amount': float(r.amount or 0), 'units': int(r.units or 0)}
+
+            def bucket_dates_local(daily_dict, gran):
+                buckets = {}
+                for ds, vals in daily_dict.items():
+                    dt = datetime.strptime(ds, '%Y-%m-%d').date()
+                    if gran == 'weekly':
+                        key = f"{dt.isocalendar()[0]}-W{dt.isocalendar()[1]:02d}"
+                        label = key
+                    elif gran == 'monthly':
+                        key = f"{dt.year}-{dt.month:02d}"
+                        label = key
+                    elif gran == 'yearly':
+                        key = f"{dt.year}"
+                        label = key
+                    else:
+                        key = ds
+                        label = ds
+
+                    if key not in buckets:
+                        buckets[key] = {'label': label, 'amount': 0.0, 'units': 0}
+                    buckets[key]['amount'] += float(vals.get('amount', 0) or 0)
+                    buckets[key]['units'] += int(vals.get('units', 0) or 0)
+
+                ordered = [buckets[k] for k in sorted(buckets.keys())]
+                labels = [x['label'] for x in ordered]
+                amounts = [x['amount'] for x in ordered]
+                units = [x['units'] for x in ordered]
+                return labels, amounts, units
+
+            daily_keys = sorted(daily.keys())
+            daily_labels = daily_keys
+            daily_amounts = [daily[k]['amount'] for k in daily_keys]
+            daily_units = [daily[k]['units'] for k in daily_keys]
+
+            labels, amounts, units = bucket_dates_local(daily, effective_granularity)
+
+            # Top 10 controlled drugs across time windows
+            def get_top_10_controlled(start_dt, end_dt):
+                rows = db.session.query(
+                    ControlledSaleItem.controlled_drug_name.label('name'),
+                    func.sum(ControlledSaleItem.quantity).label('total_units'),
+                    func.sum(ControlledSaleItem.total_price).label('total_amount'),
+                    func.sum((ControlledSaleItem.unit_price - func.coalesce(ControlledDrug.buying_price, 0)) * ControlledSaleItem.quantity).label('profit')
+                ).join(
+                    ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+                ).outerjoin(
+                    ControlledDrug, ControlledDrug.id == ControlledSaleItem.controlled_drug_id
+                ).filter(
+                    ControlledSale.created_at >= start_dt,
+                    ControlledSale.created_at < end_dt,
+                    ControlledSale.status == 'completed'
+                ).group_by(ControlledSaleItem.controlled_drug_name).order_by(func.sum(ControlledSaleItem.quantity).desc()).limit(10).all()
+
+                total_units = sum(int(d.total_units or 0) for d in rows)
+                total_amount = sum(float(d.total_amount or 0) for d in rows)
+                total_profit = sum(float(d.profit or 0) for d in rows)
+                return {
+                    'labels': [d.name[:20] for d in rows],
+                    'units': [int(d.total_units or 0) for d in rows],
+                    'amounts': [float(d.total_amount or 0) for d in rows],
+                    'profits': [float(d.profit or 0) for d in rows],
+                    'percentages': [round((int(d.total_units or 0) / total_units * 100) if total_units > 0 else 0, 2) for d in rows],
+                    'total_units': total_units,
+                    'total_amount': total_amount,
+                    'total_profit': total_profit
+                }
+
+            def _as_dt(d):
+                return datetime.combine(d, datetime.min.time())
+
+            # Primary Top 10: always for the selected period
+            top10_current = get_top_10_controlled(start_dt, end_dt)
+
+            # Use same windows as drug report to keep UI consistent
+            top10_daily = get_top_10_controlled(_as_dt(start_date), end_dt)
+            top10_weekly = get_top_10_controlled(_as_dt(start_date - timedelta(days=7)), end_dt)
+            top10_monthly = get_top_10_controlled(_as_dt(start_date - timedelta(days=30)), end_dt)
+            top10_yearly = get_top_10_controlled(_as_dt(start_date - timedelta(days=365)), end_dt)
+
+            # Patient vs walk-in for controlled sales
+            patient_sales = db.session.query(func.coalesce(func.sum(ControlledSale.total_amount), 0)).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed',
+                ControlledSale.patient_id.isnot(None)
+            ).scalar() or 0
+
+            overcounter_sales = db.session.query(func.coalesce(func.sum(ControlledSale.total_amount), 0)).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed',
+                ControlledSale.patient_id.is_(None)
+            ).scalar() or 0
+
+            patient_units = db.session.query(func.coalesce(func.sum(ControlledSaleItem.quantity), 0)).join(
+                ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+            ).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed',
+                ControlledSale.patient_id.isnot(None)
+            ).scalar() or 0
+
+            overcounter_units = db.session.query(func.coalesce(func.sum(ControlledSaleItem.quantity), 0)).join(
+                ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+            ).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed',
+                ControlledSale.patient_id.is_(None)
+            ).scalar() or 0
+
+            # List individual controlled sales for receipt links / export preview
+            sales_rows = db.session.query(ControlledSale).options(
+                db.joinedload(ControlledSale.patient)
+            ).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed'
+            ).order_by(ControlledSale.created_at.desc()).all()
+
+            # Controlled inventory snapshot (from controlled_drugs)
+            try:
+                controlled_inventory_total = db.session.query(func.count(ControlledDrug.id)).scalar() or 0
+                controlled_inventory_in_stock = db.session.query(func.count(ControlledDrug.id)).filter(
+                    ControlledDrug.remaining_quantity > 0
+                ).scalar() or 0
+                controlled_inventory_low_stock = db.session.query(func.count(ControlledDrug.id)).filter(
+                    ControlledDrug.remaining_quantity > 0,
+                    ControlledDrug.remaining_quantity < 10
+                ).scalar() or 0
+                controlled_inventory_out_stock = db.session.query(func.count(ControlledDrug.id)).filter(
+                    ControlledDrug.remaining_quantity <= 0
+                ).scalar() or 0
+                controlled_inventory_expiring_soon = db.session.query(func.count(ControlledDrug.id)).filter(
+                    ControlledDrug.expiry_date.isnot(None),
+                    ControlledDrug.expiry_date <= date.today() + timedelta(days=30)
+                ).scalar() or 0
+            except Exception:
+                controlled_inventory_total = 0
+                controlled_inventory_in_stock = 0
+                controlled_inventory_low_stock = 0
+                controlled_inventory_out_stock = 0
+                controlled_inventory_expiring_soon = 0
+
+            # Controlled prescriptions summary (from controlled_prescriptions + items)
+            prescriptions_total = 0
+            prescriptions_pending = 0
+            prescriptions_dispensed = 0
+            prescriptions_cancelled = 0
+            prescribed_units = 0
+            top_prescribed = []
+            try:
+                status_rows = db.session.query(
+                    ControlledPrescription.status,
+                    func.count(ControlledPrescription.id)
+                ).filter(
+                    ControlledPrescription.created_at >= start_dt,
+                    ControlledPrescription.created_at < end_dt,
+                ).group_by(ControlledPrescription.status).all()
+
+                for st, cnt in status_rows:
+                    c = int(cnt or 0)
+                    prescriptions_total += c
+                    if (st or '').lower() == 'pending':
+                        prescriptions_pending = c
+                    elif (st or '').lower() == 'dispensed':
+                        prescriptions_dispensed = c
+                    elif (st or '').lower() == 'cancelled':
+                        prescriptions_cancelled = c
+
+                prescribed_units = db.session.query(func.coalesce(func.sum(ControlledPrescriptionItem.quantity), 0)).join(
+                    ControlledPrescription,
+                    ControlledPrescriptionItem.controlled_prescription_id == ControlledPrescription.id
+                ).filter(
+                    ControlledPrescription.created_at >= start_dt,
+                    ControlledPrescription.created_at < end_dt,
+                ).scalar() or 0
+
+                top_rows = db.session.query(
+                    ControlledPrescriptionItem.controlled_drug_id.label('drug_id'),
+                    func.coalesce(ControlledDrug.name, func.cast(ControlledPrescriptionItem.controlled_drug_id, db.String)).label('drug_name'),
+                    func.coalesce(ControlledDrug.specification, '').label('specification'),
+                    func.coalesce(func.sum(ControlledPrescriptionItem.quantity), 0).label('units'),
+                    func.count(func.distinct(ControlledPrescription.id)).label('prescriptions')
+                ).select_from(
+                    ControlledPrescriptionItem
+                ).join(
+                    ControlledPrescription,
+                    ControlledPrescriptionItem.controlled_prescription_id == ControlledPrescription.id
+                ).outerjoin(
+                    ControlledDrug,
+                    ControlledDrug.id == ControlledPrescriptionItem.controlled_drug_id
+                ).filter(
+                    ControlledPrescription.created_at >= start_dt,
+                    ControlledPrescription.created_at < end_dt,
+                ).group_by(
+                    ControlledPrescriptionItem.controlled_drug_id,
+                    ControlledDrug.name,
+                    ControlledDrug.specification,
+                ).order_by(
+                    func.coalesce(func.sum(ControlledPrescriptionItem.quantity), 0).desc()
+                ).limit(10).all()
+
+                top_prescribed = [
+                    {
+                        'controlled_drug_id': int(r.drug_id or 0),
+                        # Provide both legacy + explicit keys to keep the frontend resilient.
+                        'name': (r.drug_name or '').strip(),
+                        'drug_name': (r.drug_name or '').strip(),
+                        'specification': (r.specification or '').strip(),
+                        'units': int(r.units or 0),
+                        'total_units': int(r.units or 0),
+                        'prescriptions': int(r.prescriptions or 0),
+                        'prescription_count': int(r.prescriptions or 0),
+                    }
+                    for r in top_rows
+                ]
+            except Exception:
+                prescriptions_total = 0
+                prescriptions_pending = 0
+                prescriptions_dispensed = 0
+                prescriptions_cancelled = 0
+                prescribed_units = 0
+                top_prescribed = []
+
+            # Item-level controlled sale lines (for end table)
+            item_rows = db.session.query(ControlledSale, ControlledSaleItem).join(
+                ControlledSaleItem, ControlledSale.id == ControlledSaleItem.sale_id
+            ).options(
+                db.joinedload(ControlledSale.patient)
+            ).filter(
+                ControlledSale.created_at >= start_dt,
+                ControlledSale.created_at < end_dt,
+                ControlledSale.status == 'completed'
+            ).order_by(ControlledSale.created_at.desc(), ControlledSaleItem.id.asc()).all()
+
+            items_data = []
+            for sale, item in item_rows:
+                patient_name = None
+                patient_phone = None
+                try:
+                    if sale.patient:
+                        patient_name = (sale.patient.name or '').strip() or None
+                        patient_phone = (sale.patient.phone or '').strip() or None
+                except Exception:
+                    patient_name = None
+                    patient_phone = None
+
+                items_data.append({
+                    'sale_id': sale.id,
+                    'sale_number': sale.sale_number,
+                    'created_at': sale.created_at.strftime('%Y-%m-%d %H:%M') if sale.created_at else '',
+                    'payment_method': sale.payment_method,
+                    'customer_name': sale.customer_name or patient_name,
+                    'patient_name': patient_name,
+                    'customer_phone': sale.customer_phone or patient_phone,
+                    'prescription_image_path': sale.prescription_image_path,
+                    'receipt_url': url_for('admin_controlled_sale_receipt', sale_id=sale.id),
+                    'drug_name': item.controlled_drug_name,
+                    'quantity': int(item.quantity or 0),
+                    'unit_price': float(item.unit_price or 0),
+                    'line_total': float(item.total_price or 0),
+                })
+
+            sales_data = []
+            for s in sales_rows:
+                patient_name = None
+                patient_phone = None
+                try:
+                    if s.patient:
+                        patient_name = (s.patient.name or '').strip() or None
+                        patient_phone = (s.patient.phone or '').strip() or None
+                except Exception:
+                    patient_name = None
+                    patient_phone = None
+
+                sales_data.append({
+                    'id': s.id,
+                    'sale_number': s.sale_number,
+                    'created_at': s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '',
+                    'pharmacist_name': s.pharmacist_name,
+                    'payment_method': s.payment_method,
+                    'total_amount': float(s.total_amount or 0),
+                    'patient_name': patient_name,
+                    'customer_name': s.customer_name or patient_name,
+                    'customer_phone': s.customer_phone or patient_phone,
+                    'customer_gender': s.customer_gender,
+                    'customer_age': s.customer_age,
+                    'diagnosis': s.diagnosis,
+                    'destination': s.destination,
+                    'prescription_image_path': s.prescription_image_path,
+                    'receipt_url': url_for('admin_controlled_sale_receipt', sale_id=s.id),
+                })
+
+            totals = {
+                'sales_total': float(total_sales),
+                'cogs': float(cogs),
+                'expenses': 0.0,
+                'estimated_profit': float(estimated_profit)
+            }
+
+            response_data = {
+                'status': 'success',
+                'report_type': 'controlled_drug_sales',
+                'granularity': granularity,
+                'start_date': start_date_str,
+                'end_date': end_date_str,
+                'effective_granularity': effective_granularity,
+                'data': items_data,
+                'receipts': sales_data,
+                'charts': {
+                    'labels': labels,
+                    'amounts': amounts,
+                    'units': units,
+                    'daily_labels': daily_labels,
+                    'daily_amounts': daily_amounts,
+                    'daily_units': daily_units,
+                    'totals': totals,
+                    'top10_current': top10_current,
+                    'top10_daily': top10_daily,
+                    'top10_weekly': top10_weekly,
+                    'top10_monthly': top10_monthly,
+                    'top10_yearly': top10_yearly,
+                    'patient_sales': float(patient_sales or 0),
+                    'patient_units': int(patient_units or 0),
+                    'patient_percentage': round((float(patient_sales or 0) / float(total_sales) * 100) if float(total_sales) > 0 else 0, 2),
+                    'overcounter_sales': float(overcounter_sales or 0),
+                    'overcounter_units': int(overcounter_units or 0),
+                    'overcounter_percentage': round((float(overcounter_sales or 0) / float(total_sales) * 100) if float(total_sales) > 0 else 0, 2),
+                },
+                'controlled_inventory': {
+                    'total': int(controlled_inventory_total),
+                    'in_stock': int(controlled_inventory_in_stock),
+                    'low_stock': int(controlled_inventory_low_stock),
+                    'out_of_stock': int(controlled_inventory_out_stock),
+                    'expiring_soon': int(controlled_inventory_expiring_soon),
+                },
+                'controlled_prescriptions': {
+                    'total': int(prescriptions_total),
+                    'pending': int(prescriptions_pending),
+                    'dispensed': int(prescriptions_dispensed),
+                    'cancelled': int(prescriptions_cancelled),
+                    'prescribed_units': int(prescribed_units or 0),
+                    'top_prescribed': top_prescribed,
+                },
+                'metrics': format_financial_metrics(totals)
+            }
+
+            issues = validate_report_data(response_data)
+            if issues:
+                response_data['data_quality_issues'] = issues
+
+            log_report_access(
+                report_type='controlled_drug_sales',
+                filters={'start_date': start_date_str, 'end_date': end_date_str, 'granularity': granularity},
+                data_count=len(items_data),
+                status='success'
+            )
+
+            return jsonify(response_data)
+
+        except Exception as e:
+            app.logger.error(f"Error generating controlled drug sales report: {str(e)}", exc_info=True)
+            log_report_access(
+                report_type='controlled_drug_sales',
+                filters={'start_date': start_date_str, 'end_date': end_date_str, 'granularity': granularity},
+                data_count=0,
+                status='error',
+                error_msg=str(e)
+            )
+            return jsonify({'error': 'Failed to generate controlled drug sales report'}), 500
 
     def bucket_dates(daily_dict, gran):
         buckets = {}
@@ -3683,19 +7945,32 @@ def generate_reports():
 
     # ==================== LAB REPORTS (Monetary, by patient) ====================
     if report_type == 'lab_reports':
+        # Lab: inpatient only (exclude over-the-counter / walk-in)
+        inpatient_filter = db.or_(Patient.ip_number.isnot(None), Patient.date_of_admission.isnot(None))
+
         # Overall lab revenue and count
-        lab_total_revenue = db.session.query(func.coalesce(func.sum(SaleItem.total_price), 0)).join(Sale).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+        lab_total_revenue = db.session.query(func.coalesce(func.sum(SaleItem.total_price), 0)).select_from(SaleItem).join(
+            Sale, SaleItem.sale_id == Sale.id
+        ).join(
+            Patient, Sale.patient_id == Patient.id
+        ).filter(
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
-            SaleItem.lab_test_id.isnot(None)
+            SaleItem.lab_test_id.isnot(None),
+            inpatient_filter
         ).scalar() or 0
 
-        lab_total_count = db.session.query(func.coalesce(func.count(SaleItem.id), 0)).join(Sale).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+        lab_total_count = db.session.query(func.coalesce(func.count(SaleItem.id), 0)).select_from(SaleItem).join(
+            Sale, SaleItem.sale_id == Sale.id
+        ).join(
+            Patient, Sale.patient_id == Patient.id
+        ).filter(
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
-            SaleItem.lab_test_id.isnot(None)
+            SaleItem.lab_test_id.isnot(None),
+            inpatient_filter
         ).scalar() or 0
 
         # Group by patient and test
@@ -3707,10 +7982,11 @@ def generate_reports():
             func.count(SaleItem.id).label('count'),
             func.coalesce(func.sum(SaleItem.total_price), 0).label('amount')
         ).join(Sale, Sale.patient_id == Patient.id).join(SaleItem, SaleItem.sale_id == Sale.id).join(LabTest, SaleItem.lab_test_id == LabTest.id).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
-            SaleItem.lab_test_id.isnot(None)
+            SaleItem.lab_test_id.isnot(None),
+            inpatient_filter
         ).group_by(Patient.id, Patient.name, LabTest.id, LabTest.name).order_by(Patient.name, LabTest.name).all()
 
         patients_by_id = {}
@@ -3742,26 +8018,44 @@ def generate_reports():
             func.date(Sale.created_at).label('d'),
             func.coalesce(func.sum(SaleItem.total_price), 0).label('amount'),
             func.coalesce(func.count(SaleItem.id), 0).label('count')
-        ).join(SaleItem, SaleItem.sale_id == Sale.id).filter(
+        ).select_from(SaleItem).join(
+            Sale, SaleItem.sale_id == Sale.id
+        ).join(
+            Patient, Sale.patient_id == Patient.id
+        ).filter(
             SaleItem.lab_test_id.isnot(None),
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
-            Sale.status == 'completed'
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
+            Sale.status == 'completed',
+            inpatient_filter
         ).group_by(func.date(Sale.created_at)).order_by(func.date(Sale.created_at)).all()
 
         lab_daily = {str(r.d): {'amount': float(r.amount or 0), 'count': int(r.count or 0)} for r in lab_date_rows}
-        labels, amounts, counts = bucket_dates(lab_daily, granularity)
+
+        daily_keys = sorted(lab_daily.keys())
+        daily_labels = daily_keys
+        daily_amounts = [lab_daily[k]['amount'] for k in daily_keys]
+        daily_counts = [lab_daily[k]['count'] for k in daily_keys]
+
+        labels, amounts, counts = bucket_dates(lab_daily, effective_granularity)
 
         # Breakdown by test (for pie + bar)
         test_breakdown_rows = db.session.query(
             LabTest.name.label('test_name'),
             func.coalesce(func.sum(SaleItem.total_price), 0).label('amount'),
             func.coalesce(func.count(SaleItem.id), 0).label('count')
-        ).join(SaleItem, SaleItem.lab_test_id == LabTest.id).join(Sale, SaleItem.sale_id == Sale.id).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+        ).select_from(SaleItem).join(
+            LabTest, SaleItem.lab_test_id == LabTest.id
+        ).join(
+            Sale, SaleItem.sale_id == Sale.id
+        ).join(
+            Patient, Sale.patient_id == Patient.id
+        ).filter(
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
-            SaleItem.lab_test_id.isnot(None)
+            SaleItem.lab_test_id.isnot(None),
+            inpatient_filter
         ).group_by(LabTest.name).order_by(func.sum(SaleItem.total_price).desc()).all()
 
         top_tests = {
@@ -3774,12 +8068,66 @@ def generate_reports():
         top_patient_rows = db.session.query(
             Patient.name.label('patient_name'),
             func.coalesce(func.sum(SaleItem.total_price), 0).label('amount')
-        ).join(Sale, Sale.patient_id == Patient.id).join(SaleItem, SaleItem.sale_id == Sale.id).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+        ).select_from(SaleItem).join(
+            Sale, SaleItem.sale_id == Sale.id
+        ).join(
+            Patient, Sale.patient_id == Patient.id
+        ).filter(
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
-            SaleItem.lab_test_id.isnot(None)
+            SaleItem.lab_test_id.isnot(None),
+            inpatient_filter
         ).group_by(Patient.name).order_by(func.sum(SaleItem.total_price).desc()).limit(10).all()
+
+        # Lab receipts list (inpatient only)
+        lab_sale_rows = db.session.query(
+            Sale.id.label('sale_id'),
+            Sale.sale_number.label('sale_number'),
+            Sale.created_at.label('created_at'),
+            Sale.payment_method.label('payment_method'),
+            Patient.name.label('patient_name'),
+            Patient.phone.label('patient_phone'),
+            func.coalesce(func.sum(SaleItem.total_price), 0).label('lab_total')
+        ).join(Patient, Sale.patient_id == Patient.id).join(SaleItem, SaleItem.sale_id == Sale.id).filter(
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
+            Sale.status == 'completed',
+            SaleItem.lab_test_id.isnot(None),
+            inpatient_filter
+        ).group_by(Sale.id, Sale.sale_number, Sale.created_at, Sale.payment_method, Patient.name, Patient.phone).order_by(Sale.created_at.desc()).all()
+
+        tx_by_sale_id = {}
+        try:
+            sale_ids = [int(r.sale_id) for r in lab_sale_rows]
+            if sale_ids:
+                tx_q = Transaction.query.filter(
+                    Transaction.transaction_type == 'sale',
+                    Transaction.reference_id.in_(sale_ids),
+                )
+                if _transaction_supports_metadata():
+                    tx_q = tx_q.filter(db.or_(Transaction.reference_table.is_(None), Transaction.reference_table == 'sales'))
+                tx_rows = tx_q.order_by(Transaction.reference_id.asc(), Transaction.created_at.desc()).all()
+                for tx in tx_rows:
+                    if tx.reference_id not in tx_by_sale_id:
+                        tx_by_sale_id[tx.reference_id] = tx
+        except Exception:
+            tx_by_sale_id = {}
+
+        lab_receipts = []
+        for r in lab_sale_rows:
+            tx = tx_by_sale_id.get(int(r.sale_id))
+            receipt_url = url_for('admin_transaction_receipt', transaction_id=tx.id) if tx else None
+            lab_receipts.append({
+                'sale_id': int(r.sale_id),
+                'sale_number': r.sale_number,
+                'created_at': r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '',
+                'payment_method': r.payment_method,
+                'patient_name': r.patient_name,
+                'patient_phone': r.patient_phone,
+                'total_amount': float(r.lab_total or 0),
+                'receipt_url': receipt_url,
+            })
 
         top_patients = {
             'labels': [r.patient_name[:24] if r.patient_name else 'Unknown' for r in top_patient_rows],
@@ -3797,11 +8145,16 @@ def generate_reports():
             'granularity': granularity,
             'start_date': start_date_str,
             'end_date': end_date_str,
+            'effective_granularity': effective_granularity,
             'data': patient_rows,
+            'receipts': lab_receipts,
             'charts': {
                 'labels': labels,
                 'amounts': amounts,
                 'units': counts,
+                'daily_labels': daily_labels,
+                'daily_amounts': daily_amounts,
+                'daily_units': daily_counts,
                 'totals': totals,
                 'lab_breakdown': {
                     'labels': [r.test_name[:24] for r in test_breakdown_rows],
@@ -3824,24 +8177,33 @@ def generate_reports():
     # ==================== GENERAL REPORT (Drugs + Labs) ====================
     if report_type == 'general':
         drug_revenue = db.session.query(func.coalesce(func.sum(SaleItem.total_price), 0)).join(Sale).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
             SaleItem.drug_id.isnot(None)
         ).scalar() or 0
 
         lab_revenue = db.session.query(func.coalesce(func.sum(SaleItem.total_price), 0)).join(Sale).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
             SaleItem.lab_test_id.isnot(None)
         ).scalar() or 0
 
         total_revenue = float(drug_revenue) + float(lab_revenue)
 
+        # Expenses (for general report)
+        try:
+            total_expenses = db.session.query(func.coalesce(func.sum(Expense.amount), 0)).filter(
+                Expense.created_at >= start_dt,
+                Expense.created_at < end_dt
+            ).scalar() or 0
+        except Exception:
+            total_expenses = 0
+
         drug_profit = db.session.query(func.coalesce(func.sum((SaleItem.unit_price - Drug.buying_price) * SaleItem.quantity), 0)).join(Drug).join(Sale).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
             SaleItem.drug_id.isnot(None)
         ).scalar() or 0
@@ -3853,8 +8215,8 @@ def generate_reports():
             func.coalesce(func.sum(SaleItem.quantity), 0).label('units')
         ).join(SaleItem, SaleItem.sale_id == Sale.id).filter(
             SaleItem.drug_id.isnot(None),
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed'
         ).group_by(func.date(Sale.created_at)).order_by(func.date(Sale.created_at)).all()
 
@@ -3864,16 +8226,23 @@ def generate_reports():
             func.coalesce(func.count(SaleItem.id), 0).label('count')
         ).join(SaleItem, SaleItem.sale_id == Sale.id).filter(
             SaleItem.lab_test_id.isnot(None),
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed'
         ).group_by(func.date(Sale.created_at)).order_by(func.date(Sale.created_at)).all()
 
         drug_daily = {str(r.d): {'amount': float(r.amount or 0), 'units': int(r.units or 0)} for r in drug_date_rows}
         lab_daily = {str(r.d): {'amount': float(r.amount or 0), 'count': int(r.count or 0)} for r in lab_date_rows}
 
-        labels_drug, drug_amounts, drug_units = bucket_dates(drug_daily, granularity)
-        labels_lab, lab_amounts, lab_counts = bucket_dates(lab_daily, granularity)
+        # Daily series for line chart
+        daily_keys = sorted(set(list(drug_daily.keys()) + list(lab_daily.keys())))
+        daily_labels = daily_keys
+        daily_drug_amounts = [float(drug_daily.get(k, {}).get('amount', 0) or 0) for k in daily_keys]
+        daily_lab_amounts = [float(lab_daily.get(k, {}).get('amount', 0) or 0) for k in daily_keys]
+        daily_amounts = [a + b for a, b in zip(daily_drug_amounts, daily_lab_amounts)]
+
+        labels_drug, drug_amounts, drug_units = bucket_dates(drug_daily, effective_granularity)
+        labels_lab, lab_amounts, lab_counts = bucket_dates(lab_daily, effective_granularity)
         labels = labels_drug if len(labels_drug) >= len(labels_lab) else labels_lab
 
         # Top drugs by revenue
@@ -3883,8 +8252,8 @@ def generate_reports():
             func.coalesce(func.sum(SaleItem.total_price), 0).label('amount'),
             func.coalesce(func.sum((SaleItem.unit_price - Drug.buying_price) * SaleItem.quantity), 0).label('profit')
         ).join(SaleItem).join(Sale).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed'
         ).group_by(Drug.name).order_by(func.sum(SaleItem.total_price).desc()).limit(10).all()
 
@@ -3893,8 +8262,8 @@ def generate_reports():
             func.coalesce(func.count(SaleItem.id), 0).label('count'),
             func.coalesce(func.sum(SaleItem.total_price), 0).label('amount')
         ).join(SaleItem, SaleItem.lab_test_id == LabTest.id).join(Sale, SaleItem.sale_id == Sale.id).filter(
-            Sale.created_at >= start_date,
-            Sale.created_at <= end_date,
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
             Sale.status == 'completed',
             SaleItem.lab_test_id.isnot(None)
         ).group_by(LabTest.name).order_by(func.sum(SaleItem.total_price).desc()).limit(10).all()
@@ -3921,8 +8290,83 @@ def generate_reports():
             'drug_revenue': float(drug_revenue),
             'lab_revenue': float(lab_revenue),
             'drug_cogs': float(cogs),
-            'drug_profit': float(drug_profit)
+            'drug_profit': float(drug_profit),
+            'expenses_total': float(total_expenses),
+            'net_income': float(total_revenue) - float(total_expenses)
         }
+
+        # Receipts list (all completed sales in period)
+        sales_rows = db.session.query(Sale).options(db.joinedload(Sale.patient)).filter(
+            Sale.created_at >= start_dt,
+            Sale.created_at < end_dt,
+            Sale.status == 'completed'
+        ).order_by(Sale.created_at.desc()).all()
+
+        tx_by_sale_id = {}
+        try:
+            sale_ids = [s.id for s in sales_rows]
+            if sale_ids:
+                tx_q = Transaction.query.filter(
+                    Transaction.transaction_type == 'sale',
+                    Transaction.reference_id.in_(sale_ids),
+                )
+                if _transaction_supports_metadata():
+                    tx_q = tx_q.filter(db.or_(Transaction.reference_table.is_(None), Transaction.reference_table == 'sales'))
+                tx_rows = tx_q.order_by(Transaction.reference_id.asc(), Transaction.created_at.desc()).all()
+                for tx in tx_rows:
+                    if tx.reference_id not in tx_by_sale_id:
+                        tx_by_sale_id[tx.reference_id] = tx
+        except Exception:
+            tx_by_sale_id = {}
+
+        receipts = []
+        for s in sales_rows:
+            patient_name = None
+            patient_phone = None
+            try:
+                if s.patient:
+                    patient_name = (s.patient.name or '').strip() or None
+                    patient_phone = (s.patient.phone or '').strip() or None
+            except Exception:
+                patient_name = None
+                patient_phone = None
+
+            tx = tx_by_sale_id.get(s.id)
+            receipt_url = url_for('admin_transaction_receipt', transaction_id=tx.id) if tx else None
+
+            receipts.append({
+                'sale_id': s.id,
+                'sale_number': s.sale_number,
+                'created_at': s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '',
+                'payment_method': s.payment_method,
+                'total_amount': float(s.total_amount or 0),
+                'patient_name': patient_name,
+                'customer_name': patient_name,
+                'customer_phone': patient_phone,
+                'receipt_url': receipt_url,
+            })
+
+        # Expense list (period)
+        expenses = []
+        try:
+            expense_rows = Expense.query.filter(
+                Expense.created_at >= start_dt,
+                Expense.created_at < end_dt
+            ).order_by(Expense.created_at.desc()).all()
+            for ex in expense_rows:
+                expenses.append({
+                    'id': ex.id,
+                    'expense_number': ex.expense_number,
+                    'expense_type': ex.expense_type,
+                    'amount': float(ex.amount or 0),
+                    'status': ex.status,
+                    'payment_method': ex.payment_method,
+                    'paid_date': ex.paid_date.strftime('%Y-%m-%d') if ex.paid_date else None,
+                    'created_at': ex.created_at.strftime('%Y-%m-%d %H:%M') if ex.created_at else '',
+                    'description': ex.description,
+                })
+        except Exception:
+            expenses = []
 
         response_data = {
             'status': 'success',
@@ -3930,13 +8374,18 @@ def generate_reports():
             'granularity': granularity,
             'start_date': start_date_str,
             'end_date': end_date_str,
+            'effective_granularity': effective_granularity,
             'data': sorted(combined_items, key=lambda x: x.get('total_revenue', 0), reverse=True),
+            'receipts': receipts,
+            'expenses': expenses,
             'charts': {
                 'labels': labels,
                 'drug_amounts': drug_amounts,
                 'lab_amounts': lab_amounts,
                 'drug_units': drug_units,
                 'lab_counts': lab_counts,
+                'daily_labels': daily_labels,
+                'daily_amounts': daily_amounts,
                 'totals': totals,
                 'top_drugs': {
                     'labels': [d.name[:24] for d in top_drugs],
@@ -4564,15 +9013,39 @@ def budget_variance_report():
     
     try:
         fiscal_year = request.args.get('fiscal_year', str(datetime.now().year), type=str)
+        month_str = (request.args.get('month') or '').strip() or None
+        month_first = _parse_year_month(month_str) if month_str else None
         
         # Get all department budgets for this year
         budgets = db.session.query(DepartmentBudget).filter(
             DepartmentBudget.fiscal_year == int(fiscal_year)
         ).all()
+
+        # Compute actuals from Transaction OUT flows (year + optional month)
+        fy = int(fiscal_year)
+        year_start_d = date(fy, 1, 1)
+        year_end_d = date(fy, 12, 31)
+        year_start_dt, year_end_excl = _dt_range_for_dates(year_start_d, year_end_d)
+        computed_year = _sum_outflows_by_department(year_start_dt, year_end_excl)
+
+        computed_month = {}
+        month_start_d = None
+        month_end_d = None
+        if month_first and month_first.year == fy:
+            month_start_d, month_end_d = _month_bounds(month_first)
+            m_start_dt, m_end_excl = _dt_range_for_dates(month_start_d, month_end_d)
+            computed_month = _sum_outflows_by_department(m_start_dt, m_end_excl)
         
         budget_data = []
         for budget in budgets:
             variance_pct = (budget.variance / budget.budgeted_amount * 100) if budget.budgeted_amount > 0 else 0
+
+            dept_key = (budget.department_name or '').strip() or 'unassigned'
+            computed_year_actual = float((computed_year or {}).get(dept_key, 0.0))
+            computed_month_actual = float((computed_month or {}).get(dept_key, 0.0)) if month_first else None
+
+            computed_variance = computed_year_actual - float(budget.budgeted_amount or 0)
+            computed_variance_pct = (computed_variance / float(budget.budgeted_amount or 1) * 100) if float(budget.budgeted_amount or 0) > 0 else 0.0
             
             budget_data.append({
                 'department': budget.department_name,
@@ -4581,22 +9054,35 @@ def budget_variance_report():
                 'variance': float(budget.variance),
                 'variance_pct': round(variance_pct, 2),
                 'status': 'under' if budget.variance < 0 else 'over',
-                'notes': budget.notes
+                'notes': budget.notes,
+                # New computed values (do not break existing keys)
+                'actual_computed_year': round(computed_year_actual, 2),
+                'variance_computed_year': round(computed_variance, 2),
+                'variance_pct_computed_year': round(computed_variance_pct, 2),
+                'month': month_str if (month_first and month_start_d and month_end_d) else None,
+                'actual_computed_month': round(computed_month_actual, 2) if computed_month_actual is not None else None,
             })
         
         total_budgeted = sum([b.budgeted_amount for b in budgets])
         total_actual = sum([b.actual_amount for b in budgets])
         total_variance = total_actual - total_budgeted
+
+        total_actual_computed_year = float(sum((computed_year or {}).values()))
+        total_variance_computed_year = float(total_actual_computed_year - float(total_budgeted or 0))
         
         response = {
             'status': 'success',
             'report_type': 'budget_variance',
             'fiscal_year': fiscal_year,
+            'month': month_str if (month_first and month_start_d and month_end_d) else None,
             'totals': {
                 'budgeted': float(total_budgeted),
                 'actual': float(total_actual),
                 'variance': float(total_variance),
-                'variance_pct': round((total_variance / total_budgeted * 100) if total_budgeted > 0 else 0, 2)
+                'variance_pct': round((total_variance / total_budgeted * 100) if total_budgeted > 0 else 0, 2),
+                'actual_computed_year': round(total_actual_computed_year, 2),
+                'variance_computed_year': round(total_variance_computed_year, 2),
+                'variance_pct_computed_year': round((total_variance_computed_year / total_budgeted * 100) if total_budgeted > 0 else 0, 2),
             },
             'data': budget_data
         }
@@ -4622,6 +9108,103 @@ def budget_variance_report():
         return jsonify({'error': 'Failed to generate budget variance report', 'message': str(e)}), 500
 
 
+@app.route('/admin/reports/budget-alerts', methods=['GET'])
+@login_required
+def budget_alerts_report():
+    """Monthly budget alerts (OK/WARNING/EXCEEDED) based on computed Transaction OUT spend."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    try:
+        month_str = (request.args.get('month') or '').strip() or None
+        month_first = _parse_year_month(month_str) if month_str else None
+        if not month_first:
+            now = get_eat_now()
+            month_first = date(now.year, now.month, 1)
+            month_str = month_first.strftime('%Y-%m')
+
+        start_d, end_d = _month_bounds(month_first)
+        start_dt, end_excl = _dt_range_for_dates(start_d, end_d)
+        spend_by_dept = _sum_outflows_by_department(start_dt, end_excl)
+
+        fiscal_year = int(month_first.year)
+        budgets = db.session.query(DepartmentBudget).filter(DepartmentBudget.fiscal_year == fiscal_year).all()
+
+        warning_ratio = 0.80
+        rows = []
+        warned_depts = []
+
+        for budget in (budgets or []):
+            dept = (budget.department_name or '').strip() or 'unassigned'
+            budget_year = float(budget.budgeted_amount or 0)
+            budget_month = float((budget_year / 12.0) if budget_year else 0.0)
+            actual_month = float((spend_by_dept or {}).get(dept, 0.0))
+
+            if budget_month <= 0:
+                status = 'OK'
+                ratio = None
+            else:
+                ratio = actual_month / budget_month
+                if ratio >= 1.0:
+                    status = 'EXCEEDED'
+                elif ratio >= warning_ratio:
+                    status = 'WARNING'
+                else:
+                    status = 'OK'
+
+            if status in ('WARNING', 'EXCEEDED'):
+                warned_depts.append((dept, status, budget_month, actual_month))
+
+            rows.append({
+                'department': dept,
+                'month': month_str,
+                'budget_month': round(budget_month, 2),
+                'actual_month': round(actual_month, 2),
+                'ratio': round(ratio, 4) if ratio is not None else None,
+                'status': status,
+            })
+
+        # Best-effort notifications (avoid duplicates for the same month/department/status)
+        try:
+            if warned_depts:
+                admins = User.query.filter(User.role == 'admin').all()
+                for dept, status, budget_month, actual_month in warned_depts:
+                    title = f"Budget {status}: {dept} ({month_str})"
+                    message = f"{dept} spend {round(actual_month, 2)} / {round(budget_month, 2)} for {month_str}."
+
+                    for admin_user in (admins or []):
+                        exists_q = Notification.query.filter(
+                            Notification.user_id == admin_user.id,
+                            Notification.title == title,
+                        )
+                        if start_dt is not None:
+                            exists_q = exists_q.filter(Notification.created_at >= start_dt)
+                        if exists_q.first():
+                            continue
+
+                        db.session.add(Notification(
+                            user_id=admin_user.id,
+                            title=title,
+                            message=message,
+                            is_read=False,
+                            created_at=get_eat_now(),
+                        ))
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+        return jsonify({
+            'status': 'success',
+            'report_type': 'budget_alerts',
+            'month': month_str,
+            'warning_ratio': warning_ratio,
+            'data': rows,
+        })
+    except Exception as e:
+        app.logger.error(f'Budget alerts report error: {str(e)}', exc_info=True)
+        return jsonify({'error': 'Failed to generate budget alerts report', 'message': str(e)}), 500
+
+
 # ==================== END ENHANCED REPORTING ENDPOINTS ====================
 
 @app.route('/admin/transactions')
@@ -4637,7 +9220,7 @@ def manage_transactions():
 # Configuration for backup
 BACKUP_CONFIG = {
     'local_storage_path': os.path.join(app.instance_path, 'backups'),
-    's3_bucket': os.getenv('AWS_BACKUP_BUCKET', 'your-backup-bucket'),
+    's3_bucket': (os.getenv('AWS_BACKUP_BUCKET', '') or '').strip(),
     'encryption_key': os.getenv('BACKUP_ENCRYPTION_KEY'),
     'tables_to_backup': [
         'appointments', 'audit_logs', 'beds', 'debt_payments', 
@@ -4650,18 +9233,66 @@ if not BACKUP_CONFIG['encryption_key']:
     raise RuntimeError("Missing BACKUP_ENCRYPTION_KEY")
 
 # Initialize S3 client if configured
-if os.getenv('AWS_ACCESS_KEY_ID'):
+_S3_BUCKET_NAME_RE = re.compile(r'^[a-zA-Z0-9.\-_]{1,255}$')
+
+
+def _is_valid_s3_bucket_name(name: str) -> bool:
+    n = (name or '').strip()
+    return bool(n and _S3_BUCKET_NAME_RE.match(n))
+
+
+_aws_access_key_id = (os.getenv('AWS_ACCESS_KEY_ID') or '').strip()
+_aws_secret_access_key = (os.getenv('AWS_SECRET_ACCESS_KEY') or '').strip()
+_aws_region = (os.getenv('AWS_REGION', 'us-east-1') or 'us-east-1').strip()
+_s3_bucket_name = (BACKUP_CONFIG.get('s3_bucket') or '').strip()
+
+if _aws_access_key_id and _aws_secret_access_key and _is_valid_s3_bucket_name(_s3_bucket_name):
     s3_client = boto3.client(
         's3',
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-        region_name=os.getenv('AWS_REGION', 'us-east-1')
+        aws_access_key_id=_aws_access_key_id,
+        aws_secret_access_key=_aws_secret_access_key,
+        region_name=_aws_region
     )
 else:
     s3_client = None
+    if _aws_access_key_id or _aws_secret_access_key or _s3_bucket_name:
+        reasons = []
+        if not _aws_access_key_id:
+            reasons.append('AWS_ACCESS_KEY_ID missing')
+        if not _aws_secret_access_key:
+            reasons.append('AWS_SECRET_ACCESS_KEY missing')
+        if not _s3_bucket_name:
+            reasons.append('AWS_BACKUP_BUCKET not set')
+        elif not _is_valid_s3_bucket_name(_s3_bucket_name):
+            reasons.append('AWS_BACKUP_BUCKET invalid')
+        app.logger.warning('S3 backups disabled (%s). Using local backups.', '; '.join(reasons))
+
+
+def has_backup_access() -> bool:
+    """Check if current session has valid backup access."""
+    email = session.get('backup_authenticated_email')
+    if not email:
+        return False
+    
+    backup_user = BackupLoginUser.query.filter_by(email=email, is_active=True, is_verified=True).first()
+    return backup_user is not None
+
+
+def require_backup_access(f):
+    """Decorator to require backup login before accessing backup features."""
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not has_backup_access():
+            flash('You must log in to backup access first', 'warning')
+            return redirect(url_for('backup_login_page'))
+        return f(*args, **kwargs)
+    return decorated_function
+
 
 @app.route('/admin/backup', methods=['GET', 'POST'])
 @login_required
+@require_backup_access
 def backup_management():
     if current_user.role != 'admin':
         flash('Unauthorized access', 'danger')
@@ -4702,6 +9333,20 @@ def backup_management():
                 if not verify_backup_exists(backup):
                     flash('Backup file not found', 'danger')
                     return redirect(url_for('backup_management'))
+
+                # Mark restore as started (stored in notes so UI can poll without schema changes)
+                try:
+                    backup.notes = _backup_notes_with_restore_status(backup.notes, {
+                        'status': 'in_progress',
+                        'started_at': get_eat_now().isoformat(),
+                        'message': 'Restore started. Please wait...',
+                    })
+                    db.session.commit()
+                except Exception:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
                 
                 # Run restore in background
                 from threading import Thread
@@ -4734,21 +9379,24 @@ def backup_management():
                         mimetype='application/octet-stream'
                     )
                 else:
-                    temp_dir = tempfile.mkdtemp()
-                    enc_path = os.path.join(temp_dir, f"{backup.backup_id}.zip.enc")
-                    dec_path = os.path.join(temp_dir, f"{backup.backup_id}.zip")
-                    with open(enc_path, 'wb') as f:
-                        f.write(backup_file.read())
-                    cipher = Fernet(BACKUP_CONFIG['encryption_key'].encode())
-                    with open(enc_path, 'rb') as f_in, open(dec_path, 'wb') as f_out:
-                        f_out.write(cipher.decrypt(f_in.read()))
-                    response = send_file(
-                        dec_path,
-                        as_attachment=True,
-                        download_name=f"backup_{backup.backup_id}.zip",
-                        mimetype='application/zip'
-                    )
-                    response.call_on_close(lambda: (os.remove(enc_path), os.remove(dec_path), os.rmdir(temp_dir)))
+                    # Decrypt in memory to avoid writing sensitive data to disk
+                    try:
+                        encrypted_data = backup_file.read()
+                        cipher = Fernet(BACKUP_CONFIG['encryption_key'].encode())
+                        decrypted_data = cipher.decrypt(encrypted_data)
+                        
+                        # Create an in-memory file-like object
+                        decrypted_file = io.BytesIO(decrypted_data)
+                        
+                        response = send_file(
+                            decrypted_file,
+                            as_attachment=True,
+                            download_name=f"backup_{backup.backup_id}.zip",
+                            mimetype='application/zip'
+                        )
+                    except Exception as e:
+                        flash(f'Error decrypting backup: {str(e)}', 'danger')
+                        return redirect(url_for('backup_management'))
                 
                 # Log download activity
                 log_audit('download', 'BackupRecord', backup.id, None, {'downloaded_by': current_user.id})
@@ -4778,11 +9426,956 @@ def backup_management():
     
     # Get all backups ordered by most recent
     backups = BackupRecord.query.order_by(BackupRecord.timestamp.desc()).all()
+
+    # Attach parsed stats/clean notes for display (no schema changes).
+    for b in backups:
+        try:
+            b.exec_stats = _backup_extract_stats(getattr(b, 'notes', None))
+            b.display_notes = _backup_strip_stats(getattr(b, 'notes', None))
+        except Exception:
+            b.exec_stats = None
+            b.display_notes = getattr(b, 'notes', None)
     
     # Get disaster recovery plans
     recovery_plans = DisasterRecoveryPlan.query.all()
+
+    # Get schedule config (optional; DB may not be migrated yet)
+    schedule_cfg = _get_or_create_schedule_config()
+
+    def _is_main_admin(u: User) -> bool:
+        try:
+            return bool(u) and (str(u.role) == 'admin') and int(u.id) == 1
+        except Exception:
+            return False
+
+    admin_users = []
+    try:
+        # Role is stored via EncryptedType; filter in Python for reliability.
+        users = User.query.order_by(User.id.asc()).all()
+        admin_users = [u for u in users if str(getattr(u, 'role', '') or '') == 'admin']
+    except Exception:
+        admin_users = []
+
+    storage_label = 'Unknown'
+    try:
+        storage_label = f"S3: {BACKUP_CONFIG.get('s3_bucket', '-') }" if s3_client else f"Local: {BACKUP_CONFIG.get('local_storage_path', '-') }"
+    except Exception:
+        pass
+
+    next_scheduled_label = 'Daily at 2:00 AM'
+    try:
+        if schedule_cfg and schedule_cfg.daily_enabled:
+            next_scheduled_label = f"Daily at {schedule_cfg.daily_time or '02:00'}"
+        elif schedule_cfg and not schedule_cfg.daily_enabled:
+            next_scheduled_label = 'Disabled'
+    except Exception:
+        pass
+
+    restricted_attempts = []
+    try:
+        if _is_main_admin(current_user):
+            restricted_attempts = AuditLog.query.filter_by(action='backup_login_restricted')\
+                .order_by(AuditLog.created_at.desc()).limit(10).all()
+    except Exception:
+        restricted_attempts = []
+
+    return render_template(
+        'admin/backup.html',
+        backups=backups,
+        recovery_plans=recovery_plans,
+        backup_user_email=session.get('backup_authenticated_email'),
+        backup_config=BACKUP_CONFIG,
+        storage_label=storage_label,
+        schedule_cfg=schedule_cfg,
+        next_scheduled_label=next_scheduled_label,
+        admin_users=admin_users,
+        is_main_admin=_is_main_admin(current_user),
+        restricted_attempts=restricted_attempts,
+    )
+
+
+# ============================================================================
+# BACKUP LOGIN SYSTEM - AUTHENTICATION & ACCESS CONTROL
+# ============================================================================
+
+def _get_or_create_backup_login_user(email: str, created_by_admin_id: int) -> 'BackupLoginUser':
+    """Get or create a BackupLoginUser record.
+
+    NOTE: `created_by_admin_id` is used as the *linked admin user_id* for access restriction.
+    """
+    user = BackupLoginUser.query.filter_by(email=email).first()
+    if not user:
+        user = BackupLoginUser(
+            email=email.lower().strip(),
+            created_by_admin_id=created_by_admin_id,
+            is_verified=False,
+            is_active=False
+        )
+        db.session.add(user)
+        db.session.commit()
+    else:
+        # Keep linkage in sync if reusing an existing record (e.g., re-inviting a user)
+        try:
+            if created_by_admin_id and user.created_by_admin_id != created_by_admin_id:
+                user.created_by_admin_id = created_by_admin_id
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+    return user
+
+
+def _send_backup_login_otp(email: str, otp_code: str) -> bool:
+    """Send OTP to backup login email address."""
+    try:
+        subject = "Your Backup Access Verification Code"
+        html = f"""
+        <h2>Backup Access Verification</h2>
+        <p>Your one-time password (OTP) for backup feature access is:</p>
+        <h3 style="letter-spacing: 3px; background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+            {otp_code}
+        </h3>
+        <p>This code will expire in <strong>10 minutes</strong>.</p>
+        <p>If you did not request this code, please ignore this email.</p>
+        """
+        
+        _send_backup_email(
+            recipient=email,
+            subject=subject,
+            html=html
+        )
+        return True
+    except Exception as e:
+        app.logger.error(f'Failed to send backup login OTP to {email}: {e}', exc_info=True)
+        return False
+
+
+def _verify_backup_password_policy(password: str) -> tuple[bool, str]:
+    """Validate backup access password meets security requirements."""
+    if not password or len(password) < 8:
+        return False, 'Password must be at least 8 characters long'
+    if not re.search(r'[A-Z]', password):
+        return False, 'Password must contain at least one uppercase letter'
+    if not re.search(r'[a-z]', password):
+        return False, 'Password must contain at least one lowercase letter'
+    if not re.search(r'\d', password):
+        return False, 'Password must contain at least one digit'
+    if not re.search(r'[^A-Za-z0-9]', password):
+        return False, 'Password must contain at least one special character'
+    return True, ''
+
+
+def _wants_json_response() -> bool:
+    """Detect fetch/AJAX requests so routes can return JSON instead of redirects."""
+    try:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return True
+        accept = (request.headers.get('Accept') or '').lower()
+        if 'application/json' in accept:
+            return True
+        if request.is_json:
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _check_is_main_admin() -> bool:
+    """Check if current user is the main admin (ID=1)."""
+    try:
+        return bool(current_user) and int(current_user.id) == 1
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _log_backup_access_attempt(email: str, success: bool, ip_address: str = None):
+    """Log backup access login attempts for security auditing."""
+    try:
+        ip_address = ip_address or request.remote_addr
+        action = 'backup_login_success' if success else 'backup_login_failure'
+        log_audit(
+            action=action,
+            table='BackupLoginUser',
+            user_id=current_user.id if current_user.is_authenticated else None,
+            changes={
+                'email': email,
+                'ip_address': ip_address,
+                'user_agent': request.user_agent.string if hasattr(request, 'user_agent') else None
+            }
+        )
+    except Exception as e:
+        app.logger.error(f'Failed to log backup access attempt: {e}')
+
+
+def _notify_unauthorized_backup_attempt(email: str, ip_address: str = None, user_agent: str = None):
+    """Alert main admin of unauthorized backup access attempt."""
+    try:
+        main_admin = User.query.filter_by(id=1).first()
+        if not main_admin or not main_admin.email:
+            return
+        
+        ip_address = ip_address or request.remote_addr if request else 'Unknown'
+        timestamp = get_eat_now().strftime('%Y-%m-%d %H:%M:%S EAT')
+        
+        subject = "⚠️ Unauthorized Backup Access Attempt"
+        html = f"""
+        <h2>Unauthorized Backup Login Attempt Detected</h2>
+        <p><strong>Email:</strong> {email}</p>
+        <p><strong>Time:</strong> {timestamp}</p>
+        <p><strong>IP Address:</strong> {ip_address}</p>
+        <p><strong>User Agent:</strong> {user_agent or 'Not available'}</p>
+        <p>Someone attempted to access backup features with this email but failed verification.</p>
+        <p>Log in to your admin dashboard for more details.</p>
+        """
+        
+        _send_backup_email(
+            recipient=main_admin.email,
+            subject=subject,
+            html=html
+        )
+    except Exception as e:
+        app.logger.error(f'Failed to notify main admin of unauthorized attempt: {e}')
+
+
+def _notify_restricted_backup_attempt(*, email: str, attempted_by_user_id: int | None, ip_address: str | None, user_agent: str | None) -> None:
+    """Notify main admin when valid credentials are used by the wrong logged-in admin."""
+    try:
+        main_admin = User.query.filter_by(id=1).first()
+        if not main_admin or not main_admin.email:
+            return
+
+        ts = get_eat_now().strftime('%Y-%m-%d %H:%M:%S EAT')
+        subject = "⚠️ Restricted Backup Login Attempt"
+        html = (
+            "<h2>Restricted Backup Login Attempt</h2>"
+            f"<p><strong>Backup Email:</strong> {email}</p>"
+            f"<p><strong>Time:</strong> {ts}</p>"
+            f"<p><strong>Attempted By Admin ID:</strong> {attempted_by_user_id or 'Unknown'}</p>"
+            f"<p><strong>IP Address:</strong> {ip_address or 'Unknown'}</p>"
+            f"<p><strong>User Agent:</strong> {user_agent or 'Not available'}</p>"
+            "<p>The email/password were correct, but the logged-in admin is not the one linked to these backup credentials.</p>"
+        )
+
+        _send_backup_email(recipient=main_admin.email, subject=subject, html=html)
+    except Exception:
+        app.logger.exception('Failed to send restricted backup attempt notification')
+
+
+@app.route('/admin/backup/login/register/email', methods=['GET', 'POST'])
+@login_required
+def backup_login_register_email():
+    """Step 1: Main admin registers backup email and requests OTP."""
+    if current_user.role != 'admin':
+        flash('Only admins can register backup access', 'danger')
+        return redirect(url_for('backup_management'))
     
-    return render_template('admin/backup.html', backups=backups, recovery_plans=recovery_plans)
+    if not _check_is_main_admin():
+        flash('Only the main admin can set up backup access', 'danger')
+        return redirect(url_for('backup_management'))
+    
+    if request.method == 'POST':
+        email = (request.form.get('backup_email') or '').strip().lower()
+        # Defensively normalize common copy/paste issues.
+        email = email.strip('<>').strip()
+        email = email.replace(' ', '')
+        if email.endswith('.'):
+            email = email[:-1]
+        
+        if not email or '@' not in email:
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'Please enter a valid email address'}), 400
+            flash('Please enter a valid email address', 'danger')
+            return redirect(url_for('backup_login_register_email'))
+        
+        existing = BackupLoginUser.query.filter_by(email=email).first()
+        if existing and existing.is_active and existing.is_verified:
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'This email already has backup access registered'}), 409
+            flash('This email already has backup access registered', 'warning')
+            return redirect(url_for('backup_login_register_email'))
+        
+        backup_user = _get_or_create_backup_login_user(email, current_user.id)
+        
+        otp_code = _generate_backup_otp_code()
+        backup_user.otp_hash = _backup_code_hash(otp_code)
+        backup_user.otp_expires_at = get_eat_now() + timedelta(minutes=10)
+        backup_user.is_verified = False
+        db.session.commit()
+        
+        if not _send_backup_login_otp(email, otp_code):
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'Failed to send OTP email. Check mail settings and try again'}), 500
+            flash('Failed to send OTP email. Check mail settings and try again', 'danger')
+            return redirect(url_for('backup_login_register_email'))
+        
+        session['backup_register_email'] = email
+        if _wants_json_response():
+            return jsonify({'success': True, 'next': 'otp', 'email': email}), 200
+        flash(f'OTP code sent to {email}. Check your inbox and enter the code to proceed', 'success')
+        return redirect(url_for('backup_login_register_otp'))
+    
+    return render_template(
+        'admin/backup_login_register_email.html',
+        page_title='Register Backup Access - Step 1: Email'
+    )
+
+
+@app.route('/admin/backup/login/register/otp', methods=['GET', 'POST'])
+@login_required
+def backup_login_register_otp():
+    """Step 2: Main admin verifies OTP sent to email."""
+    if current_user.role != 'admin' or not _check_is_main_admin():
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('backup_management'))
+    
+    email = session.get('backup_register_email')
+    if not email:
+        if _wants_json_response():
+            return jsonify({'success': False, 'message': 'Please start from Step 1: Register Email'}), 400
+        flash('Please start from Step 1: Register Email', 'warning')
+        return redirect(url_for('backup_login_register_email'))
+    
+    if request.method == 'POST':
+        otp_code = (request.form.get('otp_code') or '').strip()
+        
+        backup_user = BackupLoginUser.query.filter_by(email=email).first()
+        if not backup_user:
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'Email not found. Please try again'}), 404
+            flash('Email not found. Please try again', 'danger')
+            return redirect(url_for('backup_login_register_email'))
+        
+        now = get_eat_now()
+        expires_at = _as_eat_aware(backup_user.otp_expires_at)
+        if not expires_at or expires_at < now:
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'OTP expired. Please request a new one'}), 400
+            flash('OTP expired. Please request a new one', 'danger')
+            return redirect(url_for('backup_login_register_email'))
+        
+        if _backup_code_hash(otp_code) != backup_user.otp_hash:
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'Invalid OTP code. Please try again'}), 400
+            flash('Invalid OTP code. Please try again', 'danger')
+            return redirect(url_for('backup_login_register_otp'))
+        
+        backup_user.is_verified = True
+        backup_user.verified_at = now
+        backup_user.otp_hash = None
+        backup_user.otp_expires_at = None
+        db.session.commit()
+        
+        session['backup_register_verified_email'] = email
+        if _wants_json_response():
+            return jsonify({'success': True, 'next': 'password', 'email': email}), 200
+        flash('Email verified successfully. Now create your backup access password', 'success')
+        return redirect(url_for('backup_login_register_password'))
+    
+    return render_template(
+        'admin/backup_login_register_otp.html',
+        email=email,
+        page_title='Register Backup Access - Step 2: Verify OTP'
+    )
+
+
+@app.route('/admin/backup/login/register/password', methods=['GET', 'POST'])
+@login_required
+def backup_login_register_password():
+    """Step 3: Main admin sets backup access password."""
+    if current_user.role != 'admin' or not _check_is_main_admin():
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('backup_management'))
+    
+    email = session.get('backup_register_verified_email')
+    if not email:
+        if _wants_json_response():
+            return jsonify({'success': False, 'message': 'Email verification required first'}), 400
+        flash('Email verification required first', 'warning')
+        return redirect(url_for('backup_login_register_email'))
+    
+    if request.method == 'POST':
+        password = request.form.get('password') or ''
+        confirm = request.form.get('confirm_password') or ''
+        
+        if password != confirm:
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'Passwords do not match'}), 400
+            flash('Passwords do not match', 'danger')
+            return redirect(url_for('backup_login_register_password'))
+        
+        ok, msg = _verify_backup_password_policy(password)
+        if not ok:
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': msg}), 400
+            flash(msg, 'danger')
+            return redirect(url_for('backup_login_register_password'))
+        
+        backup_user = BackupLoginUser.query.filter_by(email=email).first()
+        if not backup_user:
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'Email record not found. Please start over'}), 404
+            flash('Email record not found. Please start over', 'danger')
+            return redirect(url_for('backup_login_register_email'))
+        
+        backup_user.password_hash = generate_password_hash(password)
+        backup_user.is_active = True
+        backup_user.failed_attempts = 0
+        db.session.commit()
+        
+        session.pop('backup_register_email', None)
+        session.pop('backup_register_verified_email', None)
+        
+        app.logger.info(f'Backup access registered for: {email} by admin {current_user.email}')
+        
+        if _wants_json_response():
+            return jsonify({'success': True, 'next': 'login', 'email': email}), 200
+        flash('✓ Backup access successfully registered! You can now login to access backups', 'success')
+        return redirect(url_for('backup_login_page'))
+    
+    return render_template(
+        'admin/backup_login_register_password.html',
+        email=email,
+        page_title='Register Backup Access - Step 3: Set Password'
+    )
+
+
+@app.route('/admin/backup/login', methods=['GET', 'POST'])
+@login_required
+def backup_login_page():
+    """Backup access login page - handles first-time and consecutive login."""
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    # If already logged into backup, redirect to management
+    if 'backup_authenticated_email' in session:
+        return redirect(url_for('backup_management'))
+    
+    if request.method == 'POST':
+        email = (request.form.get('email') or '').strip().lower()
+        password = request.form.get('password') or ''
+        
+        backup_user = BackupLoginUser.query.filter_by(email=email).first()
+        
+        if not backup_user or not backup_user.is_active or not backup_user.is_verified:
+            _log_backup_access_attempt(email, False)
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'Invalid email or password'}), 401
+            flash('Invalid email or password', 'danger')
+            return redirect(url_for('backup_login_page'))
+        
+        if not check_password_hash(backup_user.password_hash, password):
+            backup_user.failed_attempts += 1
+            backup_user.last_login_attempt = get_eat_now()
+            db.session.commit()
+            
+            if backup_user.failed_attempts > 5:
+                backup_user.is_active = False
+                db.session.commit()
+                app.logger.warning(f'Backup user locked due to failed attempts: {email}')
+                
+                try:
+                    main_admin = User.query.filter_by(id=1).first()
+                    if main_admin and main_admin.email:
+                        _send_backup_email(
+                            recipient=main_admin.email,
+                            subject='⚠️ Backup Access Locked - Too Many Failed Attempts',
+                            html=f'<p>Backup user <strong>{email}</strong> has been locked after 5+ failed login attempts.</p>'
+                        )
+                except Exception as e:
+                    app.logger.error(f'Failed to notify main admin: {e}')
+            
+            _log_backup_access_attempt(email, False)
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': f"Invalid password. {max(0, 6 - backup_user.failed_attempts)} attempts remaining"}), 401
+            flash(f'Invalid password. {max(0, 6 - backup_user.failed_attempts)} attempts remaining', 'danger')
+            return redirect(url_for('backup_login_page'))
+        
+        # Restrict usage to the linked admin user_id (prevents other admins using someone else's backup credentials)
+        try:
+            if backup_user.created_by_admin_id and int(current_user.id) != int(backup_user.created_by_admin_id):
+                backup_user.last_login_attempt = get_eat_now()
+                db.session.commit()
+
+                _log_backup_access_attempt(email, False)
+                # Dashboard notification via audit log
+                log_audit(
+                    action='backup_login_restricted',
+                    table='BackupLoginUser',
+                    record_id=getattr(backup_user, 'id', None),
+                    user_id=int(current_user.id) if current_user.is_authenticated else None,
+                    changes={
+                        'email': email,
+                        'linked_admin_id': int(backup_user.created_by_admin_id) if backup_user.created_by_admin_id else None,
+                        'attempted_by_admin_id': int(current_user.id) if current_user.is_authenticated else None,
+                        'ip_address': request.remote_addr,
+                        'user_agent': request.user_agent.string if hasattr(request, 'user_agent') else None,
+                    },
+                )
+                _notify_restricted_backup_attempt(
+                    email=email,
+                    attempted_by_user_id=int(current_user.id) if current_user.is_authenticated else None,
+                    ip_address=request.remote_addr,
+                    user_agent=request.user_agent.string if hasattr(request, 'user_agent') else None,
+                )
+                if _wants_json_response():
+                    return jsonify({'success': False, 'message': 'These backup credentials are restricted to a different admin account.'}), 403
+                flash('These backup credentials are restricted to a different admin account.', 'danger')
+                return redirect(url_for('backup_login_page'))
+        except Exception:
+            # If anything goes wrong with restriction checks, fail closed.
+            if _wants_json_response():
+                return jsonify({'success': False, 'message': 'Unable to validate backup access restriction. Please contact the main admin.'}), 403
+            flash('Unable to validate backup access restriction. Please contact the main admin.', 'danger')
+            return redirect(url_for('backup_login_page'))
+
+        backup_user.last_successful_login = get_eat_now()
+        backup_user.failed_attempts = 0
+        db.session.commit()
+
+        session['backup_authenticated_email'] = email
+        session['backup_authenticated_time'] = get_eat_now().isoformat()
+
+        _log_backup_access_attempt(email, True)
+        app.logger.info(f'Backup access authenticated: {email}')
+
+        if _wants_json_response():
+            return jsonify({'success': True, 'email': email, 'redirect': url_for('backup_management')}), 200
+
+        flash(f'✓ Welcome to Backup Access, {email}!', 'success')
+        return redirect(url_for('backup_management'))
+    
+    return render_template('admin/backup_login.html', page_title='Backup Access Login')
+
+
+
+@app.route('/admin/backup/logout', methods=['POST', 'GET'])
+def backup_logout():
+    """Logout from backup access session."""
+    email = session.get('backup_authenticated_email')
+    session.pop('backup_authenticated_email', None)
+    session.pop('backup_authenticated_time', None)
+    
+    if email:
+        app.logger.info(f'Backup access logout: {email}')
+    
+    flash('Logged out from backup access', 'info')
+    return redirect(url_for('backup_login_page'))
+
+
+@app.route('/admin/backup/users', methods=['GET', 'POST'])
+@login_required
+@require_backup_access
+def backup_manage_users():
+    """Manage backup access users (main admin only)."""
+    if not _check_is_main_admin():
+        flash('Only main admin can manage backup users', 'danger')
+        return redirect(url_for('backup_management'))
+    
+    # Get all backup users
+    backup_users = BackupLoginUser.query.order_by(BackupLoginUser.created_at.desc()).all()
+    
+    # Get admins for adding new users (role is encrypted; filter in Python)
+    try:
+        users = User.query.order_by(User.id.asc()).all()
+        admins = [u for u in users if str(getattr(u, 'role', '') or '') == 'admin']
+    except Exception:
+        admins = []
+
+    add_stage = session.get('backup_add_stage')
+    pending_user_email = session.get('backup_add_email')
+    
+    return render_template(
+        'admin/backup_manage_users.html',
+        backup_users=backup_users,
+        admins=admins,
+        add_stage=add_stage,
+        pending_user_email=pending_user_email,
+        page_title='Manage Backup Access Users'
+    )
+
+
+@app.route('/admin/backup/users/add', methods=['POST'])
+@login_required
+@require_backup_access
+def backup_add_user():
+    """Main admin adds another admin to backup access (OTP + password set by main admin)."""
+    if not _check_is_main_admin():
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    action = (request.form.get('action') or 'request_otp').strip()
+
+    # Step 1: Request OTP
+    if action == 'request_otp':
+        admin_user_id = request.form.get('admin_user_id')
+        if not admin_user_id:
+            flash('Please select an admin to add.', 'danger')
+            return redirect(url_for('backup_manage_users'))
+
+        admin_user = User.query.get(int(admin_user_id))
+        if not admin_user or str(getattr(admin_user, 'role', '') or '') != 'admin':
+            flash('Selected user is not a valid admin.', 'danger')
+            return redirect(url_for('backup_manage_users'))
+
+        email = (str(getattr(admin_user, 'email', '') or '')).strip().lower()
+        if not email or '@' not in email:
+            flash('Selected admin does not have a valid email address.', 'danger')
+            return redirect(url_for('backup_manage_users'))
+
+        backup_user = _get_or_create_backup_login_user(email, int(admin_user.id))
+        if backup_user.is_verified and backup_user.is_active and backup_user.password_hash:
+            flash('This admin already has active backup access.', 'warning')
+            return redirect(url_for('backup_manage_users'))
+
+        otp_code = _generate_backup_otp_code()
+        backup_user.otp_hash = _backup_code_hash(otp_code)
+        backup_user.otp_expires_at = get_eat_now() + timedelta(minutes=10)
+        backup_user.is_verified = False
+        backup_user.is_active = False
+        db.session.commit()
+
+        if not _send_backup_login_otp(email, otp_code):
+            flash('Failed to send OTP email', 'danger')
+            return redirect(url_for('backup_manage_users'))
+
+        session['backup_add_stage'] = 'otp_sent'
+        session['backup_add_email'] = email
+        session['backup_add_user_id'] = backup_user.id
+
+        log_audit(
+            action='backup_user_invite_otp_sent',
+            table='BackupLoginUser',
+            record_id=int(backup_user.id),
+            user_id=int(current_user.id),
+            changes={'email': email, 'linked_admin_id': int(admin_user.id)},
+        )
+
+        flash(f'OTP sent to {email}. Enter the OTP to verify, then set a password.', 'success')
+        return redirect(url_for('backup_manage_users'))
+
+    # Step 2: Verify OTP
+    if action == 'verify_otp':
+        otp_code = (request.form.get('otp_code') or '').strip()
+        email = (session.get('backup_add_email') or '').strip().lower()
+        bu_id = session.get('backup_add_user_id')
+
+        if not email or not bu_id:
+            flash('No pending backup-user invitation found. Start again.', 'warning')
+            session.pop('backup_add_stage', None)
+            session.pop('backup_add_email', None)
+            session.pop('backup_add_user_id', None)
+            return redirect(url_for('backup_manage_users'))
+
+        backup_user = BackupLoginUser.query.get(int(bu_id))
+        if not backup_user or (backup_user.email or '').strip().lower() != email:
+            flash('Pending user not found. Start again.', 'danger')
+            session.pop('backup_add_stage', None)
+            session.pop('backup_add_email', None)
+            session.pop('backup_add_user_id', None)
+            return redirect(url_for('backup_manage_users'))
+
+        now = get_eat_now()
+        expires_at = _as_eat_aware(backup_user.otp_expires_at)
+        if not backup_user.otp_hash or not expires_at or expires_at < now:
+            flash('OTP expired. Send a new OTP.', 'danger')
+            session['backup_add_stage'] = 'none'
+            return redirect(url_for('backup_manage_users'))
+
+        if _backup_code_hash(otp_code) != backup_user.otp_hash:
+            flash('Invalid OTP. Please try again.', 'danger')
+            return redirect(url_for('backup_manage_users'))
+
+        backup_user.is_verified = True
+        backup_user.verified_at = now
+        backup_user.otp_hash = None
+        backup_user.otp_expires_at = None
+        db.session.commit()
+
+        session['backup_add_stage'] = 'verified'
+
+        log_audit(
+            action='backup_user_invite_verified',
+            table='BackupLoginUser',
+            record_id=int(backup_user.id),
+            user_id=int(current_user.id),
+            changes={'email': email, 'linked_admin_id': int(backup_user.created_by_admin_id)},
+        )
+
+        flash('Email verified. Now set a password for this admin.', 'success')
+        return redirect(url_for('backup_manage_users'))
+
+    # Step 3: Set password
+    if action == 'set_password':
+        email = (session.get('backup_add_email') or '').strip().lower()
+        bu_id = session.get('backup_add_user_id')
+        if not email or not bu_id or session.get('backup_add_stage') != 'verified':
+            flash('OTP verification required before setting a password.', 'warning')
+            return redirect(url_for('backup_manage_users'))
+
+        password = request.form.get('password') or ''
+        confirm = request.form.get('confirm_password') or ''
+        if password != confirm:
+            flash('Passwords do not match.', 'danger')
+            return redirect(url_for('backup_manage_users'))
+
+        ok, msg = _verify_backup_password_policy(password)
+        if not ok:
+            flash(msg, 'danger')
+            return redirect(url_for('backup_manage_users'))
+
+        backup_user = BackupLoginUser.query.get(int(bu_id))
+        if not backup_user or (backup_user.email or '').strip().lower() != email:
+            flash('Pending user not found. Start again.', 'danger')
+            return redirect(url_for('backup_manage_users'))
+
+        backup_user.password_hash = generate_password_hash(password)
+        backup_user.is_active = True
+        backup_user.failed_attempts = 0
+        db.session.commit()
+
+        log_audit(
+            action='backup_user_password_set',
+            table='BackupLoginUser',
+            record_id=int(backup_user.id),
+            user_id=int(current_user.id),
+            changes={'email': email, 'linked_admin_id': int(backup_user.created_by_admin_id)},
+        )
+
+        session.pop('backup_add_stage', None)
+        session.pop('backup_add_email', None)
+        session.pop('backup_add_user_id', None)
+
+        flash(f'Backup access enabled for {email}. They can now log in with email + password.', 'success')
+        return redirect(url_for('backup_manage_users'))
+
+    flash('Invalid action.', 'danger')
+    return redirect(url_for('backup_manage_users'))
+
+
+@app.route('/admin/backup/users/<int:user_id>/remove', methods=['POST'])
+@login_required
+@require_backup_access
+def backup_remove_user(user_id: int):
+    """Main admin removes backup access from a user."""
+    if not _check_is_main_admin():
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    backup_user = BackupLoginUser.query.get(user_id)
+    if not backup_user:
+        flash('User not found', 'danger')
+        return redirect(url_for('backup_manage_users'))
+    
+    email = backup_user.email
+    db.session.delete(backup_user)
+    db.session.commit()
+    
+    app.logger.info(f'Main admin {current_user.email} removed backup access for {email}')
+    flash(f'Backup access removed for {email}', 'success')
+    return redirect(url_for('backup_manage_users'))
+
+
+@app.route('/admin/backup/users/<int:user_id>/toggle', methods=['POST'])
+@login_required
+@require_backup_access
+def backup_toggle_user(user_id: int):
+    """Main admin enables/disables backup access for a user."""
+    if not _check_is_main_admin():
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    backup_user = BackupLoginUser.query.get(user_id)
+    if not backup_user:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    
+    backup_user.is_active = not backup_user.is_active
+    db.session.commit()
+    
+    status = 'enabled' if backup_user.is_active else 'disabled'
+    app.logger.info(f'Main admin {current_user.email} {status} backup access for {backup_user.email}')
+    flash(f'Backup access {status} for {backup_user.email}', 'success')
+    
+    return jsonify({'success': True, 'is_active': backup_user.is_active})
+
+
+@app.context_processor
+def inject_backup_access_context():
+    """Inject backup access info into all templates."""
+    return {
+        'has_backup_access': has_backup_access(),
+        'backup_user_email': session.get('backup_authenticated_email')
+    }
+
+
+@app.route('/admin/backup/schedule', methods=['POST'])
+@login_required
+@require_backup_access
+def backup_schedule_update():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    daily_enabled = request.form.get('daily_enabled') == 'on'
+    daily_time = (request.form.get('daily_time') or '02:00').strip()
+    disaster_enabled = request.form.get('disaster_enabled') == 'on'
+
+    if not re.match(r'^(\d{1,2}):(\d{2})$', daily_time):
+        flash('Invalid daily time. Use HH:MM format.', 'danger')
+        return redirect(url_for('backup_management'))
+
+    cfg = _get_or_create_schedule_config()
+    if not cfg:
+        flash('Schedule config is not available yet. Run DB migration and try again.', 'danger')
+        return redirect(url_for('backup_management'))
+
+    cfg.daily_enabled = bool(daily_enabled)
+    cfg.daily_time = daily_time
+    cfg.disaster_enabled = bool(disaster_enabled)
+    cfg.disaster_interval_minutes = 30
+    db.session.commit()
+
+    try:
+        if 'scheduler' in globals() and globals().get('scheduler') is not None:
+            _scheduler_apply_backup_jobs(globals()['scheduler'])
+    except Exception:
+        app.logger.exception('Failed to apply scheduler changes')
+
+    flash('Backup schedule updated successfully.', 'success')
+    return redirect(url_for('backup_management'))
+
+
+@app.route('/admin/backup/access/set', methods=['POST'])
+@login_required
+def backup_access_set_for_admin():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    try:
+        is_main_admin = int(current_user.id) == 1
+    except Exception:
+        is_main_admin = False
+    
+    # Main admin can set credentials for themselves (first run bootstrap)
+    # OR set credentials for other admins (if already logged into backup system)
+    target_user_id = request.form.get('target_admin_id')
+    password = (request.form.get('backup_access_password') or '').strip()
+    
+    # If no target specified, main admin is setting up for themselves
+    if not target_user_id:
+        if not is_main_admin:
+            flash('Only the main admin can create backup access credentials.', 'danger')
+            return redirect(url_for('backup_management'))
+        target_user_id = current_user.id
+    else:
+        # If target specified, must be main admin AND must have backup access
+        if not is_main_admin:
+            flash('Only the main admin can create backup access credentials for other admins.', 'danger')
+            return redirect(url_for('backup_management'))
+        if not has_backup_access():
+            flash('You must log in to backup system first to manage other users.', 'warning')
+            return redirect(url_for('backup_login_page'))
+    
+    ok, msg = _password_meets_backup_policy(password)
+    if not ok:
+        flash(msg, 'danger')
+        return redirect(url_for('backup_management'))
+
+    user = User.query.get(int(target_user_id))
+    if not user or user.role != 'admin':
+        flash('Selected user is not an admin.', 'danger')
+        return redirect(url_for('backup_management'))
+
+    _ensure_backup_access_credential(user_id=user.id, password=password, created_by_user_id=current_user.id)
+    db.session.commit()
+    flash('Backup access password set successfully.', 'success')
+    
+    # Auto-login if main admin just created their own credentials
+    if int(target_user_id) == current_user.id and is_main_admin:
+        backup_user = BackupLoginUser.query.filter_by(email=current_user.email, is_verified=True).first()
+        if backup_user:
+            session['backup_authenticated_email'] = backup_user.email
+            return redirect(url_for('backup_management'))
+    
+    return redirect(url_for('backup_management'))
+
+
+@app.route('/admin/backup/access/reset/send-otp', methods=['POST'])
+@login_required
+@require_backup_access
+def backup_access_reset_send_otp():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    email_addr = (getattr(current_user, 'email', '') or '').strip()
+    if not email_addr or '@' not in email_addr:
+        flash('Your admin account does not have a valid email address configured.', 'danger')
+        return redirect(url_for('backup_management'))
+
+    code = _generate_backup_otp_code()
+    session['backup_access_reset_hash'] = _backup_code_hash(code)
+    session['backup_access_reset_expires'] = (get_eat_now() + timedelta(minutes=10)).isoformat()
+
+    try:
+        _send_backup_email(
+            recipient=email_addr,
+            subject='MMC Backup Password Reset Code',
+            html=(
+                f"<p>Your backup password reset code is:</p>"
+                f"<h2 style='letter-spacing:2px'>{code}</h2>"
+                f"<p>This code expires in 10 minutes.</p>"
+            ),
+        )
+    except Exception as e:
+        app.logger.error(f'Failed to send backup access reset OTP: {e}', exc_info=True)
+        flash('Failed to send reset code. Check email settings and try again.', 'danger')
+        return redirect(url_for('backup_management'))
+
+    flash('Reset code sent to your email. Enter the code and your new backup password.', 'success')
+    return redirect(url_for('backup_management'))
+
+
+@app.route('/admin/backup/access/reset/confirm', methods=['POST'])
+@login_required
+@require_backup_access
+def backup_access_reset_confirm():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    code = (request.form.get('backup_reset_code') or '').strip()
+    new_password = (request.form.get('backup_reset_new_password') or '').strip()
+    ok, msg = _password_meets_backup_policy(new_password)
+    if not ok:
+        flash(msg, 'danger')
+        return redirect(url_for('backup_management'))
+
+    expected_hash = session.get('backup_access_reset_hash')
+    exp_iso = session.get('backup_access_reset_expires')
+    if not expected_hash or not exp_iso:
+        flash('No reset request found. Please send a new reset code.', 'danger')
+        return redirect(url_for('backup_management'))
+
+    try:
+        exp_dt = datetime.fromisoformat(exp_iso)
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=EAT)
+        if exp_dt < get_eat_now():
+            flash('Reset code expired. Please request a new one.', 'danger')
+            return redirect(url_for('backup_management'))
+    except Exception:
+        flash('Reset code expired. Please request a new one.', 'danger')
+        return redirect(url_for('backup_management'))
+
+    if _backup_code_hash(code) != expected_hash:
+        flash('Invalid reset code. Please try again.', 'danger')
+        return redirect(url_for('backup_management'))
+
+    _ensure_backup_access_credential(user_id=current_user.id, password=new_password, created_by_user_id=current_user.id)
+    db.session.commit()
+    session.pop('backup_access_reset_hash', None)
+    session.pop('backup_access_reset_expires', None)
+
+    flash('Backup password reset successfully.', 'success')
+    return redirect(url_for('backup_management'))
 
 @app.route('/admin/disaster_recovery', methods=['GET', 'POST'])
 @login_required
@@ -4858,21 +10451,27 @@ def disaster_recovery():
 
 @app.route('/admin/backup/status/<int:backup_id>')
 @login_required
+@require_backup_access
 def backup_status(backup_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
     backup = BackupRecord.query.get_or_404(backup_id)
+    stats = _backup_extract_stats(backup.notes)
+    restore = _backup_extract_restore_status(backup.notes)
     return jsonify({
         'id': backup.id,
         'status': backup.status,
         'timestamp': backup.timestamp.isoformat(),
         'size_bytes': backup.size_bytes,
-        'notes': backup.notes
+        'notes': _backup_strip_restore_status(_backup_strip_stats(backup.notes)),
+        'stats': stats,
+        'restore': restore,
     })
 
 @app.route('/admin/backup/logs')
 @login_required
+@require_backup_access
 def backup_logs():
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
@@ -4894,121 +10493,685 @@ def backup_logs():
 # BACKUP IMPLEMENTATION
 # ======================
 
+class _AutoDeleteFile(io.BufferedReader):
+    def __init__(self, path: str):
+        self._path = path
+        super().__init__(open(path, 'rb'))
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            try:
+                os.remove(self._path)
+            except Exception:
+                pass
+
+
+def _safe_table_name(name: str) -> bool:
+    return bool(name) and bool(re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', str(name)))
+
+
+def _jsonable_value(value):
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = value.tobytes() if isinstance(value, memoryview) else bytes(value)
+        return {'__type__': 'bytes', 'b64': base64.b64encode(raw).decode('ascii')}
+    if isinstance(value, (datetime, date)):
+        return {'__type__': 'datetime', 'iso': value.isoformat()}
+    if isinstance(value, Decimal):
+        return {'__type__': 'decimal', 'value': str(value)}
+    return value
+
+
+def _restore_value(value):
+    if value is None:
+        return None
+    if isinstance(value, dict) and value.get('__type__') == 'bytes' and 'b64' in value:
+        try:
+            return base64.b64decode(value['b64'])
+        except Exception:
+            return None
+    if isinstance(value, dict) and value.get('__type__') == 'datetime' and 'iso' in value:
+        try:
+            return datetime.fromisoformat(value['iso'])
+        except Exception:
+            return value.get('iso')
+    if isinstance(value, dict) and value.get('__type__') == 'decimal' and 'value' in value:
+        try:
+            return Decimal(value['value'])
+        except Exception:
+            return value.get('value')
+
+    # Legacy encoding produced by json.dumps(default=str)
+    if isinstance(value, str):
+        if value.startswith("b'") and value.endswith("'"):
+            try:
+                import ast
+
+                v = ast.literal_eval(value)
+                if isinstance(v, (bytes, bytearray)):
+                    return bytes(v)
+            except Exception:
+                pass
+        if value.endswith('+00:00') or 'T' in value:
+            try:
+                return datetime.fromisoformat(value)
+            except Exception:
+                pass
+    return value
+
+
+_RESTORE_DT_RE = re.compile(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$')
+_RESTORE_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+_RESTORE_TIME_RE = re.compile(r'^\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$')
+
+
+def _restore_coerce_value_for_column(col, value):
+    """Best-effort type coercion for values coming from backups.
+
+    Why: backups may contain strings for SQLite Date/DateTime columns because
+    we export via untyped SELECT * queries; SQLite's dialect then rejects
+    strings for Date/DateTime on insert.
+    """
+    if value is None:
+        return None
+
+    try:
+        from sqlalchemy.sql.sqltypes import Boolean, Date, DateTime, Float, Integer, Numeric, Time
+        from datetime import time as dt_time
+
+        col_type = getattr(col, 'type', None)
+
+        # DateTime
+        if isinstance(col_type, DateTime):
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, date) and not isinstance(value, datetime):
+                return datetime.combine(value, dt_time(0, 0, 0))
+            if isinstance(value, str) and _RESTORE_DT_RE.match(value.strip()):
+                v = value.strip().replace('Z', '+00:00')
+                try:
+                    return datetime.fromisoformat(v)
+                except Exception:
+                    return value
+            return value
+
+        # Date
+        if isinstance(col_type, Date):
+            if isinstance(value, date) and not isinstance(value, datetime):
+                return value
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, str) and _RESTORE_DATE_RE.match(value.strip()):
+                try:
+                    return date.fromisoformat(value.strip())
+                except Exception:
+                    return value
+            return value
+
+        # Time
+        if isinstance(col_type, Time):
+            if isinstance(value, dt_time):
+                return value
+            if isinstance(value, datetime):
+                return value.time()
+            if isinstance(value, str) and _RESTORE_TIME_RE.match(value.strip()):
+                try:
+                    return dt_time.fromisoformat(value.strip())
+                except Exception:
+                    return value
+            return value
+
+        # Numeric/Decimal
+        if isinstance(col_type, Numeric):
+            if isinstance(value, Decimal):
+                return value
+            if isinstance(value, (int, float)):
+                return Decimal(str(value))
+            if isinstance(value, str):
+                try:
+                    return Decimal(value.strip())
+                except Exception:
+                    return value
+            return value
+
+        # Primitive coercions (only when clearly safe)
+        if isinstance(col_type, Boolean):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(int(value))
+            if isinstance(value, str):
+                s = value.strip().lower()
+                if s in ('true', '1', 'yes', 'y', 'on'):
+                    return True
+                if s in ('false', '0', 'no', 'n', 'off'):
+                    return False
+            return value
+
+        if isinstance(col_type, Integer):
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+            if isinstance(value, str) and re.fullmatch(r'[-+]?\d+', value.strip()):
+                try:
+                    return int(value.strip())
+                except Exception:
+                    return value
+            return value
+
+        if isinstance(col_type, Float):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+            if isinstance(value, str):
+                try:
+                    return float(value.strip())
+                except Exception:
+                    return value
+            return value
+
+    except Exception:
+        return value
+
+    return value
+
+
+def _compute_sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _compute_sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _is_main_admin(user: User) -> bool:
+    # Simplest interpretation: the first admin user is the "main admin".
+    try:
+        return bool(user) and str(user.role) == 'admin' and int(user.id) == 1
+    except Exception:
+        return False
+
+
+def _password_meets_backup_policy(pw: str) -> tuple[bool, str]:
+    s = (pw or '').strip()
+    if len(s) < 8:
+        return False, 'Password must be at least 8 characters long.'
+    if not re.search(r'[A-Z]', s):
+        return False, 'Password must contain at least one uppercase letter.'
+    if not re.search(r'[a-z]', s):
+        return False, 'Password must contain at least one lowercase letter.'
+    if not re.search(r'\d', s):
+        return False, 'Password must contain at least one number.'
+    if not re.search(r'[^A-Za-z0-9]', s):
+        return False, 'Password must contain at least one symbol.'
+    return True, ''
+
+
+def _backup_code_hash(code: str) -> str:
+    # Hash code with SECRET_KEY to avoid storing raw OTP.
+    secret = (app.config.get('SECRET_KEY') or '').encode('utf-8')
+    payload = (str(code or '').strip()).encode('utf-8')
+    return hashlib.sha256(secret + b'|' + payload).hexdigest()
+
+
+def _generate_backup_otp_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _get_or_create_schedule_config() -> BackupScheduleConfig | None:
+    try:
+        cfg = BackupScheduleConfig.query.order_by(BackupScheduleConfig.id.asc()).first()
+        if not cfg:
+            cfg = BackupScheduleConfig(id=1, daily_enabled=True, daily_time='02:00', disaster_enabled=True, disaster_interval_minutes=30)
+            db.session.add(cfg)
+            db.session.commit()
+        return cfg
+    except Exception:
+        db.session.rollback()
+        return None
+
+
+def _ensure_backup_access_credential(user_id: int, password: str, created_by_user_id: int | None = None) -> BackupAccessCredential:
+    cred = BackupAccessCredential.query.filter_by(user_id=user_id).first()
+    if cred:
+        cred.password_hash = generate_password_hash(password)
+        cred.is_active = True
+        cred.created_by_user_id = created_by_user_id
+        return cred
+    cred = BackupAccessCredential(
+        user_id=user_id,
+        password_hash=generate_password_hash(password),
+        is_active=True,
+        created_by_user_id=created_by_user_id,
+    )
+    db.session.add(cred)
+    return cred
+
+
+def _smtp_settings_for_email(email_addr: str) -> tuple[str, int, bool]:
+    """Best-effort SMTP defaults by provider.
+
+    Returns: (host, port, use_ssl)
+    """
+    domain = (email_addr.split('@', 1)[1] if '@' in email_addr else '').lower().strip()
+
+    if domain in {'gmail.com', 'googlemail.com'}:
+        return 'smtp.gmail.com', 587, False
+    if domain in {'outlook.com', 'hotmail.com', 'live.com'}:
+        return 'smtp.office365.com', 587, False
+    if domain in {'yahoo.com', 'yahoo.co.uk'}:
+        return 'smtp.mail.yahoo.com', 587, False
+    if domain in {'zoho.com'}:
+        return 'smtp.zoho.com', 587, False
+
+    # Default guess for custom domains.
+    if domain:
+        return f'smtp.{domain}', 587, False
+    return 'localhost', 25, False
+
+
+def _smtp_send_email(
+    *,
+    smtp_user: str,
+    smtp_password: str,
+    recipient: str,
+    subject: str,
+    html: str,
+    text_body: str | None = None,
+    attachments: list[tuple[str, str, bytes]] | None = None,
+    smtp_host: str | None = None,
+    smtp_port: int | None = None,
+    use_ssl: bool | None = None,
+    timeout_seconds: int = 25,
+) -> None:
+    original_password = smtp_password
+    smtp_user = _strip_env_value(smtp_user)
+    smtp_password = _normalize_smtp_password(smtp_password)
+    if original_password != smtp_password:
+        try:
+            app.logger.info('Normalized SMTP password format (removed spaces/quotes).')
+        except Exception:
+            pass
+
+    host, port, ssl_default = _smtp_settings_for_email(smtp_user)
+    host = smtp_host or host
+    port = int(smtp_port or port)
+    use_ssl = ssl_default if use_ssl is None else bool(use_ssl)
+
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = smtp_user
+    msg['To'] = recipient
+
+    safe_text = text_body or 'Your email client does not support HTML.'
+    msg.set_content(safe_text)
+    msg.add_alternative(html or '', subtype='html')
+
+    for filename, content_type, data in (attachments or []):
+        maintype, subtype = ('application', 'octet-stream')
+        try:
+            if content_type and '/' in content_type:
+                maintype, subtype = content_type.split('/', 1)
+        except Exception:
+            maintype, subtype = ('application', 'octet-stream')
+        msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
+
+    context = ssl.create_default_context()
+    if use_ssl:
+        server = smtplib.SMTP_SSL(host, port, timeout=timeout_seconds, context=context)
+    else:
+        server = smtplib.SMTP(host, port, timeout=timeout_seconds)
+
+    try:
+        server.ehlo()
+        if not use_ssl:
+            # Most providers use STARTTLS on 587.
+            server.starttls(context=context)
+            server.ehlo()
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)
+    finally:
+        try:
+            server.quit()
+        except Exception:
+            try:
+                server.close()
+            except Exception:
+                pass
+
+
+def _send_backup_email(
+    recipient: str,
+    subject: str,
+    html: str,
+    attachments: list[tuple[str, str, bytes]] | None = None,
+    *,
+    smtp_user: str | None = None,
+    smtp_password: str | None = None,
+    smtp_host: str | None = None,
+    smtp_port: int | None = None,
+    use_ssl: bool | None = None,
+) -> None:
+    """Send backup-related emails using SMTP credentials or Flask-Mail fallback."""
+
+    # 1) Explicit SMTP creds: send synchronously so caller can show real error.
+    if smtp_user and smtp_password:
+        _smtp_send_email(
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            recipient=recipient,
+            subject=subject,
+            html=html,
+            text_body='Your verification code is included in the HTML message.',
+            attachments=attachments,
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            use_ssl=use_ssl,
+        )
+        return
+
+    # 2) Fallback: Flask-Mail
+    msg = Message(subject, recipients=[recipient], html=html)
+    for filename, content_type, data in (attachments or []):
+        msg.attach(filename=filename, content_type=content_type, data=data)
+    Thread(target=send_async_email, args=(current_app._get_current_object(), msg), daemon=True).start()
+
+
+def _restore_table_order(engine, tables: list[str]) -> list[str]:
+    try:
+        from sqlalchemy import inspect as sa_inspect
+
+        insp = sa_inspect(engine)
+        existing = set(insp.get_table_names())
+        tables = [t for t in tables if t in existing]
+
+        parents: dict[str, set[str]] = {t: set() for t in tables}
+        children: dict[str, set[str]] = {t: set() for t in tables}
+
+        for t in tables:
+            try:
+                for fk in (insp.get_foreign_keys(t) or []):
+                    rt = fk.get('referred_table')
+                    if rt and rt in parents and rt != t:
+                        parents[t].add(rt)
+                        children[rt].add(t)
+            except Exception:
+                continue
+
+        ordered: list[str] = []
+        ready = sorted([t for t in tables if not parents[t]])
+        while ready:
+            n = ready.pop(0)
+            ordered.append(n)
+            for c in sorted(children[n]):
+                parents[c].discard(n)
+                if not parents[c] and c not in ordered and c not in ready:
+                    ready.append(c)
+
+        leftover = [t for t in tables if t not in ordered]
+        return ordered + leftover
+    except Exception:
+        return tables
+
+
+def _restore_zip_to_engine(engine, zip_bytes: bytes, allowed_tables: set[str] | None) -> dict:
+    from sqlalchemy import inspect as sa_inspect
+
+    insp = sa_inspect(engine)
+    existing_tables = set(insp.get_table_names())
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), 'r') as z:
+        try:
+            metadata = json.loads(z.read('metadata.json').decode('utf-8'))
+        except Exception:
+            metadata = {}
+
+        tables_in_backup = metadata.get('tables_backed_up') or []
+        if not tables_in_backup:
+            for name in z.namelist():
+                if name.endswith('.ndjson'):
+                    tables_in_backup.append(name[:-len('.ndjson')])
+                elif name.endswith('.json') and name != 'metadata.json':
+                    tables_in_backup.append(name[:-len('.json')])
+            tables_in_backup = sorted(set(tables_in_backup))
+
+        restore_tables = [t for t in tables_in_backup if _safe_table_name(t) and t in existing_tables]
+        if allowed_tables:
+            filtered = [t for t in restore_tables if t in allowed_tables]
+            if filtered:
+                restore_tables = filtered
+
+        restore_tables = _restore_table_order(engine, restore_tables)
+
+        restored_counts: dict[str, int] = {}
+
+        with engine.begin() as conn:
+            try:
+                if insp.dialect.name == 'sqlite':
+                    conn.execute(text('PRAGMA foreign_keys=OFF'))
+            except Exception:
+                pass
+
+            for table_name in restore_tables:
+                ndjson_name = f"{table_name}.ndjson"
+                json_name = f"{table_name}.json"
+                if ndjson_name not in z.namelist() and json_name not in z.namelist():
+                    continue
+
+                meta = MetaData()
+                table = Table(table_name, meta, autoload_with=engine)
+                col_names = set(c.name for c in table.columns)
+                col_by_name = {c.name: c for c in table.columns}
+
+                # Clear
+                if insp.dialect.name == 'postgresql':
+                    conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
+                else:
+                    conn.execute(text(f'DELETE FROM "{table_name}"'))
+                    if insp.dialect.name == 'sqlite':
+                        try:
+                            conn.execute(text('DELETE FROM sqlite_sequence WHERE name=:n'), {'n': table_name})
+                        except Exception:
+                            pass
+
+                inserted = 0
+                batch: list[dict] = []
+                batch_size = 1000
+
+                def flush_batch():
+                    nonlocal inserted, batch
+                    if batch:
+                        # Coerce values to column types (esp. SQLite Date/DateTime).
+                        to_insert = []
+                        for row in batch:
+                            if not isinstance(row, dict):
+                                continue
+                            coerced = dict(row)
+                            for k, v in list(coerced.items()):
+                                col = col_by_name.get(k)
+                                if col is None:
+                                    continue
+                                coerced[k] = _restore_coerce_value_for_column(col, v)
+                            to_insert.append(coerced)
+                        if to_insert:
+                            conn.execute(table.insert(), to_insert)
+                        inserted += len(batch)
+                        batch = []
+
+                if ndjson_name in z.namelist():
+                    with z.open(ndjson_name) as fh:
+                        for raw_line in fh:
+                            line = raw_line.decode('utf-8').strip()
+                            if not line:
+                                continue
+                            row = json.loads(line)
+                            if not isinstance(row, dict):
+                                continue
+                            restored = {k: _restore_value(v) for k, v in row.items() if k in col_names}
+                            batch.append(restored)
+                            if len(batch) >= batch_size:
+                                flush_batch()
+                    flush_batch()
+                else:
+                    rows = json.loads(z.read(json_name).decode('utf-8'))
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            restored = {k: _restore_value(v) for k, v in row.items() if k in col_names}
+                            batch.append(restored)
+                            if len(batch) >= batch_size:
+                                flush_batch()
+                        flush_batch()
+
+                restored_counts[table_name] = inserted
+
+            try:
+                if insp.dialect.name == 'sqlite':
+                    conn.execute(text('PRAGMA foreign_keys=ON'))
+            except Exception:
+                pass
+
+    return {
+        'tables_restored': len(restored_counts),
+        'row_counts': restored_counts,
+    }
+
+
 def create_backup(backup_id, created_by_user_id=None):
     """Create a database backup in background"""
     with app.app_context():
-        backup = db.session.get(BackupRecord, backup_id)  # Updated to use session.get()
+        backup = db.session.get(BackupRecord, backup_id)
         if not backup:
             return
-        
+
         try:
-            # Create a temporary file
-            temp_dir = tempfile.mkdtemp()
-            backup_file = os.path.join(temp_dir, f'backup_{backup.backup_id}.zip')
-            
-            # Create a ZIP file containing all table data as NDJSON streamed per row
-            with zipfile.ZipFile(backup_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                # Backup each table
-                for table_name in BACKUP_CONFIG['tables_to_backup']:
-                    try:
-                        # Get table data using SQLAlchemy 2.0 syntax with streaming
-                        with db.engine.connect() as conn:
-                            result = conn.execution_options(stream_results=True).execute(text(f"SELECT * FROM {table_name}"))
-                            with zipf.open(f"{table_name}.ndjson", "w") as zf:
-                                for row in result:
-                                    zf.write((json.dumps(dict(row._mapping), default=str) + "\n").encode("utf-8"))
-                    except Exception as e:
-                        app.logger.error(f'Error backing up table {table_name}: {str(e)}')
-                        continue
-                
-                # Add metadata
-                metadata = {
-                    'backup_id': backup.backup_id,
-                    'timestamp': datetime.now(timezone.utc).isoformat(),  # Updated to timezone-aware
-                    'database_url': str(db.engine.url),
-                    'tables_backed_up': BACKUP_CONFIG['tables_to_backup'],
-                    'app_version': '1.0.0',
-                    'key_id': 'fernet-v1'
-                }
-                zipf.writestr('metadata.json', json.dumps(metadata, indent=2))
-            
-            # Calculate checksum
-            with open(backup_file, 'rb') as f:
-                file_hash = hashlib.sha256()
-                while True:
-                    chunk = f.read(8192)
-                    if not chunk:
-                        break
-                    file_hash.update(chunk)
-                checksum = file_hash.hexdigest()
-            
-            # Encrypt the backup
-            cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
-            with open(backup_file, 'rb') as f:
-                encrypted_data = cipher_suite.encrypt(f.read())
-            
-            encrypted_file = backup_file + '.enc'
-            with open(encrypted_file, 'wb') as f:
-                f.write(encrypted_data)
-            
-            # Get file size
-            file_size = os.path.getsize(encrypted_file)
-            
-            # Store backup (local or S3)
-            if s3_client:
-                # Upload to S3
-                s3_key = f'backups/{backup.backup_id}.zip.enc'
-                s3_client.upload_file(
-                    encrypted_file,
-                    BACKUP_CONFIG['s3_bucket'],
-                    s3_key,
-                    ExtraArgs={
-                        'ServerSideEncryption': 'AES256',
-                        'ACL': 'private',
-                        'Metadata': {
-                            'backup-id': backup.backup_id,
-                            'checksum': checksum,
-                            'created-by': str(created_by_user_id) if created_by_user_id is not None else 'system'
-                        }
+            from sqlalchemy import inspect as sa_inspect
+
+            insp = sa_inspect(db.engine)
+            existing_tables = set(insp.get_table_names())
+
+            configured = [t for t in BACKUP_CONFIG.get('tables_to_backup', []) if _safe_table_name(t)]
+            # Always back up all tables (excluding alembic_version) so new tables/columns are included.
+            selected = sorted(t for t in existing_tables if _safe_table_name(t) and t != 'alembic_version')
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                zip_path = os.path.join(temp_dir, f'backup_{backup.backup_id}.zip')
+                row_counts: dict[str, int] = {}
+                failed_tables: list[str] = []
+
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for table_name in selected:
+                        try:
+                            rc = 0
+                            with db.engine.connect() as conn:
+                                result = conn.execution_options(stream_results=True).execute(text(f'SELECT * FROM "{table_name}"'))
+                                with zipf.open(f"{table_name}.ndjson", 'w') as zf:
+                                    for row in result:
+                                        row_dict = {k: _jsonable_value(v) for k, v in dict(row._mapping).items()}
+                                        zf.write((json.dumps(row_dict, default=str) + "\n").encode('utf-8'))
+                                        rc += 1
+                            row_counts[table_name] = rc
+                        except Exception as e:
+                            app.logger.error(f'Error backing up table {table_name}: {str(e)}')
+                            failed_tables.append(table_name)
+                            continue
+
+                    stats = {
+                        'tables_total': int(len(selected)),
+                        'tables_backed_up': int(len(row_counts)),
+                        'tables_failed': int(len(failed_tables)),
+                        'failed_tables': failed_tables[:200],
                     }
-                )
-                # Verify checksum metadata after upload
-                head = s3_client.head_object(Bucket=BACKUP_CONFIG['s3_bucket'], Key=s3_key)
-                if head.get('Metadata', {}).get('checksum') != checksum:
-                    backup.status = 'failed'
-                    backup.notes = 'Checksum mismatch after upload'
-                    db.session.commit()
-                    raise RuntimeError("Checksum mismatch after upload")
-                storage_location = f's3://{BACKUP_CONFIG["s3_bucket"]}/{s3_key}'
-            else:
-                # Store locally
-                local_backup_dir = BACKUP_CONFIG['local_storage_path']
-                os.makedirs(local_backup_dir, exist_ok=True)
-                local_path = os.path.join(local_backup_dir, f'{backup.backup_id}.zip.enc')
-                os.rename(encrypted_file, local_path)
-                storage_location = local_path
-            
-            # Update backup record
-            backup.status = 'completed'
-            backup.size_bytes = file_size
-            backup.storage_location = storage_location
-            backup.checksum = checksum
-            db.session.commit()
-            
-            # Clean up
-            try:
-                os.remove(backup_file)
-                if os.path.exists(encrypted_file):
-                    os.remove(encrypted_file)
-                os.rmdir(temp_dir)
-            except:
-                pass
-            
+
+                    metadata = {
+                        'backup_id': backup.backup_id,
+                        'timestamp': get_eat_now().isoformat(),
+                        'database_url': str(db.engine.url),
+                        'tables_requested': configured,
+                        'tables_backed_up': sorted(row_counts.keys()),
+                        'tables_total': stats['tables_total'],
+                        'tables_failed': stats['tables_failed'],
+                        'failed_tables': stats['failed_tables'],
+                        'row_counts': row_counts,
+                        'dialect': insp.dialect.name,
+                        'format': 'ndjson-v2',
+                        'key_id': 'fernet-v1',
+                    }
+                    zipf.writestr('metadata.json', json.dumps(metadata, indent=2))
+
+                checksum = _compute_sha256_file(zip_path)
+
+                cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
+                with open(zip_path, 'rb') as f:
+                    encrypted_bytes = cipher_suite.encrypt(f.read())
+
+                enc_path = os.path.join(temp_dir, f'backup_{backup.backup_id}.zip.enc')
+                with open(enc_path, 'wb') as f:
+                    f.write(encrypted_bytes)
+
+                file_size = os.path.getsize(enc_path)
+
+                uploaded_to_s3 = False
+                if s3_client:
+                    try:
+                        bucket = (BACKUP_CONFIG.get('s3_bucket') or '').strip()
+                        if not _is_valid_s3_bucket_name(bucket):
+                            raise ValueError('Invalid AWS_BACKUP_BUCKET; refusing S3 upload')
+
+                        s3_key = f'backups/{backup.backup_id}.zip.enc'
+                        s3_client.upload_file(
+                            enc_path,
+                            bucket,
+                            s3_key,
+                            ExtraArgs={
+                                'ServerSideEncryption': 'AES256',
+                                'ACL': 'private',
+                                'Metadata': {
+                                    'backup-id': backup.backup_id,
+                                    'checksum': checksum,
+                                    'created-by': str(created_by_user_id) if created_by_user_id is not None else 'system'
+                                }
+                            }
+                        )
+                        storage_location = f's3://{bucket}/{s3_key}'
+                        uploaded_to_s3 = True
+                    except Exception as s3_exc:
+                        app.logger.error(f'S3 upload failed; falling back to local storage: {s3_exc}', exc_info=True)
+
+                if not uploaded_to_s3:
+                    local_backup_dir = BACKUP_CONFIG['local_storage_path']
+                    os.makedirs(local_backup_dir, exist_ok=True)
+                    dest = os.path.join(local_backup_dir, f'{backup.backup_id}.zip.enc')
+                    os.replace(enc_path, dest)
+                    storage_location = dest
+
+                backup.status = 'completed'
+                backup.size_bytes = file_size
+                backup.storage_location = storage_location
+                backup.checksum = checksum
+                backup.notes = _backup_notes_with_stats(backup.notes, {
+                    **stats,
+                    'size_bytes': int(file_size),
+                })
+                db.session.commit()
+
+                app.logger.info(f'Backup completed: {backup.backup_id} ({file_size} bytes)')
+
         except Exception as e:
             app.logger.error(f'Backup failed: {str(e)}', exc_info=True)
             backup.status = 'failed'
             backup.notes = f'Error: {str(e)}'
             db.session.commit()
+
 
 def restore_backup(backup_id):
     """Restore database from backup"""
@@ -5016,411 +11179,166 @@ def restore_backup(backup_id):
         backup = db.session.get(BackupRecord, backup_id)
         if not backup:
             return
-        
+
         try:
-            # Get the backup file
-            backup_file = get_backup_file(backup)
-            if not backup_file:
-                backup.status = 'failed'
-                backup.notes = 'Backup file not found'
+            try:
+                backup.notes = _backup_notes_with_restore_status(backup.notes, {
+                    'status': 'in_progress',
+                    'started_at': get_eat_now().isoformat(),
+                    'message': 'Restore started. Please wait...',
+                })
+                db.session.commit()
+            except Exception:
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+
+            fh = get_backup_file(backup)
+            if not fh:
+                backup.notes = 'Restore error: backup file not found'
                 db.session.commit()
                 return
-            
-            # Create a temporary directory
-            temp_dir = tempfile.mkdtemp()
-            encrypted_file = os.path.join(temp_dir, 'backup.zip.enc')
-            
-            # Write the backup data to a temporary file
-            with open(encrypted_file, 'wb') as f:
-                f.write(backup_file.read())
-            
-            # Decrypt the backup
-            cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
-            with open(encrypted_file, 'rb') as f:
-                decrypted_data = cipher_suite.decrypt(f.read())
-            
-            decrypted_file = os.path.join(temp_dir, 'backup.zip')
-            with open(decrypted_file, 'wb') as f:
-                f.write(decrypted_data)
-            
-            # Extract and process the ZIP file
-            allowed_tables = set(BACKUP_CONFIG['tables_to_backup'])
-            with zipfile.ZipFile(decrypted_file, 'r') as z:
-                # Read metadata
-                metadata = json.loads(z.read('metadata.json').decode('utf-8'))
-
-            for table_name in metadata['tables_backed_up']:
-                if table_name not in allowed_tables:
-                    continue
-                
-                ndjson_name = f"{table_name}.ndjson"
-                if ndjson_name not in z.namelist():
-                    continue
-                
-                meta = MetaData()
-                table = Table(table_name, meta, autoload_with=db.engine)
-                
-                batch = []
-                batch_size = 1000
-                with db.engine.begin() as conn:
-                    # DATABASE-AGNOSTIC TABLE CLEARING
-                    if database_is_postgresql():
-                        conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
-                    else:
-                        conn.execute(text(f'DELETE FROM "{table_name}"'))
-                    
-                    with z.open(ndjson_name) as f:
-                        for raw_line in f:
-                            line = raw_line.decode('utf-8').strip()
-                            if not line:
-                                continue
-                            row = json.loads(line)
-                            # Handle special cases (like dates)
-                            for key, value in list(row.items()):
-                                if value and isinstance(value, str) and value.endswith('+00:00'):
-                                    try:
-                                        row[key] = datetime.fromisoformat(value)
-                                    except:
-                                        pass
-                            batch.append(row)
-                            if len(batch) >= batch_size:
-                                conn.execute(table.insert(), batch)
-                                batch.clear()
-                        if batch:
-                            conn.execute(table.insert(), batch)
-                         
-            # Update backup record
-            backup.notes = 'Restore completed successfully'
-            db.session.commit()
-            
-            # Clean up
             try:
-                os.remove(encrypted_file)
-                os.remove(decrypted_file)
-                for f in os.listdir(temp_dir):
-                    os.remove(os.path.join(temp_dir, f))
-                os.rmdir(temp_dir)
-            except:
+                encrypted_bytes = fh.read()
+            finally:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+
+            cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
+            zip_bytes = cipher_suite.decrypt(encrypted_bytes)
+
+            if backup.checksum and _compute_sha256_bytes(zip_bytes) != backup.checksum:
+                backup.notes = 'Restore error: checksum mismatch (backup may be corrupted)'
+                db.session.commit()
+                return
+
+            # Ensure schema exists (safe no-op if already created)
+            try:
+                initialize_database()
+            except Exception:
+                app.logger.exception('Schema initialization before restore failed')
+
+            # Restore all backed-up tables that exist in the current schema.
+            result = _restore_zip_to_engine(db.engine, zip_bytes, allowed_tables=None)
+            backup.notes = _backup_notes_with_restore_status(backup.notes, {
+                'status': 'completed',
+                'finished_at': get_eat_now().isoformat(),
+                'tables_restored': int(result.get('tables_restored') or 0),
+                'message': f"Restore completed successfully (tables: {result.get('tables_restored')})",
+            })
+            db.session.commit()
+
+            try:
+                rc = result.get('row_counts') or {}
+                total_rows = sum(int(v or 0) for v in rc.values()) if isinstance(rc, dict) else None
+                app.logger.info(
+                    "Restore completed: backup_id=%s tables=%s rows=%s",
+                    str(getattr(backup, 'backup_id', backup_id)),
+                    str(result.get('tables_restored')),
+                    str(total_rows) if total_rows is not None else 'unknown',
+                )
+            except Exception:
                 pass
-            
+
         except Exception as e:
             app.logger.error(f'Restore failed: {str(e)}', exc_info=True)
-            backup.notes = f'Restore error: {str(e)}'
+            try:
+                backup.notes = _backup_notes_with_restore_status(backup.notes, {
+                    'status': 'failed',
+                    'finished_at': get_eat_now().isoformat(),
+                    'message': f'Restore failed: {str(e)}',
+                })
+            except Exception:
+                backup.notes = f'Restore error: {str(e)}'
             db.session.commit()
 
+
 def test_disaster_recovery(plan_id, backup_id):
-    """Test disaster recovery plan by restoring to a test database"""
+    """Test disaster recovery plan by verifying the latest backup can be decrypted and parsed."""
     with app.app_context():
         plan = DisasterRecoveryPlan.query.get(plan_id)
         backup = BackupRecord.query.get(backup_id)
-        
         if not plan or not backup:
             return
-        
+
         try:
-            # Create a test database URL by appending _test to the main DB name
-            original_db_url = db.engine.url
-            test_db_url = f"{original_db_url}_recovery_test"
-            
-            # Create a new engine for the test database
-            test_engine = create_engine(test_db_url)
-            
-            # Create the test database if it doesn't exist
-            with test_engine.connect() as conn:
-                conn.execute("COMMIT")  # End any open transaction
-                try:
-                    conn.execute(f"CREATE DATABASE {original_db_url.database}_recovery_test")
-                except Exception as e:
-                    app.logger.info(f"Test database already exists or couldn't be created: {str(e)}")
-            
-            # Now connect to the test database
-            test_engine.dispose()
-            test_engine = create_engine(test_db_url)
-            
-            # Get the backup file
-            backup_file = get_backup_file(backup)
-            if not backup_file:
-                plan.test_results = "Backup file not found"
-                plan.last_tested = datetime.now(timezone.utc)
+            fh = get_backup_file(backup)
+            if not fh:
+                plan.last_tested = get_eat_now()
+                plan.test_results = 'Backup file not found'
                 db.session.commit()
                 return
-            
-            # Create a temporary directory
-            temp_dir = tempfile.mkdtemp()
-            encrypted_file = os.path.join(temp_dir, 'backup.zip.enc')
-            
-            # Write the backup data to a temporary file
-            with open(encrypted_file, 'wb') as f:
-                f.write(backup_file.read())
-            
-            # Decrypt the backup
-            cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
-            with open(encrypted_file, 'rb') as f:
-                decrypted_data = cipher_suite.decrypt(f.read())
-            
-            decrypted_file = os.path.join(temp_dir, 'backup.zip')
-            with open(decrypted_file, 'wb') as f:
-                f.write(decrypted_data)
-            
-            # Read and restore from the ZIP file into the test database
-            test_metadata = {
-                'tables_restored': [],
-                'row_counts': {},
-                'errors': []
-            }
-            allowed_tables = set(BACKUP_CONFIG['tables_to_backup'])
-            
-            with zipfile.ZipFile(decrypted_file, 'r') as z:
-                # Read metadata
-                metadata = json.loads(z.read('metadata.json').decode('utf-8'))
-                
-                for table_name in metadata['tables_backed_up']:
-                    if table_name not in allowed_tables:
-                        app.logger.warning(f"Skipping non-whitelisted table in test restore: {table_name}")
-                        continue
-                    
-                    ndjson_name = f"{table_name}.ndjson"
-                    if ndjson_name not in z.namelist():
-                        continue
-                    
-                    meta = MetaData()
-                    table = Table(table_name, meta, autoload_with=test_engine)
-                    
-                    row_count = 0
-                    try:
-                        with test_engine.begin() as conn:
-                            conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
-                            batch = []
-                            batch_size = 1000
-                            with z.open(ndjson_name) as f:
-                                for raw_line in f:
-                                    line = raw_line.decode('utf-8').strip()
-                                    if not line:
-                                        continue
-                                    row = json.loads(line)
-                                    # Handle special cases (like dates)
-                                    for key, value in list(row.items()):
-                                        if value and isinstance(value, str) and value.endswith('+00:00'):
-                                            try:
-                                                row[key] = datetime.fromisoformat(value)
-                                            except:
-                                                pass
-                                    batch.append(row)
-                                    if len(batch) >= batch_size:
-                                        conn.execute(table.insert(), batch)
-                                        row_count += len(batch)
-                                        batch.clear()
-                                if batch:
-                                    conn.execute(table.insert(), batch)
-                                    row_count += len(batch)
-                        
-                        test_metadata['tables_restored'].append(table_name)
-                        test_metadata['row_counts'][table_name] = row_count
-                    except Exception as e:
-                        error_msg = f'Error restoring table {table_name}: {str(e)}'
-                        app.logger.error(error_msg)
-                        test_metadata['errors'].append(error_msg)
-                        continue
-            
-            # Verification Phase
-            verification_results = verify_test_restoration(test_engine, metadata, test_metadata)
-            
-            # Combine results
-            test_results = {
-                'backup_id': backup.backup_id,
-                'backup_timestamp': backup.timestamp.isoformat(),
-                'tables_restored': len(test_metadata['tables_restored']),
-                'total_rows_restored': sum(test_metadata['row_counts'].values()),
-                'verification_passed': verification_results['success'],
-                'verification_details': verification_results,
-                'errors': test_metadata['errors']
-            }
-            
-            # Update plan with test results
-            plan.last_tested = datetime.now(timezone.utc)
-            plan.test_results = json.dumps(test_results, indent=2)
-            db.session.commit()
-            
-            # Clean up
             try:
-                os.remove(encrypted_file)
-                os.remove(decrypted_file)
-                for f in os.listdir(temp_dir):
-                    os.remove(os.path.join(temp_dir, f))
-                os.rmdir(temp_dir)
-            except:
-                pass
-            
+                encrypted_bytes = fh.read()
+            finally:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+
+            cipher_suite = Fernet(BACKUP_CONFIG['encryption_key'].encode())
+            zip_bytes = cipher_suite.decrypt(encrypted_bytes)
+
+            checksum_ok = True
+            if backup.checksum:
+                checksum_ok = (_compute_sha256_bytes(zip_bytes) == backup.checksum)
+
+            with zipfile.ZipFile(io.BytesIO(zip_bytes), 'r') as z:
+                names = z.namelist()
+                has_metadata = 'metadata.json' in names
+                meta = {}
+                if has_metadata:
+                    try:
+                        meta = json.loads(z.read('metadata.json').decode('utf-8'))
+                    except Exception:
+                        meta = {}
+                tables = meta.get('tables_backed_up') or sorted({
+                    n[:-len('.ndjson')] for n in names if n.endswith('.ndjson')
+                })
+
+                # Attempt to parse first line of first few tables
+                parse_errors = []
+                for t in tables[:5]:
+                    fn = f"{t}.ndjson"
+                    if fn not in names:
+                        continue
+                    try:
+                        with z.open(fn) as fh2:
+                            first = fh2.readline().decode('utf-8').strip()
+                            if first:
+                                json.loads(first)
+                    except Exception as pe:
+                        parse_errors.append(f"{t}: {pe}")
+
+            plan.last_tested = get_eat_now()
+            plan.test_results = json.dumps({
+                'backup_id': backup.backup_id,
+                'timestamp': backup.timestamp.isoformat() if backup.timestamp else None,
+                'checksum_ok': checksum_ok,
+                'has_metadata': has_metadata,
+                'table_count': len(tables),
+                'parse_errors': parse_errors,
+            }, indent=2)
+            db.session.commit()
+
         except Exception as e:
             app.logger.error(f'Disaster recovery test failed: {str(e)}', exc_info=True)
-            plan.last_tested = datetime.now(timezone.utc)
+            plan.last_tested = get_eat_now()
             plan.test_results = f"Test failed: {str(e)}"
             db.session.commit()
 
-def verify_test_restoration(test_engine, original_metadata, test_metadata):
-    """Verify that the test restoration was successful"""
-    verification = {
-        'success': True,
-        'checks': [],
-        'table_counts': {},
-        'schema_checks': {}
-    }
-    
-    try:
-        # 1. Verify all tables were restored
-        with test_engine.connect() as conn:
-            # Get list of tables in test database
-            result = conn.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public'
-            """)
-            test_tables = {row[0] for row in result}
-            
-            # Check against original metadata
-            for table in original_metadata['tables_backed_up']:
-                check = {
-                    'table': table,
-                    'exists': table in test_tables,
-                    'row_count_match': False
-                }
-                
-                if check['exists']:
-                    # Get row count in test database
-                    count = conn.execute(f'SELECT COUNT(*) FROM {table}').scalar()
-                    check['test_row_count'] = count
-                    check['backup_row_count'] = test_metadata['row_counts'].get(table, 0)
-                    check['row_count_match'] = count == test_metadata['row_counts'].get(table, 0)
-                
-                verification['table_counts'][table] = check
-                verification['checks'].append(f"Table {table} {'exists' if check['exists'] else 'missing'}")
-                
-                if not check['exists'] or not check['row_count_match']:
-                    verification['success'] = False
-        
-        # 2. Verify schema integrity for key tables
-        key_tables = ['users', 'transactions']  # Add your critical tables here
-        with test_engine.connect() as conn:
-            for table in key_tables:
-                if table not in test_tables:
-                    continue
-                
-                # Get column information
-                result = conn.execute(f"""
-                    SELECT column_name, data_type 
-                    FROM information_schema.columns 
-                    WHERE table_name = '{table}'
-                """)
-                columns = {row[0]: row[1] for row in result}
-                
-                # Check for required columns
-                required_columns = {
-                    'users': ['id', 'username', 'email', 'password_hash'],
-                    'transactions': ['id', 'transaction_number', 'amount']
-                }.get(table, [])
-                
-                schema_check = {
-                    'columns_present': all(col in columns for col in required_columns),
-                    'missing_columns': [col for col in required_columns if col not in columns],
-                    'column_types': columns
-                }
-                
-                verification['schema_checks'][table] = schema_check
-                verification['checks'].append(f"Schema check for {table}: {'passed' if schema_check['columns_present'] else 'failed'}")
-                
-                if not schema_check['columns_present']:
-                    verification['success'] = False
-        
-        # 3. Verify data integrity samples
-        sample_verification = verify_sample_data(test_engine)
-        verification['sample_checks'] = sample_verification
-        verification['checks'].extend(sample_verification['checks'])
-        
-        if not sample_verification['success']:
-            verification['success'] = False
-        
-        return verification
-    
-    except Exception as e:
-        app.logger.error(f'Verification failed: {str(e)}')
-        verification['success'] = False
-        verification['error'] = str(e)
-        return verification
-
-def verify_sample_data(test_engine):
-    """Perform sample data verification on key tables"""
-    results = {
-        'success': True,
-        'checks': [],
-        'details': {}
-    }
-    
-    try:
-        with test_engine.connect() as conn:
-            # 1. Check admin user exists
-            admin_count = conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").scalar()
-            admin_check = admin_count > 0
-            results['details']['admin_user_exists'] = admin_check
-            results['checks'].append(f"Admin user exists: {'yes' if admin_check else 'no'}")
-            if not admin_check:
-                results['success'] = False
-            
-            # 2. Check transaction totals match
-            backup_trans_total = conn.execute("SELECT SUM(amount) FROM transactions").scalar() or 0
-            results['details']['transaction_total'] = backup_trans_total
-            results['checks'].append(f"Transaction total: {backup_trans_total}")
-            
-            # 3. Verify at least one record in each key table
-            key_tables = ['users', 'transactions', 'customers', 'employees']
-            for table in key_tables:
-                try:
-                    count = conn.execute(f"SELECT COUNT(*) FROM {table}").scalar()
-                    check = count > 0
-                    results['details'][f'{table}_has_data'] = check
-                    results['checks'].append(f"Table {table} has data: {'yes' if check else 'no'}")
-                    if not check:
-                        results['success'] = False
-                except:
-                    results['details'][f'{table}_has_data'] = False
-                    results['checks'].append(f"Table {table} check failed")
-                    results['success'] = False
-            
-            # 4. Verify referential integrity
-            ref_checks = [
-                ("SELECT COUNT(*) FROM transactions t LEFT JOIN users u ON t.user_id = u.id WHERE u.id IS NULL", 'transactions.user_id -> users.id'),
-                ("SELECT COUNT(*) FROM payroll p LEFT JOIN employees e ON p.employee_id = e.id WHERE e.id IS NULL", 'payroll.employee_id -> employees.id')
-            ]
-            
-            for query, description in ref_checks:
-                try:
-                    bad_records = conn.execute(query).scalar()
-                    check = bad_records == 0
-                    results['details'][f'ref_check_{description}'] = check
-                    results['checks'].append(f"Referential integrity {description}: {'valid' if check else f'{bad_records} bad records'}")
-                    if not check:
-                        results['success'] = False
-                except:
-                    results['details'][f'ref_check_{description}'] = False
-                    results['checks'].append(f"Referential check failed for {description}")
-                    results['success'] = False
-        
-        return results
-    
-    except Exception as e:
-        app.logger.error(f'Sample data verification failed: {str(e)}')
-        results['success'] = False
-        results['error'] = str(e)
-        return results
 
 def verify_backup_exists(backup):
     """Verify that the backup file exists in storage"""
     if not backup.storage_location:
         return False
-    
+
     if backup.storage_location.startswith('s3://'):
         if not s3_client:
             return False
-        
         bucket, key = backup.storage_location[5:].split('/', 1)
         try:
             s3_client.head_object(Bucket=bucket, Key=key)
@@ -5428,29 +11346,26 @@ def verify_backup_exists(backup):
         except ClientError:
             return False
     else:
-        return os.path.exists(backup.storage_location)
+        try:
+            return os.path.exists(backup.storage_location) and os.path.getsize(backup.storage_location) > 0
+        except Exception:
+            return False
+
 
 def get_backup_file(backup):
     """Get the backup file from storage"""
     if not backup.storage_location:
         return None
-    
-    
+
     if backup.storage_location.startswith('s3://'):
         if not s3_client:
             return None
-        
         bucket, key = backup.storage_location[5:].split('/', 1)
         try:
-            # Create a temporary file
             temp_file = tempfile.NamedTemporaryFile(delete=False)
-            
-            # Download from S3
             s3_client.download_fileobj(bucket, key, temp_file)
             temp_file.close()
-            
-            # Return file object
-            return open(temp_file.name, 'rb')
+            return _AutoDeleteFile(temp_file.name)
         except ClientError as e:
             app.logger.error(f'Error downloading backup from S3: {str(e)}')
             return None
@@ -5461,15 +11376,15 @@ def get_backup_file(backup):
             app.logger.error(f'Error opening local backup file: {str(e)}')
             return None
 
+
 def delete_backup_file(backup):
     """Delete the backup file from storage"""
     if not backup.storage_location:
         return
-    
+
     if backup.storage_location.startswith('s3://'):
         if not s3_client:
             return
-        
         bucket, key = backup.storage_location[5:].split('/', 1)
         try:
             s3_client.delete_object(Bucket=bucket, Key=key)
@@ -5486,6 +11401,9 @@ def scheduled_backup():
     """Create a scheduled backup"""
     with app.app_context():
         try:
+            cfg = _get_or_create_schedule_config()
+            if cfg and not cfg.daily_enabled:
+                return
             # Create backup record
             backup = BackupRecord(
                 backup_type='scheduled',
@@ -5500,10 +11418,708 @@ def scheduled_backup():
         except Exception as e:
             app.logger.error(f'Error in scheduled backup: {str(e)}')
 
+
+def disaster_recovery_backup_job():
+    """Create a disaster recovery backup (intended to run every 30 minutes)."""
+    with app.app_context():
+        try:
+            cfg = _get_or_create_schedule_config()
+            if cfg and not cfg.disaster_enabled:
+                return
+            backup = BackupRecord(
+                backup_type='disaster_recovery',
+                notes='Automated disaster recovery backup (30-minute interval)',
+                status='in_progress'
+            )
+            db.session.add(backup)
+            db.session.commit()
+            create_backup(backup.id)
+        except Exception as e:
+            app.logger.error(f'Error in disaster recovery backup job: {str(e)}', exc_info=True)
+
+
+def _scheduler_apply_backup_jobs(scheduler: BackgroundScheduler):
+    """(Re)configure backup jobs based on DB settings; falls back to defaults if unavailable."""
+    hour, minute = 2, 0
+    disaster_minutes = 30
+    daily_enabled = True
+    disaster_enabled = True
+    try:
+        with app.app_context():
+            cfg = _get_or_create_schedule_config()
+            if cfg:
+                daily_enabled = bool(cfg.daily_enabled)
+                disaster_enabled = bool(cfg.disaster_enabled)
+                disaster_minutes = int(cfg.disaster_interval_minutes or 30)
+                t = (cfg.daily_time or '02:00').strip()
+                m = re.match(r'^(\d{1,2}):(\d{2})$', t)
+                if m:
+                    hour = max(0, min(23, int(m.group(1))))
+                    minute = max(0, min(59, int(m.group(2))))
+    except Exception:
+        # DB might not be migrated yet; keep defaults
+        pass
+
+    # Always add jobs with IDs; jobs can early-return if disabled.
+    scheduler.add_job(
+        scheduled_backup,
+        'cron',
+        hour=hour,
+        minute=minute,
+        id='daily_backup',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        disaster_recovery_backup_job,
+        'interval',
+        minutes=disaster_minutes,
+        id='disaster_backup',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+
+def _money(v) -> str:
+    try:
+        return f"Ksh {float(v or 0):,.2f}"
+    except Exception:
+        return "Ksh 0.00"
+
+
+def _period_window_dates(period: str, *, now_eat: datetime | None = None) -> tuple[date, date, str]:
+    """Return (start_date, end_date, period_id) for a *completed* period.
+
+    - daily: yesterday
+    - weekly: previous ISO week (Mon-Sun)
+    - monthly: previous calendar month
+    - yearly: previous calendar year
+    """
+    now_eat = now_eat or get_eat_now()
+    today = now_eat.date()
+    p = (period or 'daily').lower()
+
+    if p == 'daily':
+        d = today - timedelta(days=1)
+        return d, d, d.isoformat()
+
+    if p == 'weekly':
+        # Previous ISO week (Mon-Sun)
+        this_monday = today - timedelta(days=today.weekday())
+        start = this_monday - timedelta(days=7)
+        end = this_monday - timedelta(days=1)
+        iso_year, iso_week, _ = start.isocalendar()
+        return start, end, f"{iso_year}-W{iso_week:02d}"
+
+    if p == 'monthly':
+        first_this_month = today.replace(day=1)
+        end = first_this_month - timedelta(days=1)
+        start = end.replace(day=1)
+        return start, end, f"{start.year}-{start.month:02d}"
+
+    if p == 'yearly':
+        y = today.year - 1
+        start = date(y, 1, 1)
+        end = date(y, 12, 31)
+        return start, end, str(y)
+
+    # Fallback: treat as daily
+    d = today - timedelta(days=1)
+    return d, d, d.isoformat()
+
+
+def _dt_range_for_dates(start_d: date, end_d: date) -> tuple[datetime, datetime]:
+    start_dt = datetime.combine(start_d, datetime.min.time())
+    # end exclusive
+    end_dt = datetime.combine(end_d + timedelta(days=1), datetime.min.time())
+    return start_dt, end_dt
+
+
+def _render_table(rows: list[dict], columns: list[tuple[str, str]]) -> str:
+    if not rows:
+        return "<p><em>No data</em></p>"
+    th = "".join([f"<th style='text-align:left;border-bottom:1px solid #ddd;padding:6px 8px;'>{escape(label)}</th>" for key, label in columns])
+    body_parts = ["<table style='border-collapse:collapse;width:100%;'>", f"<thead><tr>{th}</tr></thead>", "<tbody>"]
+    for r in rows:
+        tds = []
+        for key, _label in columns:
+            val = r.get(key)
+            tds.append(f"<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;'>{escape(str(val if val is not None else ''))}</td>")
+        body_parts.append("<tr>" + "".join(tds) + "</tr>")
+    body_parts.append("</tbody></table>")
+    return "".join(body_parts)
+
+
+def _report_drug_sales_summary(start_dt: datetime, end_dt: datetime) -> dict:
+    total_revenue = db.session.query(func.coalesce(func.sum(SaleItem.total_price), 0)).join(Sale).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.drug_id.isnot(None)
+    ).scalar() or 0
+
+    total_units = db.session.query(func.coalesce(func.sum(SaleItem.quantity), 0)).join(Sale).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.drug_id.isnot(None)
+    ).scalar() or 0
+
+    cogs = db.session.query(func.coalesce(func.sum(SaleItem.quantity * Drug.buying_price), 0)).select_from(SaleItem).join(
+        Drug, SaleItem.drug_id == Drug.id
+    ).join(
+        Sale, SaleItem.sale_id == Sale.id
+    ).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.drug_id.isnot(None)
+    ).scalar() or 0
+
+    top = db.session.query(
+        Drug.name.label('name'),
+        func.coalesce(func.sum(SaleItem.quantity), 0).label('units'),
+        func.coalesce(func.sum(SaleItem.total_price), 0).label('amount'),
+        func.coalesce(func.sum((SaleItem.unit_price - Drug.buying_price) * SaleItem.quantity), 0).label('profit')
+    ).select_from(SaleItem).join(
+        Drug, SaleItem.drug_id == Drug.id
+    ).join(
+        Sale, SaleItem.sale_id == Sale.id
+    ).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.drug_id.isnot(None)
+    ).group_by(Drug.name).order_by(func.sum(SaleItem.total_price).desc()).limit(10).all()
+
+    rows = [
+        {
+            'name': r.name,
+            'units': int(r.units or 0),
+            'revenue': _money(r.amount),
+            'profit': _money(r.profit),
+        }
+        for r in top
+    ]
+
+    return {
+        'total_revenue': float(total_revenue or 0),
+        'total_units': int(total_units or 0),
+        'cogs': float(cogs or 0),
+        'profit': float(total_revenue or 0) - float(cogs or 0),
+        'top_rows': rows,
+    }
+
+
+def _report_controlled_drug_sales_summary(start_dt: datetime, end_dt: datetime) -> dict:
+    total_revenue = db.session.query(func.coalesce(func.sum(ControlledSaleItem.total_price), 0)).select_from(ControlledSaleItem).join(
+        ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+    ).filter(
+        ControlledSale.created_at >= start_dt,
+        ControlledSale.created_at < end_dt,
+        ControlledSale.status == 'completed'
+    ).scalar() or 0
+
+    total_units = db.session.query(func.coalesce(func.sum(ControlledSaleItem.quantity), 0)).select_from(ControlledSaleItem).join(
+        ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+    ).filter(
+        ControlledSale.created_at >= start_dt,
+        ControlledSale.created_at < end_dt,
+        ControlledSale.status == 'completed'
+    ).scalar() or 0
+
+    cogs = db.session.query(
+        func.coalesce(func.sum(ControlledSaleItem.quantity * func.coalesce(ControlledDrug.buying_price, 0)), 0)
+    ).select_from(ControlledSaleItem).join(
+        ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+    ).outerjoin(
+        ControlledDrug, ControlledDrug.id == ControlledSaleItem.controlled_drug_id
+    ).filter(
+        ControlledSale.created_at >= start_dt,
+        ControlledSale.created_at < end_dt,
+        ControlledSale.status == 'completed'
+    ).scalar() or 0
+
+    top = db.session.query(
+        ControlledSaleItem.controlled_drug_name.label('name'),
+        func.coalesce(func.sum(ControlledSaleItem.quantity), 0).label('units'),
+        func.coalesce(func.sum(ControlledSaleItem.total_price), 0).label('amount'),
+        func.coalesce(func.sum((ControlledSaleItem.unit_price - func.coalesce(ControlledDrug.buying_price, 0)) * ControlledSaleItem.quantity), 0).label('profit')
+    ).select_from(ControlledSaleItem).join(
+        ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id
+    ).outerjoin(
+        ControlledDrug, ControlledDrug.id == ControlledSaleItem.controlled_drug_id
+    ).filter(
+        ControlledSale.created_at >= start_dt,
+        ControlledSale.created_at < end_dt,
+        ControlledSale.status == 'completed'
+    ).group_by(ControlledSaleItem.controlled_drug_name).order_by(func.sum(ControlledSaleItem.total_price).desc()).limit(10).all()
+
+    rows = [
+        {
+            'name': r.name,
+            'units': int(r.units or 0),
+            'revenue': _money(r.amount),
+            'profit': _money(r.profit),
+        }
+        for r in top
+    ]
+
+    return {
+        'total_revenue': float(total_revenue or 0),
+        'total_units': int(total_units or 0),
+        'cogs': float(cogs or 0),
+        'profit': float(total_revenue or 0) - float(cogs or 0),
+        'top_rows': rows,
+    }
+
+
+def _report_lab_summary(start_dt: datetime, end_dt: datetime) -> dict:
+    inpatient_filter = db.or_(Patient.ip_number.isnot(None), Patient.date_of_admission.isnot(None))
+
+    total_revenue = db.session.query(func.coalesce(func.sum(SaleItem.total_price), 0)).select_from(SaleItem).join(
+        Sale, SaleItem.sale_id == Sale.id
+    ).join(
+        Patient, Sale.patient_id == Patient.id
+    ).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.lab_test_id.isnot(None),
+        inpatient_filter
+    ).scalar() or 0
+
+    total_count = db.session.query(func.coalesce(func.count(SaleItem.id), 0)).select_from(SaleItem).join(
+        Sale, SaleItem.sale_id == Sale.id
+    ).join(
+        Patient, Sale.patient_id == Patient.id
+    ).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.lab_test_id.isnot(None),
+        inpatient_filter
+    ).scalar() or 0
+
+    top_tests = db.session.query(
+        LabTest.name.label('name'),
+        func.coalesce(func.count(SaleItem.id), 0).label('count'),
+        func.coalesce(func.sum(SaleItem.total_price), 0).label('amount')
+    ).select_from(SaleItem).join(
+        LabTest, SaleItem.lab_test_id == LabTest.id
+    ).join(
+        Sale, SaleItem.sale_id == Sale.id
+    ).join(
+        Patient, Sale.patient_id == Patient.id
+    ).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.lab_test_id.isnot(None),
+        inpatient_filter
+    ).group_by(LabTest.name).order_by(func.sum(SaleItem.total_price).desc()).limit(10).all()
+
+    rows = [
+        {
+            'name': r.name,
+            'count': int(r.count or 0),
+            'revenue': _money(r.amount),
+        }
+        for r in top_tests
+    ]
+
+    return {
+        'total_revenue': float(total_revenue or 0),
+        'total_count': int(total_count or 0),
+        'top_rows': rows,
+    }
+
+
+def _report_general_summary(start_dt: datetime, end_dt: datetime) -> dict:
+    drug_revenue = db.session.query(func.coalesce(func.sum(SaleItem.total_price), 0)).select_from(SaleItem).join(
+        Sale, SaleItem.sale_id == Sale.id
+    ).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.drug_id.isnot(None)
+    ).scalar() or 0
+
+    lab_revenue = db.session.query(func.coalesce(func.sum(SaleItem.total_price), 0)).select_from(SaleItem).join(
+        Sale, SaleItem.sale_id == Sale.id
+    ).filter(
+        Sale.created_at >= start_dt,
+        Sale.created_at < end_dt,
+        Sale.status == 'completed',
+        SaleItem.lab_test_id.isnot(None)
+    ).scalar() or 0
+
+    try:
+        expenses_total = db.session.query(func.coalesce(func.sum(Expense.amount), 0)).filter(
+            Expense.created_at >= start_dt,
+            Expense.created_at < end_dt
+        ).scalar() or 0
+    except Exception:
+        expenses_total = 0
+
+    total_revenue = float(drug_revenue or 0) + float(lab_revenue or 0)
+    net_income = total_revenue - float(expenses_total or 0)
+
+    return {
+        'total_revenue': total_revenue,
+        'drug_revenue': float(drug_revenue or 0),
+        'lab_revenue': float(lab_revenue or 0),
+        'expenses_total': float(expenses_total or 0),
+        'net_income': net_income,
+    }
+
+
+def _should_send_once(key: str, period_id: str) -> bool:
+    state = _load_instance_json('auto_email_state.json', default={})
+    sent = state.get('sent', {}) if isinstance(state, dict) else {}
+    last = (sent.get(key) or '').strip()
+    if last == period_id:
+        return False
+    sent[key] = period_id
+    state['sent'] = sent
+    state['updated_at'] = get_eat_now().isoformat()
+    try:
+        _save_instance_json('auto_email_state.json', state)
+    except Exception:
+        # If state cannot persist, still allow sending (better to notify than to skip forever)
+        pass
+    return True
+
+
+def _send_admin_sales_report(period: str) -> None:
+    """Send combined sales report email to all admin users."""
+    try:
+        with app.app_context():
+            recipients = _get_admin_recipient_emails()
+            if not recipients:
+                return
+
+            start_d, end_d, period_id = _period_window_dates(period)
+            key = f"admin_sales_report:{period.lower()}"
+            if not _should_send_once(key, period_id):
+                return
+
+            start_dt, end_dt = _dt_range_for_dates(start_d, end_d)
+
+            drug = _report_drug_sales_summary(start_dt, end_dt)
+            controlled = _report_controlled_drug_sales_summary(start_dt, end_dt)
+            lab = _report_lab_summary(start_dt, end_dt)
+            general = _report_general_summary(start_dt, end_dt)
+
+            range_label = f"{start_d.isoformat()} to {end_d.isoformat()}"
+            subject = f"Sales Report ({period.title()}) - {period_id}"
+
+            parts = [
+                "<div style='font-family:Arial,sans-serif;max-width:900px;margin:0 auto;'>",
+                f"<h2 style='margin:0 0 6px 0;'>Sales Report ({escape(period.title())})</h2>",
+                f"<div style='color:#555;margin-bottom:16px;'>Period: <strong>{escape(range_label)}</strong></div>",
+
+                "<h3>General</h3>",
+                "<ul>",
+                f"<li>Total revenue: <strong>{escape(_money(general['total_revenue']))}</strong></li>",
+                f"<li>Drug revenue: {escape(_money(general['drug_revenue']))}</li>",
+                f"<li>Lab revenue: {escape(_money(general['lab_revenue']))}</li>",
+                f"<li>Expenses: {escape(_money(general['expenses_total']))}</li>",
+                f"<li>Net income: <strong>{escape(_money(general['net_income']))}</strong></li>",
+                "</ul>",
+
+                "<h3>Drugs</h3>",
+                "<ul>",
+                f"<li>Revenue: <strong>{escape(_money(drug['total_revenue']))}</strong></li>",
+                f"<li>Units sold: {escape(str(drug['total_units']))}</li>",
+                f"<li>COGS: {escape(_money(drug['cogs']))}</li>",
+                f"<li>Estimated profit: <strong>{escape(_money(drug['profit']))}</strong></li>",
+                "</ul>",
+                _render_table(drug['top_rows'], [('name', 'Drug'), ('units', 'Units'), ('revenue', 'Revenue'), ('profit', 'Profit')]),
+
+                "<h3>Controlled Drugs</h3>",
+                "<ul>",
+                f"<li>Revenue: <strong>{escape(_money(controlled['total_revenue']))}</strong></li>",
+                f"<li>Units sold: {escape(str(controlled['total_units']))}</li>",
+                f"<li>COGS: {escape(_money(controlled['cogs']))}</li>",
+                f"<li>Estimated profit: <strong>{escape(_money(controlled['profit']))}</strong></li>",
+                "</ul>",
+                _render_table(controlled['top_rows'], [('name', 'Controlled Drug'), ('units', 'Units'), ('revenue', 'Revenue'), ('profit', 'Profit')]),
+
+                "<h3>Labs (Inpatient)</h3>",
+                "<ul>",
+                f"<li>Revenue: <strong>{escape(_money(lab['total_revenue']))}</strong></li>",
+                f"<li>Tests count: {escape(str(lab['total_count']))}</li>",
+                "</ul>",
+                _render_table(lab['top_rows'], [('name', 'Test'), ('count', 'Count'), ('revenue', 'Revenue')]),
+
+                "<hr style='margin:18px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>This is an automated email generated by Makokha Medical Centre system.</div>",
+                "</div>",
+            ]
+            html = "".join(parts)
+
+            text_body = f"Sales Report ({period.title()})\nPeriod: {range_label}\n\nGeneral: Total {general['total_revenue']}, Net {general['net_income']}\nDrugs: Revenue {drug['total_revenue']}, Units {drug['total_units']}\nControlled: Revenue {controlled['total_revenue']}, Units {controlled['total_units']}\nLabs: Revenue {lab['total_revenue']}, Count {lab['total_count']}\n"
+
+            for r in recipients:
+                try:
+                    _send_system_email(recipient=r, subject=subject, html=html, text_body=text_body)
+                except Exception as e:
+                    app.logger.error(f"Report email failed to {r}: {e}")
+    except Exception as e:
+        try:
+            app.logger.error(f"Scheduled report job failed: {e}", exc_info=True)
+        except Exception:
+            pass
+
+
+def _scheduler_apply_reporting_jobs(scheduler: BackgroundScheduler):
+    """Configure report email jobs.
+
+    Times are in EAT (Africa/Nairobi).
+    """
+    scheduler.add_job(
+        lambda: _send_admin_sales_report('daily'),
+        'cron',
+        hour=20,
+        minute=0,
+        timezone=EAT,
+        id='email_report_daily',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        lambda: _send_admin_sales_report('weekly'),
+        'cron',
+        day_of_week='mon',
+        hour=8,
+        minute=5,
+        timezone=EAT,
+        id='email_report_weekly',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        lambda: _send_admin_sales_report('monthly'),
+        'cron',
+        day=1,
+        hour=8,
+        minute=10,
+        timezone=EAT,
+        id='email_report_monthly',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        lambda: _send_admin_sales_report('yearly'),
+        'cron',
+        month=1,
+        day=1,
+        hour=8,
+        minute=15,
+        timezone=EAT,
+        id='email_report_yearly',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+
+def _stock_alert_snapshot() -> dict:
+    """Build a stable snapshot of current stock alerts."""
+    today = get_eat_now().date()
+
+    def drug_rows():
+        rows = []
+        for d in Drug.query.all():
+            try:
+                remaining = int(d.remaining_quantity or 0)
+                exp = d.expiry_date
+                status = None
+                if exp and exp < today:
+                    status = 'expired'
+                elif remaining <= 0:
+                    status = 'out-of-stock'
+                elif remaining < 10:
+                    status = 'low-stock'
+                elif exp and (exp - today).days < 30:
+                    status = 'expiring-soon'
+                if status:
+                    rows.append({
+                        'kind': 'drug',
+                        'id': int(d.id),
+                        'name': str(d.name),
+                        'remaining': remaining,
+                        'expiry': exp.isoformat() if exp else None,
+                        'status': status,
+                    })
+            except Exception:
+                continue
+        return rows
+
+    def controlled_rows():
+        rows = []
+        for d in ControlledDrug.query.all():
+            try:
+                remaining = int(d.remaining_quantity or 0)
+                exp = d.expiry_date
+                status = None
+                if exp and exp < today:
+                    status = 'expired'
+                elif remaining <= 0:
+                    status = 'out-of-stock'
+                elif remaining < 10:
+                    status = 'low-stock'
+                elif exp and (exp - today).days < 30:
+                    status = 'expiring-soon'
+                if status:
+                    rows.append({
+                        'kind': 'controlled',
+                        'id': int(d.id),
+                        'name': str(d.name),
+                        'remaining': remaining,
+                        'expiry': exp.isoformat() if exp else None,
+                        'status': status,
+                    })
+            except Exception:
+                continue
+        return rows
+
+    alerts = drug_rows() + controlled_rows()
+    # Stable ordering for dedupe
+    alerts.sort(key=lambda x: (x.get('kind', ''), x.get('status', ''), x.get('name', ''), x.get('id', 0)))
+
+    # Group counts
+    counts = {'out-of-stock': 0, 'low-stock': 0, 'expiring-soon': 0, 'expired': 0}
+    for a in alerts:
+        s = a.get('status')
+        if s in counts:
+            counts[s] += 1
+
+    return {
+        'date': today.isoformat(),
+        'counts': counts,
+        'alerts': alerts,
+    }
+
+
+def _send_admin_stock_alerts() -> None:
+    try:
+        with app.app_context():
+            recipients = _get_admin_recipient_emails()
+            if not recipients:
+                return
+
+            snap = _stock_alert_snapshot()
+            # Only send when there are alerts
+            total_alerts = int(sum((snap.get('counts') or {}).values()))
+            if total_alerts <= 0:
+                return
+
+            key = 'admin_stock_alerts'
+            # Dedupe by comparing snapshot hash
+            payload = json.dumps(snap, ensure_ascii=False, separators=(',', ':'), sort_keys=True)
+            digest = hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+            state = _load_instance_json('auto_stock_state.json', default={})
+            last = (state.get('last_digest') if isinstance(state, dict) else None) or None
+            if last == digest:
+                return
+            state['last_digest'] = digest
+            state['last_sent_at'] = get_eat_now().isoformat()
+            try:
+                _save_instance_json('auto_stock_state.json', state)
+            except Exception:
+                pass
+
+            counts = snap.get('counts') or {}
+            subject = f"Stock Alerts - {snap.get('date')}"
+
+            # Limit rows in email body to avoid huge emails
+            alerts = snap.get('alerts') or []
+            max_rows = 80
+            shown = alerts[:max_rows]
+            omitted = max(0, len(alerts) - len(shown))
+
+            table_rows = []
+            for a in shown:
+                table_rows.append({
+                    'type': 'Controlled Drug' if a.get('kind') == 'controlled' else 'Drug',
+                    'name': a.get('name', ''),
+                    'status': a.get('status', ''),
+                    'remaining': a.get('remaining', ''),
+                    'expiry': a.get('expiry', '') or '',
+                })
+
+            html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:900px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 6px 0;'>Stock Alerts</h2>",
+                f"<div style='color:#555;margin-bottom:10px;'>Date: <strong>{escape(str(snap.get('date') or ''))}</strong></div>",
+                "<ul>",
+                f"<li>Out of stock: <strong>{escape(str(counts.get('out-of-stock', 0)))}</strong></li>",
+                f"<li>Low stock: <strong>{escape(str(counts.get('low-stock', 0)))}</strong></li>",
+                f"<li>Expiring soon (&lt;30 days): <strong>{escape(str(counts.get('expiring-soon', 0)))}</strong></li>",
+                f"<li>Expired: <strong>{escape(str(counts.get('expired', 0)))}</strong></li>",
+                "</ul>",
+                _render_table(table_rows, [('type', 'Type'), ('name', 'Item'), ('status', 'Status'), ('remaining', 'Remaining'), ('expiry', 'Expiry')]),
+                (f"<p style='color:#777;font-size:12px;'>Showing first {max_rows} alerts; {omitted} more not shown.</p>" if omitted else ""),
+                "</div>",
+            ])
+
+            text_body = (
+                f"Stock Alerts ({snap.get('date')})\n"
+                f"Out of stock: {counts.get('out-of-stock', 0)}\n"
+                f"Low stock: {counts.get('low-stock', 0)}\n"
+                f"Expiring soon: {counts.get('expiring-soon', 0)}\n"
+                f"Expired: {counts.get('expired', 0)}\n"
+            )
+
+            for r in recipients:
+                try:
+                    _send_system_email(recipient=r, subject=subject, html=html, text_body=text_body)
+                except Exception as e:
+                    app.logger.error(f"Stock alert email failed to {r}: {e}")
+    except Exception as e:
+        try:
+            app.logger.error(f"Stock alert job failed: {e}", exc_info=True)
+        except Exception:
+            pass
+
+
+def _scheduler_apply_stock_jobs(scheduler: BackgroundScheduler):
+    # Daily scan in EAT morning
+    scheduler.add_job(
+        _send_admin_stock_alerts,
+        'cron',
+        hour=7,
+        minute=30,
+        timezone=EAT,
+        id='email_stock_alerts_daily',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
 # Initialize scheduler
 if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
     scheduler = BackgroundScheduler()
-    scheduler.add_job(scheduled_backup, 'cron', hour=2, minute=0)  # Daily at 2 AM
+    _scheduler_apply_backup_jobs(scheduler)
+    _scheduler_apply_reporting_jobs(scheduler)
+    _scheduler_apply_stock_jobs(scheduler)
+    scheduler.add_job(
+        scheduled_ai_dosage_agent,
+        'interval',
+        minutes=30,
+        id='ai_dosage_agent',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
 
 # ======================
@@ -5522,9 +12138,666 @@ def manage_money():
                         expenses=Expense.query.order_by(Expense.created_at.desc()).all(),
                         purchases=Purchase.query.order_by(Purchase.created_at.desc()).all(),
                         payroll=Payroll.query.order_by(Payroll.created_at.desc()).all(),
+                        debts=Debt.query.order_by(Debt.created_at.desc()).all(),
                         debtors=Debtor.query.order_by(Debtor.amount_owed.desc()).all(),
+                        insurance_providers=InsuranceProvider.query.order_by(InsuranceProvider.name.asc()).all(),
+                        insurance_policies=InsurancePolicy.query.order_by(InsurancePolicy.created_at.desc()).limit(200).all(),
+                        insurance_claims=InsuranceClaim.query.order_by(InsuranceClaim.created_at.desc()).limit(200).all(),
                         employees=Employee.query.all(),
                         current_date=get_eat_now().date())
+
+
+@app.route('/admin/purchase_orders')
+@login_required
+def purchase_orders():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    pos = PurchaseOrder.query.order_by(PurchaseOrder.created_at.desc()).all()
+    return render_template('admin/purchase_orders.html', purchase_orders=pos)
+
+@app.route('/admin/purchase_orders/create', methods=['GET', 'POST'])
+@login_required
+def create_purchase_order():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    if request.method == 'POST':
+        vendor_id = request.form.get('vendor_id')
+        notes = request.form.get('notes')
+        
+        # Items logic
+        descriptions = request.form.getlist('item_description')
+        quantities = request.form.getlist('item_quantity')
+        unit_prices = request.form.getlist('item_unit_price')
+        
+        po = PurchaseOrder(
+            po_number=f"PO-{int(datetime.now().timestamp())}",
+            vendor_id=vendor_id,
+            date_ordered=get_eat_now(),
+            notes=notes,
+            created_by_id=current_user.id,
+            status='pending'
+        )
+        db.session.add(po)
+        db.session.flush()
+        
+        total_amount = 0
+        for i in range(len(descriptions)):
+            try:
+                qty = int(quantities[i])
+                price = float(unit_prices[i])
+                total = qty * price
+                
+                item = PurchaseOrderItem(
+                    purchase_order_id=po.id,
+                    description=descriptions[i],
+                    quantity=qty,
+                    unit_price=price,
+                    total_price=total
+                )
+                db.session.add(item)
+                total_amount += total
+            except (ValueError, IndexError):
+                continue
+                
+        po.total_amount = total_amount
+        db.session.commit()
+        flash('Purchase Order created successfully', 'success')
+        return redirect(url_for('purchase_orders'))
+        
+    vendors = Vendor.query.filter_by(is_active=True).all()
+    return render_template('admin/create_edit_purchase_order.html', vendors=vendors)
+
+@app.route('/admin/purchase_orders/<int:po_id>')
+@login_required
+def view_purchase_order(po_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    po = PurchaseOrder.query.get_or_404(po_id)
+    return render_template('admin/view_purchase_order.html', po=po)
+
+@app.route('/admin/purchase_orders/<int:po_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_purchase_order(po_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    po = PurchaseOrder.query.get_or_404(po_id)
+    
+    if request.method == 'POST':
+        po.vendor_id = request.form.get('vendor_id')
+        po.notes = request.form.get('notes')
+        status = request.form.get('status')
+        if status:
+            po.status = status
+            
+        # Recreate items (simplest approach for now)
+        PurchaseOrderItem.query.filter_by(purchase_order_id=po.id).delete()
+        
+        descriptions = request.form.getlist('item_description')
+        quantities = request.form.getlist('item_quantity')
+        unit_prices = request.form.getlist('item_unit_price')
+        
+        total_amount = 0
+        for i in range(len(descriptions)):
+            try:
+                qty = int(quantities[i])
+                price = float(unit_prices[i])
+                total = qty * price
+                
+                item = PurchaseOrderItem(
+                    purchase_order_id=po.id,
+                    description=descriptions[i],
+                    quantity=qty,
+                    unit_price=price,
+                    total_price=total
+                )
+                db.session.add(item)
+                total_amount += total
+            except (ValueError, IndexError):
+                continue
+        
+        po.total_amount = total_amount
+        db.session.commit()
+        flash('Purchase Order updated successfully', 'success')
+        return redirect(url_for('purchase_orders'))
+        
+    vendors = Vendor.query.filter_by(is_active=True).all()
+    return render_template('admin/create_edit_purchase_order.html', po=po, vendors=vendors)
+
+
+@app.route('/admin/expenses')
+@login_required
+def expenses():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    all_expenses = Expense.query.order_by(Expense.created_at.desc()).all()
+    return render_template('admin/expenses.html', expenses=all_expenses)
+
+@app.route('/admin/expenses/create', methods=['GET', 'POST'])
+@login_required
+def create_expense():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    if request.method == 'POST':
+        category = request.form.get('category')
+        amount = float(request.form.get('amount'))
+        date_str = request.form.get('date')
+        vendor_id = request.form.get('vendor_id')
+        description = request.form.get('description')
+
+        # Budget enforcement (warn-only by default)
+        try:
+            paid_d = datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else get_eat_now().date()
+            try:
+                paid_dt = datetime(paid_d.year, paid_d.month, paid_d.day, tzinfo=EAT)
+            except Exception:
+                paid_dt = datetime.combine(paid_d, datetime.min.time())
+
+            budget_check = _budget_check_outflow('admin', float(amount or 0), when_dt=paid_dt)
+            if budget_check and budget_check.get('block'):
+                flash(budget_check.get('message') or 'Budget exceeded for this month.', 'danger')
+                return redirect(url_for('expenses'))
+        except Exception:
+            pass
+        
+        expense = Expense(
+            expense_number=generate_expense_number(),
+            expense_type=category,
+            amount=amount,
+            paid_date=datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else get_eat_now().date(),
+            vendor_id=vendor_id if vendor_id else None,
+            description=description,
+            user_id=current_user.id,
+            status='paid'
+        )
+        db.session.add(expense)
+        db.session.flush()
+        
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='expense',
+            amount=amount,
+            user_id=current_user.id,
+            reference_id=expense.id,
+            notes=f"Expense: {category}"
+        )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='expenses',
+            direction='OUT',
+            status='posted',
+            department='admin',
+            category=(category or 'expense'),
+            payment_method=(request.form.get('payment_method') or '').strip() or None,
+        )
+        db.session.add(transaction)
+        
+        db.session.commit()
+        flash('Expense created successfully', 'success')
+        return redirect(url_for('expenses'))
+        
+    vendors = Vendor.query.filter_by(is_active=True).all()
+    return render_template('admin/create_edit_expense.html', vendors=vendors, expense=None)
+
+@app.route('/admin/expenses/<int:expense_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_expense(expense_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    expense = Expense.query.get_or_404(expense_id)
+    
+    if request.method == 'POST':
+        expense.expense_type = request.form.get('category')
+        expense.amount = float(request.form.get('amount'))
+        date_str = request.form.get('date')
+        if date_str:
+            expense.paid_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            
+        vid = request.form.get('vendor_id')
+        expense.vendor_id = vid if vid else None
+        expense.description = request.form.get('description')
+
+        # Keep ledger in sync (best-effort; legacy rows may not have reference_table)
+        try:
+            tq = Transaction.query.filter_by(transaction_type='expense', reference_id=expense.id)
+            if _transaction_supports_metadata():
+                tq = tq.filter((Transaction.reference_table.is_(None)) | (Transaction.reference_table == 'expenses'))
+            tx = tq.order_by(Transaction.created_at.desc()).first()
+            if tx:
+                tx.amount = float(expense.amount or 0)
+                tx.notes = f"Expense: {expense.expense_type}" if expense.expense_type else (tx.notes or 'Expense')
+                _maybe_set_transaction_meta(
+                    tx,
+                    department='admin',
+                    category=(expense.expense_type or 'expense'),
+                    status='posted',
+                )
+                db.session.add(tx)
+        except Exception:
+            pass
+
+        db.session.commit()
+        flash('Expense updated successfully', 'success')
+        return redirect(url_for('expenses'))
+        
+    vendors = Vendor.query.filter_by(is_active=True).all()
+    return render_template('admin/create_edit_expense.html', expense=expense, vendors=vendors)
+
+@app.route('/admin/expenses/<int:expense_id>/delete', methods=['POST'])
+@login_required
+def delete_expense(expense_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    expense = Expense.query.get_or_404(expense_id)
+    try:
+        # Delete associated ledger entries to prevent orphan Transactions.
+        tq = Transaction.query.filter_by(transaction_type='expense', reference_id=expense.id)
+        if _transaction_supports_metadata():
+            tq = tq.filter((Transaction.reference_table.is_(None)) | (Transaction.reference_table == 'expenses'))
+        tq.delete(synchronize_session=False)
+    except Exception:
+        pass
+
+    db.session.delete(expense)
+    db.session.commit()
+    flash('Expense deleted', 'success')
+    return redirect(url_for('expenses'))
+
+@app.route('/admin/debtors')
+@login_required
+def debtors_list():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    debtors = Debtor.query.order_by(Debtor.amount_owed.desc()).all()
+    return render_template('admin/debtors_list.html', debtors=debtors)
+
+@app.route('/admin/debtors/create', methods=['GET', 'POST'])
+@login_required
+def add_debtor():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    if request.method == 'POST':
+        name = request.form.get('name')
+        contact = request.form.get('contact')
+        amount_owed = float(request.form.get('amount_owed'))
+        notes = request.form.get('notes')
+        
+        debtor = Debtor(
+            name=name,
+            contact_info=contact,
+            amount_owed=amount_owed,
+            notes=notes
+        )
+        db.session.add(debtor)
+        db.session.commit()
+        
+        flash('Debtor created successfully', 'success')
+        return redirect(url_for('debtors_list'))
+        
+    return render_template('admin/add_edit_debtor.html', debtor=None)
+
+@app.route('/admin/debtors/<int:debtor_id>')
+@login_required
+def view_debtor(debtor_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    debtor = Debtor.query.get_or_404(debtor_id)
+    payments = DebtorPayment.query.filter_by(debtor_id=debtor.id).order_by(DebtorPayment.payment_date.desc()).all()
+    return render_template('admin/view_debtor.html', debtor=debtor, payments=payments)
+
+
+@app.route('/admin/debtors/<int:debtor_id>/payment', methods=['POST'])
+@login_required
+def make_debtor_payment(debtor_id):
+    """Compatibility endpoint for templates posting debtor payments.
+
+    The AJAX/UI in `money.html` posts to `/admin/add_debtor_payment/<id>` which returns JSON.
+    The standalone debtor view posts a normal form via `url_for('make_debtor_payment')`.
+    """
+    result = add_debtor_payment(debtor_id)
+
+    if isinstance(result, tuple):
+        response, status_code = result
+    else:
+        response, status_code = result, getattr(result, 'status_code', 200)
+
+    payload = None
+    try:
+        payload = response.get_json(silent=True)
+    except Exception:
+        payload = None
+
+    if int(status_code) >= 400:
+        flash((payload or {}).get('error', 'Payment could not be recorded.'), 'danger')
+    else:
+        flash((payload or {}).get('message', 'Payment recorded successfully.'), 'success')
+
+    return redirect(url_for('view_debtor', debtor_id=debtor_id))
+
+@app.route('/admin/debtors/<int:debtor_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_debtor(debtor_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    debtor = Debtor.query.get_or_404(debtor_id)
+    
+    if request.method == 'POST':
+        debtor.name = request.form.get('name')
+        debtor.contact_info = request.form.get('contact')
+        debtor.notes = request.form.get('notes')
+        
+        # Debtor amount is usually managed via transactions/payments, but editable for corrections
+        if request.form.get('amount_owed'):
+             debtor.amount_owed = float(request.form.get('amount_owed'))
+
+        db.session.commit()
+        flash('Debtor details updated', 'success')
+        return redirect(url_for('debtors_list'))
+        
+    return render_template('admin/add_edit_debtor.html', debtor=debtor)
+
+@app.route('/admin/debtors/<int:debtor_id>/delete', methods=['POST'])
+@login_required
+def delete_debtor(debtor_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    debtor = Debtor.query.get_or_404(debtor_id)
+    db.session.delete(debtor)
+    db.session.commit()
+    flash('Debtor record deleted', 'success')
+    return redirect(url_for('debtors_list'))
+
+
+@app.route('/admin/insurance/provider/add', methods=['POST'])
+@login_required
+def admin_add_insurance_provider():
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        name = (request.form.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'error': 'Provider name is required.'}), 400
+
+        existing = InsuranceProvider.query.filter(func.lower(InsuranceProvider.name) == func.lower(name)).first()
+        if existing:
+            return jsonify({'success': False, 'error': 'Provider already exists.'}), 400
+
+        provider = InsuranceProvider(
+            name=name,
+            phone=(request.form.get('phone') or '').strip() or None,
+            email=(request.form.get('email') or '').strip() or None,
+            address=(request.form.get('address') or '').strip() or None,
+            created_at=get_eat_now(),
+        )
+        db.session.add(provider)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Insurance provider added.'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Failed to add provider: {str(e)}'}), 400
+
+
+@app.route('/admin/insurance/policy/add', methods=['POST'])
+@login_required
+def admin_add_insurance_policy():
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        patient_id = request.form.get('patient_id', type=int)
+        provider_id = request.form.get('provider_id', type=int)
+        if not patient_id or not provider_id:
+            return jsonify({'success': False, 'error': 'Patient ID and Provider are required.'}), 400
+
+        patient = db.session.get(Patient, patient_id)
+        provider = db.session.get(InsuranceProvider, provider_id)
+        if not patient:
+            return jsonify({'success': False, 'error': 'Patient not found.'}), 400
+        if not provider:
+            return jsonify({'success': False, 'error': 'Provider not found.'}), 400
+
+        policy = InsurancePolicy(
+            patient_id=patient.id,
+            provider_id=provider.id,
+            policy_number=(request.form.get('policy_number') or '').strip() or None,
+            member_number=(request.form.get('member_number') or '').strip() or None,
+            active=(request.form.get('active') or '1') == '1',
+            notes=(request.form.get('notes') or '').strip() or None,
+            created_at=get_eat_now(),
+        )
+        db.session.add(policy)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Insurance policy added.'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Failed to add policy: {str(e)}'}), 400
+
+
+@app.route('/admin/insurance/claim/add', methods=['POST'])
+@login_required
+def admin_add_insurance_claim():
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    # Best-effort compatibility for SQLite instances that didn't run migrations
+    _ensure_insurance_claims_schema_best_effort()
+
+    try:
+        sale_id = request.form.get('sale_id', type=int)
+        sale_number = (request.form.get('sale_number') or '').strip()
+
+        sale = None
+        if sale_id:
+            sale = db.session.get(Sale, sale_id)
+        elif sale_number:
+            sale = Sale.query.filter(Sale.sale_number == sale_number).order_by(Sale.id.desc()).first()
+
+        if not sale:
+            return jsonify({'success': False, 'error': 'Sale not found (use Sale ID or Sale Number).'}), 400
+
+        if not sale.patient_id:
+            return jsonify({'success': False, 'error': 'Insurance claims require a patient sale (walk-in sale cannot be claimed).'}), 400
+
+        policy_id = request.form.get('policy_id', type=int)
+        provider_id = request.form.get('provider_id', type=int)
+
+        policy = None
+        provider = None
+        if policy_id:
+            policy = db.session.get(InsurancePolicy, policy_id)
+            if not policy:
+                return jsonify({'success': False, 'error': 'Policy not found.'}), 400
+            provider = db.session.get(InsuranceProvider, policy.provider_id)
+        else:
+            if not provider_id:
+                return jsonify({'success': False, 'error': 'Select a provider or policy.'}), 400
+            provider = db.session.get(InsuranceProvider, provider_id)
+
+        if not provider:
+            return jsonify({'success': False, 'error': 'Provider not found.'}), 400
+
+        claimed_amount = float(sale.total_amount or 0)
+        submit_now = (request.form.get('submit_now') or '1') == '1'
+        claim = InsuranceClaim(
+            claim_number=generate_insurance_claim_number(),
+            sale_id=sale.id,
+            patient_id=int(sale.patient_id),
+            provider_id=provider.id,
+            policy_id=(policy.id if policy else None),
+            status='submitted' if submit_now else 'draft',
+            claimed_amount=claimed_amount,
+            created_by=current_user.id,
+            notes=(request.form.get('notes') or '').strip() or None,
+            created_at=get_eat_now(),
+            submitted_at=(get_eat_now() if submit_now else None),
+        )
+        db.session.add(claim)
+
+        # Itemize claim from the sale items (best-effort; only if table exists)
+        try:
+            db.session.flush()  # ensure claim.id
+            if _insurance_claim_items_table_exists():
+                total_from_items = 0.0
+                for si in (sale.items or []):
+                    if not getattr(si, 'id', None):
+                        continue
+
+                    item_type = 'other'
+                    if getattr(si, 'drug_id', None):
+                        item_type = 'drug'
+                    elif getattr(si, 'service_id', None):
+                        item_type = 'service'
+                    elif getattr(si, 'lab_test_id', None):
+                        item_type = 'lab_test'
+                    elif getattr(si, 'imaging_test_id', None):
+                        item_type = 'imaging_test'
+
+                    desc = (getattr(si, 'description', None) or getattr(si, 'drug_name', None) or '').strip() or None
+                    qty = int(getattr(si, 'quantity', 1) or 1)
+                    unit_price = float(getattr(si, 'unit_price', 0) or 0)
+                    line_total = float(getattr(si, 'total_price', qty * unit_price) or 0)
+                    total_from_items += line_total
+
+                    db.session.add(InsuranceClaimItem(
+                        claim_id=claim.id,
+                        sale_item_id=si.id,
+                        item_type=item_type,
+                        description=desc,
+                        quantity=qty,
+                        unit_price=unit_price,
+                        total_price=line_total,
+                        created_at=get_eat_now(),
+                    ))
+
+                # Keep claim totals consistent with itemization when available
+                if total_from_items > 0:
+                    claim.claimed_amount = float(total_from_items)
+        except Exception as item_exc:
+            try:
+                current_app.logger.debug(f"Claim itemization skipped/failed: {item_exc}")
+            except Exception:
+                pass
+
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Insurance claim created.', 'claim_id': claim.id, 'claim_number': claim.claim_number})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Failed to create claim: {str(e)}'}), 400
+
+
+@app.route('/admin/insurance/claim/<int:claim_id>/payment', methods=['POST'])
+@login_required
+def admin_record_insurance_claim_payment(claim_id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    claim = db.session.get(InsuranceClaim, claim_id)
+    if not claim:
+        return jsonify({'success': False, 'error': 'Claim not found.'}), 404
+
+    try:
+        amount = float(request.form.get('amount') or 0)
+        if amount <= 0:
+            return jsonify({'success': False, 'error': 'Payment amount must be positive.'}), 400
+
+        payment_method = (request.form.get('payment_method') or '').strip() or None
+        notes = (request.form.get('notes') or '').strip() or None
+
+        payment = InsuranceClaimPayment(
+            claim_id=claim.id,
+            amount=float(amount),
+            payment_method=payment_method,
+            received_by=current_user.id,
+            notes=notes,
+            paid_at=get_eat_now(),
+            created_at=get_eat_now(),
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        # Update claim totals/status
+        claim.paid_amount = float(claim.paid_amount or 0) + float(amount)
+        if claim.paid_amount >= float(claim.claimed_amount or 0) - 0.005:
+            claim.status = 'paid'
+        elif (claim.status or '').lower() == 'draft':
+            claim.status = 'submitted'
+
+        provider_name = None
+        try:
+            provider_name = claim.provider.name if claim.provider else None
+        except Exception:
+            provider_name = None
+
+        # Post into Transaction (golden rule)
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='income',
+            amount=float(amount),
+            user_id=current_user.id,
+            reference_id=payment.id,
+            notes=f"Insurance claim payment {claim.claim_number}",
+            created_at=get_eat_now(),
+        )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='insurance_claim_payments',
+            direction='IN',
+            status='posted',
+            department='admin',
+            category='insurance',
+            payer=provider_name,
+            payment_method=payment_method,
+        )
+        try:
+            receipt_html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 8px 0;'>Insurance Payment Receipt</h2>",
+                f"<div><strong>Claim:</strong> {escape(str(claim.claim_number))}</div>",
+                (f"<div><strong>Provider:</strong> {escape(str(provider_name))}</div>" if provider_name else ""),
+                f"<div><strong>Amount:</strong> {escape(_money(amount))}</div>",
+                f"<div><strong>Date:</strong> {escape(get_eat_now().strftime('%Y-%m-%d %H:%M'))}</div>",
+                (f"<div><strong>Method:</strong> {escape(str(payment_method))}</div>" if payment_method else ""),
+                (f"<div><strong>Notes:</strong> {escape(str(notes))}</div>" if notes else ""),
+                "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='INS', force=True)
+        except Exception:
+            pass
+        db.session.add(transaction)
+        db.session.add(claim)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Insurance payment recorded.', 'transaction_number': transaction.transaction_number})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Failed to record payment: {str(e)}'}), 400
 
 # ==============
 # DRAWING ROUTES
@@ -5539,6 +12812,14 @@ def add_drawing():
     try:
         amount = float(request.form.get('amount'))
         description = request.form.get('description')
+
+        # Budget enforcement (warn-only by default)
+        try:
+            budget_check = _budget_check_outflow('admin', float(amount or 0), when_dt=get_eat_now())
+            if budget_check and budget_check.get('block'):
+                return jsonify({'success': False, 'error': budget_check.get('message') or 'Budget exceeded for this month.'}), 400
+        except Exception:
+            pass
         
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
@@ -5547,9 +12828,32 @@ def add_drawing():
             user_id=current_user.id,
             notes=f"Owner's drawing: {description}"
         )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='drawings',
+            direction='OUT',
+            status='posted',
+            department='admin',
+            category='drawing',
+            payment_method=None,
+        )
         db.session.add(transaction)
+        try:
+            receipt_html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 8px 0;'>Owner Drawing Receipt</h2>",
+                f"<div><strong>Amount:</strong> {escape(_money(amount))}</div>",
+                f"<div><strong>Date:</strong> {escape(get_eat_now().strftime('%Y-%m-%d %H:%M'))}</div>",
+                (f"<div><strong>Description:</strong> {escape(str(description))}</div>" if description else ""),
+                "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='DRW', force=True)
+        except Exception:
+            pass
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Payroll added and transaction recorded'})
+        return jsonify({'success': True, 'message': 'Drawing added successfully'})
     except ValueError:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'Invalid data provided'}), 400
@@ -5597,11 +12901,11 @@ def pay_payroll(id):
         if payment_date_str:
             try:
                 pd = datetime.strptime(payment_date_str, '%Y-%m-%d')
-                payment_dt = datetime(pd.year, pd.month, pd.day, tzinfo=timezone.utc)
+                payment_dt = datetime(pd.year, pd.month, pd.day, tzinfo=EAT)
             except Exception:
-                payment_dt = datetime.now(timezone.utc)
+                payment_dt = get_eat_now()
         else:
-            payment_dt = datetime.now(timezone.utc)
+            payment_dt = get_eat_now()
 
         payment = PayrollPayment(
             payroll_id=payroll.id,
@@ -5613,16 +12917,46 @@ def pay_payroll(id):
         db.session.add(payment)
         db.session.flush()
 
-        # Create transaction record for the payroll payment
+        # Create transaction record for the payroll payment (treat as expense)
+        payment_method = (request.form.get('payment_method') or '').strip() or None
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
-            transaction_type='payroll_payment',
+            transaction_type='expense',
             amount=amount,
             user_id=current_user.id,
-            reference_id=payroll.id,
+            reference_id=payment.id,
             notes=f"Payroll payment for {payroll.payroll_number}: {notes}"
         )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='payroll_payments',
+            direction='OUT',
+            status='posted',
+            department='admin',
+            category='payroll',
+            payment_method=payment_method,
+        )
         db.session.add(transaction)
+
+        # Generate a simple receipt for email/audit
+        try:
+            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            employee_name = getattr(employee, 'name', None) if employee else None
+            receipt_html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 8px 0;'>Payroll Payment Receipt</h2>",
+                f"<div><strong>Payroll:</strong> {escape(str(payroll.payroll_number))}</div>",
+                (f"<div><strong>Employee:</strong> {escape(str(employee_name))}</div>" if employee_name else ""),
+                f"<div><strong>Amount:</strong> {escape(_money(amount))}</div>",
+                f"<div><strong>Date:</strong> {escape(payment_dt.strftime('%Y-%m-%d %H:%M'))}</div>",
+                (f"<div><strong>Notes:</strong> {escape(str(notes))}</div>" if notes else ""),
+                "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='PAY')
+        except Exception:
+            pass
 
         # Update payroll status if fully paid
         total_paid += amount
@@ -5632,6 +12966,26 @@ def pay_payroll(id):
             payroll.status = 'partial'
 
         db.session.commit()
+
+        # Email receipt to payee (best-effort)
+        try:
+            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            payee_email = None
+            if employee and getattr(employee, 'user', None) and getattr(employee.user, 'email', None):
+                payee_email = str(employee.user.email)
+            if (not payee_email) and employee and getattr(employee, 'contact', None):
+                c = str(employee.contact or '').strip()
+                if '@' in c:
+                    payee_email = c
+            if payee_email and _is_valid_email_address(payee_email):
+                subject = f"Payment Receipt - Payroll {payroll.payroll_number}"
+                html = (transaction.receipt_html or '')
+                if not html:
+                    html = f"<p>Payroll payment received: {escape(_money(amount))}</p>"
+                _send_email_best_effort_async(recipient=payee_email, subject=subject, html=html, text_body=None)
+        except Exception:
+            pass
+
         return jsonify({'success': True, 'message': 'Payment recorded successfully', 'remaining': round(payroll.amount - total_paid, 2)})
     except ValueError:
         db.session.rollback()
@@ -5641,8 +12995,6 @@ def pay_payroll(id):
         db.session.rollback()
         current_app.logger.exception(f"Error processing payroll payment {id}: {str(e)}")
         return jsonify({'success': False, 'error': 'An unexpected error occurred while processing payment'}), 500
-        db.session.commit()
-        return jsonify({'success': True, 'message': 'Drawing added successfully'})
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 400
@@ -5686,62 +13038,183 @@ def delete_drawing(id):
 @app.route('/admin/add_bill', methods=['POST'])
 @login_required
 def add_bill():
-    if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-    
     try:
+        # Extract form data
+        expense_type = request.form.get('expense_type')
+        amount = float(request.form.get('amount', 0))
+        due_date = request.form.get('due_date')
+        description = request.form.get('description')
+        payment_method = request.form.get('payment_method')
+        status = request.form.get('status', 'pending')
+        paid_date = request.form.get('paid_date')
+        user_id = current_user.id
+
+        # Parse due_date and paid_date if provided
+        due_date_obj = datetime.strptime(due_date, '%Y-%m-%d').date() if due_date else None
+        paid_date_obj = datetime.strptime(paid_date, '%Y-%m-%d').date() if paid_date else None
+
+        # Generate expense number
+        expense_number = generate_expense_number()
+
         expense = Expense(
-            expense_number=generate_expense_number(),
-            expense_type=request.form.get('bill_type'),
-            amount=float(request.form.get('amount')),
-            user_id=current_user.id,
-            description=request.form.get('description'),
-            due_date=datetime.strptime(request.form.get('due_date'), '%Y-%m-%d').date(),
-            status='pending'
+            expense_number=expense_number,
+            expense_type=expense_type,
+            amount=amount,
+            user_id=user_id,
+            description=description,
+            due_date=due_date_obj,
+            payment_method=payment_method,
+            status=status,
+            paid_date=paid_date_obj
         )
+
         db.session.add(expense)
         db.session.commit()
+
+        # Log audit event
+        log_audit_event(
+            action='add_expense',
+            table_name='expenses',
+            record_id=expense.id,
+            description=f"Added new expense {expense.expense_number} of type {expense.expense_type}",
+            new_values={
+                'expense_id': expense.id,
+                'amount': expense.amount,
+                'expense_type': expense.expense_type,
+                'due_date': expense.due_date.isoformat() if expense.due_date else None
+            }
+        )
+
         return jsonify({'success': True, 'message': 'Bill added successfully'})
-    except Exception:
+    except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/admin/update_bill/<int:id>', methods=['POST'])
 @login_required
 def update_bill(id):
-    if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-    
-    bill = Expense.query.get_or_404(id)
     try:
+        bill = Expense.query.get_or_404(id)
+
+        old_values = {
+            'expense_type': bill.expense_type,
+            'amount': float(bill.amount),
+            'description': bill.description,
+            'due_date': bill.due_date.isoformat() if bill.due_date else None
+        }
+
         bill.expense_type = request.form.get('bill_type')
         bill.amount = float(request.form.get('amount'))
         bill.description = request.form.get('description')
         bill.due_date = datetime.strptime(request.form.get('due_date'), '%Y-%m-%d').date()
+        
+        new_values = {
+            'expense_type': bill.expense_type,
+            'amount': bill.amount,
+            'description': bill.description,
+            'due_date': bill.due_date.isoformat() if bill.due_date else None
+        }
+        
         db.session.commit()
+
+        # Log audit event
+        log_audit_event(
+            action='update_expense',
+            table_name='expenses',
+            record_id=bill.id,
+            description=f"Updated expense {bill.expense_number}",
+            old_values=old_values,
+            new_values=new_values
+        )
+
         return jsonify({'success': True, 'message': 'Bill updated successfully'})
-    except Exception:
+    except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/admin/delete_bill/<int:id>', methods=['POST'])
 @login_required
 def delete_bill(id):
-    if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-    
     bill = Expense.query.get_or_404(id)
     try:
+        old_values = {
+            'expense_id': bill.id,
+            'expense_number': bill.expense_number,
+            'expense_type': bill.expense_type,
+            'amount': float(bill.amount),
+            'description': bill.description,
+            'due_date': bill.due_date.isoformat() if bill.due_date else None
+        }
         db.session.delete(bill)
         db.session.commit()
+
+        # Log audit event
+        log_audit_event(
+            action='delete_expense',
+            table_name='expenses',
+            record_id=id,
+            description=f"Deleted expense {old_values['expense_number']}",
+            old_values=old_values
+        )
+
         return jsonify({'success': True, 'message': 'Bill deleted successfully'})
-    except Exception:
+    except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/admin/pay_bill/<int:id>', methods=['POST'])
 @login_required
 def pay_bill(id):
+    bill = Expense.query.get_or_404(id)
+    if bill.status == 'paid':
+        return jsonify({'success': False, 'error': 'Bill already paid'}), 400
+
+    payment_method = request.form.get('payment_method', 'cash')
+    try:
+        bill.status = 'paid'
+        bill.paid_date = date.today()
+        db.session.commit()
+
+        # Create transaction record
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='expense',
+            amount=bill.amount,
+            user_id=current_user.id,
+            reference_id=bill.id,
+            reference_table='expenses',
+            direction='OUT',
+            status='posted',
+            department=None,
+            category=bill.expense_type,
+            payment_method=payment_method,
+        )
+        db.session.add(transaction)
+        db.session.commit()
+
+        # Log audit event
+        log_audit_event(
+            action='pay_expense',
+            table_name='expenses',
+            record_id=bill.id,
+            description=f"Paid expense {bill.expense_number}",
+            new_values={
+                'expense_id': bill.id,
+                'status': 'paid',
+                'paid_date': bill.paid_date.isoformat() if bill.paid_date else None,
+                'payment_method': payment_method
+            }
+        )
+
+        return jsonify({'success': True, 'message': 'Bill paid successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/admin/pay_bill_v2/<int:id>', methods=['POST'])
+@login_required
+def pay_bill_v2(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -5749,6 +13222,8 @@ def pay_bill(id):
     try:
         bill.status = 'paid'
         bill.paid_date = get_eat_now().date()
+
+        payment_method = request.form.get('payment_method')
         
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
@@ -5759,8 +13234,34 @@ def pay_bill(id):
             notes=f"Bill payment: {bill.expense_type}"
         )
         db.session.add(transaction)
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='expenses',
+            direction='OUT',
+            status='posted',
+            department='admin',
+            category='bill',
+            payment_method=payment_method,
+        )
+        try:
+            receipt_html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 8px 0;'>Bill Payment Receipt</h2>",
+                f"<div><strong>Bill:</strong> {escape(str(bill.expense_number))}</div>",
+                f"<div><strong>Type:</strong> {escape(str(bill.expense_type))}</div>",
+                f"<div><strong>Amount:</strong> {escape(_money(float(bill.amount or 0)))}</div>",
+                f"<div><strong>Date:</strong> {escape(get_eat_now().strftime('%Y-%m-%d %H:%M'))}</div>",
+                (f"<div><strong>Payment Method:</strong> {escape(str(payment_method))}</div>" if payment_method else ""),
+                (f"<div><strong>Description:</strong> {escape(str(bill.description))}</div>" if bill.description else ""),
+                "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='BILL', force=True)
+        except Exception:
+            pass
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Bill payment recorded successfully'})
+        return jsonify({'success': True, 'message': 'Bill paid successfully'})
     except Exception:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
@@ -5776,6 +13277,20 @@ def add_purchase():
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     try:
+        # Budget enforcement (warn-only by default)
+        try:
+            purchase_amount = float(request.form.get('amount') or 0)
+            purchase_date_d = datetime.strptime(request.form.get('purchase_date'), '%Y-%m-%d').date()
+            try:
+                purchase_dt = datetime(purchase_date_d.year, purchase_date_d.month, purchase_date_d.day, tzinfo=EAT)
+            except Exception:
+                purchase_dt = datetime.combine(purchase_date_d, datetime.min.time())
+            budget_check = _budget_check_outflow('admin', purchase_amount, when_dt=purchase_dt)
+            if budget_check and budget_check.get('block'):
+                return jsonify({'success': False, 'error': budget_check.get('message') or 'Budget exceeded for this month.'}), 400
+        except Exception:
+            pass
+
         purchase = Purchase(
             purchase_number=generate_purchase_number(),
             purchase_type=request.form.get('purchase_type'),
@@ -5796,7 +13311,33 @@ def add_purchase():
             reference_id=purchase.id,
             notes=f"Purchase: {purchase.purchase_type}"
         )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='purchases',
+            direction='OUT',
+            status='posted',
+            department='admin',
+            category='purchase',
+            payment_method=None,
+        )
         db.session.add(transaction)
+        try:
+            receipt_html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 8px 0;'>Purchase Receipt</h2>",
+                f"<div><strong>Purchase:</strong> {escape(str(purchase.purchase_number))}</div>",
+                f"<div><strong>Type:</strong> {escape(str(purchase.purchase_type))}</div>",
+                f"<div><strong>Amount:</strong> {escape(_money(float(purchase.amount or 0)))}</div>",
+                f"<div><strong>Date:</strong> {escape(str(purchase.purchase_date))}</div>",
+                (f"<div><strong>Supplier:</strong> {escape(str(purchase.supplier))}</div>" if purchase.supplier else ""),
+                (f"<div><strong>Description:</strong> {escape(str(purchase.description))}</div>" if purchase.description else ""),
+                "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='PUR', force=True)
+        except Exception:
+            pass
         db.session.commit()
         return jsonify({'success': True, 'message': 'Purchase added successfully'})
     except Exception:
@@ -5816,6 +13357,28 @@ def update_purchase(id):
         purchase.purchase_date = datetime.strptime(request.form.get('purchase_date'), '%Y-%m-%d').date()
         purchase.supplier = request.form.get('supplier')
         purchase.description = request.form.get('description')
+
+        # Keep ledger in sync
+        try:
+            tq = Transaction.query.filter_by(transaction_type='purchase', reference_id=purchase.id)
+            if _transaction_supports_metadata():
+                tq = tq.filter((Transaction.reference_table.is_(None)) | (Transaction.reference_table == 'purchases'))
+            tx = tq.order_by(Transaction.created_at.desc()).first()
+            if tx:
+                tx.amount = float(purchase.amount or 0)
+                tx.notes = f"Purchase: {purchase.purchase_type}" if purchase.purchase_type else (tx.notes or 'Purchase')
+                _maybe_set_transaction_meta(
+                    tx,
+                    reference_table='purchases',
+                    direction='OUT',
+                    status='posted',
+                    department='admin',
+                    category='purchase',
+                )
+                db.session.add(tx)
+        except Exception:
+            pass
+
         db.session.commit()
         return jsonify({'success': True, 'message': 'Purchase updated successfully'})
     except Exception:
@@ -5831,7 +13394,10 @@ def delete_purchase(id):
     purchase = Purchase.query.get_or_404(id)
     try:
         # Delete associated transaction first
-        Transaction.query.filter_by(transaction_type='purchase', reference_id=id).delete()
+        q = Transaction.query.filter_by(transaction_type='purchase', reference_id=id)
+        if _transaction_supports_metadata():
+            q = q.filter((Transaction.reference_table.is_(None)) | (Transaction.reference_table == 'purchases'))
+        q.delete(synchronize_session=False)
         db.session.delete(purchase)
         db.session.commit()
         return jsonify({'success': True, 'message': 'Purchase deleted successfully'})
@@ -5849,19 +13415,46 @@ def add_payroll():
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
     try:
-        # Validate required fields
-        if not all([request.form.get('employee_id'), request.form.get('amount'), request.form.get('payment_date')]):
+        # Validate required fields (backward compatible with older form names)
+        employee_id = (request.form.get('employee_id') or '').strip()
+        payment_date_raw = (request.form.get('payment_date') or '').strip()
+        amount_raw = request.form.get('amount')
+        salary_raw = request.form.get('salary')
+        amount_paid_raw = request.form.get('amount_paid')
+
+        if not employee_id or not payment_date_raw:
             return jsonify({'success': False, 'error': 'Please fill all required fields'}), 400
 
-        employee = db.session.get(Employee, request.form.get('employee_id'))
+        # Newer UI posts `salary` + `amount_paid`; older UI posted `amount`.
+        total_amount_raw = salary_raw if (salary_raw is not None and str(salary_raw).strip() != '') else amount_raw
+        if total_amount_raw is None or str(total_amount_raw).strip() == '':
+            return jsonify({'success': False, 'error': 'Please provide salary/amount'}), 400
+
+        employee = db.session.get(Employee, employee_id)
         if not employee:
             return jsonify({'success': False, 'error': 'Employee not found'}), 404
 
-        amount = float(request.form.get('amount'))
+        amount = float(total_amount_raw)
         if amount <= 0:
-            return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+            return jsonify({'success': False, 'error': 'Salary/amount must be positive'}), 400
 
-        payment_date = datetime.strptime(request.form.get('payment_date'), '%Y-%m-%d').date()
+        # Amount paid is optional; allow creating a payroll entry without payment.
+        amount_paid = 0.0
+        if amount_paid_raw is not None and str(amount_paid_raw).strip() != '':
+            amount_paid = float(amount_paid_raw)
+        if amount_paid < 0:
+            return jsonify({'success': False, 'error': 'Amount paid cannot be negative'}), 400
+        if amount_paid > amount + 0.0001:
+            return jsonify({'success': False, 'error': 'Amount paid cannot exceed salary/amount'}), 400
+
+        payment_date = datetime.strptime(payment_date_raw, '%Y-%m-%d').date()
+
+        if amount_paid <= 0:
+            status = 'pending'
+        elif abs(amount_paid - amount) < 0.005 or amount_paid >= amount:
+            status = 'paid'
+        else:
+            status = 'partial'
         
         payroll = Payroll(
             payroll_number=generate_payroll_number(),
@@ -5870,26 +13463,104 @@ def add_payroll():
             payment_date=payment_date,
             pay_period=request.form.get('pay_period', 'monthly'),
             notes=request.form.get('notes', ''),
-            status='paid',  # Assuming immediate payment
+            status=status,
             user_id=current_user.id
         )
         db.session.add(payroll)
         db.session.flush()
-        
-        # Create transaction record (as expense)
-        transaction = Transaction(
-            transaction_number=generate_transaction_number(),
-            transaction_type='expense',  # Changed from 'payroll' to 'expense'
-            amount=amount,
-            user_id=current_user.id,
-            reference_id=payroll.id,
-            notes=f"Payroll payment for {employee.name}",
-            created_at=get_eat_now()
-        )
-        db.session.add(transaction)
+
+        transaction = None
+        payment = None
+        if amount_paid > 0:
+            # Record an initial payment (mirrors /admin/pay_payroll behavior)
+            payment_method = (request.form.get('payment_method') or '').strip() or None
+            payment_dt = get_eat_now()
+            try:
+                # Use provided date for payment timestamp when available
+                payment_dt = datetime(payment_date.year, payment_date.month, payment_date.day, tzinfo=EAT)
+            except Exception:
+                payment_dt = get_eat_now()
+
+            payment = PayrollPayment(
+                payroll_id=payroll.id,
+                amount=amount_paid,
+                paid_by=current_user.id,
+                payment_date=payment_dt,
+                notes=payroll.notes or ''
+            )
+            db.session.add(payment)
+            db.session.flush()
+
+            # Create transaction record (as expense) for the paid portion only
+            transaction = Transaction(
+                transaction_number=generate_transaction_number(),
+                transaction_type='expense',
+                amount=amount_paid,
+                user_id=current_user.id,
+                reference_id=payment.id,
+                notes=f"Payroll payment for {payroll.payroll_number}: {employee.name}",
+                created_at=get_eat_now()
+            )
+            _maybe_set_transaction_meta(
+                transaction,
+                reference_table='payroll_payments',
+                direction='OUT',
+                status='posted',
+                department='admin',
+                category='payroll',
+                payment_method=payment_method,
+            )
+            db.session.add(transaction)
+
+            # Store receipt for audit + email
+            try:
+                receipt_html = "".join([
+                    "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                    "<h2 style='margin:0 0 8px 0;'>Payroll Payment Receipt</h2>",
+                    f"<div><strong>Payroll:</strong> {escape(str(payroll.payroll_number))}</div>",
+                    f"<div><strong>Employee:</strong> {escape(str(employee.name))}</div>",
+                    f"<div><strong>Amount Paid:</strong> {escape(_money(amount_paid))}</div>",
+                    f"<div><strong>Total Salary/Amount:</strong> {escape(_money(amount))}</div>",
+                    f"<div><strong>Date:</strong> {escape(payment_dt.strftime('%Y-%m-%d %H:%M'))}</div>",
+                    (f"<div><strong>Notes:</strong> {escape(str(payroll.notes))}</div>" if payroll.notes else ""),
+                    "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                    "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                    "</div>",
+                ])
+                _ensure_transaction_receipt(transaction, receipt_html, prefix='PAY')
+            except Exception:
+                pass
         
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Payroll payment added successfully'})
+
+        # Email receipt to payee (best-effort)
+        try:
+            if not transaction:
+                raise Exception('No payment transaction created; skipping receipt email')
+            payee_email = None
+            if getattr(employee, 'user', None) and getattr(employee.user, 'email', None):
+                payee_email = str(employee.user.email)
+            if (not payee_email) and getattr(employee, 'contact', None):
+                c = str(employee.contact or '').strip()
+                if '@' in c:
+                    payee_email = c
+            if payee_email and _is_valid_email_address(payee_email):
+                subject = f"Payment Receipt - Payroll {payroll.payroll_number}"
+                html = (transaction.receipt_html or '')
+                if not html:
+                    html = f"<p>Payroll payment recorded: {escape(_money(amount_paid))}</p>"
+                _send_email_best_effort_async(recipient=payee_email, subject=subject, html=html, text_body=None)
+        except Exception:
+            pass
+
+        remaining = max(0.0, amount - amount_paid)
+        return jsonify({
+            'success': True,
+            'message': 'Payroll added successfully',
+            'payroll_id': payroll.id,
+            'status': payroll.status,
+            'remaining': round(remaining, 2),
+        })
     except ValueError:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'Invalid data format'}), 400
@@ -5905,30 +13576,40 @@ def update_payroll(id):
 
     payroll = Payroll.query.get_or_404(id)
     try:
-        if not all([request.form.get('employee_id'), request.form.get('amount'), request.form.get('payment_date')]):
+        employee_id = (request.form.get('employee_id') or '').strip()
+        payment_date_raw = (request.form.get('payment_date') or '').strip()
+        amount_raw = request.form.get('amount')
+        salary_raw = request.form.get('salary')
+        total_amount_raw = salary_raw if (salary_raw is not None and str(salary_raw).strip() != '') else amount_raw
+        if not employee_id or not payment_date_raw or total_amount_raw is None or str(total_amount_raw).strip() == '':
             return jsonify({'success': False, 'error': 'Please fill all required fields'}), 400
 
-        employee = Employee.query.get(request.form.get('employee_id'))
+        employee = Employee.query.get(employee_id)
         if not employee:
             return jsonify({'success': False, 'error': 'Employee not found'}), 404
 
-        amount = float(request.form.get('amount'))
+        amount = float(total_amount_raw)
         if amount <= 0:
             return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
 
         # Update payroll
         payroll.employee_id = employee.id
         payroll.amount = amount
-        payroll.payment_date = datetime.strptime(request.form.get('payment_date'), '%Y-%m-%d').date()
+        payroll.payment_date = datetime.strptime(payment_date_raw, '%Y-%m-%d').date()
         payroll.pay_period = request.form.get('pay_period', payroll.pay_period)
         payroll.notes = request.form.get('notes', payroll.notes)
-        
-        # Update associated transaction
-        transaction = Transaction.query.filter_by(reference_id=id).first()
-        if transaction:
-            transaction.amount = amount
-            transaction.notes = f"Payroll payment for {employee.name}"
-            transaction.created_at = get_eat_now()
+
+        # Backward compatibility: older payrolls may have a direct 'payrolls' expense transaction.
+        # Newer payroll flow uses PayrollPayment transactions; do not attempt to rewrite historical payments here.
+        if not payroll.payments:
+            transaction_query = Transaction.query.filter_by(transaction_type='expense', reference_id=id)
+            if _transaction_supports_metadata():
+                transaction_query = transaction_query.filter((Transaction.reference_table.is_(None)) | (Transaction.reference_table == 'payrolls'))
+            transaction = transaction_query.order_by(Transaction.created_at.desc()).first()
+            if transaction and (payroll.status == 'paid'):
+                transaction.amount = amount
+                transaction.notes = f"Payroll payment for {employee.name}"
+                transaction.created_at = get_eat_now()
         
         db.session.commit()
         return jsonify({'success': True, 'message': 'Payroll updated successfully'})
@@ -5952,153 +13633,12 @@ def get_employee_salary(employee_id):
 # ================
 # DEBTOR ROUTES
 # ================
-@app.route('/admin/add_debtor', methods=['POST'])
-@login_required
-def add_debtor():
-    if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-    try:
-        name = (request.form.get('name') or '').strip()
-        contact = (request.form.get('contact') or '').strip() or None
-        email = (request.form.get('email') or '').strip() or None
-        total_debt_raw = request.form.get('total_debt')
-        last_payment_date = request.form.get('last_payment_date') or None
-        next_payment_date = request.form.get('next_payment_date') or None
-        notes = (request.form.get('notes') or '').strip() or None
+# Legacy add_debtor removed
 
-        if not name:
-            return bad_request('Name is required')
-        if total_debt_raw is None or str(total_debt_raw).strip() == '':
-            return bad_request('Total debt is required')
-        try:
-            total_debt = float(total_debt_raw)
-        except (TypeError, ValueError):
-            return bad_request('Invalid total debt')
-        if total_debt < 0:
-            return bad_request('Total debt must be non-negative')
+# Legacy add_debtor (duplicate) removed
 
-        def parse_date(value):
-            if not value:
-                return None
-            try:
-                return datetime.strptime(value, '%Y-%m-%d').date()
-            except Exception:
-                return None
+# Third legacy snippet removed
 
-        debtor = Debtor(
-            name=name,
-            contact=contact,
-            email=email,
-            Total_debt=total_debt,
-            amount_paid=0.0,
-            amount_owed=total_debt,
-            last_payment_date=parse_date(last_payment_date),
-            next_payment_date=parse_date(next_payment_date)
-        )
-        db.session.add(debtor)
-        db.session.commit()
-
-        log_audit(
-            'create',
-            table='debtor',
-            record_id=debtor.id,
-            changes={'action': 'add_debtor', 'name': name, 'total_debt': total_debt, 'contact': contact, 'email': email}
-        )
-
-        return jsonify({'success': True, 'id': debtor.id})
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"add_debtor failed: {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'error': 'Internal server error'}), 500
-def add_debtor():
-    if current_user.role != 'admin':
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-    try:
-        name = (request.form.get('name') or '').strip()
-        contact = (request.form.get('contact') or '').strip() or None
-        email = (request.form.get('email') or '').strip() or None
-        total_debt_raw = request.form.get('total_debt')
-        last_payment_date = request.form.get('last_payment_date') or None
-        next_payment_date = request.form.get('next_payment_date') or None
-        notes = (request.form.get('notes') or '').strip() or None
-
-        if not name:
-            return bad_request('Name is required')
-        if total_debt_raw is None or str(total_debt_raw).strip() == '':
-            return bad_request('Total debt is required')
-        try:
-            total_debt = float(total_debt_raw)
-        except (TypeError, ValueError):
-            return bad_request('Invalid total debt')
-        if total_debt < 0:
-            return bad_request('Total debt must be non-negative')
-
-        def parse_date(value):
-            if not value:
-                return None
-            try:
-                return datetime.strptime(value, '%Y-%m-%d').date()
-            except Exception:
-                return None
-
-        debtor = Debtor(
-            name=name,
-            contact=contact,
-            email=email,
-            Total_debt=total_debt,
-            amount_paid=0.0,
-            amount_owed=total_debt,
-            last_payment_date=parse_date(last_payment_date),
-            next_payment_date=parse_date(next_payment_date)
-        )
-        db.session.add(debtor)
-        db.session.commit()
-
-        log_audit(
-            'create',
-            table='debtor',
-            record_id=debtor.id,
-            changes={'action': 'add_debtor', 'name': name, 'total_debt': total_debt, 'contact': contact, 'email': email}
-        )
-
-        return jsonify({'success': True, 'id': debtor.id})
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"add_debtor failed: {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'error': 'Internal server error'}), 500
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-
-    try:
-        # Validate required fields
-        if not all([request.form.get('name'), request.form.get('total_debt')]):
-            return jsonify({'success': False, 'error': 'Name and total debt are required'}), 400
-
-        total_debt = float(request.form.get('total_debt'))
-        if total_debt <= 0:
-            return jsonify({'success': False, 'error': 'Total debt must be positive'}), 400
-
-        # Create new debtor
-        debtor = Debtor(
-            name=request.form.get('name'),
-            contact=request.form.get('contact', ''),
-            email=request.form.get('email', ''),
-            Total_debt=total_debt,
-            amount_paid=0.0,  # Initialize with 0
-            amount_owed=total_debt,  # Initially equals total debt
-            last_payment_date=datetime.strptime(request.form.get('last_payment_date'), '%Y-%m-%d').date() if request.form.get('last_payment_date') else None,
-            next_payment_date=datetime.strptime(request.form.get('next_payment_date'), '%Y-%m-%d').date() if request.form.get('next_payment_date') else None,
-            notes=request.form.get('notes', '')
-        )
-        
-        db.session.add(debtor)
-        db.session.commit()
-        return jsonify({'success': True, 'message': 'Debtor added successfully'})
-    except ValueError:
-        db.session.rollback()
-        return jsonify({'success': False, 'error': 'Invalid amount or date format'}), 400
-    except Exception:
-        db.session.rollback()
-        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 @app.route('/admin/add_debtor_payment/<int:debtor_id>', methods=['POST'])
 @login_required
@@ -6147,9 +13687,55 @@ def add_debtor_payment(debtor_id):
             notes=f"Payment from {debtor.name}",
             created_at=get_eat_now()
         )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='debtor_payments',
+            direction='IN',
+            status='posted',
+            department='admin',
+            category='debtor_payment',
+            payment_method=getattr(payment, 'payment_method', None),
+            payer=getattr(debtor, 'name', None),
+        )
         db.session.add(transaction)
+
+        # Store receipt for audit + email
+        try:
+            receipt_html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 8px 0;'>Debtor Payment Receipt</h2>",
+                f"<div><strong>Debtor:</strong> {escape(str(debtor.name))}</div>",
+                f"<div><strong>Amount:</strong> {escape(_money(payment_amount))}</div>",
+                f"<div><strong>Payment method:</strong> {escape(str(payment.payment_method or ''))}</div>",
+                f"<div><strong>Date:</strong> {escape(str(payment_date))}</div>",
+                f"<div><strong>Balance owed:</strong> {escape(_money(debtor.amount_owed))}</div>",
+                (f"<div><strong>Notes:</strong> {escape(str(payment.notes))}</div>" if payment.notes else ""),
+                "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='DBT')
+        except Exception:
+            pass
         
         db.session.commit()
+
+        # Email receipt to debtor (best-effort)
+        try:
+            payee_email = (str(getattr(debtor, 'email', '') or '').strip() or None)
+            if not payee_email and getattr(debtor, 'contact', None):
+                c = str(debtor.contact or '').strip()
+                if '@' in c:
+                    payee_email = c
+            if payee_email and _is_valid_email_address(payee_email):
+                subject = f"Payment Receipt - {debtor.name}"
+                html = (transaction.receipt_html or '')
+                if not html:
+                    html = f"<p>Payment received: {escape(_money(payment_amount))}</p>"
+                _send_email_best_effort_async(recipient=payee_email, subject=subject, html=html, text_body=None)
+        except Exception:
+            pass
+
         return jsonify({
             'success': True,
             'message': 'Payment recorded successfully',
@@ -6163,48 +13749,375 @@ def add_debtor_payment(debtor_id):
         db.session.rollback()
         return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
-@app.route('/admin/update_debtor/<int:id>', methods=['POST'])
+
+# ======================
+# CREDITOR DEBT ROUTES
+# ======================
+
+@app.route('/admin/add_debt', methods=['POST'])
 @login_required
-def update_debtor(id):
+
+def add_debt():
+    try:
+        # Extract form data
+        debt_number = request.form.get('debt_number')
+        debt_type = request.form.get('debt_type')
+        amount = float(request.form.get('amount', 0))
+        creditor = request.form.get('creditor')
+        due_date = request.form.get('due_date')
+        interest_rate = float(request.form.get('interest_rate', 0))
+        description = request.form.get('description')
+        status = request.form.get('status', 'active')
+        user_id = current_user.id
+
+        debt = Debt(
+            debt_number=debt_number,
+            debt_type=debt_type,
+            amount=amount,
+            creditor=creditor,
+            due_date=datetime.strptime(due_date, '%Y-%m-%d') if due_date else None,
+            interest_rate=interest_rate,
+            description=description,
+            status=status,
+            user_id=user_id
+        )
+
+        db.session.add(debt)
+        db.session.commit()
+
+        # Log audit event
+        log_audit_event(
+            action='add_debt',
+            table_name='debts',
+            record_id=debt.id,
+            description=f"Added new debt {debt.debt_number} for creditor {debt.creditor}",
+            new_values={
+                'debt_id': debt.id,
+                'amount': debt.amount,
+                'creditor': debt.creditor,
+                'due_date': debt.due_date.isoformat() if debt.due_date else None
+            }
+        )
+
+        return jsonify({'success': True, 'message': 'Debt added successfully'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error adding debt: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    debtor = Debtor.query.get_or_404(id)
     try:
-        debtor.name = request.form.get('name')
-        debtor.contact = request.form.get('contact', debtor.contact)
-        debtor.email = request.form.get('email', debtor.email)
-        debtor.Total_debt = float(request.form.get('total_debt'))
-        debtor.amount_owed = debtor.Total_debt - debtor.amount_paid
-        # Optional fields
-        if request.form.get('last_payment_date'):
-            debtor.last_payment_date = datetime.strptime(request.form.get('last_payment_date'), '%Y-%m-%d').date()
-        if request.form.get('next_payment_date'):
-            debtor.next_payment_date = datetime.strptime(request.form.get('next_payment_date'), '%Y-%m-%d').date()
-        if 'notes' in request.form:
-            debtor.notes = request.form.get('notes', debtor.notes)
+        creditor = (request.form.get('creditor') or '').strip()
+        debt_type = (request.form.get('debt_type') or '').strip() or 'supplier'
+        amount_raw = request.form.get('amount')
+        due_date_raw = (request.form.get('due_date') or '').strip() or None
+        interest_raw = (request.form.get('interest_rate') or '').strip() or None
+        description = (request.form.get('description') or '').strip() or None
+
+        if not creditor:
+            return jsonify({'success': False, 'error': 'Creditor is required'}), 400
+        if amount_raw is None or str(amount_raw).strip() == '':
+            return jsonify({'success': False, 'error': 'Amount is required'}), 400
+
+        try:
+            amount = float(amount_raw)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid amount'}), 400
+        if amount <= 0:
+            return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+        due_date = None
+        if due_date_raw:
+            try:
+                due_date = datetime.strptime(due_date_raw, '%Y-%m-%d').date()
+            except Exception:
+                return jsonify({'success': False, 'error': 'Invalid due date'}), 400
+
+        interest_rate = 0.0
+        if interest_raw:
+            try:
+                interest_rate = float(interest_raw)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'Invalid interest rate'}), 400
+
+        debt = Debt(
+            debt_number=generate_debt_number(),
+            debt_type=debt_type,
+            amount=amount,
+            creditor=creditor,
+            due_date=due_date,
+            interest_rate=interest_rate,
+            description=description,
+            status='active',
+            user_id=current_user.id,
+        )
+        db.session.add(debt)
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Debtor updated successfully'})
+
+        return jsonify({'success': True, 'message': 'Debt recorded successfully', 'id': debt.id})
     except Exception:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
 
 
-@app.route('/admin/delete_debtor/<int:id>', methods=['POST'])
+@app.route('/admin/update_debt/<int:id>', methods=['POST'])
 @login_required
-def delete_debtor(id):
+def update_debt(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    debtor = Debtor.query.get_or_404(id)
+    debt = Debt.query.get_or_404(id)
     try:
-        # Only delete the debtor, payments and transactions remain
-        db.session.delete(debtor)
+        creditor = (request.form.get('creditor') or '').strip()
+        debt_type = (request.form.get('debt_type') or '').strip() or debt.debt_type
+        amount_raw = request.form.get('amount')
+        due_date_raw = (request.form.get('due_date') or '').strip() or None
+        interest_raw = (request.form.get('interest_rate') or '').strip() or None
+        description = (request.form.get('description') or '').strip() or None
+        status = (request.form.get('status') or '').strip() or debt.status
+
+        if creditor:
+            debt.creditor = creditor
+        if debt_type:
+            debt.debt_type = debt_type
+
+        if amount_raw is not None and str(amount_raw).strip() != '':
+            try:
+                amount = float(amount_raw)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'Invalid amount'}), 400
+            if amount <= 0:
+                return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+            debt.amount = amount
+
+        if due_date_raw:
+            try:
+                debt.due_date = datetime.strptime(due_date_raw, '%Y-%m-%d').date()
+            except Exception:
+                return jsonify({'success': False, 'error': 'Invalid due date'}), 400
+        else:
+            debt.due_date = None
+
+        if interest_raw is not None and str(interest_raw).strip() != '':
+            try:
+                debt.interest_rate = float(interest_raw)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'Invalid interest rate'}), 400
+
+        debt.description = description
+        debt.status = status
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Debtor deleted successfully'})
+
+        return jsonify({'success': True, 'message': 'Debt updated successfully'})
     except Exception:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+
+
+@app.route('/admin/delete_debt/<int:id>', methods=['POST'])
+@login_required
+def delete_debt(id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    debt = Debt.query.get_or_404(id)
+    try:
+        # Prevent deleting debts that already have payment records.
+        payments_count = 0
+        try:
+            payments_count = len(debt.payments or [])
+        except Exception:
+            payments_count = 0
+        if payments_count > 0:
+            return jsonify({'success': False, 'error': 'Cannot delete a debt that has payments. Delete payments first or mark as closed.'}), 400
+
+        db.session.delete(debt)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Debt deleted successfully'})
+    except Exception:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+
+
+@app.route('/admin/add_debt_payment/<int:debt_id>', methods=['POST'])
+@login_required
+def add_debt_payment(debt_id):
+    try:
+        debt = Debt.query.get_or_404(debt_id)
+        amount = float(request.form.get('amount', 0))
+        payment_method = request.form.get('payment_method', '')
+        payment_date = request.form.get('payment_date', date.today())
+        notes = request.form.get('notes', '')
+
+        # Budget enforcement (warn-only by default)
+        try:
+            budget_check = _budget_check_outflow('finance', float(amount or 0), when_dt=get_eat_now())
+            if budget_check and budget_check.get('block'):
+                return jsonify({'success': False, 'error': budget_check.get('message') or 'Budget exceeded for this month.'}), 400
+        except Exception:
+            pass
+
+        payment = DebtPayment(
+            debtor_id=debt.id,
+            amount=amount,
+            payment_date=payment_date,
+            payment_method=payment_method,
+            notes=notes,
+            user_id=current_user.id
+        )
+        db.session.add(payment)
+        db.session.flush()  # get payment.id
+
+        # Create transaction
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='debt_payment',
+            amount=amount,
+            user_id=current_user.id,
+            reference_id=payment.id,
+            notes=f"Debt payment for {debt.debt_number}",
+            created_at=get_eat_now(),
+            updated_at=get_eat_now()
+        )
+
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='debt_payments',
+            direction='OUT',
+            status='posted',
+            department='finance',
+            category='debt_repayment',
+            payer=debt.creditor,
+            payment_method=payment_method,
+        )
+        db.session.add(transaction)
+        db.session.commit()
+
+        # Log audit event
+        log_audit_event(
+            action='add_debt_payment',
+            table_name='debt_payments',
+            record_id=payment.id,
+            description=f"Recorded debt payment of {payment.amount} for debt {debt.debt_number}",
+            new_values={
+                'debt_payment_id': payment.id,
+                'debt_id': debt.id,
+                'amount': payment.amount,
+                'payment_method': payment.payment_method
+            }
+        )
+
+        return jsonify({'success': True, 'message': 'Payment added successfully'})
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error adding debt payment: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+def add_debt_payment(debt_id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    debt = Debt.query.get_or_404(debt_id)
+    try:
+        amount_raw = request.form.get('amount')
+        payment_date_raw = request.form.get('payment_date')
+        payment_method = (request.form.get('payment_method') or '').strip() or 'cash'
+        notes = (request.form.get('notes') or '').strip() or None
+
+        if amount_raw is None or str(amount_raw).strip() == '':
+            return jsonify({'success': False, 'error': 'Payment amount is required'}), 400
+        if not payment_date_raw:
+            return jsonify({'success': False, 'error': 'Payment date is required'}), 400
+
+        try:
+            payment_amount = float(amount_raw)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid payment amount'}), 400
+        if payment_amount <= 0:
+            return jsonify({'success': False, 'error': 'Payment amount must be positive'}), 400
+
+        try:
+            payment_date = datetime.strptime(payment_date_raw, '%Y-%m-%d').date()
+        except Exception:
+            return jsonify({'success': False, 'error': 'Invalid payment date'}), 400
+
+        # Cap at remaining balance
+        remaining = float(debt.balance or 0)
+        if payment_amount > remaining + 0.0001:
+            return jsonify({'success': False, 'error': f'Payment exceeds remaining balance (Ksh {remaining:.2f})'}), 400
+
+        payment = DebtPayment(
+            debtor_id=debt.id,
+            amount=payment_amount,
+            payment_date=payment_date,
+            payment_method=payment_method,
+            notes=notes,
+            user_id=current_user.id,
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        # Post actual cash outflow into Transaction
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='expense',
+            amount=payment_amount,
+            user_id=current_user.id,
+            reference_id=payment.id,
+            notes=f"Debt payment to {debt.creditor} ({debt.debt_number})",
+            created_at=get_eat_now(),
+        )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='debt_payments',
+            direction='OUT',
+            status='posted',
+            department='admin',
+            category='creditor_debt_payment',
+            payment_method=payment_method,
+            payer=debt.creditor,
+        )
+        db.session.add(transaction)
+
+        # Receipt for audit/reprint
+        try:
+            receipt_html = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+                "<h2 style='margin:0 0 8px 0;'>Creditor Payment Receipt</h2>",
+                f"<div><strong>Creditor:</strong> {escape(str(debt.creditor))}</div>",
+                f"<div><strong>Debt:</strong> {escape(str(debt.debt_number))}</div>",
+                f"<div><strong>Amount:</strong> {escape(_money(payment_amount))}</div>",
+                f"<div><strong>Payment method:</strong> {escape(str(payment_method))}</div>",
+                f"<div><strong>Date:</strong> {escape(str(payment_date))}</div>",
+                f"<div><strong>Remaining balance:</strong> {escape(_money(float(debt.balance or 0) - payment_amount))}</div>",
+                (f"<div><strong>Notes:</strong> {escape(str(notes))}</div>" if notes else ""),
+                "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
+                "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='CRD')
+        except Exception:
+            pass
+
+        # Update debt status
+        new_remaining = float(debt.balance or 0) - payment_amount
+        if new_remaining <= 0.005:
+            debt.status = 'paid'
+        else:
+            debt.status = 'partial'
+
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Payment recorded successfully'})
+    except Exception:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': 'An unexpected error occurred'}), 500
+
+# Legacy update_debtor removed
+
+
+
+# Legacy delete_debtor removed to resolve conflict with new template-compatible route
+
     
 # =====================
 # TRANSACTION ROUTES
@@ -6218,13 +14131,23 @@ def delete_transaction(id):
     
     transaction = Transaction.query.get_or_404(id)
     try:
-        # Handle different transaction types
-        if transaction.transaction_type == 'purchase':
+        # Handle linked records when we can safely identify them.
+        ref_table = None
+        try:
+            ref_table = transaction.reference_table
+        except Exception:
+            ref_table = None
+
+        if ref_table == 'purchases' or transaction.transaction_type == 'purchase':
             Purchase.query.filter_by(id=transaction.reference_id).delete()
-        elif transaction.transaction_type == 'payroll':
+        elif ref_table == 'payrolls':
             Payroll.query.filter_by(id=transaction.reference_id).delete()
-        elif transaction.transaction_type == 'debtor_payment':
+        elif ref_table == 'payroll_payments':
+            PayrollPayment.query.filter_by(id=transaction.reference_id).delete()
+        elif ref_table == 'debtor_payments' or transaction.transaction_type == 'debtor_payment':
             DebtorPayment.query.filter_by(id=transaction.reference_id).delete()
+        elif ref_table == 'debt_payments':
+            DebtPayment.query.filter_by(id=transaction.reference_id).delete()
         
         db.session.delete(transaction)
         db.session.commit()
@@ -6286,7 +14209,8 @@ def money_summary():
         total_expenses = db.session.query(
             func.sum(Transaction.amount)
         ).filter(
-            Transaction.transaction_type.in_(['expense', 'drawing', 'purchase', 'payroll'])
+            # Include legacy payroll_payment/payroll types for backward-compat
+            Transaction.transaction_type.in_(['expense', 'drawing', 'purchase', 'payroll', 'payroll_payment'])
         ).scalar() or 0
 
         net_profit = total_income - total_expenses
@@ -6313,6 +14237,7 @@ def manage_dosage():
             try:
                 dosage = DrugDosage(
                     drug_id=request.form.get('drug_id'),
+                    source='manual',
                     indication=request.form.get('indication'),
                     contraindication=request.form.get('contraindication'),
                     interaction=request.form.get('interaction'),
@@ -6367,6 +14292,10 @@ def manage_dosage():
                     dosage.dosage_adults = request.form.get('dosage_adults')
                     dosage.dosage_geriatrics = request.form.get('dosage_geriatrics')
                     dosage.important_notes = request.form.get('important_notes')
+                    try:
+                        dosage.source = 'manual'
+                    except Exception:
+                        pass
                     
                     db.session.commit()
                     
@@ -6391,7 +14320,7 @@ def manage_dosage():
         
         elif action == 'delete':
             dosage_id = request.form.get('dosage_id')
-            dosage = DrugDosage.query.get(dosage_id)
+            dosage = db.session.get(DrugDosage, dosage_id)
             if dosage:
                 try:
                     log_audit('delete', 'DrugDosage', dosage.id, {
@@ -6419,8 +14348,71 @@ def manage_dosage():
     
     dosages = DrugDosage.query.join(Drug).all()
     drugs = Drug.query.all()
-    
-    return render_template('admin/dosage.html', dosages=dosages, drugs=drugs)
+
+    total_drugs = Drug.query.count()
+    drugs_with_dosage = Drug.query.filter(Drug.dosage.any()).count()
+    drugs_without_dosage = max(0, total_drugs - drugs_with_dosage)
+    ai_generated = 0
+    try:
+        ai_generated = DrugDosage.query.filter(DrugDosage.source == 'ai').count()
+    except Exception:
+        ai_generated = 0
+
+    return render_template(
+        'admin/dosage.html',
+        dosages=dosages,
+        drugs=drugs,
+        ai_dosage_agent_enabled=_get_ai_dosage_agent_enabled(),
+        stats={
+            'total_drugs': total_drugs,
+            'with_dosage': drugs_with_dosage,
+            'without_dosage': drugs_without_dosage,
+            'ai_generated': ai_generated,
+        },
+    )
+
+
+@app.route('/admin/dosage-dashboard')
+@login_required
+def admin_dosage_dashboard():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    total_drugs = Drug.query.count()
+    drugs_with_dosage = Drug.query.filter(Drug.dosage.any()).count()
+    drugs_without_dosage = max(0, total_drugs - drugs_with_dosage)
+    drugs_ai = 0
+    try:
+        drugs_ai = DrugDosage.query.filter(DrugDosage.source == 'ai').count()
+    except Exception:
+        drugs_ai = 0
+
+    total_controlled = ControlledDrug.query.count()
+    controlled_with_dosage = ControlledDrug.query.filter(ControlledDrug.dosage.any()).count()
+    controlled_without_dosage = max(0, total_controlled - controlled_with_dosage)
+    controlled_ai = 0
+    try:
+        controlled_ai = ControlledDrugDosage.query.filter(ControlledDrugDosage.source == 'ai').count()
+    except Exception:
+        controlled_ai = 0
+
+    return render_template(
+        'admin/dosage_dashboard.html',
+        ai_dosage_agent_enabled=_get_ai_dosage_agent_enabled(),
+        drug_stats={
+            'total_drugs': total_drugs,
+            'with_dosage': drugs_with_dosage,
+            'without_dosage': drugs_without_dosage,
+            'ai_generated': drugs_ai,
+        },
+        controlled_stats={
+            'total_drugs': total_controlled,
+            'with_dosage': controlled_with_dosage,
+            'without_dosage': controlled_without_dosage,
+            'ai_generated': controlled_ai,
+        },
+    )
 
 @app.route('/admin/dosage/<int:dosage_id>')
 @login_required
@@ -6478,25 +14470,95 @@ def get_drug_dosage(drug_id):
             'drug_number': drug.drug_number
         },
         'dosage': {
-            'indication': dosage.indication if dosage else None,
-            'contraindication': dosage.contraindication if dosage else None,
-            'interaction': dosage.interaction if dosage else None,
-            'side_effects': dosage.side_effects if dosage else None,
-            'dosage_peds': dosage.dosage_peds if dosage else None,
-            'dosage_adults': dosage.dosage_adults if dosage else None,
-            'dosage_geriatrics': dosage.dosage_geriatrics if dosage else None,
-            'important_notes': dosage.important_notes if dosage else None
-        } if dosage else None
+            'indication': dosage.indication,
+            'contraindication': dosage.contraindication,
+            'interaction': dosage.interaction,
+            'side_effects': dosage.side_effects,
+            'dosage_peds': dosage.dosage_peds,
+            'dosage_adults': dosage.dosage_adults,
+            'dosage_geriatrics': dosage.dosage_geriatrics,
+            'important_notes': dosage.important_notes
+        } if dosage else None,
+        'source': 'db' if dosage else None
     })
+
+
+@app.route('/admin/dosage/load-index-book', methods=['POST'])
+@login_required
+def admin_load_dosage_index_book():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    entries = _load_dosage_index_book()
+    if not entries:
+        flash('Dosage index book not found or empty. Place it at instance/dosage_index.json or static/dosage_index.json', 'warning')
+        return redirect(url_for('manage_dosage'))
+
+    name_map = { _normalize_drug_name(e.get('name')): e for e in entries if e.get('name') }
+    created = 0
+    try:
+        drugs = Drug.query.filter(~Drug.dosage.any()).all()
+        for drug in drugs:
+            e = name_map.get(_normalize_drug_name(drug.name))
+            if not e:
+                continue
+            d = DrugDosage(
+                drug_id=drug.id,
+                indication=e.get('indication'),
+                contraindication=e.get('contraindication'),
+                interaction=e.get('interaction'),
+                side_effects=e.get('side_effects'),
+                dosage_peds=e.get('dosage_peds'),
+                dosage_adults=e.get('dosage_adults'),
+                dosage_geriatrics=e.get('dosage_geriatrics'),
+                important_notes=e.get('important_notes'),
+            )
+            db.session.add(d)
+            created += 1
+        db.session.commit()
+        flash(f'Loaded {created} drug dosage entries from index book.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Failed to load dosage index book: {str(e)}', 'danger')
+
+    return redirect(url_for('manage_dosage'))
 
 @app.before_request
 def log_request_info():
     """Log detailed information about each request"""
-    if request.method == 'POST':
-        app.logger.info(f"POST Request to: {request.path}")
-        app.logger.info(f"Headers: {dict(request.headers)}")
-        app.logger.info(f"Form data: {dict(request.form)}")
-        app.logger.info(f"JSON data: {request.get_json(silent=True)}")
+    # Never log sensitive request data in production.
+    if os.environ.get('RENDER'):
+        return
+    if not app.debug:
+        return
+    if request.method != 'POST':
+        return
+
+    # Opt-in only; avoids noisy logs that look like errors.
+    if (os.environ.get('LOG_POST_REQUESTS') or '').strip().lower() not in ('1', 'true', 'yes', 'on'):
+        return
+
+    def _redact_headers(h: dict) -> dict:
+        redacted = dict(h or {})
+        for k in list(redacted.keys()):
+            lk = str(k).lower()
+            if lk in ('cookie', 'authorization'):
+                redacted[k] = '<redacted>'
+        return redacted
+
+    def _redact_form(d: dict) -> dict:
+        redacted = dict(d or {})
+        for k in list(redacted.keys()):
+            lk = str(k).lower()
+            if 'password' in lk or 'csrf' in lk or 'token' in lk:
+                redacted[k] = '<redacted>'
+        return redacted
+
+    app.logger.debug("POST Request to: %s", request.path)
+    app.logger.debug("Headers: %s", _redact_headers(dict(request.headers)))
+    app.logger.debug("Form data: %s", _redact_form(dict(request.form)))
+    app.logger.debug("JSON data: %s", request.get_json(silent=True))
         
 # Admin Patient Management Routes
 @app.route('/admin/patients', methods=['GET'])
@@ -6677,13 +14739,13 @@ def get_patient(patient_id):
         'id': patient.id,
         'op_number': patient.op_number,
         'ip_number': patient.ip_number,
-        'name': Config.decrypt_data_static(patient.name),
+        'name': patient.name,
         'age': patient.age,
         'gender': patient.gender,
-        'address': Config.decrypt_data_static(patient.address),
-        'phone': Config.decrypt_data_static(patient.phone),
-        'nok_name': Config.decrypt_data_static(patient.nok_name),
-        'nok_contact': Config.decrypt_data_static(patient.nok_contact),
+        'address': patient.address,
+        'phone': patient.phone,
+        'nok_name': patient.nok_name,
+        'nok_contact': patient.nok_contact,
         'chief_complaints': patient.chief_complaints,
         'diagnosis': patient.diagnosis,
         'tca': patient.tca.strftime('%Y-%m-%d') if patient.tca else None,
@@ -7170,30 +15232,57 @@ def pharmacist_dashboard():
 @login_required
 def pharmacist_dashboard_stats():
     if current_user.role != 'pharmacist':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    # Calculate real stats
-    total_drugs = Drug.query.count()
-    low_stock = Drug.query.filter(Drug.remaining_quantity < 10, Drug.remaining_quantity > 0).count()
-    expiring_soon = Drug.query.filter(
-        Drug.expiry_date <= date.today() + timedelta(days=30),
-        Drug.expiry_date >= date.today()
-    ).count()
-    pending_prescriptions = Prescription.query.filter_by(status='pending').count()
-    
-    return jsonify({
-        'success': True,
-        'data': {
-            'total_drugs': total_drugs,
-            'low_stock': low_stock,
-            'expiring_soon': expiring_soon,
-            'pending_prescriptions': pending_prescriptions
-        }
-    })
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        total_drugs = Drug.query.count()
+        low_stock = Drug.query.filter(Drug.remaining_quantity < 10, Drug.remaining_quantity > 0).count()
+        expiring_soon = Drug.query.filter(
+            Drug.expiry_date <= date.today() + timedelta(days=30),
+            Drug.expiry_date >= date.today()
+        ).count()
+        pending_prescriptions = Prescription.query.filter_by(status='pending').count()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'total_drugs': total_drugs,
+                'low_stock': low_stock,
+                'expiring_soon': expiring_soon,
+                'pending_prescriptions': pending_prescriptions,
+            }
+        })
+    except Exception as e:
+        current_app.logger.error(f"Failed to load pharmacist dashboard stats: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to load dashboard stats'}), 500
 
 @app.route('/pharmacist/sale/<int:sale_id>/receipt-data')
 @login_required
-def sale_receipt_data(sale_id):
+def pharmacist_sale_receipt_data(sale_id):
+    sale = db.session.get(Sale, sale_id)
+    if not sale:
+        abort(404)
+    
+    # Basic authorization: only admin or the pharmacist who made the sale
+    if not (current_user.role == 'admin' or sale.user_id == current_user.id):
+        abort(403)
+
+    items = [{
+        'name': item.drug_name,
+        'spec': item.drug_specification,
+        'qty': item.quantity,
+        'price': float(item.unit_price),
+        'total': float(item.total_price)
+    } for item in sale.items]
+
+    return jsonify({
+        'sale_number': sale.sale_number,
+        'date': sale.created_at.strftime('%Y-%m-%d %H:%M'),
+        'patient_name': sale.patient.name if sale.patient else 'Walk-in Customer',
+        'pharmacist': sale.pharmacist_name,
+        'items': items,
+        'total': float(sale.total_amount)
+    })
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
     
@@ -7231,7 +15320,32 @@ def sale_receipt_data(sale_id):
 
 @app.route('/pharmacist/refund/<int:refund_id>/receipt-data')
 @login_required
-def refund_receipt_data(refund_id):
+def pharmacist_refund_receipt_data(refund_id):
+    refund = db.session.get(Refund, refund_id)
+    if not refund:
+        abort(404)
+    
+    # Basic authorization: only admin or the pharmacist who processed refund
+    if not (current_user.role == 'admin' or refund.user_id == current_user.id):
+        abort(403)
+
+    items = [{
+        'name': item.sale_item.drug_name,
+        'spec': item.sale_item.drug_specification,
+        'qty': item.quantity,
+        'price': float(item.unit_price),
+        'total': float(item.total_price)
+    } for item in refund.items]
+
+    return jsonify({
+        'refund_number': refund.refund_number,
+        'original_sale': refund.sale.sale_number,
+        'date': refund.created_at.strftime('%Y-%m-%d %H:%M'),
+        'patient_name': refund.sale.patient.name if refund.sale.patient else 'Walk-in Customer',
+        'pharmacist': refund.user.username,
+        'items': items,
+        'total': float(refund.total_amount)
+    })
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
     
@@ -7268,15 +15382,21 @@ def refund_receipt_data(refund_id):
 # Add decrypt_data to Jinja context
 @app.context_processor
 def utility_processor():
-    def decrypt_data(encrypted_data):
-        if not encrypted_data:
+    def decrypt_data(value):
+        if value is None:
             return ""
         try:
-            return Config.decrypt_data_static(encrypted_data)
-        except:
-            return "[Decryption Error]"
-    
-    return dict(decrypt_data=decrypt_data)
+            return Config.decrypt_data_static(value)
+        except Exception:
+            # Some fields may already be plain text (or not decryptable).
+            try:
+                return str(value)
+            except Exception:
+                return ""
+
+    return {
+        'decrypt_data': decrypt_data,
+    }
 
 @app.route('/pharmacist/drugs')
 @login_required
@@ -7339,6 +15459,218 @@ def pharmacist_drugs():
         })
     
     return jsonify(drugs_data)
+
+@app.route('/pharmacist/controlled-drugs')
+@login_required
+def pharmacist_controlled_drugs():
+    if current_user.role != 'pharmacist':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    # Get filter parameters
+    filter_type = request.args.get('filter', 'all')
+    search_query = request.args.get('search', '')
+    
+    # Base query
+    query = ControlledDrug.query
+    
+    # Apply filters
+    if filter_type == 'low':
+        query = query.filter(ControlledDrug.remaining_quantity < 5)
+    elif filter_type == 'out':
+        query = query.filter(ControlledDrug.remaining_quantity == 0)
+    elif filter_type == 'expiring':
+        query = query.filter(ControlledDrug.expiry_date <= date.today() + timedelta(days=30))
+    
+    # Apply search
+    if search_query:
+        query = query.filter(
+            or_(
+                ControlledDrug.name.ilike(f'%{search_query}%'),
+                ControlledDrug.controlled_drug_number.ilike(f'%{search_query}%'),
+            )
+        )
+    
+    # Sort by name
+    query = query.order_by(ControlledDrug.name.asc())
+    
+    drugs = query.all()
+    
+    # Prepare response data
+    drugs_data = []
+    for drug in drugs:
+        drugs_data.append({
+            'id': drug.id,
+            'controlled_drug_number': drug.controlled_drug_number,
+            'name': drug.name,
+            'specification': drug.specification,
+            'expiry_date': drug.expiry_date.isoformat() if drug.expiry_date else None,
+            'selling_price': float(drug.selling_price),
+            'remaining_quantity': drug.remaining_quantity
+        })
+    
+    return jsonify(drugs_data)
+
+@app.route('/pharmacist/controlled-sale', methods=['POST'])
+@login_required
+def process_controlled_sale():
+    """Process a controlled drug sale from the cart with patient details and prescription image"""
+    if current_user.role != 'pharmacist':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    try:
+        # Parse form data
+        cart_json = request.form.get('items')
+        if not cart_json:
+            return jsonify({'success': False, 'error': 'Missing items'}), 400
+        
+        try:
+            items = json.loads(cart_json)
+        except Exception:
+            return jsonify({'success': False, 'error': 'Invalid items format'}), 400
+        
+        if not items:
+            return jsonify({'success': False, 'error': 'Cart is empty'}), 400
+        
+        # Get patient details
+        patient_name = (request.form.get('patient_name') or '').strip()
+        patient_age = request.form.get('patient_age')
+        patient_gender = (request.form.get('patient_gender') or '').strip()
+        patient_phone = (request.form.get('patient_phone') or '').strip()
+        patient_destination = (request.form.get('patient_destination') or '').strip()
+        patient_diagnosis = (request.form.get('patient_diagnosis') or '').strip()
+        
+        if not patient_name or not patient_gender or not patient_phone or not patient_destination:
+            return jsonify({'success': False, 'error': 'Missing required patient details'}), 400
+        
+        # Get prescription image
+        prescription_image = request.files.get('prescription_image')
+        if not prescription_image or not prescription_image.filename:
+            return jsonify({'success': False, 'error': 'Prescription image is required'}), 400
+        
+        # Save prescription image
+        prescription_path = _save_prescription_image(prescription_image)
+        
+        # Validate stock and compute totals
+        resolved_items = []
+        total_amount = 0.0
+        for idx, item in enumerate(items):
+            cd_id = item.get('controlled_drug_id')
+            qty = int(item.get('quantity', 0))
+            
+            if not cd_id or qty <= 0:
+                return jsonify({'success': False, 'error': f'Invalid quantity for item {idx+1}'}), 400
+            
+            cd = db.session.get(ControlledDrug, int(cd_id))
+            if not cd:
+                return jsonify({'success': False, 'error': f'Controlled drug not found: {cd_id}'}), 400
+            
+            if cd.remaining_quantity < qty:
+                return jsonify({
+                    'success': False, 
+                    'error': f'Insufficient stock for {cd.name}',
+                    'available': cd.remaining_quantity,
+                    'requested': qty
+                }), 400
+            
+            unit_price = float(cd.selling_price or 0)
+            line_total = unit_price * qty
+            total_amount += line_total
+            resolved_items.append((cd, qty, unit_price))
+        
+        # Generate sale number
+        sale_number = generate_controlled_sale_number()
+        
+        # Get EAT timezone (Africa/Nairobi)
+        from pytz import timezone as pytz_timezone
+        eat = pytz_timezone('Africa/Nairobi')
+        sale_datetime = datetime.now(tz=eat)
+        
+        # Create ControlledSale record
+        sale = ControlledSale(
+            sale_number=sale_number,
+            user_id=current_user.id,
+            pharmacist_name=f"{current_user.username}",
+            total_amount=float(total_amount),
+            payment_method='cash',
+            status='completed',
+            notes='Controlled inventory sale',
+            customer_name=patient_name,
+            customer_age=int(patient_age) if patient_age not in (None, '') else None,
+            customer_gender=patient_gender,
+            customer_phone=patient_phone,
+            destination=patient_destination,
+            diagnosis=patient_diagnosis,
+            prescription_image_path=prescription_path,
+            created_at=sale_datetime
+        )
+        db.session.add(sale)
+        db.session.flush()
+        
+        # Create ControlledSaleItem records and deduct stock
+        for idx, (cd, qty, unit_price) in enumerate(resolved_items):
+            db.session.add(ControlledSaleItem(
+                sale_id=sale.id,
+                controlled_drug_id=cd.id,
+                controlled_drug_name=cd.name,
+                controlled_drug_specification=cd.specification or '',
+                individual_sale_number=f"{sale_number}-{idx + 1:02d}",
+                description=f"Controlled inventory sale: {cd.name}",
+                prescription_source='inventory',
+                prescription_sheet_path=prescription_path,
+                quantity=int(qty),
+                unit_price=float(unit_price),
+                total_price=float(unit_price) * int(qty),
+                created_at=get_eat_now()
+            ))
+            
+            # Deduct from remaining quantity
+            cd.remaining_quantity = (cd.remaining_quantity or 0) - int(qty)
+            cd.sold_quantity = (cd.sold_quantity or 0) + int(qty)
+            db.session.add(cd)
+        
+        # Generate receipt HTML before committing so we can store it and post to the ledger atomically.
+        receipt_html = ''
+        try:
+            db.session.flush()
+            sale_for_receipt = db.session.query(ControlledSale).options(
+                db.joinedload(ControlledSale.user),
+                db.joinedload(ControlledSale.items)
+            ).filter(ControlledSale.id == sale.id).first()
+            receipt_html = render_template('pharmacist/controlled_receipt_simple.html', sale=sale_for_receipt)
+            sale.receipt_html = receipt_html
+            db.session.add(sale)
+        except Exception as e:
+            current_app.logger.error(f"Failed to generate controlled receipt: {str(e)}", exc_info=True)
+
+        # Post into ledger (golden rule) - required
+        _ensure_controlled_sale_transaction(sale, receipt_html=receipt_html or None)
+        
+        # Log audit
+        try:
+            log_audit('controlled_sale', 'ControlledSale', sale.id, None, {
+                'sale_number': sale.sale_number,
+                'total_amount': sale.total_amount,
+                'patient_name': patient_name,
+            })
+        except Exception:
+            pass
+        
+        return jsonify({
+            'success': True,
+            'sale_id': sale.id,
+            'receipt_number': sale.sale_number,
+            'total_amount': sale.total_amount,
+            'receipt_html': receipt_html
+        })
+    
+    except ValueError as ve:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error processing controlled sale: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to process controlled sale'}), 500
+
 
 @app.route('/pharmacist/dosage')
 @login_required
@@ -7407,15 +15739,568 @@ def pharmacist_get_drug_dosage(drug_id):
             'drug_number': drug.drug_number
         },
         'dosage': {
-            'indication': dosage.indication if dosage else None,
-            'contraindication': dosage.contraindication if dosage else None,
-            'interaction': dosage.interaction if dosage else None,
-            'side_effects': dosage.side_effects if dosage else None,
-            'dosage_peds': dosage.dosage_peds if dosage else None,
-            'dosage_adults': dosage.dosage_adults if dosage else None,
-            'dosage_geriatrics': dosage.dosage_geriatrics if dosage else None,
-            'important_notes': dosage.important_notes if dosage else None
-        } if dosage else None
+            'indication': dosage.indication,
+            'contraindication': dosage.contraindication,
+            'interaction': dosage.interaction,
+            'side_effects': dosage.side_effects,
+            'dosage_peds': dosage.dosage_peds,
+            'dosage_adults': dosage.dosage_adults,
+            'dosage_geriatrics': dosage.dosage_geriatrics,
+            'important_notes': dosage.important_notes
+        } if dosage else None,
+        'source': 'db' if dosage else None
+    })
+
+
+@app.route('/pharmacist/drug/<int:drug_id>/dosage')
+@login_required
+def pharmacist_get_drug_dosage_alias(drug_id):
+    """Alias for older JS callers using singular path."""
+    return pharmacist_get_drug_dosage(drug_id)
+
+
+@app.route('/pharmacist/controlled-drugs/<int:drug_id>/dosage')
+@login_required
+def pharmacist_get_controlled_drug_dosage(drug_id):
+    if current_user.role != 'pharmacist':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    drug = ControlledDrug.query.get_or_404(drug_id)
+    dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
+    return jsonify({
+        'drug': {
+            'id': drug.id,
+            'name': drug.name,
+            'drug_number': drug.controlled_drug_number
+        },
+        'dosage': {
+            'indication': dosage.indication,
+            'contraindication': dosage.contraindication,
+            'interaction': dosage.interaction,
+            'side_effects': dosage.side_effects,
+            'dosage_peds': dosage.dosage_peds,
+            'dosage_adults': dosage.dosage_adults,
+            'dosage_geriatrics': dosage.dosage_geriatrics,
+            'important_notes': dosage.important_notes
+        } if dosage else None,
+        'source': 'db' if dosage else None
+    })
+
+
+@app.route('/admin/controlled-dosage', methods=['GET', 'POST'])
+@login_required
+def manage_controlled_dosage():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'add':
+            try:
+                dosage = ControlledDrugDosage(
+                    controlled_drug_id=request.form.get('controlled_drug_id'),
+                    source='manual',
+                    indication=request.form.get('indication'),
+                    contraindication=request.form.get('contraindication'),
+                    interaction=request.form.get('interaction'),
+                    side_effects=request.form.get('side_effects'),
+                    dosage_peds=request.form.get('dosage_peds'),
+                    dosage_adults=request.form.get('dosage_adults'),
+                    dosage_geriatrics=request.form.get('dosage_geriatrics'),
+                    important_notes=request.form.get('important_notes')
+                )
+                db.session.add(dosage)
+                db.session.commit()
+                flash('Controlled drug dosage information added successfully!', 'success')
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Error adding controlled drug dosage: {str(e)}', 'danger')
+
+        elif action == 'edit':
+            dosage_id = request.form.get('dosage_id')
+            dosage = ControlledDrugDosage.query.get(dosage_id)
+            if dosage:
+                try:
+                    dosage.indication = request.form.get('indication')
+                    dosage.contraindication = request.form.get('contraindication')
+                    dosage.interaction = request.form.get('interaction')
+                    dosage.side_effects = request.form.get('side_effects')
+                    dosage.dosage_peds = request.form.get('dosage_peds')
+                    dosage.dosage_adults = request.form.get('dosage_adults')
+                    dosage.dosage_geriatrics = request.form.get('dosage_geriatrics')
+                    dosage.important_notes = request.form.get('important_notes')
+                    try:
+                        dosage.source = 'manual'
+                    except Exception:
+                        pass
+                    db.session.commit()
+                    flash('Controlled drug dosage information updated successfully!', 'success')
+                except Exception as e:
+                    db.session.rollback()
+                    flash(f'Error updating controlled drug dosage: {str(e)}', 'danger')
+            else:
+                flash('Controlled drug dosage information not found', 'danger')
+
+        elif action == 'delete':
+            dosage_id = request.form.get('dosage_id')
+            dosage = ControlledDrugDosage.query.get(dosage_id)
+            if dosage:
+                try:
+                    db.session.delete(dosage)
+                    db.session.commit()
+                    flash('Controlled drug dosage information deleted successfully!', 'success')
+                except Exception as e:
+                    db.session.rollback()
+                    flash(f'Error deleting controlled drug dosage: {str(e)}', 'danger')
+            else:
+                flash('Controlled drug dosage information not found', 'danger')
+
+        return redirect(url_for('manage_controlled_dosage'))
+
+    dosages = ControlledDrugDosage.query.join(ControlledDrug).all()
+    drugs = ControlledDrug.query.all()
+
+    total_drugs = ControlledDrug.query.count()
+    drugs_with_dosage = ControlledDrug.query.filter(ControlledDrug.dosage.any()).count()
+    drugs_without_dosage = max(0, total_drugs - drugs_with_dosage)
+    ai_generated = 0
+    try:
+        ai_generated = ControlledDrugDosage.query.filter(ControlledDrugDosage.source == 'ai').count()
+    except Exception:
+        ai_generated = 0
+    return render_template(
+        'admin/controlled_dosage.html',
+        dosages=dosages,
+        drugs=drugs,
+        ai_dosage_agent_enabled=_get_ai_dosage_agent_enabled(),
+        stats={
+            'total_drugs': total_drugs,
+            'with_dosage': drugs_with_dosage,
+            'without_dosage': drugs_without_dosage,
+            'ai_generated': ai_generated,
+        },
+    )
+
+
+@app.route('/admin/controlled-dosage/<int:dosage_id>')
+@login_required
+def admin_get_controlled_dosage(dosage_id):
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    dosage = ControlledDrugDosage.query.get_or_404(dosage_id)
+    return jsonify({
+        'id': dosage.id,
+        'drug': {
+            'id': dosage.controlled_drug.id,
+            'drug_number': dosage.controlled_drug.controlled_drug_number,
+            'name': dosage.controlled_drug.name,
+        },
+        'indication': dosage.indication,
+        'contraindication': dosage.contraindication,
+        'interaction': dosage.interaction,
+        'side_effects': dosage.side_effects,
+        'dosage_peds': dosage.dosage_peds,
+        'dosage_adults': dosage.dosage_adults,
+        'dosage_geriatrics': dosage.dosage_geriatrics,
+        'important_notes': dosage.important_notes,
+    })
+
+
+@app.route('/admin/controlled-drugs/without-dosage')
+@login_required
+def admin_get_controlled_drugs_without_dosage():
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    drugs = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).all()
+    return jsonify([{
+        'id': d.id,
+        'drug_number': d.controlled_drug_number,
+        'name': d.name,
+    } for d in drugs])
+
+
+@app.route('/admin/controlled-drugs/<int:drug_id>/dosage')
+@login_required
+def admin_get_controlled_drug_dosage(drug_id):
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    drug = ControlledDrug.query.get_or_404(drug_id)
+    dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
+    return jsonify({
+        'drug': {
+            'id': drug.id,
+            'name': drug.name,
+            'drug_number': drug.controlled_drug_number,
+        },
+        'dosage': {
+            'indication': dosage.indication,
+            'contraindication': dosage.contraindication,
+            'interaction': dosage.interaction,
+            'side_effects': dosage.side_effects,
+            'dosage_peds': dosage.dosage_peds,
+            'dosage_adults': dosage.dosage_adults,
+            'dosage_geriatrics': dosage.dosage_geriatrics,
+            'important_notes': dosage.important_notes,
+        } if dosage else None,
+        'source': 'db' if dosage else None
+    })
+
+
+@app.route('/admin/controlled-dosage/load-index-book', methods=['POST'])
+@login_required
+def admin_load_controlled_dosage_index_book():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    entries = _load_dosage_index_book()
+    if not entries:
+        flash('Dosage index book not found or empty. Place it at instance/dosage_index.json or static/dosage_index.json', 'warning')
+        return redirect(url_for('manage_controlled_dosage'))
+
+    name_map = { _normalize_drug_name(e.get('name')): e for e in entries if e.get('name') }
+    created = 0
+    try:
+        drugs = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).all()
+        for drug in drugs:
+            e = name_map.get(_normalize_drug_name(drug.name))
+            if not e:
+                continue
+            d = ControlledDrugDosage(
+                controlled_drug_id=drug.id,
+                indication=e.get('indication'),
+                contraindication=e.get('contraindication'),
+                interaction=e.get('interaction'),
+                side_effects=e.get('side_effects'),
+                dosage_peds=e.get('dosage_peds'),
+                dosage_adults=e.get('dosage_adults'),
+                dosage_geriatrics=e.get('dosage_geriatrics'),
+                important_notes=e.get('important_notes'),
+            )
+            db.session.add(d)
+            created += 1
+        db.session.commit()
+        flash(f'Loaded {created} controlled drug dosage entries from index book.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Failed to load controlled dosage index book: {str(e)}', 'danger')
+
+    return redirect(url_for('manage_controlled_dosage'))
+
+
+@app.route('/admin/dosage/ai-suggest')
+@login_required
+def admin_ai_suggest_dosage():
+    """Admin-only helper that returns suggested dosage fields for a drug.
+
+    Query params:
+      kind=drug|controlled
+      drug_id=<int>
+    """
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    kind = (request.args.get('kind') or 'drug').strip().lower()
+    try:
+        drug_id = int(request.args.get('drug_id') or 0)
+    except Exception:
+        drug_id = 0
+
+    if kind not in ('drug', 'controlled') or drug_id <= 0:
+        return jsonify({'error': 'Invalid request'}), 400
+
+    if kind == 'drug':
+        drug = Drug.query.get_or_404(drug_id)
+        existing = DrugDosage.query.filter_by(drug_id=drug.id).first()
+        try:
+            structured = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
+        except (APIConnectionError, APITimeoutError) as e:
+            return jsonify({'error': 'AI service unavailable', 'message': f"{type(e).__name__}: {str(e)}"}), 503
+        return jsonify({
+            'kind': 'drug',
+            'drug': {'id': drug.id, 'name': drug.name, 'drug_number': drug.drug_number},
+            'suggested': structured,
+            'existing': {
+                'indication': existing.indication if existing else None,
+                'contraindication': existing.contraindication if existing else None,
+                'interaction': existing.interaction if existing else None,
+                'side_effects': existing.side_effects if existing else None,
+                'dosage_peds': existing.dosage_peds if existing else None,
+                'dosage_adults': existing.dosage_adults if existing else None,
+                'dosage_geriatrics': existing.dosage_geriatrics if existing else None,
+                'important_notes': existing.important_notes if existing else None,
+            }
+        })
+
+    drug = ControlledDrug.query.get_or_404(drug_id)
+    existing = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
+    try:
+        structured = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
+    except (APIConnectionError, APITimeoutError) as e:
+        return jsonify({'error': 'AI service unavailable', 'message': f"{type(e).__name__}: {str(e)}"}), 503
+    return jsonify({
+        'kind': 'controlled',
+        'drug': {'id': drug.id, 'name': drug.name, 'drug_number': drug.controlled_drug_number},
+        'suggested': structured,
+        'existing': {
+            'indication': existing.indication if existing else None,
+            'contraindication': existing.contraindication if existing else None,
+            'interaction': existing.interaction if existing else None,
+            'side_effects': existing.side_effects if existing else None,
+            'dosage_peds': existing.dosage_peds if existing else None,
+            'dosage_adults': existing.dosage_adults if existing else None,
+            'dosage_geriatrics': existing.dosage_geriatrics if existing else None,
+            'important_notes': existing.important_notes if existing else None,
+        }
+    })
+
+
+@app.route('/admin/dosage/ai-fill-missing', methods=['POST'])
+@login_required
+def admin_ai_fill_missing_dosage_fields():
+    """Admin-only batch helper: fills ONLY missing dosage fields using AI generation (+ optional local index-book context).
+
+    Does not overwrite any non-empty fields.
+    """
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    kind = (request.form.get('kind') or 'drug').strip().lower()
+    if kind not in ('drug', 'controlled'):
+        flash('Invalid dosage kind', 'danger')
+        return redirect(url_for('manage_dosage'))
+
+    # Keep this conservative to avoid timeouts.
+    try:
+        limit = int(request.form.get('limit') or 10)
+    except Exception:
+        limit = 10
+    limit = max(1, min(limit, 25))
+
+    updated_records = 0
+    updated_fields = 0
+    processed = 0
+    error_count = 0
+
+    try:
+        if kind == 'drug':
+            rows = DrugDosage.query.join(Drug).all()
+            for dosage in rows:
+                if processed >= limit:
+                    break
+                try:
+                    missing_any = any([
+                        _is_blank(dosage.indication),
+                        _is_blank(dosage.contraindication),
+                        _is_blank(dosage.interaction),
+                        _is_blank(dosage.side_effects),
+                        _is_blank(dosage.dosage_peds),
+                        _is_blank(dosage.dosage_adults),
+                        _is_blank(dosage.dosage_geriatrics),
+                        _is_blank(dosage.important_notes),
+                    ])
+                    if not missing_any:
+                        continue
+
+                    processed += 1
+                    drug = dosage.drug
+                    suggestion = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
+                    if not isinstance(suggestion, dict):
+                        continue
+
+                    before = updated_fields
+                    if _is_blank(dosage.indication) and suggestion.get('indication'):
+                        dosage.indication = suggestion.get('indication'); updated_fields += 1
+                    if _is_blank(dosage.contraindication) and suggestion.get('contraindication'):
+                        dosage.contraindication = suggestion.get('contraindication'); updated_fields += 1
+                    if _is_blank(dosage.interaction) and suggestion.get('interaction'):
+                        dosage.interaction = suggestion.get('interaction'); updated_fields += 1
+                    if _is_blank(dosage.side_effects) and suggestion.get('side_effects'):
+                        dosage.side_effects = suggestion.get('side_effects'); updated_fields += 1
+                    if _is_blank(dosage.dosage_peds) and suggestion.get('dosage_peds'):
+                        dosage.dosage_peds = suggestion.get('dosage_peds'); updated_fields += 1
+                    if _is_blank(dosage.dosage_adults) and suggestion.get('dosage_adults'):
+                        dosage.dosage_adults = suggestion.get('dosage_adults'); updated_fields += 1
+                    if _is_blank(dosage.dosage_geriatrics) and suggestion.get('dosage_geriatrics'):
+                        dosage.dosage_geriatrics = suggestion.get('dosage_geriatrics'); updated_fields += 1
+                    if _is_blank(dosage.important_notes) and suggestion.get('important_notes'):
+                        dosage.important_notes = suggestion.get('important_notes'); updated_fields += 1
+
+                    if updated_fields > before:
+                        updated_records += 1
+                        try:
+                            dosage.source = 'ai'
+                        except Exception:
+                            pass
+                except Exception:
+                    error_count += 1
+
+        else:
+            rows = ControlledDrugDosage.query.join(ControlledDrug).all()
+            for dosage in rows:
+                if processed >= limit:
+                    break
+                try:
+                    missing_any = any([
+                        _is_blank(dosage.indication),
+                        _is_blank(dosage.contraindication),
+                        _is_blank(dosage.interaction),
+                        _is_blank(dosage.side_effects),
+                        _is_blank(dosage.dosage_peds),
+                        _is_blank(dosage.dosage_adults),
+                        _is_blank(dosage.dosage_geriatrics),
+                        _is_blank(dosage.important_notes),
+                    ])
+                    if not missing_any:
+                        continue
+
+                    processed += 1
+                    drug = dosage.controlled_drug
+                    suggestion = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
+                    if not isinstance(suggestion, dict):
+                        continue
+
+                    before = updated_fields
+                    if _is_blank(dosage.indication) and suggestion.get('indication'):
+                        dosage.indication = suggestion.get('indication'); updated_fields += 1
+                    if _is_blank(dosage.contraindication) and suggestion.get('contraindication'):
+                        dosage.contraindication = suggestion.get('contraindication'); updated_fields += 1
+                    if _is_blank(dosage.interaction) and suggestion.get('interaction'):
+                        dosage.interaction = suggestion.get('interaction'); updated_fields += 1
+                    if _is_blank(dosage.side_effects) and suggestion.get('side_effects'):
+                        dosage.side_effects = suggestion.get('side_effects'); updated_fields += 1
+                    if _is_blank(dosage.dosage_peds) and suggestion.get('dosage_peds'):
+                        dosage.dosage_peds = suggestion.get('dosage_peds'); updated_fields += 1
+                    if _is_blank(dosage.dosage_adults) and suggestion.get('dosage_adults'):
+                        dosage.dosage_adults = suggestion.get('dosage_adults'); updated_fields += 1
+                    if _is_blank(dosage.dosage_geriatrics) and suggestion.get('dosage_geriatrics'):
+                        dosage.dosage_geriatrics = suggestion.get('dosage_geriatrics'); updated_fields += 1
+                    if _is_blank(dosage.important_notes) and suggestion.get('important_notes'):
+                        dosage.important_notes = suggestion.get('important_notes'); updated_fields += 1
+
+                    if updated_fields > before:
+                        updated_records += 1
+                        try:
+                            dosage.source = 'ai'
+                        except Exception:
+                            pass
+                except Exception:
+                    error_count += 1
+
+        db.session.commit()
+        msg = f'AI agent processed {processed} record(s); updated {updated_records} record(s); filled {updated_fields} missing field(s).'
+        if error_count:
+            msg += f' Skipped {error_count} record(s) due to errors.'
+        msg += ' Please review before clinical use.'
+        flash(msg, 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'AI agent failed: {str(e)}', 'danger')
+
+    return redirect(url_for('manage_controlled_dosage' if kind == 'controlled' else 'manage_dosage'))
+
+
+@app.route('/admin/dosage/ai-agent/toggle', methods=['POST'])
+@login_required
+def admin_toggle_ai_dosage_agent():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    enabled = (request.form.get('enabled') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+    _set_ai_dosage_agent_enabled(enabled)
+    flash(f"AI dosage agent is now {'ENABLED' if enabled else 'DISABLED'}.", 'success' if enabled else 'warning')
+    return redirect(request.referrer or url_for('manage_dosage'))
+
+
+@app.route('/admin/dosage/ai-agent/run-now', methods=['POST'])
+@login_required
+def admin_run_ai_dosage_agent_now():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    if not _get_ai_dosage_agent_enabled():
+        flash('AI dosage agent is disabled. Enable it first to run.', 'warning')
+        return redirect(request.referrer or url_for('manage_dosage'))
+
+    kind = (request.form.get('kind') or 'both').strip().lower()
+    if kind not in ('drug', 'controlled', 'both'):
+        kind = 'both'
+
+    try:
+        result = _run_ai_dosage_agent_once_with_db_retry(
+            kind=kind,
+            create_limit=50,
+            update_limit=50,
+            ai_generation_limit=5,
+            max_run_seconds=300,
+            created_at=get_eat_now()
+        )
+        app.logger.info(f"AI dosage agent result: {result}")
+        reason = result.get('reason', '')
+        msg = f"AI dosage agent (kind={kind}): created {result.get('created', 0)}, updated {result.get('updated_records', 0)}, filled {result.get('filled_fields', 0)} fields."
+        if reason:
+            msg += f" Reason: {reason}"
+        else:
+            msg += f" AI budget remaining: {result.get('ai_generation_remaining', 0)}. Errors: {result.get('errors', 0)}."
+        flash(msg, 'warning' if reason else 'success')
+    except Exception as e:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        flash(f'AI dosage agent run failed: {str(e)}', 'danger')
+
+    return redirect(request.referrer or url_for('manage_dosage'))
+
+
+@app.route('/doctor/drugs/<int:drug_id>/dosage')
+@login_required
+def doctor_get_drug_dosage(drug_id):
+    if current_user.role != 'doctor':
+        return jsonify({'error': 'Unauthorized'}), 403
+    drug = Drug.query.get_or_404(drug_id)
+    dosage = DrugDosage.query.filter_by(drug_id=drug.id).first()
+    return jsonify({
+        'drug': {'id': drug.id, 'name': drug.name, 'drug_number': drug.drug_number},
+        'dosage': {
+            'indication': dosage.indication,
+            'contraindication': dosage.contraindication,
+            'interaction': dosage.interaction,
+            'side_effects': dosage.side_effects,
+            'dosage_peds': dosage.dosage_peds,
+            'dosage_adults': dosage.dosage_adults,
+            'dosage_geriatrics': dosage.dosage_geriatrics,
+            'important_notes': dosage.important_notes,
+        } if dosage else None,
+        'source': 'db' if dosage else None
+    })
+
+
+@app.route('/doctor/controlled-drugs/<int:drug_id>/dosage')
+@login_required
+def doctor_get_controlled_drug_dosage(drug_id):
+    if current_user.role != 'doctor':
+        return jsonify({'error': 'Unauthorized'}), 403
+    drug = ControlledDrug.query.get_or_404(drug_id)
+    dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
+    return jsonify({
+        'drug': {'id': drug.id, 'name': drug.name, 'drug_number': drug.controlled_drug_number},
+        'dosage': {
+            'indication': dosage.indication,
+            'contraindication': dosage.contraindication,
+            'interaction': dosage.interaction,
+            'side_effects': dosage.side_effects,
+            'dosage_peds': dosage.dosage_peds,
+            'dosage_adults': dosage.dosage_adults,
+            'dosage_geriatrics': dosage.dosage_geriatrics,
+            'important_notes': dosage.important_notes,
+        } if dosage else None,
+        'source': 'db' if dosage else None
     })
 
 @app.route('/pharmacist/inventory')
@@ -7458,8 +16343,43 @@ def pharmacist_controlled_inventory():
         return redirect(url_for('home'))
 
     try:
-        controlled_drugs = ControlledDrug.query.order_by(ControlledDrug.name).all()
-        return render_template('pharmacist/controlled_inventory.html', controlled_drugs=controlled_drugs)
+        search_query = (request.args.get('search') or '').strip()
+        filter_type = (request.args.get('filter') or 'all').strip()
+
+        query = ControlledDrug.query
+
+        if filter_type == 'in':
+            query = query.filter(ControlledDrug.remaining_quantity > 0)
+        elif filter_type == 'low':
+            query = query.filter(ControlledDrug.remaining_quantity < 10, ControlledDrug.remaining_quantity > 0)
+        elif filter_type == 'out':
+            query = query.filter(ControlledDrug.remaining_quantity == 0)
+
+        if search_query:
+            like = f"%{search_query}%"
+            query = query.filter(or_(
+                ControlledDrug.name.ilike(like),
+                ControlledDrug.controlled_drug_number.ilike(like),
+                ControlledDrug.specification.ilike(like),
+                created_at=get_eat_now()
+            ))
+
+        controlled_drugs = query.order_by(ControlledDrug.name).all()
+
+        controlled_sales = db.session.query(ControlledSale).options(
+            db.joinedload(ControlledSale.patient)
+        ).filter(
+            ControlledSale.status == 'completed'
+        ).order_by(
+            ControlledSale.created_at.desc()
+        ).limit(50).all()
+        return render_template(
+            'pharmacist/controlled_inventory.html',
+            controlled_drugs=controlled_drugs,
+            search_query=search_query,
+            filter_type=filter_type,
+            controlled_sales=controlled_sales,
+        )
     except Exception as e:
         current_app.logger.error(f"Error loading controlled inventory: {str(e)}")
         flash('An error occurred while loading controlled inventory', 'danger')
@@ -7468,39 +16388,38 @@ def pharmacist_controlled_inventory():
 
 @app.route('/pharmacist/api/controlled-prescriptions')
 @login_required
-def pharmacist_controlled_prescriptions_list():
+def pharmacist_get_controlled_prescriptions():
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
 
     try:
-        prescriptions = ControlledPrescription.query.filter_by(status='pending').options(
+        prescriptions = db.session.query(ControlledPrescription).options(
             db.joinedload(ControlledPrescription.patient),
             db.joinedload(ControlledPrescription.doctor),
-            db.joinedload(ControlledPrescription.items).joinedload(ControlledPrescriptionItem.controlled_drug)
-        ).order_by(ControlledPrescription.created_at.asc()).all()
+            db.joinedload(ControlledPrescription.items).joinedload(ControlledPrescriptionItem.controlled_drug),
+        ).order_by(ControlledPrescription.created_at.desc()).all()
 
-        result = []
+        data = []
         for p in prescriptions:
             patient_name = 'Unknown Patient'
             try:
                 if p.patient and hasattr(p.patient, 'get_decrypted_name'):
-                    patient_name = p.patient.get_decrypted_name()
+                    patient_name = p.patient.get_decrypted_name
                 elif p.patient:
                     patient_name = str(p.patient)
             except Exception:
                 patient_name = 'Error loading patient'
 
-            result.append({
+            data.append({
                 'id': p.id,
                 'patient_name': patient_name,
                 'patient_number': p.patient.op_number or p.patient.ip_number if p.patient else 'N/A',
                 'doctor_name': p.doctor.username if p.doctor else 'Unknown Doctor',
-                'created_at': p.created_at.strftime('%Y-%m-%d %H:%M') if p.created_at else 'Unknown Date',
-                'items_count': len(p.items) if p.items else 0,
                 'status': p.status,
+                'created_at': p.created_at.strftime('%Y-%m-%d %H:%M') if p.created_at else '',
+                'item_count': len(p.items) if p.items else 0,
             })
-
-        return jsonify(result)
+        return jsonify(data)
     except Exception as e:
         current_app.logger.error(f"Error fetching controlled prescriptions: {str(e)}")
         return jsonify({'error': 'Failed to fetch controlled prescriptions'}), 500
@@ -7508,7 +16427,7 @@ def pharmacist_controlled_prescriptions_list():
 
 @app.route('/pharmacist/api/controlled-prescription/<int:prescription_id>')
 @login_required
-def pharmacist_controlled_prescription_details(prescription_id):
+def pharmacist_get_controlled_prescription_details(prescription_id):
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
 
@@ -7525,7 +16444,7 @@ def pharmacist_controlled_prescription_details(prescription_id):
         patient_name = 'Unknown Patient'
         try:
             if p.patient and hasattr(p.patient, 'get_decrypted_name'):
-                patient_name = p.patient.get_decrypted_name()
+                patient_name = p.patient.get_decrypted_name
             elif p.patient:
                 patient_name = str(p.patient)
         except Exception:
@@ -7545,6 +16464,7 @@ def pharmacist_controlled_prescription_details(prescription_id):
                 'duration': item.duration or '',
                 'notes': item.notes or '',
                 'remaining_quantity': cd.remaining_quantity if cd else 0,
+                'status': item.status,
             })
 
         return jsonify({
@@ -7573,6 +16493,7 @@ def pharmacist_controlled_dispense():
         data = request.get_json() or {}
         prescription_id = data.get('controlled_prescription_id')
         payment_method = data.get('payment_method', 'cash')
+        prescription_sheet_path = (data.get('prescription_sheet_path') or data.get('prescription_image_path') or '').strip() or None
 
         if not prescription_id:
             return jsonify({'error': 'Controlled prescription ID is required'}), 400
@@ -7609,7 +16530,8 @@ def pharmacist_controlled_dispense():
             total_amount=total_amount,
             payment_method=payment_method,
             status='completed',
-            created_at=datetime.now(timezone.utc)
+            prescription_image_path=prescription_sheet_path,
+            created_at=get_eat_now()
         )
         db.session.add(sale)
         db.session.flush()
@@ -7626,11 +16548,11 @@ def pharmacist_controlled_dispense():
                 individual_sale_number=f"{sale_number}-{idx+1:02d}",
                 description=f"Controlled prescription: {cd.name}",
                 prescription_source='internal',
-                prescription_sheet_path=None,
+                prescription_sheet_path=prescription_sheet_path,
                 quantity=qty,
                 unit_price=unit_price,
                 total_price=unit_price * qty,
-                created_at=datetime.now(timezone.utc)
+                created_at=get_eat_now()
             ))
 
             cd.sold_quantity = (cd.sold_quantity or 0) + qty
@@ -7639,7 +16561,24 @@ def pharmacist_controlled_dispense():
             item.status = 'dispensed'
 
         p.status = 'dispensed'
-        db.session.commit()
+
+        # Store a copy of the receipt HTML for audit/reprints and post to ledger before committing
+        receipt_html = None
+        try:
+            db.session.flush()
+            sale_for_receipt = db.session.query(ControlledSale).options(
+                db.joinedload(ControlledSale.user),
+                db.joinedload(ControlledSale.items),
+                db.joinedload(ControlledSale.patient),
+            ).filter(ControlledSale.id == sale.id).first()
+            if sale_for_receipt:
+                receipt_html = render_template('pharmacist/controlled_receipt.html', sale=sale_for_receipt)
+                sale.receipt_html = receipt_html
+                db.session.add(sale)
+        except Exception as e:
+            current_app.logger.error(f"Failed to generate controlled receipt HTML: {str(e)}", exc_info=True)
+
+        _ensure_controlled_sale_transaction(sale, receipt_html=receipt_html)
 
         try:
             log_audit('dispense_controlled_prescription', 'ControlledPrescription', p.id, None, {
@@ -7656,6 +16595,7 @@ def pharmacist_controlled_dispense():
             'sale_id': sale.id,
             'sale_number': sale.sale_number,
             'total_amount': total_amount,
+            'receipt_url': url_for('pharmacist_controlled_sale_receipt', sale_id=sale.id),
             'message': 'Controlled prescription dispensed successfully'
         })
 
@@ -7677,14 +16617,16 @@ def pharmacist_controlled_external_sale():
         quantity = request.form.get('quantity', type=int)
         patient_id = request.form.get('patient_id', type=int)
         payment_method = request.form.get('payment_method', 'cash')
-        sheet = request.files.get('prescription_sheet')
+        # Legacy endpoint: now restricted to camera-captured images only.
+        # The frontend no longer provides file upload input; it captures from camera.
+        sheet = request.files.get('prescription_image') or request.files.get('prescription_sheet')
 
         if not controlled_drug_id or not quantity or quantity <= 0:
             flash('Please select a controlled drug and valid quantity.', 'danger')
             return redirect(url_for('pharmacist_controlled_inventory'))
 
         if not sheet or not getattr(sheet, 'filename', None):
-            flash('Prescription sheet is required for external/OTC controlled sales.', 'danger')
+            flash('Prescription photo is required for external/OTC controlled sales.', 'danger')
             return redirect(url_for('pharmacist_controlled_inventory'))
 
         cdrug = db.session.get(ControlledDrug, controlled_drug_id)
@@ -7702,7 +16644,7 @@ def pharmacist_controlled_external_sale():
                 flash('Selected patient not found.', 'danger')
                 return redirect(url_for('pharmacist_controlled_inventory'))
 
-        sheet_path = _save_prescription_sheet(sheet)
+        sheet_path = _save_prescription_image(sheet)
         sale_number = generate_controlled_sale_number()
         unit_price = float(cdrug.selling_price)
         total_amount = unit_price * quantity
@@ -7716,7 +16658,8 @@ def pharmacist_controlled_external_sale():
             payment_method=payment_method,
             status='completed',
             notes='External controlled sale',
-            created_at=datetime.now(timezone.utc)
+            prescription_image_path=sheet_path,
+            created_at=get_eat_now(),
         )
         db.session.add(sale)
         db.session.flush()
@@ -7733,12 +16676,14 @@ def pharmacist_controlled_external_sale():
             quantity=quantity,
             unit_price=unit_price,
             total_price=total_amount,
-            created_at=datetime.now(timezone.utc)
+            created_at=get_eat_now(),
         ))
 
         cdrug.sold_quantity = (cdrug.sold_quantity or 0) + quantity
         db.session.add(cdrug)
-        db.session.commit()
+
+        # Post into ledger (golden rule) - required
+        _ensure_controlled_sale_transaction(sale, receipt_html=None)
 
         try:
             log_audit('external_controlled_sale', 'ControlledSale', sale.id, None, {
@@ -7764,6 +16709,325 @@ def pharmacist_controlled_external_sale():
         current_app.logger.error(f"Error processing external controlled sale: {str(e)}", exc_info=True)
         flash('Failed to process external controlled sale.', 'danger')
         return redirect(url_for('pharmacist_controlled_inventory'))
+
+
+@app.route('/pharmacist/controlled/cart-sale', methods=['POST'])
+@login_required
+def pharmacist_controlled_cart_sale():
+    if current_user.role != 'pharmacist':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        cart_raw = request.form.get('cart')
+        if not cart_raw:
+            return jsonify({'success': False, 'error': 'Missing cart payload'}), 400
+
+        try:
+            payload = json.loads(cart_raw)
+        except Exception:
+            return jsonify({'success': False, 'error': 'Invalid cart JSON'}), 400
+
+        items = payload.get('items') or []
+        if not items:
+            return jsonify({'success': False, 'error': 'Cart is empty'}), 400
+
+        payment_method = payload.get('payment_method', 'cash')
+        patient_id = payload.get('patient_id')
+
+        # Required captured metadata
+        customer_name = (payload.get('customer_name') or '').strip()
+        customer_age = payload.get('customer_age')
+        customer_gender = (payload.get('customer_gender') or '').strip()
+        customer_phone = (payload.get('customer_phone') or '').strip()
+        diagnosis = (payload.get('diagnosis') or '').strip()
+        destination = (payload.get('destination') or '').strip()
+
+        if not customer_name or not customer_gender or not customer_phone or not diagnosis or not destination:
+            return jsonify({'success': False, 'error': 'Missing required customer details'}), 400
+
+        image = request.files.get('prescription_image')
+        if not image or not getattr(image, 'filename', None):
+            return jsonify({'success': False, 'error': 'Prescription photo is required (camera capture)'}), 400
+
+        prescription_path = _save_prescription_image(image)
+
+        if patient_id:
+            patient = db.session.get(Patient, int(patient_id))
+            if not patient:
+                return jsonify({'success': False, 'error': 'Selected patient not found'}), 400
+
+        # Validate stock + compute totals
+        resolved_items = []
+        total_amount = 0.0
+        for idx, it in enumerate(items):
+            cd_id = it.get('controlled_drug_id')
+            qty = int(it.get('quantity') or 0)
+            if not cd_id or qty <= 0:
+                return jsonify({'success': False, 'error': f'Invalid item at position {idx + 1}'}), 400
+
+            cd = db.session.get(ControlledDrug, int(cd_id))
+            if not cd:
+                return jsonify({'success': False, 'error': f'Controlled drug not found: {cd_id}'}), 400
+
+            if cd.remaining_quantity < qty:
+                return jsonify({'success': False, 'error': f'Insufficient stock for {cd.name}', 'available': cd.remaining_quantity, 'requested': qty, 'controlled_drug_id': cd.id}), 400
+
+            unit_price = float(cd.selling_price)
+            line_total = unit_price * qty
+            total_amount += line_total
+            resolved_items.append((cd, qty, unit_price, it))
+
+        sale_number = generate_controlled_sale_number()
+        sale = ControlledSale(
+            sale_number=sale_number,
+            patient_id=int(patient_id) if patient_id else None,
+            user_id=current_user.id,
+            pharmacist_name=f"{current_user.username}",
+            total_amount=float(total_amount),
+            payment_method=payment_method,
+            status='completed',
+            notes='Controlled cart sale',
+            customer_name=customer_name,
+            customer_age=int(customer_age) if customer_age not in (None, '') else None,
+            customer_gender=customer_gender,
+            diagnosis=diagnosis,
+            customer_phone=customer_phone,
+            destination=destination,
+            prescription_image_path=prescription_path,
+            created_at=get_eat_now(),
+        )
+        db.session.add(sale)
+        db.session.flush()
+
+        for idx, (cd, qty, unit_price, it) in enumerate(resolved_items):
+            db.session.add(ControlledSaleItem(
+                sale_id=sale.id,
+                controlled_drug_id=cd.id,
+                controlled_drug_name=cd.name,
+                controlled_drug_specification=cd.specification,
+                individual_sale_number=f"{sale_number}-{idx + 1:02d}",
+                description=f"Controlled cart sale: {cd.name}",
+                prescription_source='external',
+                prescription_sheet_path=prescription_path,
+                dosage=(it.get('dosage') or '').strip() or None,
+                frequency=(it.get('frequency') or '').strip() or None,
+                duration=(it.get('duration') or '').strip() or None,
+                notes=(it.get('notes') or '').strip() or None,
+                quantity=int(qty),
+                unit_price=float(unit_price),
+                total_price=float(unit_price) * int(qty),
+                created_at=get_eat_now(),
+            ))
+
+            cd.sold_quantity = (cd.sold_quantity or 0) + int(qty)
+            db.session.add(cd)
+
+        receipt_html = None
+        try:
+            db.session.flush()
+            sale_for_receipt = db.session.query(ControlledSale).options(
+                db.joinedload(ControlledSale.user),
+                db.joinedload(ControlledSale.items),
+                db.joinedload(ControlledSale.patient)
+            ).filter(ControlledSale.id == sale.id).first()
+
+            receipt_html = render_template('pharmacist/controlled_receipt.html', sale=sale_for_receipt)
+            sale.receipt_html = receipt_html
+            db.session.add(sale)
+        except Exception as e:
+            current_app.logger.error(f"Failed to generate controlled receipt HTML: {str(e)}", exc_info=True)
+
+        # Post into ledger (golden rule) - required
+        _ensure_controlled_sale_transaction(sale, receipt_html=receipt_html)
+
+        try:
+            log_audit('controlled_cart_sale', 'ControlledSale', sale.id, None, {
+                'sale_number': sale.sale_number,
+                'total_amount': sale.total_amount,
+                'payment_method': sale.payment_method,
+            })
+        except Exception:
+            pass
+
+        return jsonify({
+            'success': True,
+            'sale_id': sale.id,
+            'sale_number': sale.sale_number,
+            'total_amount': sale.total_amount,
+        })
+
+    except ValueError as ve:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error processing controlled cart sale: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to process controlled sale'}), 500
+
+
+@app.route('/pharmacist/controlled/sale/<int:sale_id>/receipt')
+@login_required
+def pharmacist_controlled_sale_receipt(sale_id):
+    if current_user.role != 'pharmacist':
+        abort(403)
+
+    embedded_requested = request.args.get('embedded') == '1'
+
+    sale = db.session.query(ControlledSale).options(
+        db.joinedload(ControlledSale.user),
+        db.joinedload(ControlledSale.items),
+        db.joinedload(ControlledSale.patient)
+    ).filter(ControlledSale.id == sale_id).first()
+
+    if not sale:
+        abort(404)
+
+    if embedded_requested:
+        return Response(render_template('pharmacist/controlled_receipt_simple.html', sale=sale), mimetype='text/html')
+
+    return render_template('pharmacist/controlled_receipt.html', sale=sale)
+
+
+@app.route('/pharmacist/api/controlled-sales/search')
+@login_required
+def pharmacist_search_controlled_sales():
+    if current_user.role != 'pharmacist':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    q = (request.args.get('q') or '').strip()
+
+    query = db.session.query(ControlledSale).options(
+        db.joinedload(ControlledSale.patient)
+    ).order_by(ControlledSale.created_at.desc())
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(
+            ControlledSale.sale_number.ilike(like),
+            ControlledSale.customer_name.ilike(like),
+            ControlledSale.customer_phone.ilike(like),
+            ControlledSale.diagnosis.ilike(like)
+        ))
+
+    sales = query.limit(50).all()
+    result = []
+    for s in sales:
+        patient_name = None
+        try:
+            if s.patient and hasattr(s.patient, 'get_decrypted_name'):
+                patient_name = s.patient.get_decrypted_name
+        except Exception:
+            patient_name = None
+
+        result.append({
+            'id': s.id,
+            'sale_number': s.sale_number,
+            'created_at': s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '',
+            'customer_name': s.customer_name,
+            'customer_phone': s.customer_phone,
+            'patient_name': patient_name,
+            'total_amount': float(s.total_amount or 0),
+        })
+
+    return jsonify(result)
+
+
+@app.route('/admin/controlled/sale/<int:sale_id>/receipt')
+@login_required
+def admin_controlled_sale_receipt(sale_id):
+    if current_user.role != 'admin':
+        abort(403)
+
+    sale = db.session.query(ControlledSale).options(
+        db.joinedload(ControlledSale.user),
+        db.joinedload(ControlledSale.items),
+        db.joinedload(ControlledSale.patient)
+    ).filter(ControlledSale.id == sale_id).first()
+
+    if not sale:
+        abort(404)
+
+    return render_template('pharmacist/controlled_receipt.html', sale=sale)
+
+
+@app.route('/admin/reports/controlled-sales/export', methods=['GET'])
+@login_required
+def admin_export_controlled_sales_report():
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    start_date_str = request.args.get('start_date')
+    end_date_str = request.args.get('end_date')
+    if not start_date_str or not end_date_str:
+        return jsonify({'error': 'Both start and end dates are required'}), 400
+
+    try:
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date() + timedelta(days=1)
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    rows = db.session.query(ControlledSale, ControlledSaleItem).join(
+        ControlledSaleItem, ControlledSale.id == ControlledSaleItem.sale_id
+    ).filter(
+        ControlledSale.created_at >= start_date,
+        ControlledSale.created_at <= end_date,
+        ControlledSale.status == 'completed'
+    ).order_by(ControlledSale.created_at.desc(), ControlledSaleItem.id.asc()).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'Sale Number', 'Date', 'Pharmacist', 'Payment Method', 'Total Amount',
+        'Patient Name',
+        'Customer Name', 'Customer Age', 'Customer Gender', 'Customer Phone',
+        'Diagnosis', 'Destination',
+        'Controlled Drug', 'Specification', 'Qty', 'Unit Price', 'Line Total',
+        'Dosage', 'Frequency', 'Duration', 'Notes',
+        'Prescription Image Path', 'Receipt URL'
+    ])
+
+    for sale, item in rows:
+        patient_name = ''
+        try:
+            if sale.patient and sale.patient.name:
+                patient_name = str(sale.patient.name)
+        except Exception:
+            patient_name = ''
+
+        receipt_url = url_for('admin_controlled_sale_receipt', sale_id=sale.id, _external=False)
+        writer.writerow([
+            sale.sale_number,
+            sale.created_at.strftime('%Y-%m-%d %H:%M') if sale.created_at else '',
+            sale.pharmacist_name or '',
+            sale.payment_method or '',
+            float(sale.total_amount or 0),
+            patient_name,
+            sale.customer_name or '',
+            sale.customer_age if sale.customer_age is not None else '',
+            sale.customer_gender or '',
+            sale.customer_phone or '',
+            sale.diagnosis or '',
+            sale.destination or '',
+            item.controlled_drug_name or '',
+            item.controlled_drug_specification or '',
+            int(item.quantity or 0),
+            float(item.unit_price or 0),
+            float(item.total_price or 0),
+            getattr(item, 'dosage', None) or '',
+            getattr(item, 'frequency', None) or '',
+            getattr(item, 'duration', None) or '',
+            getattr(item, 'notes', None) or '',
+            sale.prescription_image_path or '',
+            receipt_url,
+        ])
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Disposition'] = f'attachment; filename=controlled_drug_sales_{start_date_str}_to_{end_date_str}.csv'
+    response.headers['Content-type'] = 'text/csv'
+
+    return response
+
     
 @app.route('/pharmacist/drugs/export')
 @login_required
@@ -7845,9 +17109,165 @@ def pharmacist_sales():
     if current_user.role != 'pharmacist':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
-    
-    sales = Sale.query.order_by(Sale.created_at.desc()).limit(50).all()
+
+    sales = (
+        db.session.query(Sale)
+        .options(
+            db.joinedload(Sale.items),
+            db.joinedload(Sale.patient),
+        )
+        .order_by(Sale.created_at.desc())
+        .limit(50)
+        .all()
+    )
+
+    wants_json = (
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.accept_mimetypes.best == 'application/json'
+        or request.args.get('format') == 'json'
+    )
+    if wants_json:
+        rows = []
+        for s in sales:
+            patient_name = None
+            if s.patient:
+                patient_name = getattr(s.patient, 'get_decrypted_name', None) or getattr(s.patient, 'name', None)
+
+            created_at_str = None
+            try:
+                created_at_str = s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else None
+            except Exception:
+                created_at_str = None
+
+            try:
+                items_count = len(list(s.items or []))
+            except Exception:
+                items_count = 0
+
+            rows.append({
+                'id': s.id,
+                'sale_number': s.sale_number,
+                'created_at': created_at_str,
+                'patient_name': patient_name,
+                'items_count': items_count,
+                'total_amount': float(s.total_amount or 0),
+            })
+
+        return jsonify(rows)
+
     return render_template('pharmacist/sales.html', sales=sales)
+
+
+@app.route('/pharmacist/sale', methods=['POST'])
+@login_required
+def pharmacist_sale_alias():
+    """Compatibility alias for the pharmacist dashboard JS.
+
+    Frontend posts to `/pharmacist/sale`; the canonical handler is `/pharmacist/cart_sale`.
+    """
+    return process__cart_sale()
+
+
+@app.route('/api/sales/<string:sale_number>', methods=['GET'])
+@login_required
+def api_sale_lookup_by_number(sale_number: str):
+    """Lookup a sale by sale_number for pharmacist refund UI."""
+    if current_user.role not in ['pharmacist', 'admin']:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    sale = (
+        db.session.query(Sale)
+        .options(
+            db.joinedload(Sale.items),
+            db.joinedload(Sale.patient),
+        )
+        .filter((Sale.sale_number == sale_number) | (Sale.bulk_sale_number == sale_number))
+        .first()
+    )
+
+    if not sale:
+        return jsonify({'error': 'Sale not found'}), 404
+
+    patient_name = None
+    if sale.patient:
+        patient_name = getattr(sale.patient, 'get_decrypted_name', None) or getattr(sale.patient, 'name', None)
+
+    created_at_str = None
+    try:
+        created_at_str = sale.created_at.strftime('%Y-%m-%d %H:%M') if sale.created_at else None
+    except Exception:
+        created_at_str = None
+
+    items = []
+    for item in (sale.items or []):
+        items.append({
+            'id': item.id,
+            'description': getattr(item, 'description', None) or getattr(item, 'drug_name', None) or 'Item',
+            'unit_price': float(item.unit_price or 0),
+            'quantity': int(item.quantity or 0),
+            'total_price': float(item.total_price or 0),
+        })
+
+    return jsonify({
+        'id': sale.id,
+        'sale_number': sale.sale_number,
+        'bulk_sale_number': sale.bulk_sale_number,
+        'created_at': created_at_str,
+        'patient_name': patient_name,
+        'total_amount': float(sale.total_amount or 0),
+        'items': items,
+    })
+
+
+@app.route('/pharmacist/api/walkin-sales', methods=['GET'])
+@login_required
+def pharmacist_walkin_sales_api():
+    if current_user.role != 'pharmacist':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        limit = 500
+        sales = (
+            db.session.query(Sale)
+            .options(
+                db.joinedload(Sale.user),
+                db.joinedload(Sale.items),
+            )
+            .filter(Sale.patient_id.is_(None))
+            .order_by(Sale.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+        rows = []
+        for s in sales:
+            items = list(s.items or [])
+            total_qty = 0
+            try:
+                total_qty = sum(int(i.quantity or 0) for i in items)
+            except Exception:
+                total_qty = 0
+
+            created_at_iso = None
+            try:
+                created_at_iso = (s.created_at.isoformat() if s.created_at else None)
+            except Exception:
+                created_at_iso = None
+
+            rows.append({
+                'sale_id': s.id,
+                'sale_number': s.sale_number,
+                'created_at': created_at_iso,
+                'payment_method': s.payment_method,
+                'total_amount': float(s.total_amount or 0),
+                'total_qty': int(total_qty),
+                'pharmacist': (s.pharmacist_name or (s.user.username if s.user else '')),
+            })
+
+        return jsonify({'success': True, 'rows': rows})
+    except Exception as e:
+        current_app.logger.error(f"Failed to load walk-in sales: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to load receipts'}), 500
 
 
 @app.route('/pharmacist/cart_sale', methods=['POST'])
@@ -7895,7 +17315,7 @@ def process__cart_sale():
             total_amount=total_amount,
             payment_method=payment_method,
             status='completed',
-            created_at=datetime.now(timezone.utc)
+            created_at=get_eat_now(),
         )
         db.session.add(sale)
         db.session.flush()
@@ -7931,7 +17351,7 @@ def process__cart_sale():
             
             # Create sale item
             sale_item = SaleItem(
-                sale_id=sale.id,
+                sale=sale,
                 drug_id=drug_id,
                 drug_name=drug.name,
                 drug_specification=drug.specification,
@@ -7940,7 +17360,7 @@ def process__cart_sale():
                 quantity=quantity,
                 unit_price=unit_price,
                 total_price=unit_price * quantity,
-                created_at=datetime.now(timezone.utc)
+                created_at=get_eat_now(),
             )
             db.session.add(sale_item)
             
@@ -7956,9 +17376,45 @@ def process__cart_sale():
             user_id=current_user.id,
             reference_id=sale.id,
             notes=f"Sale #{sale.sale_number}",
-            created_at=datetime.now(timezone.utc)
+            created_at=get_eat_now(),
+        )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='sales',
+            direction='IN',
+            status='posted',
+            department='pharmacy',
+            category='drug_sale',
+            payment_method=payment_method,
         )
         db.session.add(transaction)
+
+        # Store sale receipt HTML for reprinting (best-effort)
+        try:
+            # Session autoflush is disabled; flush pending SaleItems so receipt queries can see them.
+            db.session.flush()
+            sale_for_receipt = db.session.query(Sale).options(
+                db.joinedload(Sale.user),
+                db.joinedload(Sale.items).joinedload(SaleItem.drug),
+                db.joinedload(Sale.patient)
+            ).filter(Sale.id == sale.id).first()
+
+            related_sales = []
+            if sale_for_receipt and sale_for_receipt.bulk_sale_number:
+                related_sales = db.session.query(Sale).filter(
+                    Sale.bulk_sale_number == sale_for_receipt.bulk_sale_number,
+                    Sale.id != sale_for_receipt.id
+                ).options(db.joinedload(Sale.items).joinedload(SaleItem.drug)).all()
+
+            receipt_html = render_template(
+                'pharmacist/receipt.html',
+                sale=sale_for_receipt,
+                related_sales=related_sales,
+                now=datetime.now(),
+            )
+            _ensure_transaction_receipt(transaction, receipt_html, prefix='SALE')
+        except Exception as e:
+            current_app.logger.error(f"Failed to store sale receipt HTML: {str(e)}", exc_info=True)
         
         # Commit all changes
         db.session.commit()
@@ -7976,8 +17432,7 @@ def process__cart_sale():
         current_app.logger.error(f"Error processing sale: {str(e)}", exc_info=True)
         return jsonify({
             'success': False, 
-            'error': 'Failed to process sale',
-            'details': str(e)
+            'error': 'Failed to process sale. Please try again later.'
         }), 500
         
 @app.route('/pharmacist/sale/<int:sale_id>/receipt')
@@ -7986,6 +17441,38 @@ def generate_receipt(sale_id):
     if current_user.role != 'pharmacist':
         abort(403)
     
+    tx = _get_transaction_for_sale(sale_id)
+    embedded_requested = request.args.get('embedded') == '1'
+
+    reprint_requested = request.args.get('reprint') == '1'
+    stored_invalid = False
+
+    # If we already stored the receipt, serve it (and optionally mark as reprint)
+    # For embedded modal views, render from DB to avoid nested full-page HTML.
+    if (not embedded_requested) and tx and tx.receipt_html:
+        stored_html = tx.receipt_html
+        # Backward-compat: older sanitization escaped tags, causing receipts to display as text.
+        if stored_html and ('&lt;' in stored_html or '&gt;' in stored_html):
+            try:
+                stored_html = _sanitize_receipt_html(html_lib.unescape(stored_html))
+            except Exception:
+                stored_html = tx.receipt_html
+
+        # If the stored receipt was generated before items were flushed, it may have no rows.
+        if stored_html and 'No items found for this sale.' in stored_html:
+            stored_invalid = True
+        else:
+            if reprint_requested:
+                try:
+                    tx.receipt_reprint_count = int(tx.receipt_reprint_count or 0) + 1
+                    tx.receipt_reprinted_at = get_eat_now()
+                    db.session.add(tx)
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                return Response(_inject_reprint_banner(stored_html, tx.receipt_reprinted_at, tx.receipt_reprint_count), mimetype='text/html')
+            return Response(stored_html, mimetype='text/html')
+
     sale = db.session.query(Sale).options(
         db.joinedload(Sale.user),
         db.joinedload(Sale.items).joinedload(SaleItem.drug),
@@ -8004,10 +17491,34 @@ def generate_receipt(sale_id):
             db.joinedload(Sale.items).joinedload(SaleItem.drug)
         ).all()
     
-    return render_template('pharmacist/receipt.html', 
-                         sale=sale,
-                         related_sales=related_sales,
-                         now=datetime.now())
+    rendered = render_template(
+        'pharmacist/receipt.html',
+        sale=sale,
+        related_sales=related_sales,
+        now=datetime.now(),
+    )
+
+    # Persist for future reprints if transaction exists
+    try:
+        if not tx:
+            tx = _get_transaction_for_sale(sale_id)
+        if tx:
+            _ensure_transaction_receipt(tx, rendered, prefix='SALE', force=stored_invalid)
+
+            if reprint_requested:
+                tx.receipt_reprint_count = int(tx.receipt_reprint_count or 0) + 1
+                tx.receipt_reprinted_at = get_eat_now()
+                db.session.add(tx)
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    if embedded_requested:
+        return Response(rendered, mimetype='text/html')
+
+    if reprint_requested and tx:
+        return Response(_inject_reprint_banner(tx.receipt_html or rendered, tx.receipt_reprinted_at, tx.receipt_reprint_count), mimetype='text/html')
+    return Response(rendered, mimetype='text/html')
 
 @app.route('/pharmacist/refunds')
 @login_required
@@ -8101,101 +17612,186 @@ def search_sale_for_refund():
         'items': items
     })
 
-@app.route('/pharmacist/refund', methods=['POST'])
+
+@app.route('/pharmacist/process-refund', methods=['POST'])
 @login_required
 def process_refund():
-    if current_user.role != 'pharmacist':
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    data = request.get_json()
-    sale_id = data.get('sale_id')
-    items = data.get('items', [])
-    reason = data.get('reason', '')
-    
-    if not sale_id:
-        return jsonify({'error': 'Sale ID is required'}), 400
-    
-    if not items:
-        return jsonify({'error': 'No items selected for refund'}), 400
-    
-    sale = db.session.get(Sale, sale_id)
-    if not sale:
-        return jsonify({'error': 'Sale not found'}), 404
-    
+    if current_user.role not in ['pharmacist', 'admin']:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
     try:
+        data = request.get_json() or {}
+        sale_id = data.get('sale_id')
+        sale_number = data.get('sale_number')
+        items_to_refund = data.get('items', [])
+        reason = data.get('reason', 'No reason provided')
+
+        # Compatibility: dashboard.js sends {sale_number, items:[sale_item_id,...]}
+        raw_item_ids = None
+        if items_to_refund and isinstance(items_to_refund, list) and not isinstance(items_to_refund[0], dict):
+            raw_item_ids = [int(x) for x in items_to_refund]
+            items_to_refund = []
+
+        if not sale_id and sale_number:
+            sale = db.session.query(Sale).filter(
+                (Sale.sale_number == sale_number) | (Sale.bulk_sale_number == sale_number)
+            ).first()
+            sale_id = sale.id if sale else None
+
+        if not sale_id:
+            return jsonify({'success': False, 'error': 'Sale ID (or sale number) is required.'}), 400
+
+        if (not items_to_refund) and (not raw_item_ids):
+            return jsonify({'success': False, 'error': 'Items to refund are required.'}), 400
+
+        original_sale = db.session.get(Sale, sale_id)
+        if not original_sale:
+            return jsonify({'success': False, 'error': 'Original sale not found.'}), 404
+
+        # If we received only item IDs, refund the remaining refundable quantity for each.
+        if raw_item_ids:
+            converted = []
+            for sale_item_id in raw_item_ids:
+                sale_item = db.session.get(SaleItem, sale_item_id)
+                if not sale_item or sale_item.sale_id != original_sale.id:
+                    continue
+
+                already_refunded_qty = sum(ri.quantity for ri in sale_item.refund_items)
+                remaining_qty = int(sale_item.quantity or 0) - int(already_refunded_qty or 0)
+                if remaining_qty <= 0:
+                    continue
+
+                converted.append({'sale_item_id': sale_item.id, 'quantity': remaining_qty})
+
+            if not converted:
+                return jsonify({'success': False, 'error': 'No valid items to refund.'}), 400
+            items_to_refund = converted
+
+        total_refund_amount = 0
+        refund_items_to_create = []
+        
+        for item_data in items_to_refund:
+            sale_item_id = item_data.get('sale_item_id')
+            quantity_to_refund = int(item_data.get('quantity', 0))
+
+            if quantity_to_refund <= 0:
+                continue
+
+            sale_item = db.session.get(SaleItem, sale_item_id)
+            if not sale_item or sale_item.sale_id != original_sale.id:
+                return jsonify({'success': False, 'error': f'Sale item {sale_item_id} not found or does not belong to this sale.'}), 400
+            
+            # Check if this item has been refunded before
+            already_refunded_qty = sum(ri.quantity for ri in sale_item.refund_items)
+            
+            if quantity_to_refund > (sale_item.quantity - already_refunded_qty):
+                return jsonify({'success': False, 'error': f'Cannot refund more than purchased quantity for item {sale_item.drug_name}.'}), 400
+
+            refund_amount = quantity_to_refund * sale_item.unit_price
+            total_refund_amount += refund_amount
+
+            refund_items_to_create.append({
+                'sale_item': sale_item,
+                'quantity': quantity_to_refund,
+                'unit_price': sale_item.unit_price,
+                'total_price': refund_amount
+            })
+
+            # Restore stock
+            if sale_item.drug:
+                drug = sale_item.drug
+                drug.sold_quantity -= quantity_to_refund
+                db.session.add(drug)
+
+        if not refund_items_to_create:
+            return jsonify({'success': False, 'error': 'No valid items to refund.'}), 400
+
+        # Budget enforcement (warn-only by default)
+        try:
+            budget_check = _budget_check_outflow('pharmacy', float(total_refund_amount or 0), when_dt=get_eat_now())
+            if budget_check and budget_check.get('block'):
+                return jsonify({'success': False, 'error': budget_check.get('message') or 'Budget exceeded for this month.'}), 400
+        except Exception:
+            pass
+
+        # Create Refund record
         refund = Refund(
-            refund_number=generate_refund_number(),  # This function needs to be defined
-            sale_id=sale.id,
+            refund_number=f"REF-{original_sale.sale_number}-{random.randint(100, 999)}",
+            sale_id=original_sale.id,
             user_id=current_user.id,
-            total_amount=0,
-            status='completed',
-            reason=reason
+            total_amount=total_refund_amount,
+            reason=reason,
+            status='completed'
         )
         db.session.add(refund)
         db.session.flush()
-        
-        total_amount = 0
-        
-        for item_data in items:
-            sale_item_id = item_data.get('sale_item_id')
-            quantity = int(item_data.get('quantity'))
-            
-            if quantity <= 0:
-                continue
-            
-            sale_item = db.session.get(SaleItem, sale_item_id)
-            if not sale_item or sale_item.sale_id != sale.id:
-                continue
-            
-            refunded_qty = sum(ri.quantity for ri in sale_item.refund_items) if sale_item.refund_items else 0
-            max_refundable = sale_item.quantity - refunded_qty
-            
-            if quantity > max_refundable:
-                return jsonify({
-                    'error': f'Cannot refund more than {max_refundable} for {sale_item.drug_name}'
-                }), 400
-            
-            if sale_item.drug_id:
-                drug = db.session.get(Drug, sale_item.drug_id)
-                if drug:
-                    drug.sold_quantity -= quantity
-                    drug.stocked_quantity += quantity
-            
-            item_total = sale_item.unit_price * quantity
+
+        # Create RefundItem records
+        for item_to_create in refund_items_to_create:
             refund_item = RefundItem(
                 refund_id=refund.id,
-                sale_item_id=sale_item.id,
-                quantity=quantity,
-                unit_price=sale_item.unit_price,
-                total_price=item_total
+                sale_item_id=item_to_create['sale_item'].id,
+                quantity=item_to_create['quantity'],
+                unit_price=item_to_create['unit_price'],
+                total_price=item_to_create['total_price']
             )
             db.session.add(refund_item)
-            
-            total_amount += item_total
-        
-        refund.total_amount = total_amount
-        
+
+        # Create Transaction record for the refund
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
             transaction_type='refund',
-            amount=total_amount,
+            amount=total_refund_amount,
             user_id=current_user.id,
             reference_id=refund.id,
-            notes=f'Refund for sale {sale.sale_number}'
+            notes=f"Refund for sale {original_sale.sale_number}. Reason: {reason}"
+        )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='refunds',
+            direction='OUT',
+            status='posted',
+            department='pharmacy',
+            category='refund',
+            payer=original_sale.patient.name if original_sale.patient else 'Walk-in Customer',
+            payment_method=None,
         )
         db.session.add(transaction)
-        
+
+        # Log audit event
+        log_audit_event(
+            action='process_refund',
+            table_name='refunds',
+            record_id=refund.id,
+            description=f"Processed refund {refund.refund_number} for sale {original_sale.sale_number}",
+            new_values={
+                'refund_id': refund.id,
+                'sale_id': original_sale.id,
+                'total_amount': total_refund_amount,
+                'reason': reason,
+                'items': [
+                    {'sale_item_id': item['sale_item'].id, 'quantity': item['quantity']}
+                    for item in refund_items_to_create
+                ]
+            }
+        )
+
         db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'refund_id': refund.id,
-            'refund_number': refund.refund_number,
-            'total_amount': total_amount
-        })
+
+        return jsonify({'success': True, 'message': 'Refund processed successfully.', 'refund_id': refund.id})
+
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f"Error processing refund: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': 'An unexpected error occurred.'}), 500
+
+
+@app.route('/pharmacist/refund', methods=['POST'])
+@login_required
+def pharmacist_refund_alias():
+    """Compatibility alias for frontend posting to `/pharmacist/refund`."""
+    return process_refund()
+
 
 def generate_refund_number():
     return f"REF-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
@@ -8206,7 +17802,22 @@ def refund_receipt(refund_id):
     if current_user.role != 'pharmacist':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
+
+    embedded_requested = request.args.get('embedded') == '1'
     
+    tx = _get_transaction_for_refund(refund_id)
+    if (not embedded_requested) and tx and tx.receipt_html:
+        if request.args.get('reprint') == '1':
+            try:
+                tx.receipt_reprint_count = int(tx.receipt_reprint_count or 0) + 1
+                tx.receipt_reprinted_at = get_eat_now()
+                db.session.add(tx)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            return Response(_inject_reprint_banner(tx.receipt_html, tx.receipt_reprinted_at, tx.receipt_reprint_count), mimetype='text/html')
+        return Response(tx.receipt_html, mimetype='text/html')
+
     refund = db.session.query(Refund).options(
         db.joinedload(Refund.sale).joinedload(Sale.patient),
         db.joinedload(Refund.user),
@@ -8217,7 +17828,74 @@ def refund_receipt(refund_id):
         flash('Refund not found', 'danger')
         return redirect(url_for('pharmacist_refunds'))
     
-    return render_template('pharmacist/refund_receipt.html', refund=refund)
+    rendered = render_template('pharmacist/refund_receipt.html', refund=refund)
+    try:
+        if not tx:
+            tx = _get_transaction_for_refund(refund_id)
+        if tx:
+            _ensure_transaction_receipt(tx, rendered, prefix='REF')
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return Response(rendered, mimetype='text/html')
+
+
+@app.route('/admin/transaction/<int:transaction_id>/receipt')
+@login_required
+def admin_transaction_receipt(transaction_id):
+    if current_user.role != 'admin':
+        abort(403)
+
+    tx = Transaction.query.options(db.joinedload(Transaction.user)).get(transaction_id)
+    if not tx:
+        abort(404)
+
+    # Serve stored receipt if exists
+    if tx.receipt_html:
+        if request.args.get('reprint') == '1':
+            try:
+                tx.receipt_reprint_count = int(tx.receipt_reprint_count or 0) + 1
+                tx.receipt_reprinted_at = get_eat_now()
+                db.session.add(tx)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            return Response(_inject_reprint_banner(tx.receipt_html, tx.receipt_reprinted_at, tx.receipt_reprint_count), mimetype='text/html')
+        return Response(tx.receipt_html, mimetype='text/html')
+
+    # Generate receipt based on transaction type
+    sale = None
+    refund = None
+    expense = None
+    purchase = None
+    try:
+        if tx.transaction_type == 'sale' and tx.reference_id:
+            sale = Sale.query.options(
+                db.joinedload(Sale.user),
+                db.joinedload(Sale.items).joinedload(SaleItem.drug),
+                db.joinedload(Sale.patient)
+            ).get(tx.reference_id)
+        elif tx.transaction_type == 'refund' and tx.reference_id:
+            refund = Refund.query.options(
+                db.joinedload(Refund.sale).joinedload(Sale.patient),
+                db.joinedload(Refund.user),
+                db.joinedload(Refund.items).joinedload(RefundItem.sale_item)
+            ).get(tx.reference_id)
+        elif tx.transaction_type == 'expense' and tx.reference_id:
+            expense = Expense.query.get(tx.reference_id)
+        elif tx.transaction_type == 'purchase' and tx.reference_id:
+            purchase = Purchase.query.get(tx.reference_id)
+    except Exception:
+        pass
+
+    rendered = render_template('admin/transaction_receipt.html', transaction=tx, sale=sale, refund=refund, expense=expense, purchase=purchase)
+    try:
+        _ensure_transaction_receipt(tx, rendered, prefix='TX')
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    return Response(rendered, mimetype='text/html')
 
     
 # Pharmacist Prescription Routes
@@ -8243,7 +17921,7 @@ def patient_prescriptions():
             try:
                 if hasattr(prescription.patient, 'get_decrypted_name'):
                     # Call the method to get the actual value
-                    patient_name = prescription.patient.get_decrypted_name()
+                    patient_name = prescription.patient.get_decrypted_name
                 else:
                     patient_name = str(prescription.patient) if prescription.patient else "Unknown Patient"
             except Exception as e:
@@ -8418,7 +18096,7 @@ def get_prescription_details(prescription_id):
         patient_name = ""
         try:
             if hasattr(prescription.patient, 'get_decrypted_name'):
-                patient_name = prescription.patient.get_decrypted_name()
+                patient_name = prescription.patient.get_decrypted_name
             else:
                 patient_name = str(prescription.patient) if prescription.patient else "Unknown Patient"
         except Exception as e:
@@ -8526,6 +18204,15 @@ def pharmacist_dispense():
             reference_id=sale.id,
             notes=f"Prescription dispense: {prescription.id}"
         )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='sales',
+            direction='IN',
+            status='posted',
+            department='pharmacy',
+            category='drug_sale',
+            payment_method=payment_method,
+        )
         db.session.add(transaction)
         
         db.session.commit()
@@ -8559,23 +18246,23 @@ def pharmacist_dispense():
             'error': 'Failed to process prescription',
             'details': str(e)
         }), 500
-@app.route('/pharmacist/sale/<int:sale_id>/receipt')
+@app.route('/pharmacist/sale/<int:sale_id>/receipt-json')
 @login_required
-def get_sale_receipt(sale_id):
-    """Get receipt for a completed sale"""
+def get_sale_receipt_json(sale_id):
+    """JSON receipt data for a completed sale (kept for API consumers)."""
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     try:
         sale = Sale.query.options(
             db.joinedload(Sale.patient),
             db.joinedload(Sale.items),
             db.joinedload(Sale.user)
         ).get(sale_id)
-        
+
         if not sale:
             return jsonify({'error': 'Sale not found'}), 404
-        
+
         receipt_data = {
             'sale_id': sale.id,
             'sale_number': sale.sale_number,
@@ -8587,7 +18274,7 @@ def get_sale_receipt(sale_id):
             'total_amount': sale.total_amount,
             'items': []
         }
-        
+
         for item in sale.items:
             receipt_data['items'].append({
                 'name': item.drug_name,
@@ -8596,12 +18283,11 @@ def get_sale_receipt(sale_id):
                 'unit_price': item.unit_price,
                 'total_price': item.total_price
             })
-        
+
         return jsonify(receipt_data)
-    
+
     except Exception as e:
-        current_app.logger.error(f"Error generating receipt: {str(e)}")
-        
+        current_app.logger.error(f"Error generating receipt JSON: {str(e)}")
         return jsonify({'error': 'Failed to generate receipt'}), 500
 
    
@@ -8633,6 +18319,61 @@ def doctor_dashboard():
         recent_activities=[]  # Empty list until audit is properly set up
     )
 
+
+@app.route('/doctor/patient/<int:patient_id>/ward-bill', methods=['GET'])
+@login_required
+def patient_ward_bill(patient_id):
+    """View ward-stay billing summary for a patient."""
+    if current_user.role != 'doctor':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    patient = Patient.query.get_or_404(patient_id)
+    ctx = _get_patient_bed_stay_context(patient_id)
+
+    if not ctx:
+        flash('Patient has no ward stay assignment on record.', 'info')
+        return redirect(url_for('patient_details', patient_id=patient_id))
+
+    try:
+        ctx['patient_name'] = Config.decrypt_data_static(patient.name)
+    except Exception:
+        ctx['patient_name'] = 'Patient'
+
+    bill_summary, unbilled_summary = get_ward_stay_bill(patient_id, ctx)
+
+    return render_template(
+        'doctor/patient_ward_bill.html',
+        patient_id=patient_id,
+        bill_summary=bill_summary,
+        unbilled_summary=unbilled_summary
+    )
+
+
+@app.route('/doctor/patient/<int:patient_id>/ward-bill/update', methods=['POST'])
+@login_required
+def update_patient_ward_bill(patient_id):
+    """Post unbilled ward-stay charges for a patient."""
+    if current_user.role != 'doctor':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    patient = Patient.query.get_or_404(patient_id)
+    ctx = _get_patient_bed_stay_context(patient_id)
+
+    if not ctx:
+        flash('No ward stay assignment found for this patient.', 'warning')
+        return redirect(url_for('patient_details', patient_id=patient_id))
+
+    charge, unbilled_days = update_ward_stay_bill_for_patient(patient_id, ctx)
+
+    if charge and unbilled_days > 0:
+        flash(f'Ward stay charge added: {unbilled_days} days billed successfully.', 'success')
+    else:
+        flash('No unbilled days to add (already up to date).', 'info')
+
+    return redirect(url_for('patient_ward_bill', patient_id=patient_id))
+
         
 @app.route('/generate_patient_number')
 @login_required
@@ -8643,6 +18384,26 @@ def get_patient_number():
     
     number = generate_patient_number(patient_type)
     return jsonify({'number': number})
+
+
+@app.route('/admin/api/dashboard-stats', methods=['GET'])
+@login_required
+def dashboard_stats():
+    """Lightweight JSON stats for the admin dashboard card widgets."""
+    if getattr(current_user, 'role', None) != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    total_patients = db.session.query(func.count(Patient.id)).scalar() or 0
+    total_appointments = db.session.query(func.count(Appointment.id)).scalar() or 0
+    total_sales = db.session.query(func.sum(Sale.total_amount)).scalar() or 0
+    total_expenses = db.session.query(func.sum(Expense.amount)).scalar() or 0
+
+    return jsonify({
+        'total_patients': int(total_patients),
+        'total_appointments': int(total_appointments),
+        'total_sales': float(total_sales or 0),
+        'total_expenses': float(total_expenses or 0),
+    })
 
 def generate_patient_number(patient_type):
     """Generate patient number in format OP MNC001 or IP MNC001"""
@@ -8676,6 +18437,83 @@ def doctor_patients():
         'doctor/patients.html',
         active_patients=active_patients,
         completed_patients=completed_patients
+    )
+
+
+@app.route('/doctor/notifications/tca_today', methods=['GET'])
+@login_required
+def doctor_notifications_tca_today():
+    """Return a count + list of patients whose TCA date is today."""
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    today = date.today()
+    patients = Patient.query.filter(Patient.tca == today).order_by(Patient.updated_at.desc(), Patient.id.desc()).all()
+
+    payload = []
+    for p in patients:
+        payload.append({
+            'id': p.id,
+            'name': p.decrypted_name,
+            'phone': p.decrypted_phone,
+            'op_number': p.op_number,
+            'ip_number': p.ip_number,
+            'destination': p.destination,
+            'status': p.status,
+        })
+
+    return jsonify({'success': True, 'count': len(payload), 'patients': payload})
+
+
+@app.route('/doctor/patient/<int:patient_id>/view_sections', methods=['GET'])
+@login_required
+def doctor_patient_view_sections(patient_id: int):
+    """Return a quick status snapshot of key sections for the Patients list."""
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+    review = PatientReviewSystem.query.filter_by(patient_id=patient.id).order_by(PatientReviewSystem.created_at.desc(), PatientReviewSystem.id.desc()).first()
+    history = PatientHistory.query.filter_by(patient_id=patient.id).order_by(PatientHistory.created_at.desc(), PatientHistory.id.desc()).first()
+    exam = PatientExamination.query.filter_by(patient_id=patient.id).order_by(PatientExamination.created_at.desc(), PatientExamination.id.desc()).first()
+    diagnosis = PatientDiagnosis.query.filter_by(patient_id=patient.id).order_by(PatientDiagnosis.created_at.desc(), PatientDiagnosis.id.desc()).first()
+    management = PatientManagement.query.filter_by(patient_id=patient.id).order_by(PatientManagement.created_at.desc(), PatientManagement.id.desc()).first()
+
+    prescriptions_count = Prescription.query.filter_by(patient_id=patient.id).count()
+    lab_count = LabRequest.query.filter_by(patient_id=patient.id).count()
+    imaging_count = ImagingRequest.query.filter_by(patient_id=patient.id).count()
+    summaries_count = PatientSummary.query.filter_by(patient_id=patient.id).count()
+
+    progression_parts = []
+    progression_parts.append('Chief complaint: ✓' if (patient.chief_complaint or '').strip() else 'Chief complaint: —')
+    progression_parts.append('HPI: ✓' if (patient.history_present_illness or '').strip() else 'HPI: —')
+    progression_parts.append(f"Status: {patient.status or 'N/A'}")
+
+    findings_parts = []
+    findings_parts.append('ROS: ✓' if review else 'ROS: —')
+    findings_parts.append('History: ✓' if history else 'History: —')
+    findings_parts.append('Exam: ✓' if exam else 'Exam: —')
+    findings_parts.append('Dx: ✓' if diagnosis else 'Dx: —')
+    findings_parts.append('Mgmt: ✓' if management else 'Mgmt: —')
+    findings_parts.append(f"Summaries: {summaries_count}")
+
+    prescriptions_parts = []
+    prescriptions_parts.append(f"Prescriptions: {prescriptions_count}")
+    prescriptions_parts.append(f"Lab requests: {lab_count}")
+    prescriptions_parts.append(f"Imaging requests: {imaging_count}")
+
+    return jsonify(
+        {
+            'success': True,
+            'sections': {
+                'progression': ' | '.join(progression_parts),
+                'findings': ' | '.join(findings_parts),
+                'prescriptions': ' | '.join(prescriptions_parts),
+            },
+        }
     )
 
 @app.route('/doctor/patient/<int:patient_id>/summary', methods=['GET', 'POST'])
@@ -8815,7 +18653,7 @@ def patient_summary(patient_id):
                 
                 # Update patient's AI diagnosis
                 patient.ai_diagnosis = diagnosis_text
-                patient.ai_last_updated = datetime.now(timezone.utc)
+                patient.ai_last_updated = get_eat_now()
                 patient.ai_assistance_enabled = True
                 
                 # Also update the diagnosis record if exists
@@ -8891,6 +18729,173 @@ def delete_patient_summary(patient_id, summary_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # Doctor Routes - Complete with all sections
+@app.route('/doctor/patient', methods=['POST'])
+@login_required
+def doctor_create_patient():
+    """Create a patient from JSON payload.
+
+    This endpoint exists to support newer UI flows that submit JSON to
+    `/doctor/patient` (as opposed to the multi-step form at `/doctor/patient/new`).
+    """
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    payload = request.get_json(silent=True) or {}
+    biodata = payload.get('bioData') or payload.get('biodata') or {}
+
+    def _parse_int(value):
+        try:
+            s = str(value).strip()
+            return int(s) if s else None
+        except Exception:
+            return None
+
+    def _parse_date(value):
+        try:
+            s = str(value).strip()
+            return datetime.strptime(s, '%Y-%m-%d').date() if s else None
+        except Exception:
+            return None
+
+    patient_type = (biodata.get('patient_type') or biodata.get('patientType') or 'OP').strip().upper()
+    if patient_type not in ('OP', 'IP'):
+        patient_type = 'OP'
+
+    name = (biodata.get('name') or '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': 'Patient name is required'}), 400
+
+    try:
+        patient_number = generate_patient_number(patient_type)
+
+        patient = Patient(
+            op_number=patient_number if patient_type == 'OP' else None,
+            ip_number=patient_number if patient_type == 'IP' else None,
+            name=Config.encrypt_data_static(name),
+            age=_parse_int(biodata.get('age')),
+            gender=(biodata.get('gender') or None),
+            address=Config.encrypt_data_static(biodata.get('address')) if biodata.get('address') else None,
+            phone=Config.encrypt_data_static(biodata.get('phone')) if biodata.get('phone') else None,
+            destination=biodata.get('destination') or None,
+            occupation=Config.encrypt_data_static(biodata.get('occupation')) if biodata.get('occupation') else None,
+            religion=biodata.get('religion') or None,
+            nok_name=Config.encrypt_data_static(biodata.get('nok_name') or biodata.get('nokName'))
+            if (biodata.get('nok_name') or biodata.get('nokName'))
+            else None,
+            nok_contact=Config.encrypt_data_static(biodata.get('nok_contact') or biodata.get('nokContact'))
+            if (biodata.get('nok_contact') or biodata.get('nokContact'))
+            else None,
+            tca=_parse_date(biodata.get('tca')),
+            date_of_admission=_parse_date(biodata.get('date_of_admission') or biodata.get('dateOfAdmission'))
+            or date.today(),
+            status='active',
+        )
+
+        # Optional fields if present in payload
+        if biodata.get('chief_complaint'):
+            patient.chief_complaint = biodata.get('chief_complaint')
+        if biodata.get('history_present_illness'):
+            patient.history_present_illness = biodata.get('history_present_illness')
+
+        db.session.add(patient)
+        db.session.flush()  # Get patient.id without final commit yet
+
+        # Optional: create lab requests if provided
+        lab_tests = payload.get('labTests') or []
+        if isinstance(lab_tests, list) and lab_tests:
+            for item in lab_tests:
+                if not isinstance(item, dict):
+                    continue
+                test_id = item.get('test_id') or item.get('testId') or item.get('id')
+                try:
+                    test_id = int(test_id)
+                except Exception:
+                    continue
+                notes = item.get('notes') or None
+
+                # Ensure test exists to avoid FK errors
+                test = db.session.get(LabTest, test_id)
+                if not test:
+                    continue
+                
+                lab_request = LabRequest(
+                    patient_id=patient.id,
+                    test_id=test_id,
+                    requested_by=current_user.id,
+                    status='pending',
+                    notes=notes,
+                )
+                db.session.add(lab_request)
+
+                # Create financial records
+                try:
+                    create_service_sale_and_transaction(
+                        patient_id=patient.id,
+                        service_item=test,
+                        service_type='lab',
+                        requested_by_id=current_user.id,
+                        notes=notes
+                    )
+                except Exception as e:
+                    # The helper function rolls back, so we just need to bubble up the error
+                    current_app.logger.error(f"Could not create transaction for lab request during patient creation: {str(e)}")
+                    raise
+
+
+        # Optional: create prescription if provided
+        prescriptions = payload.get('prescriptions') or []
+        if isinstance(prescriptions, list) and prescriptions:
+            prescription = Prescription(
+                patient_id=patient.id,
+                doctor_id=current_user.id,
+                notes=payload.get('prescriptionNotes') or None,
+                status='pending',
+            )
+            db.session.add(prescription)
+            db.session.flush()
+
+            for item in prescriptions:
+                if not isinstance(item, dict):
+                    continue
+                drug_id = item.get('drug_id') or item.get('drugId')
+                try:
+                    drug_id = int(drug_id) if drug_id is not None else None
+                except Exception:
+                    drug_id = None
+                if drug_id is None:
+                    continue
+
+                drug = db.session.get(Drug, drug_id)
+                if not drug:
+                    continue
+
+                quantity = _parse_int(item.get('quantity')) or 1
+                db.session.add(
+                    PrescriptionItem(
+                        prescription_id=prescription.id,
+                        drug_id=drug_id,
+                        quantity=quantity,
+                        dosage=item.get('dosage') or None,
+                        frequency=item.get('frequency') or None,
+                        duration=item.get('duration') or None,
+                        notes=item.get('notes') or None,
+                        status='pending',
+                    )
+                )
+
+        db.session.commit()
+
+        return jsonify(
+            {
+                'success': True,
+                'patient_id': patient.id,
+                'patient_number': patient.op_number or patient.ip_number,
+            }
+        )
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/doctor/patient/new', methods=['GET', 'POST'])
 @login_required
 def doctor_new_patient():
@@ -9087,26 +19092,64 @@ def doctor_new_patient():
                 # Lab requests
                 if request.form.getlist('lab_tests'):
                     for test_id in request.form.getlist('lab_tests'):
+                        test = db.session.get(LabTest, int(test_id))
+                        if not test:
+                            continue
+
                         lab_request = LabRequest(
                             patient_id=patient.id,
-                            test_id=test_id,
+                            test_id=test.id,
                             requested_by=current_user.id,
                             status='pending',
                             notes=request.form.get('lab_notes')
                         )
                         db.session.add(lab_request)
+
+                        # Create financial records
+                        try:
+                            create_service_sale_and_transaction(
+                                patient_id=patient.id,
+                                service_item=test,
+                                service_type='lab',
+                                requested_by_id=current_user.id,
+                                notes=request.form.get('lab_notes')
+                            )
+                        except Exception as e:
+                            db.session.rollback()
+                            current_app.logger.error(f"Could not create transaction for lab request in new patient flow: {str(e)}")
+                            return jsonify({'success': False, 'error': 'Failed to create financial record for lab test.'}), 500
+
                 
                 # Imaging requests
                 if request.form.getlist('imaging_tests'):
                     for test_id in request.form.getlist('imaging_tests'):
+                        test = db.session.get(ImagingTest, int(test_id))
+                        if not test:
+                            continue
+
                         imaging_request = ImagingRequest(
                             patient_id=patient.id,
-                            test_id=test_id,
+                            test_id=test.id,
                             requested_by=current_user.id,
                             status='pending',
                             notes=request.form.get('imaging_notes')
                         )
                         db.session.add(imaging_request)
+
+                        # Create financial records
+                        try:
+                            create_service_sale_and_transaction(
+                                patient_id=patient.id,
+                                service_item=test,
+                                service_type='imaging',
+                                requested_by_id=current_user.id,
+                                notes=request.form.get('imaging_notes')
+                            )
+                        except Exception as e:
+                            db.session.rollback()
+                            current_app.logger.error(f"Could not create transaction for imaging request in new patient flow: {str(e)}")
+                            return jsonify({'success': False, 'error': 'Failed to create financial record for imaging test.'}), 500
+
                 
                 db.session.commit()
                 
@@ -9190,7 +19233,10 @@ def doctor_new_patient():
     )
 
 # AI Assistant for diagnosis and treatment suggestions
-class AIService:
+# NOTE: This legacy class previously overwrote the primary AIService defined earlier in this file.
+# It is kept only to avoid merge-loss, but it must NOT shadow the main AIService.
+
+class DoctorAIServiceLegacy:
     @staticmethod
     def generate_review_systems_questions(patient_data):
         """Generate review of systems questions based on patient data"""
@@ -9208,8 +19254,12 @@ class AIService:
             Generate 5-8 specific, targeted questions that would help in the review of systems for this patient.
             Format the response as a bulleted list.
             """
-            
-            response = deepseek_client.chat.completions.create(
+
+            client = get_deepseek_client()
+            if not client:
+                return None
+
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
@@ -9237,8 +19287,12 @@ class AIService:
             Focus on the chronology, quality, severity, and associated symptoms.
             Format the response as a bulleted list.
             """
-            
-            response = deepseek_client.chat.completions.create(
+
+            client = get_deepseek_client()
+            if not client:
+                return None
+
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
@@ -9273,7 +19327,11 @@ class AIService:
             Write in professional medical narrative format.
             """
             
-            response = deepseek_client.chat.completions.create(
+            client = get_deepseek_client()
+            if not client:
+                return None
+
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=800,
@@ -9322,8 +19380,12 @@ class AIService:
             3. Brief rationale for each
             4. Suggested diagnostic tests to confirm
             """
-            
-            response = deepseek_client.chat.completions.create(
+
+            client = get_deepseek_client()
+            if not client:
+                return None
+
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1000,
@@ -9359,8 +19421,12 @@ class AIService:
             3. Any additional tests recommended
             4. Potential treatment implications
             """
-            
-            response = deepseek_client.chat.completions.create(
+
+            client = get_deepseek_client()
+            if not client:
+                return None
+
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=800,
@@ -9405,7 +19471,11 @@ class AIService:
             Consider drug interactions and contraindications based on patient information.
             """
             
-            response = deepseek_client.chat.completions.create(
+            client = get_deepseek_client()
+            if not client:
+                return None
+
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1200,
@@ -9418,24 +19488,41 @@ class AIService:
             return None
 
 from flask import current_app
-# Initialize DeepSeek client with proper error handling inside app context
-with app.app_context():
+
+# Lazy DeepSeek client (avoid import-time network calls).
+deepseek_client = None
+
+
+def get_deepseek_client():
+    global deepseek_client
+
+    if deepseek_client is not None:
+        return deepseek_client
+
+    api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip()
+    if not api_key:
+        return None
+
     try:
+        base_url = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+
+        timeout = float(os.getenv("DEEPSEEK_TIMEOUT", "30"))
         deepseek_client = OpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url="https://api.deepseek.com/v1",
-            timeout=30.0
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
         )
-        # Test the connection
-        if os.getenv("DEEPSEEK_API_KEY"):
-            models = deepseek_client.models.list()
-            current_app.logger.info(f"Connected to DeepSeek API. Available models: {[m.id for m in models.data]}")
-        else:
-            current_app.logger.warning("DEEPSEEK_API_KEY not set - AI features will be disabled")
-            deepseek_client = None
+        return deepseek_client
     except Exception as e:
-        current_app.logger.error(f"Failed to initialize DeepSeek client: {str(e)}")
+        try:
+            app.logger.error("Failed to initialize DeepSeek client: %s", str(e), exc_info=True)
+        except Exception:
+            pass
         deepseek_client = None
+        return None
+
     
 @app.route('/api/verify-models', methods=['GET'])
 @login_required
@@ -9445,8 +19532,9 @@ def verify_models():
         models_list = []
         
         # Test DeepSeek if configured
-        if deepseek_client and os.getenv("DEEPSEEK_API_KEY"):
-            deepseek_models = deepseek_client.models.list()
+        client = get_deepseek_client()
+        if client:
+            deepseek_models = client.models.list()
             models_list.extend([m.id for m in deepseek_models.data])
             current_app.logger.info(f"DeepSeek available models: {models_list}")
         
@@ -9495,7 +19583,7 @@ def ai_review_systems():
             db.session.add(review)
         
         review.ai_suggested_questions = questions
-        review.ai_last_updated = datetime.now(timezone.utc)
+        review.ai_last_updated = get_eat_now()
         db.session.commit()
         
         return jsonify({
@@ -9795,6 +19883,181 @@ def ai_treatment():
             'error': 'Internal server error',
             'details': str(e)
         }), 500
+
+
+def _build_doctor_patient_ai_context(patient: 'Patient') -> dict:
+    """Collect a unified view of the patient's entered data for AI prompts."""
+    review = db.session.scalar(
+        db.select(PatientReviewSystem).filter_by(patient_id=patient.id).limit(1)
+    )
+    history = db.session.scalar(
+        db.select(PatientHistory).filter_by(patient_id=patient.id).limit(1)
+    )
+    exam = db.session.scalar(
+        db.select(PatientExamination).filter_by(patient_id=patient.id).limit(1)
+    )
+    dx = db.session.scalar(
+        db.select(PatientDiagnosis).filter_by(patient_id=patient.id).limit(1)
+    )
+    mgmt = db.session.scalar(
+        db.select(PatientManagement).filter_by(patient_id=patient.id).limit(1)
+    )
+
+    # Latest investigation notes (these are optional free-text fields in the new-patient wizard)
+    latest_lab = db.session.scalar(
+        db.select(LabRequest)
+        .filter_by(patient_id=patient.id)
+        .order_by(LabRequest.created_at.desc())
+        .limit(1)
+    )
+    latest_imaging = db.session.scalar(
+        db.select(ImagingRequest)
+        .filter_by(patient_id=patient.id)
+        .order_by(ImagingRequest.created_at.desc())
+        .limit(1)
+    )
+
+    vitals = {}
+    if exam:
+        if exam.temperature is not None:
+            vitals['temperature_c'] = exam.temperature
+        if exam.pulse is not None:
+            vitals['pulse_bpm'] = exam.pulse
+        if exam.resp_rate is not None:
+            vitals['resp_rate'] = exam.resp_rate
+        if exam.spo2 is not None:
+            vitals['spo2'] = exam.spo2
+        if exam.bp_systolic is not None or exam.bp_diastolic is not None:
+            vitals['bp'] = f"{exam.bp_systolic or ''}/{exam.bp_diastolic or ''}".strip('/')
+
+    return {
+        'biodata': {
+            'name': patient.get_decrypted_name,
+            'age': patient.age,
+            'gender': patient.gender,
+            'address': patient.get_decrypted_address,
+            'phone': patient.get_decrypted_phone,
+            'occupation': patient.get_decrypted_occupation,
+            'religion': patient.religion or '',
+            'patient_number': patient.op_number or patient.ip_number or '',
+            'date_of_admission': str(patient.date_of_admission) if patient.date_of_admission else '',
+        },
+        'chief_complaint': patient.chief_complaint or '',
+        'hpi': patient.history_present_illness or '',
+        'ros': {
+            'cns': review.cns if review else '',
+            'cvs': review.cvs if review else '',
+            'rs': review.rs if review else '',
+            'git': review.git if review else '',
+            'gut': review.gut if review else '',
+            'skin': review.skin if review else '',
+            'msk': review.msk if review else '',
+        },
+        'history': {
+            'social_history': history.social_history if history else '',
+            'medical_history': history.medical_history if history else '',
+            'surgical_history': history.surgical_history if history else '',
+            'family_history': history.family_history if history else '',
+            'allergies': history.allergies if history else '',
+            'medications': history.medications if history else '',
+        },
+        'examination': {
+            'general_appearance': exam.general_appearance if exam else '',
+            'vitals': vitals,
+            'systemic': {
+                'cvs_exam': exam.cvs_exam if exam else '',
+                'resp_exam': exam.resp_exam if exam else '',
+                'abdo_exam': exam.abdo_exam if exam else '',
+                'cns_exam': exam.cns_exam if exam else '',
+                'msk_exam': exam.msk_exam if exam else '',
+                'skin_exam': exam.skin_exam if exam else '',
+            },
+            'flags': {
+                'jaundice': bool(exam.jaundice) if exam else False,
+                'pallor': bool(exam.pallor) if exam else False,
+                'cyanosis': bool(exam.cyanosis) if exam else False,
+                'lymphadenopathy': bool(exam.lymphadenopathy) if exam else False,
+                'edema': bool(exam.edema) if exam else False,
+                'dehydration': bool(exam.dehydration) if exam else False,
+            },
+        },
+        'diagnosis': {
+            'working_diagnosis': dx.working_diagnosis if dx else '',
+            'differentials': dx.differential_diagnosis if dx else '',
+        },
+        'management': {
+            'treatment_plan': mgmt.treatment_plan if mgmt else '',
+            'follow_up': mgmt.follow_up if mgmt else '',
+            'notes': mgmt.notes if mgmt else '',
+        },
+        'investigations': {
+            'lab_notes': (latest_lab.notes if latest_lab else '') or '',
+            'imaging_notes': (latest_imaging.notes if latest_imaging else '') or '',
+        },
+    }
+
+
+@app.route('/doctor/patient/ai/generate_summary', methods=['POST'])
+@login_required
+def ai_generate_summary():
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    patient_id = request.form.get('patient_id')
+    if not patient_id:
+        return jsonify({'success': False, 'error': 'Patient ID required'}), 400
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+    try:
+        ctx = _build_doctor_patient_ai_context(patient)
+
+        # Flatten into the structure expected by AIService.generate_patient_summary
+        patient_data = {
+            'name': ctx['biodata']['name'],
+            'age': ctx['biodata']['age'],
+            'gender': ctx['biodata']['gender'],
+            'address': ctx['biodata']['address'],
+            'occupation': ctx['biodata']['occupation'],
+            'religion': ctx['biodata']['religion'],
+            'chief_complaint': ctx['chief_complaint'],
+            'history_present_illness': ctx['hpi'],
+            'review_systems': ctx['ros'],
+            'social_history': ctx['history']['social_history'],
+            'medical_history': ctx['history']['medical_history'],
+            'surgical_history': ctx['history']['surgical_history'],
+            'family_history': ctx['history']['family_history'],
+            'allergies': ctx['history']['allergies'] or 'None known',
+            'medications': ctx['history']['medications'] or 'None',
+            'examination': ctx['examination'],
+            'working_diagnosis': ctx['diagnosis']['working_diagnosis'],
+        }
+
+        summary_text = AIService.generate_patient_summary(patient_data)
+        if not summary_text:
+            return jsonify({
+                'success': False,
+                'error': 'AI service unavailable. Check AI key/config and try again.'
+            }), 503
+
+        # Persist as an AI-generated summary for audit/history
+        summary = PatientSummary(
+            patient_id=patient.id,
+            summary_text=summary_text,
+            summary_type='ai_generated',
+            generated_by=current_user.id,
+        )
+        db.session.add(summary)
+        db.session.commit()
+
+        return jsonify({'success': True, 'summary_text': summary_text})
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"AI summary generation error: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
  
 @app.errorhandler(APITimeoutError)
 def handle_ai_timeout(e):
@@ -9927,12 +20190,58 @@ def patient_medical_record(patient_id):
 @app.route('/doctor/patient/<int:patient_id>/complete', methods=['POST'])
 @login_required
 def complete_patient_treatment(patient_id):
-    if current_user.role != 'doctor':
+    if current_user.role not in ('doctor', 'admin'):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     patient = db.session.get(Patient, patient_id)
     if not patient:
         return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+    # Enforce pay-before-discharge for ward stays
+    try:
+        ctx = _get_patient_bed_stay_context(patient.id)
+        if ctx:
+            daily_rate = float(ctx.get('daily_rate') or 0)
+            if daily_rate > 0:
+                bed_id = int(ctx['bed_id'])
+                start_date = ctx['start_date']
+                end_date = ctx['end_date']
+
+                last = (
+                    BedStayCharge.query
+                    .filter_by(bed_id=bed_id, patient_id=patient.id)
+                    .order_by(BedStayCharge.charge_end_date.desc())
+                    .first()
+                )
+                last_end = last.charge_end_date if last else None
+                bill_start = start_date
+                if last_end:
+                    bill_start = max(bill_start, last_end + timedelta(days=1))
+
+                if bill_start <= end_date:
+                    days_due = (end_date - bill_start).days + 1
+                else:
+                    days_due = 0
+
+                if days_due > 0 and not _ward_stay_is_paid_through(patient.id, bed_id, end_date):
+                    amount_due = float(days_due) * daily_rate
+                    return jsonify({
+                        'success': False,
+                        'error': 'Ward stay charges must be paid before discharge.',
+                        'ward_stay_due': {
+                            'ward_name': ctx.get('ward_name'),
+                            'bed_number': ctx.get('bed_number'),
+                            'start_date': bill_start.isoformat(),
+                            'end_date': end_date.isoformat(),
+                            'days': int(days_due),
+                            'daily_rate': float(daily_rate),
+                            'amount': float(amount_due),
+                            'source': ctx.get('source'),
+                        }
+                    }), 400
+    except Exception:
+        # Do not block discharge if ward stay check fails unexpectedly.
+        pass
         
     try:
         patient.status = 'completed'
@@ -10151,6 +20460,9 @@ def handle_patient_sections():
             # Lab requests
             if request.form.getlist('lab_tests'):
                 for test_id in request.form.getlist('lab_tests'):
+                    test = db.session.get(LabTest, int(test_id))
+                    if not test:
+                        continue
                     lab_request = LabRequest(
                         patient_id=patient.id,
                         test_id=test_id,
@@ -10159,10 +20471,26 @@ def handle_patient_sections():
                         notes=request.form.get('lab_notes')
                     )
                     db.session.add(lab_request)
+                    # Create financial records
+                    try:
+                        create_service_sale_and_transaction(
+                            patient_id=patient.id,
+                            service_item=test,
+                            service_type='lab',
+                            requested_by_id=current_user.id,
+                            notes=request.form.get('lab_notes')
+                        )
+                    except Exception as e:
+                        db.session.rollback()
+                        current_app.logger.error(f"Could not create transaction for lab request in handle_patient_sections: {str(e)}")
+                        return jsonify({'success': False, 'error': 'Failed to create financial record for lab test.'}), 500
             
             # Imaging requests
             if request.form.getlist('imaging_tests'):
                 for test_id in request.form.getlist('imaging_tests'):
+                    test = db.session.get(ImagingTest, int(test_id))
+                    if not test:
+                        continue
                     imaging_request = ImagingRequest(
                         patient_id=patient.id,
                         test_id=test_id,
@@ -10171,6 +20499,19 @@ def handle_patient_sections():
                         notes=request.form.get('imaging_notes')
                     )
                     db.session.add(imaging_request)
+                    # Create financial records
+                    try:
+                        create_service_sale_and_transaction(
+                            patient_id=patient.id,
+                            service_item=test,
+                            service_type='imaging',
+                            requested_by_id=current_user.id,
+                            notes=request.form.get('imaging_notes')
+                        )
+                    except Exception as e:
+                        db.session.rollback()
+                        current_app.logger.error(f"Could not create transaction for imaging request in handle_patient_sections: {str(e)}")
+                        return jsonify({'success': False, 'error': 'Failed to create financial record for imaging test.'}), 500
             
             db.session.commit()
             
@@ -10252,12 +20593,115 @@ def doctor_patient_details(patient_id):
     
     if request.method == 'POST':
         section = request.form.get('section')
+
+        if section == 'biodata':
+            try:
+                name = (request.form.get('name') or '').strip()
+                if not name:
+                    flash('Patient name cannot be empty', 'warning')
+                    return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+
+                # Track only these fields for append-only history.
+                old_phone = (patient.get_decrypted_phone or '').strip()
+                old_nok_name = (patient.get_decrypted_nok_name or '').strip()
+                old_nok_contact = (patient.get_decrypted_nok_contact or '').strip()
+                old_religion = (patient.religion or '').strip()
+                old_tca = patient.tca
+
+                new_phone = (request.form.get('phone') or '').strip()
+                new_nok_name = (request.form.get('nok_name') or '').strip()
+                new_nok_contact = (request.form.get('nok_contact') or '').strip()
+                new_religion = (request.form.get('religion') or '').strip()
+                new_tca = (
+                    datetime.strptime(request.form.get('tca'), '%Y-%m-%d').date()
+                    if (request.form.get('tca') or '').strip()
+                    else None
+                )
+
+                tracked_changed = (
+                    (old_phone != new_phone)
+                    or (old_nok_name != new_nok_name)
+                    or (old_nok_contact != new_nok_contact)
+                    or (old_religion != new_religion)
+                    or (old_tca != new_tca)
+                )
+
+                if tracked_changed:
+                    existing_count = PatientBiodataEntry.query.filter_by(patient_id=patient.id).count()
+                    if existing_count == 0:
+                        # Create an initial snapshot so the doctor can navigate back to what existed before the first change.
+                        initial = PatientBiodataEntry(
+                            patient_id=patient.id,
+                            phone=(Config.encrypt_data_static(old_phone) if old_phone else None),
+                            nok_name=(Config.encrypt_data_static(old_nok_name) if old_nok_name else None),
+                            nok_contact=(Config.encrypt_data_static(old_nok_contact) if old_nok_contact else None),
+                            religion=(old_religion or None),
+                            tca=old_tca,
+                            created_by=current_user.id,
+                        )
+                        db.session.add(initial)
+
+                    entry = PatientBiodataEntry(
+                        patient_id=patient.id,
+                        phone=(Config.encrypt_data_static(new_phone) if new_phone else None),
+                        nok_name=(Config.encrypt_data_static(new_nok_name) if new_nok_name else None),
+                        nok_contact=(Config.encrypt_data_static(new_nok_contact) if new_nok_contact else None),
+                        religion=(new_religion or None),
+                        tca=new_tca,
+                        created_by=current_user.id,
+                    )
+                    db.session.add(entry)
+
+                patient.name = Config.encrypt_data_static(name)
+                patient.age = int(request.form.get('age')) if (request.form.get('age') or '').strip() else None
+                patient.gender = (request.form.get('gender') or None)
+                patient.address = (
+                    Config.encrypt_data_static(request.form.get('address'))
+                    if (request.form.get('address') or '').strip()
+                    else None
+                )
+                if old_phone != new_phone:
+                    patient.phone = Config.encrypt_data_static(new_phone) if new_phone else None
+                patient.destination = (request.form.get('destination') or None)
+                patient.occupation = (
+                    Config.encrypt_data_static(request.form.get('occupation'))
+                    if (request.form.get('occupation') or '').strip()
+                    else None
+                )
+                if old_religion != new_religion:
+                    patient.religion = (new_religion or None)
+                if old_nok_name != new_nok_name:
+                    patient.nok_name = Config.encrypt_data_static(new_nok_name) if new_nok_name else None
+                if old_nok_contact != new_nok_contact:
+                    patient.nok_contact = Config.encrypt_data_static(new_nok_contact) if new_nok_contact else None
+                if old_tca != new_tca:
+                    patient.tca = new_tca
+                db.session.commit()
+                flash('Biodata updated successfully!', 'success')
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Error updating biodata: {str(e)}', 'danger')
+
+            return redirect(url_for('doctor_patient_details', patient_id=patient_id))
         
         # Add these new sections for chief complaint and HPI
         if section == 'chief_complaint':
             try:
-                chief_complaint = request.form.get('chief_complaint')
+                chief_complaint = (request.form.get('chief_complaint') or '').strip()
                 if chief_complaint:
+                    old_text = (patient.chief_complaint or '').strip()
+                    existing_count = PatientChiefComplaintEntry.query.filter_by(patient_id=patient.id).count()
+                    if existing_count == 0 and old_text and old_text != chief_complaint:
+                        db.session.add(PatientChiefComplaintEntry(
+                            patient_id=patient.id,
+                            complaint_text=old_text,
+                            created_by=current_user.id,
+                        ))
+                    db.session.add(PatientChiefComplaintEntry(
+                        patient_id=patient.id,
+                        complaint_text=chief_complaint,
+                        created_by=current_user.id,
+                    ))
                     patient.chief_complaint = chief_complaint
                     db.session.commit()
                     flash('Chief complaint updated successfully!', 'success')
@@ -10269,8 +20713,21 @@ def doctor_patient_details(patient_id):
         
         elif section == 'hpi':
             try:
-                hpi = request.form.get('history_present_illness')
+                hpi = (request.form.get('history_present_illness') or '').strip()
                 if hpi:
+                    old_text = (patient.history_present_illness or '').strip()
+                    existing_count = PatientHPIEntry.query.filter_by(patient_id=patient.id).count()
+                    if existing_count == 0 and old_text and old_text != hpi:
+                        db.session.add(PatientHPIEntry(
+                            patient_id=patient.id,
+                            hpi_text=old_text,
+                            created_by=current_user.id,
+                        ))
+                    db.session.add(PatientHPIEntry(
+                        patient_id=patient.id,
+                        hpi_text=hpi,
+                        created_by=current_user.id,
+                    ))
                     patient.history_present_illness = hpi
                     db.session.commit()
                     flash('History of present illness updated successfully!', 'success')
@@ -10282,17 +20739,16 @@ def doctor_patient_details(patient_id):
         
         elif section == 'review_systems':
             try:
-                review_systems = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
-                if not review_systems:
-                    review_systems = PatientReviewSystem(patient_id=patient.id)
-                    db.session.add(review_systems)
-                
-                review_systems.cns = request.form.get('cns')
-                review_systems.cvs = request.form.get('cvs')
-                review_systems.rs = request.form.get('rs')
-                review_systems.git = request.form.get('git')
-                review_systems.gut = request.form.get('gut')
-                review_systems.msk = request.form.get('msk')
+                review_systems = PatientReviewSystem(
+                    patient_id=patient.id,
+                    cns=request.form.get('cns'),
+                    cvs=request.form.get('cvs'),
+                    rs=request.form.get('rs'),
+                    git=request.form.get('git'),
+                    gut=request.form.get('gut'),
+                    msk=request.form.get('msk'),
+                )
+                db.session.add(review_systems)
                 
                 db.session.commit()
                 flash('Review of systems updated successfully!', 'success')
@@ -10302,15 +20758,14 @@ def doctor_patient_details(patient_id):
         
         elif section == 'history':
             try:
-                history = PatientHistory.query.filter_by(patient_id=patient.id).first()
-                if not history:
-                    history = PatientHistory(patient_id=patient.id)
-                    db.session.add(history)
-                
-                history.medical_history = request.form.get('medical_history')
-                history.surgical_history = request.form.get('surgical_history')
-                history.family_history = request.form.get('family_history')
-                history.allergies = request.form.get('allergies')
+                history = PatientHistory(
+                    patient_id=patient.id,
+                    medical_history=request.form.get('medical_history'),
+                    surgical_history=request.form.get('surgical_history'),
+                    family_history=request.form.get('family_history'),
+                    allergies=request.form.get('allergies'),
+                )
+                db.session.add(history)
                 
                 db.session.commit()
                 flash('Medical history updated successfully!', 'success')
@@ -10320,22 +20775,21 @@ def doctor_patient_details(patient_id):
         
         elif section == 'examination':
             try:
-                examination = PatientExamination.query.filter_by(patient_id=patient.id).first()
-                if not examination:
-                    examination = PatientExamination(patient_id=patient.id)
-                    db.session.add(examination)
-                
-                examination.general_appearance = request.form.get('general_appearance')
-                examination.temperature = request.form.get('temperature')
-                examination.pulse = request.form.get('pulse')
-                examination.resp_rate = request.form.get('resp_rate')
-                examination.bp_systolic = request.form.get('bp_systolic')
-                examination.bp_diastolic = request.form.get('bp_diastolic')
-                examination.spo2 = request.form.get('spo2')
-                examination.cvs_exam = request.form.get('cvs_exam')
-                examination.resp_exam = request.form.get('resp_exam')
-                examination.abdo_exam = request.form.get('abdo_exam')
-                examination.cns_exam = request.form.get('cns_exam')
+                examination = PatientExamination(
+                    patient_id=patient.id,
+                    general_appearance=request.form.get('general_appearance'),
+                    temperature=request.form.get('temperature'),
+                    pulse=request.form.get('pulse'),
+                    resp_rate=request.form.get('resp_rate'),
+                    bp_systolic=request.form.get('bp_systolic'),
+                    bp_diastolic=request.form.get('bp_diastolic'),
+                    spo2=request.form.get('spo2'),
+                    cvs_exam=request.form.get('cvs_exam'),
+                    resp_exam=request.form.get('resp_exam'),
+                    abdo_exam=request.form.get('abdo_exam'),
+                    cns_exam=request.form.get('cns_exam'),
+                )
+                db.session.add(examination)
                 
                 db.session.commit()
                 flash('Examination findings updated successfully!', 'success')
@@ -10345,13 +20799,12 @@ def doctor_patient_details(patient_id):
         
         elif section == 'diagnosis':
             try:
-                diagnosis = PatientDiagnosis.query.filter_by(patient_id=patient.id).first()
-                if not diagnosis:
-                    diagnosis = PatientDiagnosis(patient_id=patient.id)
-                    db.session.add(diagnosis)
-                
-                diagnosis.working_diagnosis = request.form.get('working_diagnosis')
-                diagnosis.differential_diagnosis = request.form.get('differential_diagnosis')
+                diagnosis = PatientDiagnosis(
+                    patient_id=patient.id,
+                    working_diagnosis=request.form.get('working_diagnosis'),
+                    differential_diagnosis=request.form.get('differential_diagnosis'),
+                )
+                db.session.add(diagnosis)
                 
                 db.session.commit()
                 flash('Diagnosis updated successfully!', 'success')
@@ -10361,15 +20814,14 @@ def doctor_patient_details(patient_id):
         
         elif section == 'management':
             try:
-                # Update or create management plan
-                management = PatientManagement.query.filter_by(patient_id=patient.id).first()
-                if not management:
-                    management = PatientManagement(patient_id=patient.id)
-                    db.session.add(management)
-                
-                management.treatment_plan = request.form.get('treatment_plan', '')
-                management.follow_up = request.form.get('follow_up', '')
-                management.notes = request.form.get('management_notes', '')
+                # Append-only management plan entries (preserve previous updates)
+                management = PatientManagement(
+                    patient_id=patient.id,
+                    treatment_plan=request.form.get('treatment_plan', ''),
+                    follow_up=request.form.get('follow_up', ''),
+                    notes=request.form.get('management_notes', ''),
+                )
+                db.session.add(management)
                 
                 # Handle prescriptions
                 drug_ids = request.form.getlist('drug_id')
@@ -10450,6 +20902,16 @@ def doctor_patient_details(patient_id):
                     requested_by=current_user.id
                 )
                 db.session.add(lab_request)
+                
+                # Create financial records
+                create_service_sale_and_transaction(
+                    patient_id=patient.id,
+                    service_item=lab_test,
+                    service_type='lab',
+                    requested_by_id=current_user.id,
+                    notes=request.form.get('notes')
+                )
+                
                 db.session.commit()
                 
                 flash('Lab request sent successfully!', 'success')
@@ -10477,6 +20939,16 @@ def doctor_patient_details(patient_id):
                     requested_by=current_user.id
                 )
                 db.session.add(imaging_request)
+
+                # Create financial records
+                create_service_sale_and_transaction(
+                    patient_id=patient.id,
+                    service_item=imaging_test,
+                    service_type='imaging',
+                    requested_by_id=current_user.id,
+                    notes=request.form.get('notes')
+                )
+
                 db.session.commit()
                 
                 flash('Imaging request sent successfully!', 'success')
@@ -10486,8 +20958,51 @@ def doctor_patient_details(patient_id):
         
         elif request.form.get('action') == 'complete_treatment':
             try:
+                # Enforce pay-before-discharge for ward stays (friendly flash on block)
+                try:
+                    ctx = _get_patient_bed_stay_context(patient.id)
+                    if ctx:
+                        daily_rate = float(ctx.get('daily_rate') or 0)
+                        if daily_rate > 0:
+                            bed_id = int(ctx['bed_id'])
+                            start_date = ctx['start_date']
+                            end_date = ctx['end_date']
+
+                            last = (
+                                BedStayCharge.query
+                                .filter_by(bed_id=bed_id, patient_id=patient.id)
+                                .order_by(BedStayCharge.charge_end_date.desc())
+                                .first()
+                            )
+                            last_end = last.charge_end_date if last else None
+                            bill_start = start_date
+                            if last_end:
+                                bill_start = max(bill_start, last_end + timedelta(days=1))
+
+                            if bill_start <= end_date:
+                                days_due = (end_date - bill_start).days + 1
+                            else:
+                                days_due = 0
+
+                            if days_due > 0 and not _ward_stay_is_paid_through(patient.id, bed_id, end_date):
+                                amount_due = float(days_due) * daily_rate
+                                flash(
+                                    (
+                                        'Cannot discharge: ward stay charges are unpaid. '
+                                        f"Ward: {ctx.get('ward_name') or '-'}, Bed: {ctx.get('bed_number') or '-'}, "
+                                        f"Due: {int(days_due)} day(s) ({bill_start.isoformat()} to {end_date.isoformat()}) "
+                                        f"at {float(daily_rate):.2f}/day = {float(amount_due):.2f}. "
+                                        'Please ask reception to bill/pay the ward stay, then try again.'
+                                    ),
+                                    'warning'
+                                )
+                                return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+                except Exception:
+                    # Do not block discharge if ward stay check fails unexpectedly.
+                    pass
+
                 patient.status = 'completed'
-                patient.updated_at = datetime.now(timezone.utc)
+                patient.updated_at = get_eat_now()
                 db.session.commit()
                 flash('Patient treatment marked as completed!', 'success')
                 return redirect(url_for('doctor_patients'))
@@ -10498,7 +21013,7 @@ def doctor_patient_details(patient_id):
         elif request.form.get('action') == 'readmit_patient':
             try:
                 patient.status = 'active'
-                patient.updated_at = datetime.now(timezone.utc)
+                patient.updated_at = get_eat_now()
                 db.session.commit()
                 flash('Patient readmitted successfully!', 'success')
             except Exception as e:
@@ -10507,31 +21022,100 @@ def doctor_patient_details(patient_id):
         
         return redirect(url_for('doctor_patient_details', patient_id=patient_id))
     
-    # Get all related data
-    review_systems = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
-    history = PatientHistory.query.filter_by(patient_id=patient.id).first()
-    examination = PatientExamination.query.filter_by(patient_id=patient.id).first()
-    diagnosis = PatientDiagnosis.query.filter_by(patient_id=patient.id).first()
-    management = PatientManagement.query.filter_by(patient_id=patient.id).first()
+    def _resolve_version(versions, selected_id):
+        if not versions:
+            return None, {'total': 0, 'index': 0, 'prev_id': None, 'next_id': None}
+        selected = None
+        if selected_id is not None:
+            selected = next((v for v in versions if v.id == selected_id), None)
+        if selected is None:
+            selected = versions[-1]
+        idx = next((i for i, v in enumerate(versions) if v.id == selected.id), len(versions) - 1)
+        prev_id = versions[idx - 1].id if idx > 0 else None
+        next_id = versions[idx + 1].id if idx < len(versions) - 1 else None
+        return selected, {'total': len(versions), 'index': idx + 1, 'prev_id': prev_id, 'next_id': next_id}
+
+    # Get all related data (append-only history; default to latest unless an id is provided)
+    review_versions = PatientReviewSystem.query.filter_by(patient_id=patient.id) \
+        .order_by(PatientReviewSystem.created_at.asc(), PatientReviewSystem.id.asc()).all()
+    history_versions = PatientHistory.query.filter_by(patient_id=patient.id) \
+        .order_by(PatientHistory.created_at.asc(), PatientHistory.id.asc()).all()
+    exam_versions = PatientExamination.query.filter_by(patient_id=patient.id) \
+        .order_by(PatientExamination.created_at.asc(), PatientExamination.id.asc()).all()
+    diagnosis_versions = PatientDiagnosis.query.filter_by(patient_id=patient.id) \
+        .order_by(PatientDiagnosis.created_at.asc(), PatientDiagnosis.id.asc()).all()
+    management_versions = PatientManagement.query.filter_by(patient_id=patient.id) \
+        .order_by(PatientManagement.created_at.asc(), PatientManagement.id.asc()).all()
+
+    biodata_versions = PatientBiodataEntry.query.filter_by(patient_id=patient.id) \
+        .order_by(PatientBiodataEntry.created_at.asc(), PatientBiodataEntry.id.asc()).all()
+    complaint_versions = PatientChiefComplaintEntry.query.filter_by(patient_id=patient.id) \
+        .order_by(PatientChiefComplaintEntry.created_at.asc(), PatientChiefComplaintEntry.id.asc()).all()
+    hpi_versions = PatientHPIEntry.query.filter_by(patient_id=patient.id) \
+        .order_by(PatientHPIEntry.created_at.asc(), PatientHPIEntry.id.asc()).all()
+
+    review_systems, review_nav = _resolve_version(review_versions, request.args.get('review_id', type=int))
+    history, history_nav = _resolve_version(history_versions, request.args.get('history_id', type=int))
+    examination, examination_nav = _resolve_version(exam_versions, request.args.get('exam_id', type=int))
+    diagnosis, diagnosis_nav = _resolve_version(diagnosis_versions, request.args.get('diagnosis_id', type=int))
+    management, management_nav = _resolve_version(management_versions, request.args.get('management_id', type=int))
+
+    biodata_entry, biodata_nav = _resolve_version(biodata_versions, request.args.get('biodata_id', type=int))
+    chief_complaint_entry, chief_complaint_nav = _resolve_version(complaint_versions, request.args.get('complaint_id', type=int))
+    hpi_entry, hpi_nav = _resolve_version(hpi_versions, request.args.get('hpi_id', type=int))
+
+    def _dec(val):
+        return patient._safe_decrypt(val)
+
+    biodata_view = {
+        'phone': _dec(biodata_entry.phone) if biodata_entry else patient.get_decrypted_phone,
+        'nok_name': _dec(biodata_entry.nok_name) if biodata_entry else patient.get_decrypted_nok_name,
+        'nok_contact': _dec(biodata_entry.nok_contact) if biodata_entry else patient.get_decrypted_nok_contact,
+        'religion': (biodata_entry.religion if biodata_entry else patient.religion),
+        'tca': (biodata_entry.tca if biodata_entry else patient.tca),
+    }
+
+    chief_complaint_text = (chief_complaint_entry.complaint_text if chief_complaint_entry else patient.chief_complaint)
+    hpi_text = (hpi_entry.hpi_text if hpi_entry else patient.history_present_illness)
     lab_tests = LabTest.query.all()
     imaging_tests = ImagingTest.query.all()
     lab_requests = LabRequest.query.filter_by(patient_id=patient.id).all()
     imaging_requests = ImagingRequest.query.filter_by(patient_id=patient.id).all()
-    prescriptions = Prescription.query.filter_by(patient_id=patient.id).options(db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)).all()
+    prescriptions = Prescription.query.filter_by(patient_id=patient.id) \
+        .order_by(Prescription.created_at.desc(), Prescription.id.desc()) \
+        .options(db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)).all()
+    controlled_prescriptions = ControlledPrescription.query.filter_by(patient_id=patient.id) \
+        .order_by(ControlledPrescription.created_at.desc(), ControlledPrescription.id.desc()) \
+        .options(db.joinedload(ControlledPrescription.items).joinedload(ControlledPrescriptionItem.controlled_drug)).all()
     patient_services = PatientService.query.filter_by(patient_id=patient.id).all()
     
     return render_template('doctor/patient_details.html',
         patient=patient,
+        biodata_entry=biodata_entry,
+        biodata_nav=biodata_nav,
+        biodata_view=biodata_view,
+        chief_complaint_entry=chief_complaint_entry,
+        chief_complaint_nav=chief_complaint_nav,
+        chief_complaint_text=chief_complaint_text,
+        hpi_entry=hpi_entry,
+        hpi_nav=hpi_nav,
+        hpi_text=hpi_text,
         review_systems=review_systems,
+        review_nav=review_nav,
         history=history,
+        history_nav=history_nav,
         examination=examination,
+        examination_nav=examination_nav,
         diagnosis=diagnosis,
+        diagnosis_nav=diagnosis_nav,
         management=management,
+        management_nav=management_nav,
         lab_tests=lab_tests,
         imaging_tests=imaging_tests,
         lab_requests=lab_requests,
         imaging_requests=imaging_requests,
         prescriptions=prescriptions,
+        controlled_prescriptions=controlled_prescriptions,
         patient_services=patient_services,
         drugs=drugs,
         services=services
@@ -10542,23 +21126,26 @@ def doctor_patient_details(patient_id):
 def doctor_prescription_details(prescription_id):
     if current_user.role != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     prescription = db.session.get(Prescription, prescription_id)
     if not prescription:
         return jsonify({'error': 'Prescription not found'}), 404
-    
-    items = [{
-        'id': item.id,
-        'drug_id': item.drug_id,
-        'drug_name': item.drug.name,
-        'quantity': item.quantity,
-        'dosage': item.dosage,
-        'frequency': item.frequency,
-        'duration': item.duration,
-        'notes': item.notes,
-        'status': item.status
-    } for item in prescription.items]
-    
+
+    items = [
+        {
+            'id': item.id,
+            'drug_id': item.drug_id,
+            'drug_name': item.drug.name,
+            'quantity': item.quantity,
+            'dosage': item.dosage,
+            'frequency': item.frequency,
+            'duration': item.duration,
+            'notes': item.notes,
+            'status': item.status,
+        }
+        for item in prescription.items
+    ]
+
     return jsonify({
         'id': prescription.id,
         'patient_id': prescription.patient_id,
@@ -10567,8 +21154,219 @@ def doctor_prescription_details(prescription_id):
         'notes': prescription.notes,
         'status': prescription.status,
         'created_at': prescription.created_at.strftime('%Y-%m-%d %H:%M'),
-        'items': items
+        'items': items,
     })
+
+
+@app.route('/doctor/lab-request/<int:request_id>/complete', methods=['POST'])
+@login_required
+def complete_lab_request(request_id):
+    lab_request = LabRequest.query.get_or_404(request_id)
+    if lab_request.status == 'completed':
+        flash('Lab request is already completed.', 'info')
+        return redirect(url_for('doctor_dashboard'))
+
+    result = request.form.get('result')
+    notes = request.form.get('notes')
+
+    lab_request.status = 'completed'
+    lab_request.result = result
+    lab_request.performed_by = current_user.id
+    lab_request.performed_at = get_eat_now()
+    lab_request.notes = notes
+
+    try:
+        db.session.commit()
+
+        # Create a sale and transaction for the completed lab test
+        patient = lab_request.patient
+        lab_test = lab_request.test
+        if patient and lab_test and lab_test.price > 0:
+            sale = Sale(
+                sale_number=generate_sale_number(),
+                patient_id=patient.id,
+                user_id=current_user.id,
+                pharmacist_name=current_user.username,
+                total_amount=lab_test.price,
+                payment_method='internal',
+                status='completed',
+                notes=f"Lab test: {lab_test.name}"
+            )
+            db.session.add(sale)
+            db.session.flush()
+
+            sale_item = SaleItem(
+                sale_id=sale.id,
+                lab_test_id=lab_test.id,
+                description=f"Lab Test: {lab_test.name}",
+                quantity=1,
+                unit_price=lab_test.price,
+                total_price=lab_test.price
+            )
+            db.session.add(sale_item)
+
+            transaction = _ensure_sale_transaction(sale)
+            if transaction:
+                _maybe_set_transaction_meta(
+                    transaction,
+                    department='laboratory',
+                    category='diagnostics',
+                    payer=patient.name,
+                    notes=f"Lab test for {patient.name}: {lab_test.name}"
+                )
+            db.session.commit()
+
+        flash('Lab request completed successfully.', 'success')
+        return redirect(url_for('doctor_dashboard'))
+    except Exception as e:
+        db.session.rollback()
+        flash('An error occurred while completing the lab request.', 'danger')
+        return redirect(url_for('doctor_dashboard'))
+def complete_lab_request(request_id):
+    if current_user.role not in ('doctor', 'admin'):
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    lab_request = db.session.get(LabRequest, request_id)
+    if not lab_request:
+        flash('Lab request not found', 'danger')
+        return redirect(url_for('doctor_patients'))
+
+    patient = db.session.get(Patient, lab_request.patient_id)
+    if not patient:
+        flash('Patient not found', 'danger')
+        return redirect(url_for('doctor_patients'))
+
+    result_text = (request.form.get('result') or '').strip()
+    if not result_text:
+        flash('Result cannot be empty', 'danger')
+        return redirect(url_for('doctor_patient_details', patient_id=patient.id))
+
+    force = (request.form.get('force') == '1') and (current_user.role == 'admin')
+    if not force:
+        is_paid = _patient_has_paid_sale_for_item(patient_id=patient.id, lab_test_id=lab_request.test_id)
+        if not is_paid:
+            flash('Payment required before completing this lab test. Please bill and pay via Reception.', 'warning')
+            return redirect(url_for('doctor_patient_details', patient_id=patient.id))
+
+    try:
+        lab_request.result = result_text
+        lab_request.status = 'completed'
+        lab_request.performed_by = current_user.id
+        lab_request.performed_at = get_eat_now()
+        db.session.commit()
+        flash('Lab result saved and request marked completed.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error saving lab result: {str(e)}', 'danger')
+
+    return redirect(url_for('doctor_patient_details', patient_id=patient.id))
+
+
+@app.route('/doctor/imaging-request/<int:request_id>/complete', methods=['POST'])
+@login_required
+def complete_imaging_request(request_id):
+    imaging_request = ImagingRequest.query.get_or_404(request_id)
+    if imaging_request.status == 'completed':
+        flash('Imaging request already completed.', 'info')
+        return redirect(url_for('doctor_dashboard'))
+
+    result = request.form.get('result')
+    notes = request.form.get('notes')
+
+    imaging_request.status = 'completed'
+    imaging_request.result = result
+    imaging_request.performed_by = current_user.id
+    imaging_request.performed_at = get_eat_now()
+    imaging_request.notes = notes
+
+    try:
+        db.session.commit()
+
+        # Create a sale and transaction for the completed imaging test
+        patient = imaging_request.patient
+        imaging_test = imaging_request.test
+        if patient and imaging_test and imaging_test.price > 0:
+            sale = Sale(
+                sale_number=generate_sale_number(),
+                patient_id=patient.id,
+                user_id=current_user.id,
+                pharmacist_name=current_user.username,
+                total_amount=imaging_test.price,
+                payment_method='internal',
+                status='completed',
+                notes=f"Imaging test: {imaging_test.name}"
+            )
+            db.session.add(sale)
+            db.session.flush()
+
+            sale_item = SaleItem(
+                sale_id=sale.id,
+                imaging_test_id=imaging_test.id,
+                description=f"Imaging Test: {imaging_test.name}",
+                quantity=1,
+                unit_price=imaging_test.price,
+                total_price=imaging_test.price
+            )
+            db.session.add(sale_item)
+
+            transaction = _ensure_sale_transaction(sale)
+            if transaction:
+                _maybe_set_transaction_meta(
+                    transaction,
+                    department='radiology',
+                    category='diagnostics',
+                    payer=patient.name,
+                    notes=f"Imaging test for {patient.name}: {imaging_test.name}"
+                )
+            db.session.commit()
+
+        flash('Imaging request completed successfully.', 'success')
+        return redirect(url_for('doctor_dashboard'))
+    except Exception as e:
+        db.session.rollback()
+        flash('Error completing imaging request: {}'.format(str(e)), 'danger')
+        return redirect(url_for('doctor_dashboard'))
+def complete_imaging_request(request_id):
+    if current_user.role not in ('doctor', 'admin'):
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    imaging_request = db.session.get(ImagingRequest, request_id)
+    if not imaging_request:
+        flash('Imaging request not found', 'danger')
+        return redirect(url_for('doctor_patients'))
+
+    patient = db.session.get(Patient, imaging_request.patient_id)
+    if not patient:
+        flash('Patient not found', 'danger')
+        return redirect(url_for('doctor_patients'))
+
+    result_text = (request.form.get('result') or '').strip()
+    if not result_text:
+        flash('Result cannot be empty', 'danger')
+        return redirect(url_for('doctor_patient_details', patient_id=patient.id))
+
+    force = (request.form.get('force') == '1') and (current_user.role == 'admin')
+    if not force:
+        imaging_test = db.session.get(ImagingTest, imaging_request.test_id)
+        is_paid = _patient_has_paid_sale_for_imaging_test(patient_id=patient.id, imaging_test=imaging_test)
+        if not is_paid:
+            flash('Payment required before completing this imaging study. Please bill and pay via Reception.', 'warning')
+            return redirect(url_for('doctor_patient_details', patient_id=patient.id))
+
+    try:
+        imaging_request.result = result_text
+        imaging_request.status = 'completed'
+        imaging_request.performed_by = current_user.id
+        imaging_request.performed_at = get_eat_now()
+        db.session.commit()
+        flash('Imaging result saved and request marked completed.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error saving imaging result: {str(e)}', 'danger')
+
+    return redirect(url_for('doctor_patient_details', patient_id=patient.id))
 
 @app.route('/doctor/patient/complete_prescription', methods=['POST'])
 @login_required
@@ -10778,15 +21576,42 @@ def create_bill():
     if current_user.role != 'receptionist':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
-    
-    data = request.get_json()
-    patient_id = data.get('patient_id')
-    service_ids = data.get('services', [])
-    lab_ids = data.get('labs', [])
+
+    def _coerce_int_list(values):
+        out = []
+        for v in values or []:
+            try:
+                out.append(int(v))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    data = request.get_json(silent=True) if request.is_json else None
+    if isinstance(data, dict):
+        patient_id = data.get('patient_id')
+        service_ids = _coerce_int_list(data.get('services', []))
+        lab_ids = _coerce_int_list(data.get('labs', []))
+        imaging_ids = _coerce_int_list(data.get('imaging_tests', []))
+        prescription_item_ids = _coerce_int_list(data.get('prescription_items', []))
+        include_ward_stay = bool(data.get('include_ward_stay'))
+        payment_method = data.get('payment_method', 'cash')
+        notes = data.get('notes')
+    else:
+        patient_id = request.form.get('patient_id')
+        service_ids = _coerce_int_list(request.form.getlist('services'))
+        lab_ids = _coerce_int_list(request.form.getlist('lab_tests'))
+        imaging_ids = _coerce_int_list(request.form.getlist('imaging_tests'))
+        prescription_item_ids = _coerce_int_list(request.form.getlist('prescription_items'))
+        include_ward_stay = request.form.get('include_ward_stay') in ('1', 'true', 'True', 'on', 'yes')
+        payment_method = request.form.get('payment_method', 'cash')
+        notes = request.form.get('notes')
     
     patient = Patient.query.get(patient_id)
     if not patient:
-        return jsonify({'error': 'Patient not found'}), 404
+        if request.is_json:
+            return jsonify({'error': 'Patient not found'}), 404
+        flash('Patient not found', 'danger')
+        return redirect(url_for('receptionist_billing'))
     
     try:
         # Create sale
@@ -10795,7 +21620,7 @@ def create_bill():
             patient_id=patient.id,
             user_id=current_user.id,
             total_amount=0,  # Will be calculated
-            payment_method=data.get('payment_method', 'cash'),
+            payment_method=payment_method,
             status='completed'
         )
         db.session.add(sale)
@@ -10832,11 +21657,90 @@ def create_bill():
                 )
                 db.session.add(sale_item)
                 total_amount += lab.price
+
+        # Add imaging tests (stored as description-only items to avoid schema changes)
+        for imaging_id in imaging_ids:
+            imaging_test = ImagingTest.query.get(imaging_id)
+            if imaging_test and imaging_test.is_active:
+                kwargs = {
+                    'sale_id': sale.id,
+                    'description': f"Imaging: {imaging_test.name}",
+                    'quantity': 1,
+                    'unit_price': imaging_test.price,
+                    'total_price': imaging_test.price,
+                }
+                if _sale_item_supports_imaging_test_id():
+                    kwargs['imaging_test_id'] = imaging_test.id
+                sale_item = SaleItem(**kwargs)
+                db.session.add(sale_item)
+                total_amount += imaging_test.price
+
+        # Add ward stay (auto-updating daily based on assignment and last billed period)
+        if include_ward_stay:
+            try:
+                ctx = _get_patient_bed_stay_context(patient.id)
+                if ctx:
+                    bed_id = ctx['bed_id']
+                    start_date = ctx['start_date']
+                    end_date = ctx['end_date']
+                    daily_rate = float(ctx.get('daily_rate') or 0)
+
+                    last = (
+                        BedStayCharge.query
+                        .filter_by(bed_id=bed_id, patient_id=patient.id)
+                        .order_by(BedStayCharge.charge_end_date.desc())
+                        .first()
+                    )
+                    if last and getattr(last, 'charge_end_date', None):
+                        start_date = max(start_date, last.charge_end_date + timedelta(days=1))
+
+                    if start_date <= end_date:
+                        days = (end_date - start_date).days + 1
+                    else:
+                        days = 0
+
+                    if days > 0 and daily_rate > 0:
+                        amount = float(days) * daily_rate
+                        desc = f"Ward stay: {ctx['ward_name']} - Bed {ctx['bed_number']} ({start_date.isoformat()} to {end_date.isoformat()})"
+                        sale_item = SaleItem(
+                            sale_id=sale.id,
+                            description=desc,
+                            quantity=int(days),
+                            unit_price=daily_rate,
+                            total_price=amount,
+                        )
+                        db.session.add(sale_item)
+                        total_amount += amount
+
+                        charge_row = BedStayCharge(
+                            bed_id=bed_id,
+                            patient_id=patient.id,
+                            charge_start_date=start_date,
+                            charge_end_date=end_date,
+                            days=int(days),
+                            daily_rate=daily_rate,
+                            amount=amount,
+                            sale_id=sale.id,
+                        )
+                        db.session.add(charge_row)
+            except Exception:
+                # Ward stay is optional; do not break core billing flow.
+                pass
         
-        # Add dispensed prescriptions
-        prescriptions = Prescription.query.filter_by(patient_id=patient.id, status='dispensed').all()
-        for prescription in prescriptions:
-            for item in prescription.items:
+        # Add dispensed prescriptions (respect selection if provided)
+        if prescription_item_ids:
+            selected_items = (
+                db.session.query(PrescriptionItem)
+                .join(Prescription, PrescriptionItem.prescription_id == Prescription.id)
+                .filter(Prescription.patient_id == patient.id)
+                .filter(PrescriptionItem.id.in_(prescription_item_ids))
+                .all()
+            )
+        else:
+            selected_items = []
+
+        if selected_items:
+            for item in selected_items:
                 if item.status == 'dispensed' and item.drug:
                     sale_item = SaleItem(
                         sale_id=sale.id,
@@ -10848,6 +21752,21 @@ def create_bill():
                     )
                     db.session.add(sale_item)
                     total_amount += item.drug.selling_price * item.quantity
+        else:
+            prescriptions = Prescription.query.filter_by(patient_id=patient.id, status='dispensed').all()
+            for prescription in prescriptions:
+                for item in prescription.items:
+                    if item.status == 'dispensed' and item.drug:
+                        sale_item = SaleItem(
+                            sale_id=sale.id,
+                            drug_id=item.drug.id,
+                            description=f"{item.drug.name} - {item.dosage}",
+                            quantity=item.quantity,
+                            unit_price=item.drug.selling_price,
+                            total_price=item.drug.selling_price * item.quantity
+                        )
+                        db.session.add(sale_item)
+                        total_amount += item.drug.selling_price * item.quantity
         
         # Update sale total
         sale.total_amount = total_amount
@@ -10858,9 +21777,22 @@ def create_bill():
             transaction_type='sale',
             amount=total_amount,
             user_id=current_user.id,
-            reference_id=sale.id
+            reference_id=sale.id,
+            notes=notes,
+        )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='sales',
+            direction='IN',
+            status='posted',
+            department='reception',
+            category='patient_billing',
+            payment_method=sale.payment_method,
         )
         db.session.add(transaction)
+
+        receipt_html = render_template('receptionist/receipt.html', sale=sale)
+        _ensure_transaction_receipt(transaction, receipt_html, prefix='SALE', force=True)
         
         db.session.commit()
         
@@ -10869,15 +21801,20 @@ def create_bill():
             'total_amount': total_amount
         })
         
-        return jsonify({
-            'success': True,
-            'sale_id': sale.id,
-            'sale_number': sale.sale_number,
-            'total_amount': total_amount
-        })
+        if request.is_json:
+            return jsonify({
+                'success': True,
+                'sale_id': sale.id,
+                'sale_number': sale.sale_number,
+                'total_amount': total_amount
+            })
+        return redirect(url_for('receptionist_receipt', sale_id=sale.id))
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        if request.is_json:
+            return jsonify({'error': str(e)}), 500
+        flash(f'Error creating bill: {str(e)}', 'danger')
+        return redirect(url_for('receptionist_billing'))
 
 @app.route('/receptionist/sale/<int:sale_id>/receipt')
 @login_required
@@ -10969,6 +21906,162 @@ def get_drug_status(drug):
     else:
         return 'In Stock'
 
+
+def create_service_sale_and_transaction(patient_id, service_item, service_type, requested_by_id, notes=None):
+    try:
+        # Create Sale
+        sale = Sale(
+            sale_number=generate_sale_number(),
+            patient_id=patient_id,
+            user_id=requested_by_id,
+            pharmacist_name=current_user.username if hasattr(current_user, 'username') else None,
+            total_amount=service_item.price,
+            payment_method='internal',
+            status='completed',
+            notes=notes or f"{service_type.capitalize()} service sale for patient {patient_id}"
+        )
+        db.session.add(sale)
+        db.session.flush()  # To get sale.id
+
+        # Create SaleItem
+        sale_item = SaleItem(
+            sale_id=sale.id,
+            service_id=service_item.id if service_type == 'service' else None,
+            lab_test_id=service_item.id if service_type == 'lab_test' else None,
+            imaging_test_id=service_item.id if service_type == 'imaging_test' else None,
+            description=f"{service_type.capitalize()} sale",
+            quantity=1,
+            unit_price=service_item.price,
+            total_price=service_item.price
+        )
+        db.session.add(sale_item)
+
+        # Create Transaction
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='sale',
+            amount=service_item.price,
+            user_id=requested_by_id,
+            reference_id=sale.id,
+            reference_table='sales',
+            direction='IN',
+            status='posted',
+            department=service_type,
+            category='service',
+            payer=f"Patient {patient_id}",
+            notes=f"{service_type.capitalize()} sale for patient {patient_id}"
+        )
+
+        db.session.add(transaction)
+        db.session.commit()
+
+        # Log audit event for service sale
+        log_audit_event(
+            action=f'create_{service_type}_sale',
+            table_name='sales',
+            record_id=sale.id,
+            description=f"Created {service_type} sale {sale.sale_number} for patient {patient_id}",
+            new_values={
+                'sale_id': sale.id,
+                'patient_id': patient_id,
+                'service_item_id': service_item.id,
+                'service_type': service_type,
+                'amount': sale.total_amount
+            }
+        )
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Failed to create service sale and transaction: {e}", exc_info=True)
+        # Do not re-raise, allow the calling function to handle the error display
+
+
+def _create_service_sale_and_transaction(service_item, service_type, patient):
+    """
+    Creates a Sale, SaleItem, and Transaction for a given service (LabTest or ImagingTest).
+    `service_item` is the actual LabTest or ImagingTest object.
+    `service_type` is a string 'lab' or 'imaging'.
+    """
+    if not service_item or not hasattr(service_item, 'price') or service_item.price is None:
+        current_app.logger.error(f"Service item for sale has no price: {service_item}")
+        return
+
+    try:
+        patient_id = patient.id if patient else None
+        # 1. Create Sale
+        sale = Sale(
+            sale_number=generate_sale_number(),
+            patient_id=patient_id,
+            user_id=current_user.id if current_user and current_user.is_authenticated else None,
+            total_amount=service_item.price,
+            payment_method='unpaid', # Services are billed, not paid for immediately
+            status='completed',
+            notes=f"{service_type.capitalize()} Test: {service_item.name}"
+        )
+        db.session.add(sale)
+        db.session.flush()
+
+        # 2. Create SaleItem
+        sale_item = SaleItem(
+            sale_id=sale.id,
+            # No drug_id for services
+            drug_name=service_item.name,
+            drug_specification=service_type,
+            description=f"{service_type.capitalize()} Test",
+            quantity=1,
+            unit_price=service_item.price,
+            total_price=service_item.price
+        )
+        db.session.add(sale_item)
+        db.session.flush()
+
+        # 3. Create Transaction
+        transaction = Transaction(
+            transaction_number=generate_transaction_number(),
+            transaction_type='sale',
+            amount=service_item.price,
+            user_id=current_user.id if current_user and current_user.is_authenticated else None,
+            reference_id=sale.id,
+            notes=f"Charge for {service_type} '{service_item.name}' for patient ID {patient_id}",
+        )
+        _maybe_set_transaction_meta(
+            transaction,
+            reference_table='sales',
+            direction='IN',
+            status='unpaid',
+            department='laboratory' if service_type == 'lab' else 'imaging',
+            category=f'{service_type}_test',
+            payment_method='internal_charge',
+        )
+        db.session.add(transaction)
+        db.session.flush()
+
+    except Exception as e:
+        current_app.logger.error(f"Failed to create sale/transaction for {service_type} request: {str(e)}", exc_info=True)
+        # We must rollback to avoid partial records
+        db.session.rollback()
+        # Re-raise the exception to notify the caller
+        raise
+
+
+
+def _check_drug_stock_status(drug):
+    # Check the stock status of a drug
+    remaining = drug.remaining_quantity if hasattr(drug, 'remaining_quantity') else 0
+    expiry_date = drug.expiry_date if hasattr(drug, 'expiry_date') else None
+    today = datetime.now().date()
+    
+    if remaining <= 0:
+        return 'Out of Stock'
+    elif remaining < 5:
+        return 'Low Stock'
+    elif expiry_date and expiry_date < today:
+        return 'Expired'
+    elif expiry_date and (expiry_date - today).days < 30:
+        return 'Expiring Soon'
+    else:
+        return 'In Stock'
+
 # Add this function to generate drug numbers automatically
 def generate_drug_number():
     last_drug = Drug.query.order_by(Drug.id.desc()).first()
@@ -10993,6 +22086,88 @@ def generate_controlled_drug_number():
     return f"CDR-{new_number:04d}"
 
 
+def _patient_has_paid_sale_for_item(*, patient_id, lab_test_id=None, service_id=None) -> bool:
+    """Return True if patient has a completed sale + posted sale transaction for the given item."""
+
+    if not patient_id:
+        return False
+    if lab_test_id is None and service_id is None:
+        return False
+
+    item_filters = []
+    if lab_test_id is not None:
+        item_filters.append(SaleItem.lab_test_id == int(lab_test_id))
+    if service_id is not None:
+        item_filters.append(SaleItem.service_id == int(service_id))
+
+    sale_ids_subq = (
+        db.session.query(Sale.id)
+        .join(SaleItem, SaleItem.sale_id == Sale.id)
+        .filter(Sale.patient_id == int(patient_id))
+        .filter(Sale.status == 'completed')
+        .filter(or_(*item_filters))
+        .distinct()
+        .subquery()
+    )
+
+    # Require an actual ledger post for the sale (golden rule: money event posts into Transaction)
+    paid_txn_exists = (
+        db.session.query(Transaction.id)
+        .filter(Transaction.transaction_type == 'sale')
+        .filter(Transaction.reference_id.in_(db.select(sale_ids_subq.c.id)))
+        .limit(1)
+        .scalar()
+        is not None
+    )
+    return bool(paid_txn_exists)
+
+
+def _patient_has_paid_sale_for_imaging_test(*, patient_id, imaging_test) -> bool:
+    """Best-effort check for imaging billing.
+
+    Prefer imaging_test_id linkage when available; otherwise match by description.
+    """
+
+    if not patient_id or not imaging_test or not imaging_test.name:
+        return False
+
+    name = (imaging_test.name or '').strip()
+    if not name:
+        return False
+
+    if _sale_item_supports_imaging_test_id():
+        sale_ids_subq = (
+            db.session.query(Sale.id)
+            .join(SaleItem, SaleItem.sale_id == Sale.id)
+            .filter(Sale.patient_id == int(patient_id))
+            .filter(Sale.status == 'completed')
+            .filter(SaleItem.imaging_test_id == int(imaging_test.id))
+            .distinct()
+            .subquery()
+        )
+    else:
+        sale_ids_subq = (
+            db.session.query(Sale.id)
+            .join(SaleItem, SaleItem.sale_id == Sale.id)
+            .filter(Sale.patient_id == int(patient_id))
+            .filter(Sale.status == 'completed')
+            .filter(SaleItem.description.ilike('%imaging%'))
+            .filter(SaleItem.description.ilike(f'%{name}%'))
+            .distinct()
+            .subquery()
+        )
+
+    paid_txn_exists = (
+        db.session.query(Transaction.id)
+        .filter(Transaction.transaction_type == 'sale')
+        .filter(Transaction.reference_id.in_(db.select(sale_ids_subq.c.id)))
+        .limit(1)
+        .scalar()
+        is not None
+    )
+    return bool(paid_txn_exists)
+
+
 def generate_controlled_sale_number():
     return f"CSALE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
@@ -11002,6 +22177,41 @@ def _allowed_prescription_file(filename: str) -> bool:
         return False
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
     return ext in {'jpg', 'jpeg', 'png', 'webp', 'pdf'}
+
+
+def _allowed_prescription_image(filename: str) -> bool:
+    if not filename:
+        return False
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    return ext in {'jpg', 'jpeg', 'png', 'webp'}
+
+
+def _save_prescription_image(file_storage):
+    """Save camera-captured prescription photo to uploads/controlled_prescriptions and return relative path."""
+    if not file_storage or not getattr(file_storage, 'filename', None):
+        return None
+
+    # Enforce image-only (no PDF uploads)
+    if not _allowed_prescription_image(file_storage.filename):
+        raise ValueError('Unsupported file type. Prescription must be an image (jpg, png, webp).')
+
+    # Enforce image mimetype when available
+    mimetype = (getattr(file_storage, 'mimetype', '') or '').lower()
+    if mimetype and not mimetype.startswith('image/'):
+        raise ValueError('Unsupported file type. Prescription must be an image.')
+
+    filename = secure_filename(file_storage.filename) or 'prescription.jpg'
+    stamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    unique = f"{stamp}_{random.randint(1000, 9999)}_{filename}"
+
+    upload_dir = os.path.join(app.root_path, 'uploads', 'controlled_prescriptions')
+    os.makedirs(upload_dir, exist_ok=True)
+    full_path = os.path.join(upload_dir, unique)
+    file_storage.save(full_path)
+    return os.path.join('uploads', 'controlled_prescriptions', unique).replace('\\', '/')
+
+
+
 
 
 def _save_prescription_sheet(file_storage):
@@ -11017,9 +22227,38 @@ def _save_prescription_sheet(file_storage):
 
     upload_dir = os.path.join(app.root_path, 'uploads', 'controlled_prescriptions')
     os.makedirs(upload_dir, exist_ok=True)
+
     full_path = os.path.join(upload_dir, unique)
     file_storage.save(full_path)
     return os.path.join('uploads', 'controlled_prescriptions', unique).replace('\\', '/')
+
+
+@app.route('/pharmacist/api/controlled-prescriptions/upload-sheet', methods=['POST'])
+@login_required
+def pharmacist_upload_controlled_prescription_sheet():
+    """Upload a doctor prescription sheet image for a controlled prescription.
+
+    Returns: {success: bool, path: 'uploads/...'}
+    """
+    if current_user.role != 'pharmacist':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        file_storage = request.files.get('prescription_image')
+        if not file_storage or not getattr(file_storage, 'filename', None):
+            return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+
+        # For receipts we currently render an <img>, so keep this image-only.
+        path = _save_prescription_image(file_storage)
+        if not path:
+            return jsonify({'success': False, 'error': 'Failed to save file'}), 400
+
+        return jsonify({'success': True, 'path': path})
+    except ValueError as ve:
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        current_app.logger.error(f"Error uploading prescription sheet: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to upload prescription sheet'}), 500
 
 @app.route('/api/drugs/<int:drug_id>')
 @login_required
@@ -11082,6 +22321,53 @@ def api_patients():
         'gender': patient.gender
     } for patient in patients])
 
+@app.route('/api/notifications_list')
+@login_required
+
+def create_notification(user_id, message, url=None):
+    """Helper function to create a notification."""
+    try:
+        notification = Notification(
+            user_id=user_id,
+            message=message,
+            url=url
+        )
+        db.session.add(notification)
+        db.session.commit()
+        return notification
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Failed to create notification: {e}")
+        return None
+
+@app.route('/api/notifications', methods=['GET'])
+@login_required
+def api_get_notifications():
+    """API endpoint to get all notifications for the current user."""
+    notifications = Notification.query.filter_by(user_id=current_user.id).order_by(Notification.created_at.desc()).all()
+    return jsonify([n.to_dict() for n in notifications])
+
+@app.route('/api/notifications/<int:notification_id>/read', methods=['POST'])
+@login_required
+def mark_notification_read(notification_id):
+    """API endpoint to mark a notification as read."""
+    notification = Notification.query.get_or_404(notification_id)
+    if notification.user_id != current_user.id:
+        abort(403)
+    notification.is_read = True
+    db.session.commit()
+    return jsonify({'success': True})
+def get_notifications():
+    notifications = Notification.query.filter_by(user_id=current_user.id, is_read=False).order_by(Notification.created_at.desc()).all()
+    return jsonify([{
+        'id': n.id,
+        'message': n.message,
+        'link': n.link,
+        'created_at': n.created_at.strftime('%Y-%m-%d %H:%M')
+    } for n in notifications])
+
+
+
 @app.route('/receptionist/billing')
 @login_required
 def receptionist_billing():
@@ -11092,12 +22378,64 @@ def receptionist_billing():
     patients = Patient.query.filter_by(status='active').all()
     services = Service.query.all()
     lab_tests = LabTest.query.all()
+    imaging_tests = ImagingTest.query.filter_by(is_active=True).order_by(ImagingTest.name).all()
     
     return render_template('receptionist/billing.html',
         patients=patients,
         services=services,
-        lab_tests=lab_tests
+        lab_tests=lab_tests,
+        imaging_tests=imaging_tests,
     )
+
+
+@app.route('/api/patient/<int:patient_id>/ward-stay-preview')
+@login_required
+def api_patient_ward_stay_preview(patient_id: int):
+    """Preview ward-stay charges due for the currently assigned bed.
+
+    Returns a computed (not persisted) preview so the receptionist UI can show
+    an auto-updating daily amount.
+    """
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    ctx = _get_patient_bed_stay_context(patient.id)
+    if not ctx:
+        return jsonify({'assigned': False})
+
+    daily_rate = float(ctx.get('daily_rate') or 0)
+    start_date = ctx['start_date']
+    end_date = ctx['end_date']
+
+    last = (
+        BedStayCharge.query
+        .filter_by(bed_id=ctx['bed_id'], patient_id=patient.id)
+        .order_by(BedStayCharge.charge_end_date.desc())
+        .first()
+    )
+    last_end = last.charge_end_date if last else None
+    if last_end:
+        start_date = max(start_date, last_end + timedelta(days=1))
+
+    if start_date <= end_date:
+        days = (end_date - start_date).days + 1
+    else:
+        days = 0
+    amount = float(days) * daily_rate
+
+    return jsonify({
+        'assigned': True,
+        'ward_name': ctx['ward_name'],
+        'bed_number': ctx['bed_number'],
+        'daily_rate': daily_rate,
+        'start_date': start_date.isoformat(),
+        'end_date': end_date.isoformat(),
+        'days': int(days),
+        'amount': float(amount),
+        'last_billed_through': last_end.isoformat() if last_end else None,
+        'source': ctx.get('source'),
+    })
 
 @app.route('/api/lab-tests')
 @login_required
@@ -11173,14 +22511,689 @@ def internal_server_error(e):
 
 
 def initialize_database():
+    """Ensure the database exists and all model tables are created.
+
+    This is safe to run repeatedly: existing tables are left unchanged.
+    """
     with app.app_context():
-        # Create all database tables
-        db.create_all()
+        try:
+            # Ensure instance/ exists for the default SQLite path.
+            try:
+                os.makedirs(os.path.join(app.root_path, 'instance'), exist_ok=True)
+            except Exception:
+                pass
+
+            # Create only missing tables (db.create_all is idempotent).
+            from sqlalchemy import inspect as sa_inspect
+
+            engine = db.engine
+            inspector = sa_inspect(engine)
+            existing_tables = set(inspector.get_table_names())
+            expected_tables = set(db.metadata.tables.keys())
+            missing_tables = sorted(expected_tables - existing_tables)
+
+            if missing_tables:
+                db.create_all()
+                app.logger.info(
+                    "Database schema initialized/updated. Created %d missing tables.",
+                    len(missing_tables),
+                )
+            else:
+                app.logger.info(
+                    "Database schema already up to date (%d tables).",
+                    len(existing_tables),
+                )
+
+            # Ensure all tables/columns exist (runtime-safe migration for older DBs).
+            created_tables, added_cols = _ensure_all_tables_and_columns(engine)
+            if created_tables or added_cols:
+                app.logger.info(
+                    "Schema sync applied: created %d tables, added %d columns.",
+                    created_tables,
+                    added_cols,
+                )
+        except Exception:
+            app.logger.exception('Database initialization failed')
+            # In development/testing, fail fast so we don't start with a broken/empty schema.
+            if app.config.get('DEBUG') or app.config.get('TESTING'):
+                raise
 
 app.register_blueprint(auth_bp, url_prefix='/auth')
 
+# =================================================================================================
+# INSURANCE ROUTES
+# =================================================================================================
+
+def admin_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        # Example: Only allow users with role 'admin'
+        if not current_user.is_authenticated or getattr(current_user, 'role', None) != 'admin':
+            flash('Admin access required.', 'danger')
+            return redirect(url_for('home'))
+        return f(*args, **kwargs)
+    return wrapper
+
+@app.route('/admin/insurance_providers')
+@login_required
+@admin_required
+def insurance_providers():
+    providers = InsuranceProvider.query.all()
+    return render_template('admin/insurance_providers.html', providers=providers)
+
+@app.route('/admin/insurance_providers/add', methods=['POST'])
+@login_required
+@admin_required
+def add_insurance_provider():
+    name = request.form.get('name')
+    contact_person = request.form.get('contact_person')
+    phone = request.form.get('phone')
+    email = request.form.get('email')
+    address = request.form.get('address')
+    is_active = request.form.get('is_active') == 'true'
+
+    if not name:
+        flash('Provider name is required.', 'danger')
+        return redirect(url_for('insurance_providers'))
+
+    new_provider = InsuranceProvider(
+        name=name,
+        contact_person=contact_person,
+        phone=phone,
+        email=email,
+        address=address,
+        is_active=is_active
+    )
+    db.session.add(new_provider)
+    db.session.commit()
+    flash('Insurance provider added successfully.', 'success')
+    return redirect(url_for('insurance_providers'))
+
+@app.route('/admin/insurance_providers/edit/<int:provider_id>', methods=['POST'])
+@login_required
+@admin_required
+def edit_insurance_provider(provider_id):
+    provider = InsuranceProvider.query.get_or_404(provider_id)
+    provider.name = request.form.get('name')
+    provider.contact_person = request.form.get('contact_person')
+    provider.phone = request.form.get('phone')
+    provider.email = request.form.get('email')
+    provider.address = request.form.get('address')
+    provider.is_active = request.form.get('is_active') == 'true'
+
+    if not provider.name:
+        flash('Provider name is required.', 'danger')
+        return redirect(url_for('insurance_providers'))
+
+    db.session.commit()
+    flash('Insurance provider updated successfully.', 'success')
+    return redirect(url_for('insurance_providers'))
+
+@app.route('/admin/insurance_providers/delete/<int:provider_id>', methods=['POST'])
+@login_required
+@admin_required
+def delete_insurance_provider(provider_id):
+    provider = InsuranceProvider.query.get_or_404(provider_id)
+    db.session.delete(provider)
+    db.session.commit()
+    flash('Insurance provider deleted successfully.', 'success')
+    return redirect(url_for('insurance_providers'))
+
+# =================================================================================================
+# END INSURANCE ROUTES
+# =================================================================================================
+
+# =================================================================================================
+# PATIENT INSURANCE POLICY ROUTES
+# =================================================================================================
+
+@app.route('/admin/patient_insurance')
+@login_required
+@admin_required
+def patient_insurance():
+    patient_insurances = PatientInsurance.query.all()
+    patients = Patient.query.all()
+    providers = InsuranceProvider.query.all()
+    return render_template('admin/patient_insurance.html', 
+                           patient_insurances=patient_insurances, 
+                           patients=patients, 
+                           providers=providers)
+
+@app.route('/admin/patient_insurance/add', methods=['POST'])
+@login_required
+@admin_required
+def add_patient_insurance():
+    patient_id = request.form.get('patient_id')
+    provider_id = request.form.get('provider_id')
+    policy_number = request.form.get('policy_number')
+    valid_from_str = request.form.get('valid_from')
+    valid_to_str = request.form.get('valid_to')
+
+    valid_from = datetime.strptime(valid_from_str, '%Y-%m-%d') if valid_from_str else None
+    valid_to = datetime.strptime(valid_to_str, '%Y-%m-%d') if valid_to_str else None
+
+    new_patient_insurance = PatientInsurance(
+        patient_id=patient_id,
+        provider_id=provider_id,
+        policy_number=policy_number,
+        valid_from=valid_from,
+        valid_to=valid_to
+    )
+    db.session.add(new_patient_insurance)
+    db.session.commit()
+    flash('Patient insurance policy added successfully.', 'success')
+    return redirect(url_for('patient_insurance'))
+
+@app.route('/admin/patient_insurance/edit/<int:patient_insurance_id>', methods=['POST'])
+@login_required
+@admin_required
+def edit_patient_insurance(patient_insurance_id):
+    p_insurance = PatientInsurance.query.get_or_404(patient_insurance_id)
+    p_insurance.patient_id = request.form.get('patient_id')
+    p_insurance.provider_id = request.form.get('provider_id')
+    p_insurance.policy_number = request.form.get('policy_number')
+    valid_from_str = request.form.get('valid_from')
+    valid_to_str = request.form.get('valid_to')
+
+    p_insurance.valid_from = datetime.strptime(valid_from_str, '%Y-%m-%d') if valid_from_str else None
+    p_insurance.valid_to = datetime.strptime(valid_to_str, '%Y-%m-%d') if valid_to_str else None
+    
+    db.session.commit()
+    flash('Patient insurance policy updated successfully.', 'success')
+    return redirect(url_for('patient_insurance'))
+
+@app.route('/admin/patient_insurance/delete/<int:patient_insurance_id>', methods=['POST'])
+@login_required
+@admin_required
+def delete_patient_insurance(patient_insurance_id):
+    p_insurance = PatientInsurance.query.get_or_404(patient_insurance_id)
+    db.session.delete(p_insurance)
+    db.session.commit()
+    flash('Patient insurance policy deleted successfully.', 'success')
+    return redirect(url_for('patient_insurance'))
+
+@app.route('/admin/claims')
+@login_required
+@admin_required
+def claims():
+    claims = Claim.query.all()
+    patient_insurances = PatientInsurance.query.all()
+    return render_template('admin/claims.html', claims=claims, patient_insurances=patient_insurances)
+
+@app.route('/admin/claims/create', methods=['POST'])
+@login_required
+@admin_required
+def create_claim():
+    patient_insurance_id = request.form.get('patient_insurance_id')
+    date_filed_str = request.form.get('date_filed')
+    total_amount = request.form.get('total_amount')
+    notes = request.form.get('notes')
+
+    date_filed = datetime.strptime(date_filed_str, '%Y-%m-%d') if date_filed_str else datetime.utcnow()
+
+    new_claim = Claim(
+        patient_insurance_id=patient_insurance_id,
+        date_filed=date_filed,
+        total_amount=total_amount,
+        status='Pending',
+        notes=notes
+    )
+    db.session.add(new_claim)
+    db.session.commit()
+    flash('Claim created successfully.', 'success')
+    return redirect(url_for('claims'))
+
+@app.route('/admin/claims/update/<int:claim_id>', methods=['POST'])
+@login_required
+@admin_required
+def update_claim(claim_id):
+    claim = Claim.query.get_or_404(claim_id)
+    claim.total_amount = request.form.get('total_amount')
+    claim.amount_paid = request.form.get('amount_paid') if request.form.get('amount_paid') else None
+    date_paid_str = request.form.get('date_paid')
+    claim.date_paid = datetime.strptime(date_paid_str, '%Y-%m-%d') if date_paid_str else None
+    claim.status = request.form.get('status')
+    claim.notes = request.form.get('notes')
+    
+    db.session.commit()
+    flash('Claim updated successfully.', 'success')
+    return redirect(url_for('claims'))
+
+def generate_invoice_number():
+    # Generate a unique invoice number, e.g., INV-YYYYMMDD-XXXX
+    today_str = get_eat_now().strftime('%Y%m%d')
+    last_invoice = Invoice.query.filter(Invoice.invoice_number.like(f"INV-{today_str}-%")).order_by(Invoice.invoice_number.desc()).first()
+    if last_invoice:
+        last_seq = int(last_invoice.invoice_number.split('-')[-1])
+        new_seq = last_seq + 1
+    else:
+        new_seq = 1
+    return f"INV-{today_str}-{new_seq:04d}"
+
+@app.route('/admin/invoices')
+@login_required
+@admin_required
+def invoices():
+    invoices = Invoice.query.order_by(Invoice.date_issued.desc()).all()
+    return render_template('admin/invoices.html', invoices=invoices)
+
+@app.route('/admin/invoices/create', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def create_invoice():
+    if request.method == 'POST':
+        patient_id = request.form.get('patient_id')
+        date_issued_str = request.form.get('date_issued')
+        due_date_str = request.form.get('due_date')
+        notes = request.form.get('notes')
+
+        date_issued = datetime.strptime(date_issued_str, '%Y-%m-%d') if date_issued_str else get_eat_now()
+        due_date = datetime.strptime(due_date_str, '%Y-%m-%d') if due_date_str else None
+
+        total_amount = 0
+        invoice_items_data = []
+        descriptions = request.form.getlist('item_description')
+        quantities = request.form.getlist('item_quantity')
+        unit_prices = request.form.getlist('item_unit_price')
+
+        for i in range(len(descriptions)):
+            quantity = int(quantities[i])
+            unit_price = Decimal(unit_prices[i])
+            total_price = quantity * unit_price
+            total_amount += total_price
+            invoice_items_data.append({
+                'description': descriptions[i],
+                'quantity': quantity,
+                'unit_price': unit_price,
+                'total_price': total_price
+            })
+
+        new_invoice = Invoice(
+            invoice_number=generate_invoice_number(),
+            patient_id=patient_id,
+            date_issued=date_issued,
+            due_date=due_date,
+            total_amount=total_amount,
+            notes=notes
+        )
+        db.session.add(new_invoice)
+        db.session.flush()
+
+        for item_data in invoice_items_data:
+            invoice_item = InvoiceItem(invoice_id=new_invoice.id, **item_data)
+            db.session.add(invoice_item)
+
+        db.session.commit()
+        flash('Invoice created successfully.', 'success')
+        return redirect(url_for('invoices'))
+
+    patients = Patient.query.all()
+    return render_template('admin/create_edit_invoice.html', patients=patients, invoice=None)
+
+@app.route('/admin/invoices/edit/<int:invoice_id>', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def edit_invoice(invoice_id):
+    invoice = Invoice.query.get_or_404(invoice_id)
+    if request.method == 'POST':
+        invoice.patient_id = request.form.get('patient_id')
+        invoice.date_issued = datetime.strptime(request.form.get('date_issued'), '%Y-%m-%d')
+        due_date_str = request.form.get('due_date')
+        invoice.due_date = datetime.strptime(due_date_str, '%Y-%m-%d') if due_date_str else None
+        invoice.notes = request.form.get('notes')
+
+        # Clear existing items
+        for item in invoice.items:
+            db.session.delete(item)
+        db.session.flush()
+
+        total_amount = 0
+        descriptions = request.form.getlist('item_description')
+        quantities = request.form.getlist('item_quantity')
+        unit_prices = request.form.getlist('item_unit_price')
+
+        for i in range(len(descriptions)):
+            quantity = int(quantities[i])
+            unit_price = Decimal(unit_prices[i])
+            total_price = quantity * unit_price
+            total_amount += total_price
+            
+            invoice_item = InvoiceItem(
+                invoice_id=invoice.id,
+                description=descriptions[i],
+                quantity=quantity,
+                unit_price=unit_price,
+                total_price=total_price
+            )
+            db.session.add(invoice_item)
+
+        invoice.total_amount = total_amount
+        db.session.commit()
+        flash('Invoice updated successfully.', 'success')
+        return redirect(url_for('invoices'))
+
+    patients = Patient.query.all()
+    return render_template('admin/create_edit_invoice.html', patients=patients, invoice=invoice)
+
+@app.route('/admin/invoices/view/<int:invoice_id>')
+@login_required
+@admin_required
+def view_invoice(invoice_id):
+    invoice = Invoice.query.get_or_404(invoice_id)
+    return render_template('admin/view_invoice.html', invoice=invoice)
+
+@app.route('/admin/invoices/delete/<int:invoice_id>', methods=['POST'])
+@login_required
+@admin_required
+def delete_invoice(invoice_id):
+    invoice = Invoice.query.get_or_404(invoice_id)
+    db.session.delete(invoice)
+    db.session.commit()
+    flash('Invoice deleted successfully.', 'success')
+    return redirect(url_for('invoices'))
+
+# =================================================================================================
+# VENDOR ROUTES
+# =================================================================================================
+
+@app.route('/admin/vendors')
+@login_required
+@admin_required
+def vendors():
+    vendors = Vendor.query.all()
+    return render_template('admin/vendors.html', vendors=vendors)
+
+@app.route('/admin/vendors/add', methods=['POST'])
+@login_required
+@admin_required
+def add_vendor():
+    name = request.form.get('name')
+    contact_person = request.form.get('contact_person')
+    phone = request.form.get('phone')
+    email = request.form.get('email')
+    address = request.form.get('address')
+    is_active = request.form.get('is_active') == 'true'
+
+    if not name:
+        flash('Vendor name is required.', 'danger')
+        return redirect(url_for('vendors'))
+
+    new_vendor = Vendor(
+        name=name,
+        contact_person=contact_person,
+        phone=phone,
+        email=email,
+        address=address,
+        is_active=is_active
+    )
+    db.session.add(new_vendor)
+    db.session.commit()
+    flash('Vendor added successfully.', 'success')
+    return redirect(url_for('vendors'))
+
+@app.route('/admin/vendors/edit/<int:vendor_id>', methods=['POST'])
+@login_required
+@admin_required
+def edit_vendor(vendor_id):
+    vendor = Vendor.query.get_or_404(vendor_id)
+    vendor.name = request.form.get('name')
+    vendor.contact_person = request.form.get('contact_person')
+    vendor.phone = request.form.get('phone')
+    vendor.email = request.form.get('email')
+    vendor.address = request.form.get('address')
+    vendor.is_active = request.form.get('is_active') == 'true'
+
+    if not vendor.name:
+        flash('Vendor name is required.', 'danger')
+        return redirect(url_for('vendors'))
+
+    db.session.commit()
+    flash('Vendor updated successfully.', 'success')
+    return redirect(url_for('vendors'))
+
+@app.route('/admin/vendors/delete/<int:vendor_id>', methods=['POST'])
+@login_required
+@admin_required
+def delete_vendor(vendor_id):
+    vendor = Vendor.query.get_or_404(vendor_id)
+    db.session.delete(vendor)
+    db.session.commit()
+    flash('Vendor deleted successfully.', 'success')
+    return redirect(url_for('vendors'))
+
+# =================================================================================================
+# END VENDOR ROUTES
+# =================================================================================================
+
+@app.route('/admin/employees')
+@login_required
+@admin_required
+def employees():
+    employees = Employee.query.all()
+    return render_template('admin/employees.html', employees=employees)
+
+@app.route('/admin/employees/create', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def create_employee():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        position = request.form.get('position')
+        salary = request.form.get('salary')
+        hire_date_str = request.form.get('hire_date')
+        contact = request.form.get('contact')
+
+        hire_date = datetime.strptime(hire_date_str, '%Y-%m-%d') if hire_date_str else None
+        
+        new_employee = Employee(
+            name=name,
+            position=position,
+            salary=float(salary) if salary else None,
+            hire_date=hire_date,
+            contact=contact
+        )
+        db.session.add(new_employee)
+        db.session.commit()
+        flash('Employee created successfully.', 'success')
+        return redirect(url_for('employees'))
+
+    return render_template('admin/create_edit_employee.html', employee=None)
+
+@app.route('/admin/employees/edit/<int:employee_id>', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def edit_employee(employee_id):
+    employee = Employee.query.get_or_404(employee_id)
+    if request.method == 'POST':
+        employee.name = request.form.get('name')
+        employee.position = request.form.get('position')
+        salary = request.form.get('salary')
+        employee.salary = float(salary) if salary else None
+        hire_date_str = request.form.get('hire_date')
+        employee.hire_date = datetime.strptime(hire_date_str, '%Y-%m-%d') if hire_date_str else None
+        employee.contact = request.form.get('contact')
+        
+        db.session.commit()
+        flash('Employee updated successfully.', 'success')
+        return redirect(url_for('employees'))
+
+    return render_template('admin/create_edit_employee.html', employee=employee)
+
+@app.route('/admin/employees/delete/<int:employee_id>', methods=['POST'])
+@login_required
+@admin_required
+def delete_employee(employee_id):
+    employee = Employee.query.get_or_404(employee_id)
+    db.session.delete(employee)
+    db.session.commit()
+    flash('Employee deleted successfully.', 'success')
+    return redirect(url_for('employees'))
+
+
+def _employee_for_current_user():
+    emp = Employee.query.filter_by(user_id=current_user.id).first()
+    return emp
+
+
+def _make_payroll_receipt_view(payment: 'PayrollPayment', payroll: 'Payroll') -> dict:
+    """Return a dict with fields expected by employee payroll receipt templates."""
+    payment_dt = getattr(payment, 'payment_date', None)
+    if not payment_dt:
+        payment_dt = get_eat_now()
+
+    try:
+        previous_paid = (
+            db.session.query(func.coalesce(func.sum(PayrollPayment.amount), 0))
+            .filter(PayrollPayment.payroll_id == payroll.id)
+            .filter(PayrollPayment.id != payment.id)
+            .filter(PayrollPayment.payment_date < payment_dt)
+            .scalar()
+        ) or 0
+    except Exception:
+        previous_paid = 0
+
+    current_paid = float(previous_paid or 0) + float(getattr(payment, 'amount', 0) or 0)
+    salary = float(getattr(payroll, 'amount', 0) or 0)
+    arrears = float(salary) - float(current_paid)
+
+    return {
+        'id': payment.id,
+        'receipt_number': f"PR-{int(payment.id):06d}",
+        'payment_date': payment_dt,
+        'amount': float(getattr(payment, 'amount', 0) or 0),
+        'salary': salary,
+        'previous_amount_paid': float(previous_paid or 0),
+        'current_amount_paid': float(current_paid or 0),
+        'arrears': float(arrears or 0),
+        'notes': getattr(payment, 'notes', None),
+        'created_at': payment_dt,
+        'paid_by': getattr(payment, 'paid_by', None),
+        'payroll_id': payroll.id,
+    }
+
+
+@app.route('/employee/payroll/receipts')
+@login_required
+def view_my_payroll_receipts():
+    if getattr(current_user, 'role', None) != 'employee':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    employee = _employee_for_current_user()
+    if not employee:
+        flash('No employee profile is linked to your account.', 'warning')
+        return redirect(url_for('home'))
+
+    rows = (
+        db.session.query(PayrollPayment, Payroll)
+        .join(Payroll, PayrollPayment.payroll_id == Payroll.id)
+        .filter(Payroll.employee_id == employee.id)
+        .order_by(PayrollPayment.payment_date.desc())
+        .all()
+    )
+
+    receipts = [_make_payroll_receipt_view(p, pr) for (p, pr) in rows]
+    is_embed = bool(request.args.get('embed'))
+
+    return render_template(
+        'employee/payroll_receipts.html',
+        employee=employee,
+        receipts=receipts,
+        is_embed=is_embed,
+    )
+
+
+@app.route('/employee/payroll/receipts/<int:receipt_id>')
+@login_required
+def view_payroll_receipt(receipt_id):
+    if getattr(current_user, 'role', None) != 'employee':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    employee = _employee_for_current_user()
+    if not employee:
+        flash('No employee profile is linked to your account.', 'warning')
+        return redirect(url_for('home'))
+
+    payment = PayrollPayment.query.get_or_404(receipt_id)
+    payroll = Payroll.query.get_or_404(payment.payroll_id)
+    if int(getattr(payroll, 'employee_id', 0) or 0) != int(employee.id):
+        abort(403)
+
+    receipt = _make_payroll_receipt_view(payment, payroll)
+
+    issued_user = None
+    try:
+        if receipt.get('paid_by'):
+            issued_user = User.query.get(int(receipt.get('paid_by')))
+    except Exception:
+        issued_user = None
+
+    # Template expects payroll.hired_date; map from employee.hire_date for compatibility.
+    try:
+        setattr(payroll, 'hired_date', getattr(employee, 'hire_date', None))
+    except Exception:
+        pass
+
+    return render_template(
+        'employee/payroll_receipt_detail.html',
+        receipt=receipt,
+        employee=employee,
+        payroll=payroll,
+        issued_user=issued_user,
+    )
+
+
+@app.route('/employee/payroll/receipts/<int:receipt_id>/download')
+@login_required
+def download_payroll_receipt_employee(receipt_id):
+    """Download a payroll receipt.
+
+    This implementation provides an HTML download (print-to-PDF friendly) to
+    avoid introducing heavy PDF dependencies.
+    """
+    if getattr(current_user, 'role', None) != 'employee':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    employee = _employee_for_current_user()
+    if not employee:
+        flash('No employee profile is linked to your account.', 'warning')
+        return redirect(url_for('home'))
+
+    payment = PayrollPayment.query.get_or_404(receipt_id)
+    payroll = Payroll.query.get_or_404(payment.payroll_id)
+    if int(getattr(payroll, 'employee_id', 0) or 0) != int(employee.id):
+        abort(403)
+
+    receipt = _make_payroll_receipt_view(payment, payroll)
+    issued_user = None
+    try:
+        if receipt.get('paid_by'):
+            issued_user = User.query.get(int(receipt.get('paid_by')))
+    except Exception:
+        issued_user = None
+
+    try:
+        setattr(payroll, 'hired_date', getattr(employee, 'hire_date', None))
+    except Exception:
+        pass
+
+    html = render_template(
+        'employee/payroll_receipt_detail.html',
+        receipt=receipt,
+        employee=employee,
+        payroll=payroll,
+        issued_user=issued_user,
+    )
+
+    filename = f"payroll-receipt-{receipt.get('receipt_number','receipt')}.html"
+    resp = make_response(html)
+    resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+    resp.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return resp
+
 if __name__ == '__main__':
-    # Create necessary directories
     if not os.path.exists('instance'):
         os.makedirs('instance')
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
@@ -11188,30 +23201,18 @@ if __name__ == '__main__':
     if not os.path.exists(app.config['BACKUP_FOLDER']):
         os.makedirs(app.config['BACKUP_FOLDER'])
 
-    # Initialize login manager
-    login_manager = LoginManager()
-    login_manager.init_app(app)
-    login_manager.login_view = 'auth.login'
-    login_manager.login_message_category = 'info'
-
-    @login_manager.user_loader
-    def load_user(user_id):
-        return db.session.get(User, int(user_id))
+    # Ensure DB and tables exist before serving any requests.
+    initialize_database()
 
     if os.environ.get('RENDER'):
         # Production - use gunicorn or platform-provided process manager
         app.logger.info("Production mode - ready for gunicorn")
     else:
         # Development - start Flask dev server
-        app.logger.info("Development mode - starting Flask server")
-        try:
-            initialize_data()
-        except Exception:
-            app.logger.exception('initialize_data failed, continuing to start server')
-
         host = '0.0.0.0'
         port = int(os.environ.get('PORT', 5000))
+        debug_mode = (os.getenv('FLASK_DEBUG', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on')) or bool(app.config.get('DEBUG', False))
 
-        app.logger.info(f"Starting server on {host}:{port} (DEBUG={app.config.get('DEBUG', False)})")
-        print(f"Starting server on {host}:{port} (DEBUG={app.config.get('DEBUG', False)})")
-        app.run(host=host, port=port, debug=app.config.get('DEBUG', False))
+        app.logger.info(f"Starting server on {host}:{port} (DEBUG={debug_mode})")
+        print(f"Starting server on {host}:{port} (DEBUG={debug_mode})")
+        app.run(host=host, port=port, debug=debug_mode)

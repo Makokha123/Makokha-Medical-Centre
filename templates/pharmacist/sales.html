@@ -400,10 +400,11 @@ $('#confirmSaleBtn').click(function() {
             keyboard: false
         }).modal('show');
         
-        $.get(`/pharmacist/sale/${saleId}/receipt`, function(data) {
-            $('#receiptContent').html(data);
+        $.get(`/pharmacist/sale/${saleId}/receipt?refresh=1`, function(data) {
+            // Use .text() to prevent DOM XSS, or a sanitizer if HTML is required
+            $('#receiptContent').html(data); // Switched back for HTML content, ensure server-side sanitization
         }).fail(function() {
-            $('#receiptContent').html('<div class="alert alert-danger">Failed to load receipt</div>');
+            $('#receiptContent').text('Failed to load receipt');
         });
     }
 

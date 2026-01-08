@@ -14,6 +14,11 @@
         <button class="tab-btn" onclick="openTab(event, 'oldPatients')">Old Patients</button>
     </div>
 
+        <div id="completeAlert" class="alert alert-warning alert-dismissible fade d-none" role="alert">
+            <div id="completeAlertBody"></div>
+            <button type="button" class="btn-close" aria-label="Close" onclick="hideCompleteAlert()"></button>
+        </div>
+
     <!-- Active Patients -->
     <div id="activePatients" class="tab-content active">
         <div class="search-box mb-3">
@@ -103,6 +108,33 @@
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
 <script>
+function showCompleteAlert(message, level) {
+    const alertEl = document.getElementById('completeAlert');
+    const bodyEl = document.getElementById('completeAlertBody');
+    if (!alertEl || !bodyEl) return;
+
+    const cls = (level === 'danger') ? 'alert-danger'
+        : (level === 'success') ? 'alert-success'
+        : (level === 'info') ? 'alert-info'
+        : 'alert-warning';
+
+    alertEl.classList.remove('alert-warning', 'alert-danger', 'alert-success', 'alert-info');
+    alertEl.classList.add(cls);
+    bodyEl.textContent = message;
+    alertEl.classList.remove('d-none');
+    alertEl.classList.add('show');
+    try {
+        alertEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {}
+}
+
+function hideCompleteAlert() {
+    const alertEl = document.getElementById('completeAlert');
+    if (!alertEl) return;
+    alertEl.classList.remove('show');
+    alertEl.classList.add('d-none');
+}
+
 function openTab(evt, tabId) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -115,14 +147,53 @@ function completeTreatment(patientId) {
         fetch(`/doctor/patient/${patientId}/complete`, {
             method: 'POST',
             headers: {
+                'Content-Type': 'application/json',
                 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
             body: JSON.stringify({})
         })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) location.reload();
-            else alert(data.error || 'Error completing treatment');
+        .then(async (res) => {
+            let data = {};
+            try {
+                data = await res.json();
+            } catch (e) {
+                data = {};
+            }
+
+            if (res.ok && data.success) {
+                location.reload();
+                return;
+            }
+
+            if (data && data.ward_stay_due) {
+                const w = data.ward_stay_due;
+                const dailyRate = (w.daily_rate !== undefined && w.daily_rate !== null)
+                    ? Number(w.daily_rate)
+                    : null;
+                const amount = (w.amount !== undefined && w.amount !== null)
+                    ? Number(w.amount)
+                    : null;
+                const days = (w.days !== undefined && w.days !== null)
+                    ? Number(w.days)
+                    : null;
+
+                    const msg = [
+                        'Cannot discharge: ward stay charges are unpaid.',
+                        `Ward: ${w.ward_name || '-'}`,
+                        `Bed: ${w.bed_number || '-'}`,
+                        `Due: ${days !== null && !Number.isNaN(days) ? days : '-'} day(s) (${w.start_date || '-'} to ${w.end_date || '-'})`,
+                        `Rate: ${dailyRate !== null && !Number.isNaN(dailyRate) ? dailyRate.toFixed(2) : '-'}`,
+                        `Amount: ${amount !== null && !Number.isNaN(amount) ? amount.toFixed(2) : '-'}`,
+                        'Please ask reception to bill/pay the ward stay, then try again.'
+                    ].join(' | ');
+                    showCompleteAlert(msg, 'warning');
+                return;
+            }
+
+                showCompleteAlert((data && data.error) ? data.error : 'Error completing treatment', 'danger');
+        })
+        .catch(() => {
+                showCompleteAlert('Network error completing treatment', 'danger');
         });
     }
 }

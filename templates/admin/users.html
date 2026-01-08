@@ -53,8 +53,13 @@
                     </span>
                 </td>
                 <td>
-                    {% if user.last_login %}
-                        {{ user.last_login.strftime('%Y-%m-%d %H:%M') }}
+                    {% set ll = user.last_login_dt or user.last_login %}
+                    {% if ll %}
+                        {% if ll is string %}
+                            {{ ll }}
+                        {% else %}
+                            {{ ll.strftime('%Y-%m-%d %H:%M') }}
+                        {% endif %}
                     {% else %}
                         Never
                     {% endif %}
@@ -78,7 +83,7 @@
 </div>
 
 <!-- Add User Modal -->
-<div class="modal fade" id="addUserModal" tabindex="-1" role="dialog" aria-labelledby="addUserModalLabel" aria-hidden="true">
+<div class="modal fade" id="addUserModal" tabindex="-1" role="dialog" aria-labelledby="addUserModalLabel" aria-hidden="true" {% if open_add_user_modal %}data-show="true"{% endif %}>
     <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content">
             <div class="modal-header">
@@ -87,29 +92,69 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
-            <form id="addUserForm" method="POST" action="{{ url_for('manage_users') }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="add">
-                <div class="modal-body">
+            {% set add_state = add_user_state or {} %}
+            {% set add_stage = add_state.get('stage', 'start') %}
+
+            <div class="modal-body">
+                <!-- Step 1: Email OTP -->
+                <form id="addUserOtpForm" method="POST" action="{{ url_for('manage_users') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="form-row">
+                        <div class="form-group col-md-6">
+                            <label for="add_email">Email *</label>
+                            {% if add_stage in ['otp_sent', 'verified'] %}
+                                <input type="email" class="form-control" id="add_email" value="{{ add_state.get('email','') }}" disabled>
+                                <input type="hidden" name="email" value="{{ add_state.get('email','') }}">
+                            {% else %}
+                                <input type="email" class="form-control" id="add_email" name="email" value="{{ add_state.get('email','') }}" required>
+                            {% endif %}
+                        </div>
+
+                        {% if add_stage == 'otp_sent' %}
+                        <div class="form-group col-md-6">
+                            <label for="add_otp">OTP *</label>
+                            <input type="text" class="form-control" id="add_otp" name="otp" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit OTP" required>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="form-actions">
+                        {% if add_stage == 'start' %}
+                            <button type="submit" class="btn btn-primary" name="action" value="add_request_otp">Request OTP</button>
+                        {% elif add_stage == 'otp_sent' %}
+                            <button type="submit" class="btn btn-primary" name="action" value="add_verify_otp">Confirm OTP</button>
+                        {% elif add_stage == 'verified' %}
+                            <button type="button" class="btn btn-outline" disabled>Email verified</button>
+                        {% endif %}
+                    </div>
+                </form>
+
+                <hr>
+
+                <!-- Step 2: Finish adding user (only after OTP verified) -->
+                {% if add_stage == 'verified' %}
+                <form id="addUserForm" method="POST" action="{{ url_for('manage_users') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="add">
+                    <input type="hidden" name="email" value="{{ add_state.get('email','') }}">
+
                     <div class="form-row">
                         <div class="form-group col-md-6">
                             <label for="username">Username *</label>
-                            <input type="text" class="form-control" id="username" name="username" required>
+                            <input type="text" class="form-control" id="username" name="username" value="{{ add_state.get('username','') }}" required>
                         </div>
                         <div class="form-group col-md-6">
-                            <label for="email">Email *</label>
-                            <input type="email" class="form-control" id="email" name="email" required>
+                            <label for="role">Role *</label>
+                            <select class="form-control" id="role" name="role" required>
+                                <option value="admin" {% if add_state.get('role') == 'admin' %}selected{% endif %}>Admin</option>
+                                <option value="doctor" {% if add_state.get('role') == 'doctor' %}selected{% endif %}>Doctor</option>
+                                <option value="pharmacist" {% if add_state.get('role') == 'pharmacist' %}selected{% endif %}>Pharmacist</option>
+                                <option value="receptionist" {% if add_state.get('role') == 'receptionist' %}selected{% endif %}>Receptionist</option>
+                            </select>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="role">Role *</label>
-                        <select class="form-control" id="role" name="role" required>
-                            <option value="admin">Admin</option>
-                            <option value="doctor">Doctor</option>
-                            <option value="pharmacist">Pharmacist</option>
-                            <option value="receptionist">Receptionist</option>
-                        </select>
-                    </div>
+
                     <div class="form-group">
                         <label for="password">Password *</label>
                         <div class="input-group">
@@ -137,6 +182,7 @@
                             </ul>
                         </div>
                     </div>
+
                     <div class="form-group">
                         <label for="confirm_password">Confirm Password *</label>
                         <div class="input-group">
@@ -149,16 +195,23 @@
                         </div>
                         <small class="password-match-text" id="passwordMatchText"></small>
                     </div>
+
                     <div class="form-group form-check">
-                        <input type="checkbox" class="form-check-input" id="is_active" name="is_active" checked>
+                        <input type="checkbox" class="form-check-input" id="is_active" name="is_active" {% if add_state.get('is_active', True) %}checked{% endif %}>
                         <label class="form-check-label" for="is_active">Active User</label>
                     </div>
-                </div>
+
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save User</button>
+                    </div>
+                </form>
+                {% else %}
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save User</button>
                 </div>
-            </form>
+                {% endif %}
+            </div>
         </div>
     </div>
 </div>
@@ -697,14 +750,6 @@
     width: 100%;
 }
 
-.close-alert {
-    background: none;
-    border: none;
-    font-size: 20px;
-    cursor: pointer;
-    color: inherit;
-}
-
 /* Responsive Design */
 @media (max-width: 768px) {
     .user-management-container {
@@ -740,6 +785,12 @@
 
 <script>
 $(document).ready(function() {
+    // Auto-open add user modal on OTP flow
+    var addModal = $('#addUserModal');
+    if (addModal.attr('data-show') === 'true') {
+        try { addModal.modal('show'); } catch (e) {}
+    }
+
     // Initialize DataTable
 
     $('.btn-edit').click(function() {
@@ -919,27 +970,16 @@ $(document).ready(function() {
         $('#password').trigger('input');
     });
     
-    // Show alert message
+    // Show alert message (delegates to global popup system)
     function showAlert(type, message) {
-        var alertHtml = `
-            <div class="alert alert-${type} animate__animated animate__fadeIn">
-                <div class="alert-content">
-                    <span class="alert-message">${message}</span>
-                    <button class="close-alert">&times;</button>
-                </div>
-            </div>
-        `;
-        
-        $('#alert-container').html(alertHtml);
-        setTimeout(function() {
-            $('.alert').remove();
-        }, 5000);
+        if (typeof window.showAlert === 'function') {
+            window.showAlert(String(message ?? ''), type || 'info');
+            return;
+        }
+        window.alert(String(message ?? ''));
     }
     
-    // Close alert handler
-    $(document).on('click', '.close-alert', function() {
-        $(this).closest('.alert').remove();
-    });
+    // Local close buttons removed; global popup auto-closes
 });
 </script>
 {% endblock %}

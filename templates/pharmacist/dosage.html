@@ -109,7 +109,13 @@ $(document).ready(function() {
             
             $('#dosageModal').modal('show');
         }).fail(function() {
-            toastr.error('Failed to load dosage information');
+            if (typeof window.showAlert === 'function') {
+                window.showAlert('Failed to load dosage information', 'danger');
+            } else if (window.toastr) {
+                toastr.error('Failed to load dosage information');
+            } else {
+                alert('Failed to load dosage information');
+            }
         });
     });
 
@@ -138,7 +144,13 @@ $(document).ready(function() {
             
             $('#dosageModal').modal('show');
         }).fail(function() {
-            toastr.error('Failed to load drug dosage information');
+            if (typeof window.showAlert === 'function') {
+                window.showAlert('Failed to load drug dosage information', 'danger');
+            } else if (window.toastr) {
+                toastr.error('Failed to load drug dosage information');
+            } else {
+                alert('Failed to load drug dosage information');
+            }
         });
     });
 });

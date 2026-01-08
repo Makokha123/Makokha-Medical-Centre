@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Controlled Sale Receipt{% endblock %}
+
+{% block content %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<div class="container py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3 no-print">
+    <button class="btn btn-outline-secondary" type="button" id="closeControlledReceiptBtn"><i class="bi bi-x-circle"></i> Close</button>
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary" onclick="window.print()"><i class="bi bi-printer"></i> Print / Save PDF</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="text-center mb-3">
+        <h4 class="mb-0">MAKOKHA MEDICAL CENTRE</h4>
+        <div class="text-muted">CONTROLLED DRUGS RECEIPT</div>
+      </div>
+
+      <div class="row">
+        <div class="col-md-6">
+          <div><span class="fw-semibold">Receipt No:</span> {{ sale.sale_number }}</div>
+          <div><span class="fw-semibold">Date:</span> {{ sale.created_at.strftime('%Y-%m-%d %H:%M') if sale.created_at else '' }}</div>
+          <div><span class="fw-semibold">Pharmacist:</span> {{ sale.pharmacist_name or (sale.user.username if sale.user else '') }}</div>
+          <div><span class="fw-semibold">Payment:</span> {{ sale.payment_method or 'cash' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div><span class="fw-semibold">Customer:</span> {{ sale.customer_name or (decrypt_data(sale.patient.name) if sale.patient else 'Walk-in') }}</div>
+          <div><span class="fw-semibold">Age:</span> {{ sale.customer_age or (sale.patient.age if sale.patient else '') }}</div>
+          <div><span class="fw-semibold">Sex:</span> {{ sale.customer_gender or (sale.patient.gender if sale.patient else '') }}</div>
+          <div><span class="fw-semibold">Phone:</span> {{ sale.customer_phone or (decrypt_data(sale.patient.phone) if sale.patient else '') }}</div>
+          <div><span class="fw-semibold">Dx:</span> {{ sale.diagnosis or '' }}</div>
+          <div><span class="fw-semibold">Destination:</span> {{ sale.destination or (decrypt_data(sale.patient.destination) if sale.patient else '') }}</div>
+        </div>
+      </div>
+
+      <hr>
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Drug</th>
+              <th class="text-end">Qty</th>
+              <th class="text-end">Unit</th>
+              <th class="text-end">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in sale.items %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                  <div class="fw-semibold">{{ item.controlled_drug_name }}</div>
+                  {% if item.controlled_drug_specification %}
+                    <div class="text-muted small">{{ item.controlled_drug_specification }}</div>
+                  {% endif %}
+                  {% set rx = [] %}
+                  {% if item.dosage %}{% set _ = rx.append(item.dosage) %}{% endif %}
+                  {% if item.frequency %}{% set _ = rx.append(item.frequency) %}{% endif %}
+                  {% if item.duration %}{% set _ = rx.append(item.duration) %}{% endif %}
+                  {% if rx|length %}
+                    <div class="text-muted small">Rx: {{ rx|join(' · ') }}</div>
+                  {% endif %}
+                  {% if item.notes %}
+                    <div class="text-muted small">Notes: {{ item.notes }}</div>
+                  {% endif %}
+                </td>
+                <td class="text-end">{{ item.quantity }}</td>
+                <td class="text-end">Ksh {{ '%.2f'|format(item.unit_price) }}</td>
+                <td class="text-end fw-semibold">Ksh {{ '%.2f'|format(item.total_price) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th colspan="4" class="text-end">Total</th>
+              <th class="text-end">Ksh {{ '%.2f'|format(sale.total_amount) }}</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {% if sale.prescription_image_path %}
+      <hr>
+      <div>
+        <div class="fw-semibold mb-2">Prescription Photo</div>
+        <img src="/{{ sale.prescription_image_path }}" alt="Prescription" class="img-fluid border rounded" style="max-height: 420px; object-fit: contain;" />
+      </div>
+      {% endif %}
+
+      <div class="text-center text-muted mt-3">
+        <div>Thank you.</div>
+        <div class="small">Goods sold are not returnable without original receipt.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; }
+}
+</style>
+
+<script>
+  document.getElementById('closeControlledReceiptBtn')?.addEventListener('click', function() {
+    window.location.href = "{{ url_for('pharmacist_controlled_inventory') }}?embed=1";
+  });
+</script>
+{% endblock %}

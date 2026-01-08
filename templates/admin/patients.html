@@ -551,6 +551,10 @@
 
 <script>
 $(document).ready(function() {
+    // Initialize DataTable with drawCallback to update totals
+    $('#patientsTable').DataTable({
+        drawCallback: function(settings) {
+            var api = this.api();
             
             // Calculate totals for each column
             var labTotal = api.column(5, {page: 'current'}).data().reduce(function(a, b) {

@@ -68,6 +68,22 @@ class Config:
     DEBUG = _parse_bool(_get_env("DEBUG", "false"))
     TESTING = _parse_bool(_get_env("TESTING", "false"))
 
+    @staticmethod
+    def _is_production() -> bool:
+        """Best-effort environment detection.
+
+        Treat Render and explicit production flags as production.
+        """
+        if _parse_bool(os.getenv("PRODUCTION"), False):
+            return True
+        if os.getenv("RENDER"):
+            return True
+        if (os.getenv("FLASK_ENV") or "").strip().lower() == "production":
+            return True
+        if (os.getenv("ENV") or "").strip().lower() == "production":
+            return True
+        return False
+
     # Cookies/security headers
     SESSION_COOKIE_SECURE = _parse_bool(_get_env("SESSION_COOKIE_SECURE", "true"))
     REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE
@@ -97,13 +113,23 @@ class Config:
     MAIL_PASSWORD = _get_env("MAIL_PASSWORD") or _get_env("BREVO_SMTP_KEY")
     MAIL_DEFAULT_SENDER = _get_env("MAIL_DEFAULT_SENDER") or (MAIL_USERNAME or "no-reply@yourdomain.com")
 
+    # Password reset token expiration (seconds)
+    RESET_TOKEN_EXPIRATION = _parse_int(_get_env("RESET_TOKEN_EXPIRATION", "3600"), 3600)
+
     # AI / LLMs
+    DEEPSEEK_API_KEY = _get_env("DEEPSEEK_API_KEY")
     DEEPSEEK_CONFIG = {
-        "api_key": _get_env("DEEPSEEK_API_KEY"),
+        "api_key": DEEPSEEK_API_KEY,
         "base_url": _get_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         "timeout": float(_get_env("DEEPSEEK_TIMEOUT", "30")),
         "max_retries": _parse_int(_get_env("DEEPSEEK_MAX_RETRIES", "3"), 3),
     }
+
+    # Dosage AI generation (admin dosage/monographs)
+    # These are intentionally separate from DEEPSEEK_CONFIG because dosage generation can be much longer.
+    DOSAGE_AI_TIMEOUT_SECONDS = float(_get_env("DOSAGE_AI_TIMEOUT_SECONDS", "1200"))
+    # Interactive UI-triggered job time budget (polling job). Keep finite to avoid runaway background threads.
+    AI_DOSAGE_JOB_MAX_RUN_SECONDS = _parse_int(_get_env("AI_DOSAGE_JOB_MAX_RUN_SECONDS", "1200"), 1200)
 
     # Encryption keys (set by init_fernet)
     FERNET_KEY: Optional[str] = None
@@ -121,14 +147,14 @@ class Config:
         Ensure SECRET_KEY and SECURITY_PASSWORD_SALT are set. In production, require them; in development, generate ephemeral ones.
         """
         if not cls.SECRET_KEY:
-            if cls.DEBUG or cls.TESTING:
+            if not cls._is_production() or cls.DEBUG or cls.TESTING:
                 import secrets
                 cls.SECRET_KEY = secrets.token_hex(64)
                 app.logger.warning("SECRET_KEY missing; generated ephemeral dev key. Do NOT use in production.")
             else:
                 raise RuntimeError("SECRET_KEY is required in production.")
         if not cls.SECURITY_PASSWORD_SALT:
-            if cls.DEBUG or cls.TESTING:
+            if not cls._is_production() or cls.DEBUG or cls.TESTING:
                 import secrets
                 cls.SECURITY_PASSWORD_SALT = secrets.token_hex(64)
                 app.logger.warning("SECURITY_PASSWORD_SALT missing; generated ephemeral dev salt. Do NOT use in production.")
@@ -150,7 +176,7 @@ class Config:
         legacy_keys_env = _get_env("LEGACY_FERNET_KEYS", "")  # CSV of older keys allowed for decryption
 
         if not key_env:
-            if cls.DEBUG or cls.TESTING:
+            if not cls._is_production() or cls.DEBUG or cls.TESTING:
                 # Development convenience: generate ephemeral key but warn loudly.
                 key_env = Fernet.generate_key().decode()
                 app.logger.warning("FERNET_KEY missing; generated ephemeral dev key. Data encrypted now will be unreadable next restart.")
@@ -176,7 +202,7 @@ class Config:
         # Backup encryption key (separate from app data key)
         backup_key_env = _get_env("BACKUP_ENCRYPTION_KEY")
         if not backup_key_env:
-            if cls.DEBUG or cls.TESTING:
+            if not cls._is_production() or cls.DEBUG or cls.TESTING:
                 backup_key_env = Fernet.generate_key().decode()
                 app.logger.warning("BACKUP_ENCRYPTION_KEY missing; generated ephemeral dev key. Do NOT use in production.")
             else:

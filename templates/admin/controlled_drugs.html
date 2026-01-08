@@ -11,18 +11,26 @@
       <h2 class="mb-1"><i class="bi bi-shield-lock"></i> Controlled Drugs</h2>
       <div class="text-muted">Manage controlled drug inventory separately from regular drugs.</div>
     </div>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addControlledDrugModal">
-      <i class="bi bi-plus-circle"></i> Add Controlled Drug
-    </button>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('manage_controlled_dosage') }}">
+        <i class="bi bi-journal-medical"></i> Controlled Dosages
+      </a>
+      <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addControlledDrugModal">
+        <i class="bi bi-plus-circle"></i> Add Controlled Drug
+      </button>
+    </div>
   </div>
 
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      {% for category, message in messages %}
-        <div class="alert alert-{{ category }}">{{ message }}</div>
-      {% endfor %}
-    {% endif %}
-  {% endwith %}
+  {# Flash Messages (embed only; base.html already renders flashes) #}
+  {% if is_embed %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} alert-auto-close" role="alert">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+  {% endif %}
 
   <div class="row g-3 mb-3">
     <div class="col-md-4">

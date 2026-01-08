@@ -102,6 +102,9 @@
             <button class="btn btn-sm btn-view" data-id="{{ transaction.id }}" aria-label="View transaction {{ transaction.transaction_number }}">
               <i class="fas fa-eye"></i>
             </button>
+            <a class="btn btn-sm btn-info" href="{{ url_for('admin_transaction_receipt', transaction_id=transaction.id, reprint=1) }}" target="_blank" aria-label="View receipt for {{ transaction.transaction_number }}">
+              <i class="fas fa-receipt"></i>
+            </a>
             {% if transaction.transaction_type in ['expense', 'refund'] %}
             <button class="btn btn-sm btn-edit" data-id="{{ transaction.id }}" aria-label="Edit transaction {{ transaction.transaction_number }}">
               <i class="fas fa-edit"></i>

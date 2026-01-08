@@ -413,6 +413,11 @@
                         
                         <div class="form-group">
                             <label for="patient_summary" class="form-label"><strong>Clinical Summary</strong></label>
+                            <div class="mb-2">
+                                <button type="button" class="btn btn-sm btn-success" id="generate-summary-ai">
+                                    <i class="fas fa-magic"></i> Generate Summary (AI)
+                                </button>
+                            </div>
                             <textarea class="form-control" id="patient_summary" name="patient_summary" rows="6"
                                       placeholder="Enter a comprehensive clinical summary including:
 - Presenting complaint and key history
@@ -557,6 +562,9 @@ This summary will help AI generate accurate diagnosis suggestions in the next se
                                     <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">{{ cdrug.name }} ({{ cdrug.remaining_quantity }} in stock)</option>
                                 {% endfor %}
                             </select>
+                            <button type="button" class="btn btn-sm btn-outline-info mt-2 view-dosage-btn">
+                                <i class="fas fa-info-circle"></i> View Dosage
+                            </button>
                         </div>
                         <div class="form-group col-md-1">
                             <input type="number" class="form-control" name="quantity" placeholder="Qty" min="1">
@@ -607,9 +615,30 @@ This summary will help AI generate accurate diagnosis suggestions in the next se
                 <input type="hidden" name="patient_id" id="patient_id" value="">
                 <button type="button" class="btn btn-secondary" id="prevBtn">Previous</button>
                 <button type="button" class="btn btn-primary" id="nextBtn">Next</button>
-                <button type="submit" class="btn btn-success" id="submitBtn" style="display:none;">Save Patient</button>
+                <a class="btn btn-success" id="endBtn" style="display:none;" href="{{ url_for('doctor_patients') }}">End</a>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- Dosage Modal -->
+<div class="modal fade" id="doctorDosageModal" tabindex="-1" role="dialog" aria-labelledby="doctorDosageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="doctorDosageModalLabel"><i class="fas fa-pills"></i> Dosage Information</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="text-muted mb-2" id="doctorDosageSource"></div>
+                <div id="doctorDosageBody" class="small text-muted">Loading...</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -638,6 +667,96 @@ $(document).ready(function() {
             }
         });
     }
+
+    function safeText(v) {
+        return (v === null || v === undefined || v === '') ? '-' : String(v);
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function splitToBulletItems(text) {
+        const raw = (text === null || text === undefined) ? '' : String(text);
+        let t = raw.replace(/\r/g, '').trim();
+        if (!t) return [];
+        t = t.replace(/\s*•\s*/g, '\n• ');
+        const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
+        const items = [];
+        for (const line of lines) {
+            const cleaned = line
+                .replace(/^([•\u2022\-*]+\s*)/, '')
+                .replace(/^\d+[\).]\s*/, '')
+                .trim();
+            if (cleaned) items.push(cleaned);
+        }
+        return items.length ? items : [t];
+    }
+
+    function renderBullets(text) {
+        const items = splitToBulletItems(text);
+        if (!items.length) return '<span class="text-muted">-</span>';
+        const lis = items.map(i => `<li>${escapeHtml(i)}</li>`).join('');
+        return `<ul class="mb-0 pl-3">${lis}</ul>`;
+    }
+
+    function renderDosageBody(payload) {
+        const d = payload && payload.dosage ? payload.dosage : null;
+        if (!d) {
+            return '<div class="text-muted">No dosage information found (DB or index book).</div>';
+        }
+        const rows = (label, value) => `
+            <div class="mb-2">
+                <div class="font-weight-bold">${label}</div>
+                <div class="text-muted">${renderBullets(value)}</div>
+            </div>
+        `;
+        return `
+            <div class="mb-2"><strong>Drug:</strong> ${escapeHtml(safeText(payload.drug.drug_number))} - ${escapeHtml(safeText(payload.drug.name))}</div>
+            <hr/>
+            ${rows('Indication', d.indication)}
+            ${rows('Contraindication', d.contraindication)}
+            ${rows('Interaction', d.interaction)}
+            ${rows('Side Effects', d.side_effects)}
+            <hr/>
+            ${rows('Dosage (Pediatrics)', d.dosage_peds)}
+            ${rows('Dosage (Adults)', d.dosage_adults)}
+            ${rows('Dosage (Geriatrics)', d.dosage_geriatrics)}
+            <hr/>
+            ${rows('Important Notes', d.important_notes)}
+        `;
+    }
+
+    $(document).on('click', '.view-dosage-btn', function() {
+        const row = $(this).closest('.prescription-item');
+        const isControlled = row.find('.controlled-toggle').is(':checked');
+        const drugId = isControlled ? row.find('select[name="controlled_drug_id"]').val() : row.find('select[name="drug_id"]').val();
+
+        if (!drugId) {
+            alert('Please select a drug first.');
+            return;
+        }
+
+        const url = isControlled ? `/doctor/controlled-drugs/${drugId}/dosage` : `/doctor/drugs/${drugId}/dosage`;
+        $('#doctorDosageSource').text('');
+        $('#doctorDosageBody').html('<div class="text-muted">Loading...</div>');
+        $('#doctorDosageModal').modal('show');
+
+        $.get(url)
+            .done(function(data) {
+                const src = data.source === 'db' ? 'Database' : (data.source === 'index' ? 'Dosage index book' : 'Not available');
+                $('#doctorDosageSource').text(`Source: ${src}`);
+                $('#doctorDosageBody').html(renderDosageBody(data));
+            })
+            .fail(function() {
+                $('#doctorDosageBody').html('<div class="text-danger">Failed to load dosage information.</div>');
+            });
+    });
 
     // Initialize Select2 for multi-select inputs
     $('.select2').select2({
@@ -820,7 +939,7 @@ $(document).ready(function() {
         // Update navigation buttons
         $('#prevBtn').toggle(index !== 0);
         $('#nextBtn').toggle(index < sections.length - 1);
-        $('#submitBtn').toggle(index === sections.length - 1);
+        $('#endBtn').toggle(index === sections.length - 1);
     }
     
     // Update section validation (summary is now optional)
@@ -1086,12 +1205,60 @@ $(document).ready(function() {
 
     // Apply AI diagnosis to form
     $('#apply-ai-diagnosis').click(function() {
-        const diagnosis = $('#ai-diagnosis-text').text();
-        
-        $('#working_diagnosis').val(diagnosis);
-        
+        const raw = ($('#ai-diagnosis-text').text() || '').trim();
+
+        function _cleanSection(text) {
+            return (text || '')
+                .replace(/\r\n/g, '\n')
+                .replace(/^\s*[-•]\s*/gm, '')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+        }
+
+        function _extractSection(text, headerRegex, stopRegex) {
+            const normalized = (text || '').replace(/\r\n/g, '\n');
+            const headerMatch = normalized.match(headerRegex);
+            if (!headerMatch) return '';
+            const startIndex = headerMatch.index + headerMatch[0].length;
+            const rest = normalized.slice(startIndex);
+            const stopMatch = rest.match(stopRegex);
+            const section = stopMatch ? rest.slice(0, stopMatch.index) : rest;
+            return _cleanSection(section);
+        }
+
+        // Primary/Working diagnosis section
+        let workingDx = _extractSection(
+            raw,
+            /(?:^|\n)\s*(?:1\s*\.)?\s*(?:PRIMARY\s+WORKING\s+DIAGNOSIS|WORKING\s+DIAGNOSIS)\s*[:\-]?\s*(?:\n+|\s+)/i,
+            /(?:\n\s*(?:2\s*\.)?\s*(?:DIFFERENTIAL\s+DIAGNOSES?|DIFFERENTIALS?)\b)|(?:\n\s*(?:3\s*\.)?\s*KEY\s+CLINICAL\s+FINDINGS\b)|$/i
+        );
+
+        // Differential diagnoses section
+        let differentialDx = _extractSection(
+            raw,
+            /(?:^|\n)\s*(?:2\s*\.)?\s*(?:DIFFERENTIAL\s+DIAGNOSES?|DIFFERENTIALS?)\s*[:\-]?\s*(?:\n+|\s+)/i,
+            /(?:\n\s*(?:3\s*\.)?\s*KEY\s+CLINICAL\s+FINDINGS\b)|(?:\n\s*(?:4\s*\.)?\s*RECOMMENDED\s+INVESTIGATIONS\b)|(?:\n\s*(?:5\s*\.)?\s*CLINICAL\s+PEARLS\b)|$/i
+        );
+
+        // Fallback heuristics if headings are missing/changed
+        if (!workingDx) {
+            const firstLine = raw.split(/\r?\n/).map(l => l.trim()).find(Boolean);
+            workingDx = _cleanSection(firstLine || raw);
+        }
+        if (!differentialDx) {
+            // Try extracting after a simple 'Differential' keyword
+            differentialDx = _extractSection(
+                raw,
+                /(?:^|\n)\s*(?:DIFFERENTIAL\s+DIAGNOSES?|DIFFERENTIALS?)\s*[:\-]?\s*(?:\n+|\s+)/i,
+                /(?:\n\s*(?:KEY\s+CLINICAL\s+FINDINGS|RECOMMENDED\s+INVESTIGATIONS|CLINICAL\s+PEARLS)\b)|$/i
+            );
+        }
+
+        $('#working_diagnosis').val(workingDx).trigger('input');
+        $('#differential_diagnosis').val(differentialDx).trigger('input');
+
         $(this).html('<i class="fas fa-check"></i> Applied').prop('disabled', true);
-        showAISuccess('AI suggestions applied to form');
+        showAISuccess('AI suggestions applied to Working Dx and Differentials');
     });
 
     // AI Treatment Plan
@@ -1192,31 +1359,60 @@ $(document).ready(function() {
 
     // Helper function to show AI errors
     function showAIError(message) {
-        const alert = $(`<div class="alert alert-danger alert-dismissible fade show">
-            ${message}
-            <button type="button" class="close" data-dismiss="alert">&times;</button>
-        </div>`);
-        
-        $('.content').prepend(alert);
-        
-        setTimeout(() => {
-            alert.alert('close');
-        }, 8000);
+        if (typeof window.showAlert === 'function') {
+            window.showAlert(String(message ?? ''), 'danger');
+            return;
+        }
+        alert(String(message ?? ''));
     }
 
     // Helper function to show AI success
     function showAISuccess(message) {
-        const alert = $(`<div class="alert alert-success alert-dismissible fade show">
-            ${message}
-            <button type="button" class="close" data-dismiss="alert">&times;</button>
-        </div>`);
-        
-        $('.content').prepend(alert);
-        
-        setTimeout(() => {
-            alert.alert('close');
-        }, 5000);
+        if (typeof window.showAlert === 'function') {
+            window.showAlert(String(message ?? ''), 'success');
+            return;
+        }
+        alert(String(message ?? ''));
     }
+
+    // AI Generate Clinical Summary
+    $('#generate-summary-ai').click(function() {
+        const patientId = $('#patient_id').val();
+        if (!patientId) {
+            alert('Please save patient biodata first');
+            return;
+        }
+
+        // Ensure latest section data is saved before generating summary
+        $('#patient_summary').val('Generating clinical summary...');
+
+        saveCurrentSection().then(() => {
+            $.ajax({
+                url: '/doctor/patient/ai/generate_summary',
+                method: 'POST',
+                data: {
+                    patient_id: patientId,
+                    csrf_token: getCSRFToken()
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $('#patient_summary').val(response.summary_text);
+                        showAISuccess('Clinical summary generated');
+                    } else {
+                        showAIError(response.error || 'Failed to generate summary');
+                        $('#patient_summary').val('');
+                    }
+                },
+                error: function(xhr) {
+                    showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                    $('#patient_summary').val('');
+                }
+            });
+        }).catch(error => {
+            showAIError('Error saving current section: ' + error);
+            $('#patient_summary').val('');
+        });
+    });
 
     // Auto-populate drugs mentioned in treatment plan
     function autoPopulateDrugs(treatmentText) {
