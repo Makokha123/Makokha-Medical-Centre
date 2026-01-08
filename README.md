@@ -1,31 +1,22 @@
 Makokha Medical Centre - Local Run Instructions
 
+SocketIO run instructions:
+
 1. Activate your venv (example PowerShell):
 
-   & 'c:\\Users\\makok\\Desktop\\Makokha-Medical-Centre\\venv\\Scripts\\Activate.ps1'
+   & 'c:\\Users\\User\\Desktop\\Makokha Medical Centre\\MMC\\Scripts\\Activate.ps1'
 
-2. Install requirements:
+2. Install requirements (ensure Flask-SocketIO and eventlet):
 
    pip install -r requirements.txt
+   pip install eventlet
 
-3. Set required environment variables (recommended via a local .env file):
+3. Run with SocketIO server:
 
-   - Copy `.env.example` to `.env` and fill in values (do not commit `.env`).
+   python run_socketio.py
 
-   - SECRET_KEY
-   - SECURITY_PASSWORD_SALT
-   - FERNET_KEY
-   - BACKUP_ENCRYPTION_KEY
-   - DATABASE_URL (optional for local; defaults to SQLite in instance/)
+This will start the server on http://localhost:5000 and enable real-time messaging via Socket.IO.
 
-4. Run locally:
-
-   python launcher.py
-
-Production notes:
-- Use Gunicorn with [gunicorn.conf.py](gunicorn.conf.py) (threaded workers by default).
-- Configure Redis (REDIS_URL) for rate limiting storage if running multiple workers.
-- Do not ship default credentials; user seeding is disabled unless explicitly enabled via env.
-
-Optional one-time seeding (local/dev only):
-- Set `SEED_DEFAULT_USERS=true` and provide `SEED_ADMIN_EMAIL` + `SEED_ADMIN_PASSWORD` (and optionally `SEED_ADMIN_USERNAME`).
+Notes:
+- In production, use eventlet or gevent and a proper message queue (Redis) for scaling Socket.IO.
+- Ensure SECRET_KEY and DATABASE_URL are set in environment for production.

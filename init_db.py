@@ -20,21 +20,8 @@ def initialize_database():
         try:
             print("Creating database tables...")
             db.create_all()
-
-            allow_seed = (os.getenv('SEED_DEFAULT_USERS', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on'))
-            if not allow_seed:
-                print("Skipping user seeding (set SEED_DEFAULT_USERS=true to enable).")
-                print("✓ Database initialized successfully!")
-                return
-
-            admin_username = (os.getenv('SEED_ADMIN_USERNAME') or '').strip() or 'Admin'
-            admin_email = (os.getenv('SEED_ADMIN_EMAIL') or '').strip()
-            admin_password = (os.getenv('SEED_ADMIN_PASSWORD') or '').strip()
-
-            if not admin_email or not admin_password:
-                raise RuntimeError("SEED_DEFAULT_USERS=true but SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD not provided")
-
-            print("Creating initial admin user...")
+            
+            print("Creating default users...")
             
             # Create default admin if not exists
             admin_exists = db.session.execute(
@@ -43,16 +30,70 @@ def initialize_database():
             
             if not admin_exists:
                 admin = User(
-                    username=admin_username,
-                    email=admin_email,
+                    username='Makokha Nelson',
+                    email='makokhanelson4@gmail.com',
                     role='admin',
                     is_active=True
                 )
-                admin.set_password(admin_password)
+                admin.set_password('Doc.makokha@2024')
                 db.session.add(admin)
                 print("✓ Admin user created")
             else:
                 print("✓ Admin user already exists")
+            
+            # Create default doctor if not exists
+            doctor_exists = db.session.execute(
+                db.select(User).filter_by(role='doctor')
+            ).scalar()
+            
+            if not doctor_exists:
+                doctor = User(
+                    username='Default Doctor',
+                    email='doctor@clinic.com',
+                    role='doctor',
+                    is_active=True
+                )
+                doctor.set_password('Doctor@123')
+                db.session.add(doctor)
+                print("✓ Doctor user created")
+            else:
+                print("✓ Doctor user already exists")
+            
+            # Create default pharmacist if not exists
+            pharmacist_exists = db.session.execute(
+                db.select(User).filter_by(role='pharmacist')
+            ).scalar()
+            
+            if not pharmacist_exists:
+                pharmacist = User(
+                    username='Default Pharmacist',
+                    email='pharmacist@clinic.com',
+                    role='pharmacist',
+                    is_active=True
+                )
+                pharmacist.set_password('Pharmacist@123')
+                db.session.add(pharmacist)
+                print("✓ Pharmacist user created")
+            else:
+                print("✓ Pharmacist user already exists")
+            
+            # Create default receptionist if not exists
+            receptionist_exists = db.session.execute(
+                db.select(User).filter_by(role='receptionist')
+            ).scalar()
+            
+            if not receptionist_exists:
+                receptionist = User(
+                    username='Default Receptionist',
+                    email='receptionist@clinic.com',
+                    role='receptionist',
+                    is_active=True
+                )
+                receptionist.set_password('Receptionist@123')
+                db.session.add(receptionist)
+                print("✓ Receptionist user created")
+            else:
+                print("✓ Receptionist user already exists")
             
             # Commit all changes
             db.session.commit()

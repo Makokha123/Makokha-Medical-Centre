@@ -1,5 +1,4 @@
 import logging
-import os
 from logging.config import fileConfig
 
 from flask import current_app
@@ -27,7 +26,7 @@ def get_engine():
 
 def get_engine_url():
     try:
-        return get_engine().url.render_as_string(hide_password=True).replace(
+        return get_engine().url.render_as_string(hide_password=False).replace(
             '%', '%%')
     except AttributeError:
         return str(get_engine().url).replace('%', '%%')
@@ -39,8 +38,7 @@ from app import db
 # Import all models to ensure they are registered with SQLAlchemy's metadata
 from app import User, Patient, Drug, Sale, Transaction, Notification, InsuranceClaim, InsuranceClaimItem  # Add all other models
 target_metadata = db.metadata
-if (os.getenv('ALEMBIC_DEBUG') or '').strip().lower() in ('1', 'true', 'yes', 'y', 'on'):
-    logger.info(f"Tables in metadata: {list(target_metadata.tables.keys())}")
+logger.info(f"Tables in metadata: {list(target_metadata.tables.keys())}")
 config.set_main_option('sqlalchemy.url', get_engine_url())
 target_db = current_app.extensions['migrate'].db
 

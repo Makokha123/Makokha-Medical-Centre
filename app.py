@@ -76,8 +76,6 @@ from markupsafe import Markup, escape
 from utils.encryption import EncryptionUtils
 import bleach
 
-from werkzeug.middleware.proxy_fix import ProxyFix
-
 from time import monotonic
 
 import html as html_lib
@@ -93,35 +91,6 @@ from pathlib import Path
 
 # Initialize Flask app
 app = Flask(__name__)
-
-# Respect reverse-proxy headers (Render / Nginx). This keeps url_for(_external=True)
-# and HTTPS-aware redirects working correctly behind a proxy.
-_is_render = bool(os.environ.get('RENDER'))
-_trust_proxy = (os.getenv('TRUST_PROXY', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on'))
-if _is_render or _trust_proxy:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
-
-
-@app.after_request
-def _set_security_headers(response):
-    """Set conservative security headers.
-
-    Avoids heavy CSP changes that could break templates; focuses on safe defaults.
-    """
-    try:
-        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
-        response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
-        response.headers.setdefault('Referrer-Policy', 'same-origin')
-
-        enable_hsts = (os.getenv('ENABLE_HSTS', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on'))
-        if not enable_hsts and _is_render:
-            enable_hsts = True
-
-        if enable_hsts and request.is_secure:
-            response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-    except Exception:
-        pass
-    return response
 
 def nl2br(value):
     """Converts newlines to <br> tags, ensuring the input is escaped."""
@@ -160,14 +129,13 @@ else:
     # Development settings
     app.config.update(
         DEBUG=True,
-        TESTING=False,
+        TESTING=True,
         PREFERRED_URL_SCHEME='http'
     )
     app.logger.setLevel(logging.DEBUG)
     app.logger.info('Clinic Management System starting in development mode')
 
 app.config.from_object('config.Config')
-Config.init_secrets(app)
 Config.init_fernet(app)
 EncryptionUtils.init_fernet(app)
 # Socket.IO removed - using standard Flask dev server
@@ -200,6 +168,10 @@ PROFILE_PICTURE_FOLDER = os.path.join(UPLOAD_FOLDER, 'profile_pictures')
 os.makedirs(PROFILE_PICTURE_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    raise ValueError("No SECRET_KEY set for Flask application. Please set the SECRET_KEY environment variable.")
+app.config['SECRET_KEY'] = SECRET_KEY
 def get_database_uri():
     is_render = bool(os.environ.get('RENDER'))
 
@@ -315,9 +287,15 @@ if _db_uri.startswith('postgresql://'):
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', UPLOAD_FOLDER)
 app.config['BACKUP_FOLDER'] = os.getenv('BACKUP_FOLDER', 'backups')
 app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 16 * 1024 * 1024))  # 16MB max upload size
-
-# Keep a top-level DEEPSEEK_API_KEY for legacy call sites.
-app.config['DEEPSEEK_API_KEY'] = (app.config.get('DEEPSEEK_API_KEY') or os.getenv('DEEPSEEK_API_KEY') or '').strip()
+app.config['FERNET_KEY'] = os.getenv('FERNET_KEY')
+app.config['DEEPSEEK_API_KEY'] = os.getenv('DEEPSEEK_API_KEY')
+app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'true').lower() == 'true'
+app.config['MAIL_USERNAME'] = (os.getenv('MAIL_USERNAME') or '').strip()
+app.config['MAIL_PASSWORD'] = (os.getenv('MAIL_PASSWORD') or '').strip()
+app.config['MAIL_DEFAULT_SENDER'] = (os.getenv('MAIL_DEFAULT_SENDER') or app.config['MAIL_USERNAME'] or '').strip()
+app.config['RESET_TOKEN_EXPIRATION'] = int(os.getenv('RESET_TOKEN_EXPIRATION', 3600))
 
 # Initialize database extensions AFTER configuration is finalized.
 db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
@@ -4328,38 +4306,38 @@ def ensure_database_initialized():
 
 
 def _create_default_users():
-    """Optional seeding of initial users.
-
-    Disabled by default for production safety.
-    To enable, set SEED_DEFAULT_USERS=true and provide at least:
-      SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD
-    """
-    seed_enabled = (os.getenv('SEED_DEFAULT_USERS', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on'))
-    if not seed_enabled:
-        return
-
-    # Never seed implicitly on production platforms.
-    if os.getenv('RENDER') or (os.getenv('FLASK_ENV') or '').strip().lower() == 'production':
-        app.logger.warning('SEED_DEFAULT_USERS requested but ignored in production environment.')
-        return
-
+    """Create default users if they don't exist. Idempotent - safe to call multiple times."""
     try:
-        admin_email = (os.getenv('SEED_ADMIN_EMAIL') or '').strip()
-        admin_password = (os.getenv('SEED_ADMIN_PASSWORD') or '').strip()
-        admin_username = (os.getenv('SEED_ADMIN_USERNAME') or 'Admin').strip()
-
-        if not admin_email or not admin_password:
-            app.logger.warning('SEED_DEFAULT_USERS enabled but SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD not provided. Skipping seeding.')
-            return
-
+        # Default users configuration
         default_users = [
             {
-                'username': admin_username,
-                'email': admin_email,
+                'username': 'Makokha Nelson',
+                'email': 'makokhanelson4@gmail.com',
                 'role': 'admin',
-                'password': admin_password,
-                'is_active': True,
-            }
+                'password': 'Doc.makokha@2024',
+                'is_active': True
+            },
+            {
+                'username': 'Default Doctor',
+                'email': 'doctor@clinic.com',
+                'role': 'doctor',
+                'password': 'Doctor@123',
+                'is_active': True
+            },
+            {
+                'username': 'Default Pharmacist',
+                'email': 'pharmacist@clinic.com',
+                'role': 'pharmacist',
+                'password': 'Pharmacist@123',
+                'is_active': True
+            },
+            {
+                'username': 'Default Receptionist',
+                'email': 'receptionist@clinic.com',
+                'role': 'receptionist',
+                'password': 'Receptionist@123',
+                'is_active': True
+            },
         ]
         
         created_count = 0
@@ -19254,12 +19232,8 @@ class DoctorAIServiceLegacy:
             Generate 5-8 specific, targeted questions that would help in the review of systems for this patient.
             Format the response as a bulleted list.
             """
-
-            client = get_deepseek_client()
-            if not client:
-                return None
-
-            response = client.chat.completions.create(
+            
+            response = deepseek_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
@@ -19287,12 +19261,8 @@ class DoctorAIServiceLegacy:
             Focus on the chronology, quality, severity, and associated symptoms.
             Format the response as a bulleted list.
             """
-
-            client = get_deepseek_client()
-            if not client:
-                return None
-
-            response = client.chat.completions.create(
+            
+            response = deepseek_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
@@ -19327,11 +19297,7 @@ class DoctorAIServiceLegacy:
             Write in professional medical narrative format.
             """
             
-            client = get_deepseek_client()
-            if not client:
-                return None
-
-            response = client.chat.completions.create(
+            response = deepseek_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=800,
@@ -19380,12 +19346,8 @@ class DoctorAIServiceLegacy:
             3. Brief rationale for each
             4. Suggested diagnostic tests to confirm
             """
-
-            client = get_deepseek_client()
-            if not client:
-                return None
-
-            response = client.chat.completions.create(
+            
+            response = deepseek_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1000,
@@ -19421,12 +19383,8 @@ class DoctorAIServiceLegacy:
             3. Any additional tests recommended
             4. Potential treatment implications
             """
-
-            client = get_deepseek_client()
-            if not client:
-                return None
-
-            response = client.chat.completions.create(
+            
+            response = deepseek_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=800,
@@ -19471,11 +19429,7 @@ class DoctorAIServiceLegacy:
             Consider drug interactions and contraindications based on patient information.
             """
             
-            client = get_deepseek_client()
-            if not client:
-                return None
-
-            response = client.chat.completions.create(
+            response = deepseek_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1200,
@@ -19488,40 +19442,24 @@ class DoctorAIServiceLegacy:
             return None
 
 from flask import current_app
-
-# Lazy DeepSeek client (avoid import-time network calls).
-deepseek_client = None
-
-
-def get_deepseek_client():
-    global deepseek_client
-
-    if deepseek_client is not None:
-        return deepseek_client
-
-    api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip()
-    if not api_key:
-        return None
-
+# Initialize DeepSeek client with proper error handling inside app context
+with app.app_context():
     try:
-        base_url = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
-        if not base_url.endswith("/v1"):
-            base_url = f"{base_url}/v1"
-
-        timeout = float(os.getenv("DEEPSEEK_TIMEOUT", "30"))
         deepseek_client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=timeout,
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com/v1",
+            timeout=30.0
         )
-        return deepseek_client
+        # Test the connection
+        if os.getenv("DEEPSEEK_API_KEY"):
+            models = deepseek_client.models.list()
+            current_app.logger.info(f"Connected to DeepSeek API. Available models: {[m.id for m in models.data]}")
+        else:
+            current_app.logger.warning("DEEPSEEK_API_KEY not set - AI features will be disabled")
+            deepseek_client = None
     except Exception as e:
-        try:
-            app.logger.error("Failed to initialize DeepSeek client: %s", str(e), exc_info=True)
-        except Exception:
-            pass
+        current_app.logger.error(f"Failed to initialize DeepSeek client: {str(e)}")
         deepseek_client = None
-        return None
 
     
 @app.route('/api/verify-models', methods=['GET'])
@@ -19532,9 +19470,8 @@ def verify_models():
         models_list = []
         
         # Test DeepSeek if configured
-        client = get_deepseek_client()
-        if client:
-            deepseek_models = client.models.list()
+        if deepseek_client and os.getenv("DEEPSEEK_API_KEY"):
+            deepseek_models = deepseek_client.models.list()
             models_list.extend([m.id for m in deepseek_models.data])
             current_app.logger.info(f"DeepSeek available models: {models_list}")
         
@@ -23194,6 +23131,9 @@ def download_payroll_receipt_employee(receipt_id):
     return resp
 
 if __name__ == '__main__':
+
+    app.run(debug=True)
+
     if not os.path.exists('instance'):
         os.makedirs('instance')
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
@@ -23204,15 +23144,26 @@ if __name__ == '__main__':
     # Ensure DB and tables exist before serving any requests.
     initialize_database()
 
+    # Initialize login manager
+    login_manager = LoginManager()
+    login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'
+    login_manager.login_message_category = 'info'
+
+    @login_manager.user_loader
+    def load_user(user_id):
+        return db.session.get(User, int(user_id))
+
     if os.environ.get('RENDER'):
         # Production - use gunicorn or platform-provided process manager
         app.logger.info("Production mode - ready for gunicorn")
     else:
         # Development - start Flask dev server
+        app.logger.info("Development mode - starting Flask server")
+
         host = '0.0.0.0'
         port = int(os.environ.get('PORT', 5000))
-        debug_mode = (os.getenv('FLASK_DEBUG', '').strip().lower() in ('1', 'true', 'yes', 'y', 'on')) or bool(app.config.get('DEBUG', False))
 
-        app.logger.info(f"Starting server on {host}:{port} (DEBUG={debug_mode})")
-        print(f"Starting server on {host}:{port} (DEBUG={debug_mode})")
-        app.run(host=host, port=port, debug=debug_mode)
+        app.logger.info(f"Starting server on {host}:{port} (DEBUG={app.config.get('DEBUG', False)})")
+        print(f"Starting server on {host}:{port} (DEBUG={app.config.get('DEBUG', False)})")
+        app.run(host=host, port=port, debug=app.config.get('DEBUG', False))
