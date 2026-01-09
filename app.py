@@ -1,4 +1,5 @@
 from logging.handlers import RotatingFileHandler
+from multiprocessing import Lock
 from operator import and_
 from sqlalchemy import MetaData, Table
 import csv
@@ -262,22 +263,19 @@ def get_database_uri():
 app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Harden DB pooling for long-running processes (APScheduler) where connections may go idle
+ # Harden DB pooling for long-running processes (APScheduler) where connections may go idle
 # while waiting on external APIs. Particularly important for Postgres + SSL.
 _db_uri = (app.config.get('SQLALCHEMY_DATABASE_URI') or '').strip().lower()
 if _db_uri.startswith('postgresql://'):
     # Defaults are conservative and can be overridden via env.
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         'pool_pre_ping': True,
-        # Recycle periodically to avoid server-side idle timeout drops.
         'pool_recycle': int(os.getenv('SQLALCHEMY_POOL_RECYCLE', '300')),
         'pool_timeout': int(os.getenv('SQLALCHEMY_POOL_TIMEOUT', '30')),
         'pool_size': int(os.getenv('SQLALCHEMY_POOL_SIZE', '5')),
         'max_overflow': int(os.getenv('SQLALCHEMY_MAX_OVERFLOW', '10')),
         'connect_args': {
-            # psycopg2 connect args
             'connect_timeout': int(os.getenv('PG_CONNECT_TIMEOUT', '10')),
-            # TCP keepalives help prevent silent mid-run disconnects.
             'keepalives': 1,
             'keepalives_idle': int(os.getenv('PG_KEEPALIVES_IDLE', '30')),
             'keepalives_interval': int(os.getenv('PG_KEEPALIVES_INTERVAL', '10')),
@@ -954,6 +952,30 @@ class Drug(db.Model):
             return True
         return False  
 
+        @hybrid_property
+        def stock_status(self):
+            if self.remaining_quantity <= 0:
+                return 'out_of_stock'
+            elif self.remaining_quantity < 10:
+                return 'low_stock'
+            else:
+                return 'in_stock'
+
+        @stock_status.expression
+        def stock_status(cls):
+            from sqlalchemy import case
+            return case(
+                (
+                    (cls.stocked_quantity - (cls.sold_quantity) <= 0),
+                    'out_of_stock',
+                ),
+                (
+                    (cls.stocked_quantity - (cls.sold_quantity) < 10),
+                    'low_stock',
+                ),
+                else_='in_stock',
+            )
+
 
 class ControlledDrug(db.Model):
     __tablename__ = 'controlled_drugs'
@@ -1114,6 +1136,7 @@ class ControlledSaleItem(db.Model):
         if getattr(self, 'controlled_drug', None):
             self.controlled_drug_name = self.controlled_drug.name
             self.controlled_drug_specification = self.controlled_drug.specification
+            super().__init__(**kwargs)
     
 class DrugDosage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -1200,7 +1223,12 @@ def _lookup_index_dosage_by_name(drug_name: str):
 
 
 def _get_dosage_ai_client():
-    """Get OpenAI client for dosage generation (separate from doctor AIService)"""
+    """Get OpenAI client for dosage generation (separate from doctor AIService)
+
+    To increase AI timeout (fix APITimeoutError), set the environment variable:
+        DEEPSEEK_DOSAGE_TIMEOUT=60
+    in your Render dashboard or .env file (default is 30 seconds).
+    """
     api_key = current_app.config.get('DEEPSEEK_API_KEY')
     if not api_key:
         return None
@@ -1346,7 +1374,7 @@ def _ai_generate_dosage_fields_from_name(drug_name: str, context_entry: dict | N
                 messages=[{"role": "user", "content": field_prompt}],
                 temperature=0.2,
                 max_tokens=600,
-                timeout=float(os.getenv('DEEPSEEK_TIMEOUT') or Config.DEEPSEEK_CONFIG.get('timeout', 30.0)),
+                timeout=float(os.getenv('DEEPSEEK_DOSAGE_TIMEOUT') or os.getenv('DEEPSEEK_TIMEOUT') or Config.DEEPSEEK_CONFIG.get('timeout', 30.0)),
             )
             field_content = (resp.choices[0].message.content or '').strip()
             field_payload = _extract_json_object(field_content)
@@ -1377,8 +1405,13 @@ def _ai_generate_dosage_fields_from_name(drug_name: str, context_entry: dict | N
                 )
                 break
             except (APIConnectionError, APITimeoutError) as e:
-                # Let callers decide whether to retry/skip and how to count errors.
-                app.logger.error(f"AI dosage generation exception for '{name}': {type(e).__name__}: {str(e)}")
+                # These are common transient failures; retry with smaller output.
+                last_exception = e
+                app.logger.warning(
+                    f"AI call failed for '{name}' at max_tokens={attempt_max_tokens}: {type(e).__name__}: {str(e)}"
+                )
+                if attempt_max_tokens != 900:
+                    continue
                 raise
             except Exception as e:
                 last_exception = e
@@ -1782,6 +1815,16 @@ def run_ai_dosage_agent_once(
                 app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
                 if not suggestion:
                     app.logger.info(f"Skipped {drug.name}: AI returned None")
+                    # Clear spinner in UI row.
+                    emit({
+                        'event': 'row',
+                        'kind': 'drug',
+                        'drug_id': int(drug.id),
+                        'dosage_id': None,
+                        'indication': None,
+                        'dosage_adults': None,
+                        'dosage_peds': None,
+                    })
                     emit({'event': 'tick', 'kind': 'meta'})
                     continue
                 dosage = DrugDosage(drug_id=drug.id, source='ai')
@@ -1809,6 +1852,15 @@ def run_ai_dosage_agent_once(
                     })
                 else:
                     app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
+                    emit({
+                        'event': 'row',
+                        'kind': 'drug',
+                        'drug_id': int(drug.id),
+                        'dosage_id': None,
+                        'indication': None,
+                        'dosage_adults': None,
+                        'dosage_peds': None,
+                    })
                 emit({'event': 'tick', 'kind': 'meta'})
             except Exception as e:
                 app.logger.error(f"Error creating dosage for {drug.name}: {e}")
@@ -1837,6 +1889,15 @@ def run_ai_dosage_agent_once(
                 app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
                 if not suggestion:
                     app.logger.info(f"Skipped {drug.name}: AI returned None")
+                    emit({
+                        'event': 'row',
+                        'kind': 'controlled',
+                        'drug_id': int(drug.id),
+                        'dosage_id': None,
+                        'indication': None,
+                        'dosage_adults': None,
+                        'dosage_peds': None,
+                    })
                     emit({'event': 'tick', 'kind': 'meta'})
                     continue
                 dosage = ControlledDrugDosage(controlled_drug_id=drug.id, source='ai')
@@ -1864,6 +1925,15 @@ def run_ai_dosage_agent_once(
                     })
                 else:
                     app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
+                    emit({
+                        'event': 'row',
+                        'kind': 'controlled',
+                        'drug_id': int(drug.id),
+                        'dosage_id': None,
+                        'indication': None,
+                        'dosage_adults': None,
+                        'dosage_peds': None,
+                    })
                 emit({'event': 'tick', 'kind': 'meta'})
             except Exception as e:
                 app.logger.error(f"Error creating dosage for {drug.name}: {e}")
@@ -1897,6 +1967,16 @@ def run_ai_dosage_agent_once(
                         emit({'event': 'row_start', 'kind': 'drug', 'drug_id': int(getattr(dosage, 'drug_id', 0) or 0)})
                     suggestion = get_suggestion(drug.name)
                     if not suggestion:
+                        # Clear spinner; keep existing values.
+                        emit({
+                            'event': 'row',
+                            'kind': 'drug',
+                            'drug_id': int(getattr(dosage, 'drug_id', 0) or 0) or None,
+                            'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
+                            'indication': dosage.indication,
+                            'dosage_adults': dosage.dosage_adults,
+                            'dosage_peds': dosage.dosage_peds,
+                        })
                         emit({'event': 'tick', 'kind': 'meta'})
                         continue
                     before = filled_fields
@@ -1946,6 +2026,15 @@ def run_ai_dosage_agent_once(
                         emit({'event': 'row_start', 'kind': 'controlled', 'drug_id': int(getattr(dosage, 'controlled_drug_id', 0) or 0)})
                     suggestion = get_suggestion(drug.name)
                     if not suggestion:
+                        emit({
+                            'event': 'row',
+                            'kind': 'controlled',
+                            'drug_id': int(getattr(dosage, 'controlled_drug_id', 0) or 0) or None,
+                            'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
+                            'indication': dosage.indication,
+                            'dosage_adults': dosage.dosage_adults,
+                            'dosage_peds': dosage.dosage_peds,
+                        })
                         emit({'event': 'tick', 'kind': 'meta'})
                         continue
                     before = filled_fields
@@ -16323,6 +16412,11 @@ def _ai_dosage_jobs_dir() -> str:
     return path
 
 
+# Guard file reads/writes of per-job JSON state.
+# This prevents Windows rename/replace races with concurrent polling reads.
+_AI_DOSAGE_JOB_STATE_LOCK = Lock()
+
+
 def _ai_dosage_job_path(job_id: str) -> str:
     safe_id = (job_id or '').strip()
     return os.path.join(_ai_dosage_jobs_dir(), f'{safe_id}.json')
@@ -16330,14 +16424,46 @@ def _ai_dosage_job_path(job_id: str) -> str:
 
 def _write_ai_dosage_job_state(job_id: str, state: dict):
     path = _ai_dosage_job_path(job_id)
-    tmp_path = f'{path}.tmp'
+    # Use unique temp files to avoid collisions and retry os.replace on Windows.
+    tmp_path = f"{path}.{uuid.uuid4()}.tmp"
+    payload = state or {}
     try:
-        with open(tmp_path, 'w', encoding='utf-8') as f:
-            json.dump(state or {}, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        with _AI_DOSAGE_JOB_STATE_LOCK:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+                try:
+                    f.flush()
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+
+            last_exc: Exception | None = None
+            for attempt in range(1, 8):
+                try:
+                    os.replace(tmp_path, path)
+                    last_exc = None
+                    break
+                except PermissionError as e:
+                    last_exc = e
+                    time.sleep(0.02 * attempt)
+                except OSError as e:
+                    # Some environments/AV scanners can briefly lock files.
+                    last_exc = e
+                    time.sleep(0.02 * attempt)
+
+            if last_exc is not None:
+                # Fallback: best-effort direct write (non-atomic) if rename keeps failing.
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
     except Exception as e:
         try:
             current_app.logger.error(f'Failed to write AI dosage job state: {e}', exc_info=True)
+        except Exception:
+            pass
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
         except Exception:
             pass
 
@@ -16347,8 +16473,9 @@ def _read_ai_dosage_job_state(job_id: str) -> dict | None:
     try:
         if not os.path.exists(path):
             return None
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f) or {}
+        with _AI_DOSAGE_JOB_STATE_LOCK:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f) or {}
     except Exception:
         return None
 
