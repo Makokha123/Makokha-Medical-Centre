@@ -4654,75 +4654,34 @@ def ensure_database_initialized():
 
 
 def _create_default_users():
-    """Create default users if they don't exist. Idempotent - safe to call multiple times."""
+    """Create default admin user from .env only if no users exist. Runs only on initial DB setup."""
     try:
-        # Default users configuration
-        default_users = [
-            {
-                'username': 'Makokha Nelson',
-                'email': 'makokhanelson4@gmail.com',
-                'role': 'admin',
-                'password': 'Doc.makokha@2024',
-                'is_active': True
-            },
-            {
-                'username': 'Default Doctor',
-                'email': 'doctor@clinic.com',
-                'role': 'doctor',
-                'password': 'Doctor@123',
-                'is_active': True
-            },
-            {
-                'username': 'Default Pharmacist',
-                'email': 'pharmacist@clinic.com',
-                'role': 'pharmacist',
-                'password': 'Pharmacist@123',
-                'is_active': True
-            },
-            {
-                'username': 'Default Receptionist',
-                'email': 'receptionist@clinic.com',
-                'role': 'receptionist',
-                'password': 'Receptionist@123',
-                'is_active': True
-            },
-        ]
-        
-        created_count = 0
-        
-        for user_data in default_users:
-            # Check if user with this email already exists
-            # Use _find_user_by_email_plain for cross-DB compatibility.
-            existing_user = _find_user_by_email_plain(user_data['email'])
-            
-            if not existing_user:
-                user = User(
-                    username=user_data['username'],
-                    email=user_data['email'],
-                    role=user_data['role'],
-                    is_active=user_data['is_active'],
-                    is_email_verified=True  # Default users are pre-verified
-                )
-                user.set_password(user_data['password'])
-                db.session.add(user)
-                app.logger.info(f"  ✓ Created {user_data['role']} user: {user_data['email']}")
-                created_count += 1
-            else:
-                app.logger.debug(f"  - Skipped {user_data['role']} user: {user_data['email']} (already exists)")
-        
-        if created_count > 0:
-            db.session.commit()
-        
-        # Verify users and check for duplicates
         user_count = User.query.count()
         if user_count > 0:
-            app.logger.info(f"✓ Default users initialized ({user_count} users in database)")
-            
-            # Check for and remove duplicates
-            _remove_duplicate_users()
-        
+            app.logger.info("Users already exist. Skipping default admin creation.")
+            return
+        from dotenv import load_dotenv
+        load_dotenv()
+        admin_username = os.getenv('DEFAULT_ADMIN_USERNAME')
+        admin_email = os.getenv('DEFAULT_ADMIN_EMAIL')
+        admin_password = os.getenv('DEFAULT_ADMIN_PASSWORD')
+        admin_role = 'admin'
+        if not (admin_username and admin_email and admin_password):
+            app.logger.warning("Default admin credentials not set in .env. Skipping admin creation.")
+            return
+        user = User(
+            username=admin_username,
+            email=admin_email,
+            role=admin_role,
+            is_active=True,
+            is_email_verified=True
+        )
+        user.set_password(admin_password)
+        db.session.add(user)
+        db.session.commit()
+        app.logger.info(f"✓ Default admin user created: {admin_email}")
     except Exception as e:
-        app.logger.error(f"✗ Failed to create default users: {str(e)}")
+        app.logger.error(f"✗ Failed to create default admin: {str(e)}")
         db.session.rollback()
 
 
