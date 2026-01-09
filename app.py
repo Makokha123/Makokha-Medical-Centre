@@ -1,9 +1,9 @@
 from logging.handlers import RotatingFileHandler
-from multiprocessing import Lock
 from operator import and_
 from sqlalchemy import MetaData, Table
 import csv
 import io
+import threading
 from threading import Thread
 from flask_migrate import Migrate
 import time
@@ -240,7 +240,7 @@ def get_database_uri():
         connect_args = {}
         # Short startup timeout for Postgres-compatible drivers.
         if database_url.startswith('postgresql://'):
-            connect_args = {'connect_timeout': 3}
+            connect_args = {'connect_timeout': 10}
         engine = create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
@@ -263,19 +263,22 @@ def get_database_uri():
 app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
- # Harden DB pooling for long-running processes (APScheduler) where connections may go idle
+# Harden DB pooling for long-running processes (APScheduler) where connections may go idle
 # while waiting on external APIs. Particularly important for Postgres + SSL.
 _db_uri = (app.config.get('SQLALCHEMY_DATABASE_URI') or '').strip().lower()
 if _db_uri.startswith('postgresql://'):
     # Defaults are conservative and can be overridden via env.
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         'pool_pre_ping': True,
+        # Recycle periodically to avoid server-side idle timeout drops.
         'pool_recycle': int(os.getenv('SQLALCHEMY_POOL_RECYCLE', '300')),
         'pool_timeout': int(os.getenv('SQLALCHEMY_POOL_TIMEOUT', '30')),
         'pool_size': int(os.getenv('SQLALCHEMY_POOL_SIZE', '5')),
         'max_overflow': int(os.getenv('SQLALCHEMY_MAX_OVERFLOW', '10')),
         'connect_args': {
+            # psycopg2 connect args
             'connect_timeout': int(os.getenv('PG_CONNECT_TIMEOUT', '10')),
+            # TCP keepalives help prevent silent mid-run disconnects.
             'keepalives': 1,
             'keepalives_idle': int(os.getenv('PG_KEEPALIVES_IDLE', '30')),
             'keepalives_interval': int(os.getenv('PG_KEEPALIVES_INTERVAL', '10')),
@@ -952,30 +955,6 @@ class Drug(db.Model):
             return True
         return False  
 
-        @hybrid_property
-        def stock_status(self):
-            if self.remaining_quantity <= 0:
-                return 'out_of_stock'
-            elif self.remaining_quantity < 10:
-                return 'low_stock'
-            else:
-                return 'in_stock'
-
-        @stock_status.expression
-        def stock_status(cls):
-            from sqlalchemy import case
-            return case(
-                (
-                    (cls.stocked_quantity - (cls.sold_quantity) <= 0),
-                    'out_of_stock',
-                ),
-                (
-                    (cls.stocked_quantity - (cls.sold_quantity) < 10),
-                    'low_stock',
-                ),
-                else_='in_stock',
-            )
-
 
 class ControlledDrug(db.Model):
     __tablename__ = 'controlled_drugs'
@@ -1136,7 +1115,6 @@ class ControlledSaleItem(db.Model):
         if getattr(self, 'controlled_drug', None):
             self.controlled_drug_name = self.controlled_drug.name
             self.controlled_drug_specification = self.controlled_drug.specification
-            super().__init__(**kwargs)
     
 class DrugDosage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -1223,45 +1201,21 @@ def _lookup_index_dosage_by_name(drug_name: str):
 
 
 def _get_dosage_ai_client():
-    """Get OpenAI client for dosage generation (separate from doctor AIService)
-
-    To increase AI timeout (fix APITimeoutError), set the environment variable:
-        DEEPSEEK_DOSAGE_TIMEOUT=60
-    in your Render dashboard or .env file (default is 30 seconds).
-    """
+    """Get OpenAI client for dosage generation (separate from doctor AIService)"""
     api_key = current_app.config.get('DEEPSEEK_API_KEY')
     if not api_key:
         return None
+
     try:
-        # Allow environment/config overrides; normalize base URL to include /v1.
-        base_url = (
-            os.getenv('DEEPSEEK_BASE_URL')
-            or (Config.DEEPSEEK_CONFIG.get('base_url') if isinstance(getattr(Config, 'DEEPSEEK_CONFIG', None), dict) else None)
-            or 'https://api.deepseek.com'
-        )
-        base_url = (base_url or '').strip().rstrip('/')
-        if base_url and not base_url.endswith('/v1'):
-            base_url = f"{base_url}/v1"
-
-        timeout = os.getenv('DEEPSEEK_DOSAGE_TIMEOUT')
-        if timeout is None:
-            timeout = os.getenv('DEEPSEEK_TIMEOUT')
-        try:
-            timeout_f = float(timeout) if timeout is not None else float(Config.DEEPSEEK_CONFIG.get('timeout', 30.0))
-        except Exception:
-            timeout_f = 30.0
-
-        max_retries = os.getenv('DEEPSEEK_MAX_RETRIES')
-        try:
-            max_retries_i = int(max_retries) if max_retries is not None else int(Config.DEEPSEEK_CONFIG.get('max_retries', 3))
-        except Exception:
-            max_retries_i = 3
-
+        dosage_timeout = float(current_app.config.get('DOSAGE_AI_TIMEOUT_SECONDS') or 1200.0)
+    except Exception:
+        dosage_timeout = 1200.0
+    try:
         return OpenAI(
             api_key=api_key,
-            base_url=base_url,
-            timeout=timeout_f,
-            max_retries=max_retries_i,
+            base_url="https://api.deepseek.com/v1",
+            # Dosage monographs can be long; allow enough time for model completion.
+            timeout=dosage_timeout,
         )
     except Exception as e:
         app.logger.error(f"Failed to create dosage AI client: {e}")
@@ -1374,7 +1328,6 @@ def _ai_generate_dosage_fields_from_name(drug_name: str, context_entry: dict | N
                 messages=[{"role": "user", "content": field_prompt}],
                 temperature=0.2,
                 max_tokens=600,
-                timeout=float(os.getenv('DEEPSEEK_DOSAGE_TIMEOUT') or os.getenv('DEEPSEEK_TIMEOUT') or Config.DEEPSEEK_CONFIG.get('timeout', 30.0)),
             )
             field_content = (resp.choices[0].message.content or '').strip()
             field_payload = _extract_json_object(field_content)
@@ -1401,18 +1354,8 @@ def _ai_generate_dosage_fields_from_name(drug_name: str, context_entry: dict | N
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.2,
                     max_tokens=attempt_max_tokens,
-                    timeout=float(os.getenv('DEEPSEEK_DOSAGE_TIMEOUT') or os.getenv('DEEPSEEK_TIMEOUT') or Config.DEEPSEEK_CONFIG.get('timeout', 30.0)),
                 )
                 break
-            except (APIConnectionError, APITimeoutError) as e:
-                # These are common transient failures; retry with smaller output.
-                last_exception = e
-                app.logger.warning(
-                    f"AI call failed for '{name}' at max_tokens={attempt_max_tokens}: {type(e).__name__}: {str(e)}"
-                )
-                if attempt_max_tokens != 900:
-                    continue
-                raise
             except Exception as e:
                 last_exception = e
                 err_name = type(e).__name__
@@ -1474,9 +1417,6 @@ def _ai_generate_dosage_fields_from_name(drug_name: str, context_entry: dict | N
                 out[key] = None
         app.logger.info(f"AI generation success for '{name}': {out}")
         return out
-    except (APIConnectionError, APITimeoutError):
-        # Already logged above; re-raise so callers can count/report appropriately.
-        raise
     except Exception as e:
         app.logger.error(f"AI dosage generation exception for '{name}': {type(e).__name__}: {str(e)}")
         return None
@@ -1655,6 +1595,383 @@ def _ai_dosage_agent_state_path():
     return os.path.join(app.instance_path, 'ai_dosage_agent.json')
 
 
+def _ai_dosage_jobs_dir() -> str:
+    try:
+        os.makedirs(app.instance_path, exist_ok=True)
+    except Exception:
+        pass
+    path = os.path.join(app.instance_path, 'ai_dosage_jobs')
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        pass
+    return path
+
+
+def _ai_dosage_job_path(job_id: str) -> str:
+    safe = ''.join([c for c in (job_id or '') if c.isalnum() or c in ('-', '_')])
+    return os.path.join(_ai_dosage_jobs_dir(), f'{safe}.json')
+
+
+def _write_ai_job_state(job_id: str, state: dict) -> None:
+    path = _ai_dosage_job_path(job_id)
+    tmp = path + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+
+def _read_ai_job_state(job_id: str) -> dict | None:
+    path = _ai_dosage_job_path(job_id)
+    try:
+        if not os.path.exists(path):
+            return None
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f) or None
+    except Exception:
+        return None
+
+
+def _truncate_for_table(value: str | None, limit: int = 50) -> str:
+    if not value:
+        return '-'
+    s = str(value).strip()
+    if not s:
+        return '-'
+    return (s[: max(0, limit - 3)] + '...') if len(s) > limit else s
+
+
+def _is_db_disconnect_error(exc: Exception) -> bool:
+    """Best-effort detection of transient DB disconnects (common with Postgres+SSL)."""
+    try:
+        msg = str(exc).lower()
+    except Exception:
+        msg = ''
+    needles = [
+        'ssl connection has been closed unexpectedly',
+        'server closed the connection unexpectedly',
+        'connection reset by peer',
+        'connection refused',
+        'could not receive data from server',
+        'terminating connection due to administrator command',
+        'connection timed out',
+        'broken pipe',
+    ]
+    return any(n in msg for n in needles)
+
+
+def _recover_db_connection(reason: str) -> None:
+    """Dispose SQLAlchemy engine + reset session so next checkout gets a fresh connection."""
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
+    try:
+        db.session.remove()
+    except Exception:
+        pass
+    try:
+        db.engine.dispose()
+    except Exception:
+        pass
+    try:
+        app.logger.warning(f"DB connection recovered after disconnect: {reason}")
+    except Exception:
+        pass
+
+
+def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | None, requested_by_user_id: int):
+    """Runs a dosage generation job and persists progress to an instance JSON file.
+
+    mode:
+      - 'full': create missing + fill missing fields
+      - 'fill': only fill missing fields on existing dosage rows
+    """
+    with app.app_context():
+        # Ensure this background thread starts with a fresh session/connection.
+        try:
+            db.session.remove()
+        except Exception:
+            pass
+        state = _read_ai_job_state(job_id) or {}
+        state.setdefault('updates', [])
+        state.setdefault('update_seq', 0)
+
+        def push_update(update: dict):
+            state['update_seq'] = int(state.get('update_seq') or 0) + 1
+            update['seq'] = state['update_seq']
+            # Keep last 100 updates only
+            updates = list(state.get('updates') or [])
+            updates.append(update)
+            state['updates'] = updates[-100:]
+
+        def set_status(status: str, message: str | None = None):
+            state['status'] = status
+            state['updated_at'] = get_eat_now().isoformat()
+            if message:
+                state['message'] = message
+            _write_ai_job_state(job_id, state)
+
+        try:
+            # Build work queue
+            kind_norm = (kind or 'drug').strip().lower()
+            if kind_norm not in ('drug', 'controlled'):
+                kind_norm = 'drug'
+
+            mode_norm = (mode or 'full').strip().lower()
+            if mode_norm not in ('full', 'fill'):
+                mode_norm = 'full'
+
+            create_limit = 0 if mode_norm == 'fill' else int(limit or 10)
+            update_limit = int(limit or 10)
+
+            # Keep interactive jobs conservative but responsive
+            ai_generation_limit = int(limit or 10)
+            # Interactive job time budget (avoid runaway jobs but allow slow AI).
+            # Configurable via AI_DOSAGE_JOB_MAX_RUN_SECONDS.
+            try:
+                max_run_seconds = int(current_app.config.get('AI_DOSAGE_JOB_MAX_RUN_SECONDS') or 1200)
+            except Exception:
+                max_run_seconds = 1200
+
+            queue: list[dict] = []
+
+            if mode_norm == 'full' and create_limit > 0:
+                if kind_norm == 'drug':
+                    missing = Drug.query.filter(~Drug.dosage.any()).limit(create_limit).all()
+                    for d in missing:
+                        queue.append({'action': 'create', 'kind': 'drug', 'drug_id': d.id})
+                else:
+                    missing = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).limit(create_limit).all()
+                    for d in missing:
+                        queue.append({'action': 'create', 'kind': 'controlled', 'drug_id': d.id})
+
+            if update_limit > 0:
+                if kind_norm == 'drug':
+                    rows = (
+                        DrugDosage.query.join(Drug)
+                        .filter(_dosage_missing_filter(DrugDosage))
+                        .limit(update_limit)
+                        .all()
+                    )
+                    for r in rows:
+                        queue.append({'action': 'fill', 'kind': 'drug', 'dosage_id': r.id})
+                else:
+                    rows = (
+                        ControlledDrugDosage.query.join(ControlledDrug)
+                        .filter(_dosage_missing_filter(ControlledDrugDosage))
+                        .limit(update_limit)
+                        .all()
+                    )
+                    for r in rows:
+                        queue.append({'action': 'fill', 'kind': 'controlled', 'dosage_id': r.id})
+
+            planned_total = min(int(ai_generation_limit or 0), len(queue))
+            queue = queue[:planned_total]
+
+            state.update({
+                'job_id': job_id,
+                'kind': kind_norm,
+                'mode': mode_norm,
+                'requested_by_user_id': requested_by_user_id,
+                'status': 'running',
+                'total': planned_total,
+                'processed': 0,
+                'completed': 0,
+                'failed': 0,
+                'created': 0,
+                'updated_records': 0,
+                'filled_fields': 0,
+                'errors': 0,
+                'started_at': state.get('started_at') or get_eat_now().isoformat(),
+                'updated_at': get_eat_now().isoformat(),
+            })
+            _write_ai_job_state(job_id, state)
+
+            started = monotonic()
+            ai_budget = planned_total
+
+            for item in queue:
+                if ai_budget <= 0:
+                    break
+                if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                    break
+
+                state['processed'] = int(state.get('processed') or 0) + 1
+                state['updated_at'] = get_eat_now().isoformat()
+
+                try:
+                    if item['kind'] == 'drug':
+                        if item['action'] == 'create':
+                            drug = Drug.query.get(item['drug_id'])
+                            if not drug:
+                                raise Exception('Drug not found')
+                            suggestion = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
+                            ai_budget -= 1
+                            if not suggestion:
+                                state['failed'] = int(state.get('failed') or 0) + 1
+                                _write_ai_job_state(job_id, state)
+                                continue
+                            dosage = DrugDosage(drug_id=drug.id, source='ai')
+                            changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                            if not changed:
+                                state['failed'] = int(state.get('failed') or 0) + 1
+                                _write_ai_job_state(job_id, state)
+                                continue
+                            state['filled_fields'] = int(state.get('filled_fields') or 0) + int(changed)
+                            db.session.add(dosage)
+                            db.session.commit()
+                            state['created'] = int(state.get('created') or 0) + 1
+                            state['completed'] = int(state.get('completed') or 0) + 1
+                            push_update({
+                                'kind': 'drug',
+                                'drug_id': drug.id,
+                                'dosage_id': dosage.id,
+                                'indication': _truncate_for_table(dosage.indication, 50),
+                                'dosage_adults': _truncate_for_table(dosage.dosage_adults, 50),
+                                'dosage_peds': _truncate_for_table(dosage.dosage_peds, 50),
+                            })
+                            _write_ai_job_state(job_id, state)
+                            continue
+
+                        # fill existing dosage
+                        dosage = DrugDosage.query.get(item['dosage_id'])
+                        if not dosage or not dosage.drug:
+                            raise Exception('Dosage not found')
+                        suggestion = _ai_generate_dosage_fields_from_name(dosage.drug.name, context_entry=None)
+                        ai_budget -= 1
+                        if not suggestion:
+                            state['failed'] = int(state.get('failed') or 0) + 1
+                            _write_ai_job_state(job_id, state)
+                            continue
+                        changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                        if not changed:
+                            state['failed'] = int(state.get('failed') or 0) + 1
+                            _write_ai_job_state(job_id, state)
+                            continue
+                        try:
+                            dosage.source = 'ai'
+                        except Exception:
+                            pass
+                        state['filled_fields'] = int(state.get('filled_fields') or 0) + int(changed)
+                        db.session.commit()
+                        state['updated_records'] = int(state.get('updated_records') or 0) + 1
+                        state['completed'] = int(state.get('completed') or 0) + 1
+                        push_update({
+                            'kind': 'drug',
+                            'drug_id': dosage.drug.id,
+                            'dosage_id': dosage.id,
+                            'indication': _truncate_for_table(dosage.indication, 50),
+                            'dosage_adults': _truncate_for_table(dosage.dosage_adults, 50),
+                            'dosage_peds': _truncate_for_table(dosage.dosage_peds, 50),
+                        })
+                        _write_ai_job_state(job_id, state)
+                        continue
+
+                    # controlled
+                    if item['action'] == 'create':
+                        drug = ControlledDrug.query.get(item['drug_id'])
+                        if not drug:
+                            raise Exception('Controlled drug not found')
+                        suggestion = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
+                        ai_budget -= 1
+                        if not suggestion:
+                            state['failed'] = int(state.get('failed') or 0) + 1
+                            _write_ai_job_state(job_id, state)
+                            continue
+                        dosage = ControlledDrugDosage(controlled_drug_id=drug.id, source='ai')
+                        changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                        if not changed:
+                            state['failed'] = int(state.get('failed') or 0) + 1
+                            _write_ai_job_state(job_id, state)
+                            continue
+                        state['filled_fields'] = int(state.get('filled_fields') or 0) + int(changed)
+                        db.session.add(dosage)
+                        db.session.commit()
+                        state['created'] = int(state.get('created') or 0) + 1
+                        state['completed'] = int(state.get('completed') or 0) + 1
+                        push_update({
+                            'kind': 'controlled',
+                            'drug_id': drug.id,
+                            'dosage_id': dosage.id,
+                            'indication': _truncate_for_table(dosage.indication, 50),
+                            'dosage_adults': _truncate_for_table(dosage.dosage_adults, 50),
+                            'dosage_peds': _truncate_for_table(dosage.dosage_peds, 50),
+                        })
+                        _write_ai_job_state(job_id, state)
+                        continue
+
+                    dosage = ControlledDrugDosage.query.get(item['dosage_id'])
+                    if not dosage or not dosage.controlled_drug:
+                        raise Exception('Controlled dosage not found')
+                    suggestion = _ai_generate_dosage_fields_from_name(dosage.controlled_drug.name, context_entry=None)
+                    ai_budget -= 1
+                    if not suggestion:
+                        state['failed'] = int(state.get('failed') or 0) + 1
+                        _write_ai_job_state(job_id, state)
+                        continue
+                    changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                    if not changed:
+                        state['failed'] = int(state.get('failed') or 0) + 1
+                        _write_ai_job_state(job_id, state)
+                        continue
+                    try:
+                        dosage.source = 'ai'
+                    except Exception:
+                        pass
+                    state['filled_fields'] = int(state.get('filled_fields') or 0) + int(changed)
+                    db.session.commit()
+                    state['updated_records'] = int(state.get('updated_records') or 0) + 1
+                    state['completed'] = int(state.get('completed') or 0) + 1
+                    push_update({
+                        'kind': 'controlled',
+                        'drug_id': dosage.controlled_drug.id,
+                        'dosage_id': dosage.id,
+                        'indication': _truncate_for_table(dosage.indication, 50),
+                        'dosage_adults': _truncate_for_table(dosage.dosage_adults, 50),
+                        'dosage_peds': _truncate_for_table(dosage.dosage_peds, 50),
+                    })
+                    _write_ai_job_state(job_id, state)
+                except Exception as e:
+                    state['errors'] = int(state.get('errors') or 0) + 1
+                    state['failed'] = int(state.get('failed') or 0) + 1
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+                    # If Postgres SSL dropped mid-run, recover and keep going.
+                    try:
+                        import sqlalchemy
+                        is_operational = isinstance(e, sqlalchemy.exc.OperationalError)
+                    except Exception:
+                        is_operational = False
+                    if is_operational and _is_db_disconnect_error(e):
+                        _recover_db_connection('ai_dosage_job_thread item')
+                    _write_ai_job_state(job_id, state)
+
+            state['status'] = 'complete'
+            state['updated_at'] = get_eat_now().isoformat()
+            _write_ai_job_state(job_id, state)
+        except Exception as e:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            state['status'] = 'failed'
+            state['errors'] = int(state.get('errors') or 0) + 1
+            state['message'] = str(e)
+            state['updated_at'] = get_eat_now().isoformat()
+            _write_ai_job_state(job_id, state)
+
+
+
 def _get_ai_dosage_agent_enabled() -> bool:
     """Returns True if the background dosage agent is enabled."""
     path = _ai_dosage_agent_state_path()
@@ -1724,15 +2041,20 @@ def _dosage_missing_filter(model_cls):
     )
 
 
+# Best-effort in-process guard to prevent overlapping runs (e.g., scheduler + manual run-now).
+# Note: this is per-process; in multi-worker deployments, APScheduler's max_instances helps,
+# and admin-triggered runs should be rare.
+_AI_DOSAGE_AGENT_LOCK = threading.Lock()
+
+
+
+
 def run_ai_dosage_agent_once(
     kind: str = 'both',
     create_limit: int = 50,
     update_limit: int = 50,
     ai_generation_limit: int = 50,
     max_run_seconds: int = 300,
-    created_at: Optional[datetime] = None,
-    progress_hook=None,
-    **_ignored_kwargs,
 ):
     """Creates missing dosage rows and fills missing fields (does not overwrite existing values).
 
@@ -1745,6 +2067,16 @@ def run_ai_dosage_agent_once(
     if not _get_ai_dosage_agent_enabled():
         return {'enabled': False, 'created': 0, 'updated_records': 0, 'filled_fields': 0, 'reason': 'Agent is disabled.'}
 
+    if not _AI_DOSAGE_AGENT_LOCK.acquire(blocking=False):
+        return {
+            'enabled': True,
+            'created': 0,
+            'updated_records': 0,
+            'filled_fields': 0,
+            'errors': 0,
+            'reason': 'Another AI dosage agent run is already in progress.',
+        }
+
     created = 0
     updated_records = 0
     filled_fields = 0
@@ -1753,7 +2085,25 @@ def run_ai_dosage_agent_once(
     ai_budget = max(0, int(ai_generation_limit or 0))
     started = monotonic()
 
-    last_ai_error: str | None = None
+    # Keep transactions short to avoid losing all progress if the process/request dies.
+    # Also reduces SQLite/MySQL lock contention.
+    db_batch_size = 25
+    pending_writes = 0
+
+    def _commit_batch():
+        nonlocal errors, pending_writes
+        if pending_writes <= 0:
+            return
+        try:
+            db.session.commit()
+            pending_writes = 0
+        except Exception:
+            errors += 1
+            pending_writes = 0
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
 
     if not current_app.config.get('DEEPSEEK_API_KEY'):
         msg = 'DEEPSEEK_API_KEY not configured. Set it in environment/config to use AI generation.'
@@ -1774,308 +2124,183 @@ def run_ai_dosage_agent_once(
     if kind_norm not in ('drug', 'controlled', 'both'):
         kind_norm = 'both'
 
-    def emit(event: dict):
-        if not progress_hook:
-            return
-        try:
-            progress_hook(event)
-        except Exception:
-            # Never let progress reporting break the actual agent run.
-            pass
-
     def get_suggestion(name: str):
-        nonlocal ai_budget, errors, last_ai_error
+        nonlocal ai_budget
         if ai_budget <= 0:
             return None
-        try:
-            suggestion = _ai_generate_dosage_fields_from_name(name, context_entry=None)
-            return suggestion
-        except (APIConnectionError, APITimeoutError) as e:
-            errors += 1
-            last_ai_error = f"{type(e).__name__}: {str(e)}"
-            return None
-        except Exception as e:
-            errors += 1
-            last_ai_error = f"{type(e).__name__}: {str(e)}"
-            return None
-        finally:
-            ai_budget -= 1
-
-    # 1) Create missing dosage rows for normal drugs
-    if kind_norm in ('drug', 'both'):
-        missing_drugs = Drug.query.filter(~Drug.dosage.any()).limit(max(0, int(create_limit or 0))).all()
-        app.logger.info(f"Agent: Found {len(missing_drugs)} drugs without dosage (kind=drug)")
-        for drug in missing_drugs:
-            if max_run_seconds and (monotonic() - started) > max_run_seconds:
-                break
-            try:
-                if ai_budget > 0:
-                    emit({'event': 'row_start', 'kind': 'drug', 'drug_id': int(drug.id)})
-                suggestion = get_suggestion(drug.name)
-                app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
-                if not suggestion:
-                    app.logger.info(f"Skipped {drug.name}: AI returned None")
-                    # Clear spinner in UI row.
-                    emit({
-                        'event': 'row',
-                        'kind': 'drug',
-                        'drug_id': int(drug.id),
-                        'dosage_id': None,
-                        'indication': None,
-                        'dosage_adults': None,
-                        'dosage_peds': None,
-                    })
-                    emit({'event': 'tick', 'kind': 'meta'})
-                    continue
-                dosage = DrugDosage(drug_id=drug.id, source='ai')
-                changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
-                app.logger.debug(f"Applied {changed} fields to {drug.name} dosage")
-                if changed:
-                    try:
-                        dosage.source = 'ai'
-                    except Exception:
-                        pass
-                    filled_fields += changed
-                    db.session.add(dosage)
-                    db.session.flush()
-                    created += 1
-                    app.logger.info(f"Created dosage for {drug.name} (fields: {changed})")
-
-                    emit({
-                        'event': 'row',
-                        'kind': 'drug',
-                        'drug_id': int(drug.id),
-                        'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
-                        'indication': dosage.indication,
-                        'dosage_adults': dosage.dosage_adults,
-                        'dosage_peds': dosage.dosage_peds,
-                    })
-                else:
-                    app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
-                    emit({
-                        'event': 'row',
-                        'kind': 'drug',
-                        'drug_id': int(drug.id),
-                        'dosage_id': None,
-                        'indication': None,
-                        'dosage_adults': None,
-                        'dosage_peds': None,
-                    })
-                emit({'event': 'tick', 'kind': 'meta'})
-            except Exception as e:
-                app.logger.error(f"Error creating dosage for {drug.name}: {e}")
-                errors += 1
-                try:
-                    db.session.rollback()
-                except Exception:
-                    pass
-                emit({'event': 'tick', 'kind': 'meta'})
-                continue
-
-            if created % 200 == 0:
-                db.session.flush()
-
-    # 2) Create missing dosage rows for controlled drugs
-    if kind_norm in ('controlled', 'both'):
-        missing_controlled = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).limit(max(0, int(create_limit or 0))).all()
-        app.logger.info(f"Agent: Found {len(missing_controlled)} controlled drugs without dosage (kind=controlled)")
-        for drug in missing_controlled:
-            if max_run_seconds and (monotonic() - started) > max_run_seconds:
-                break
-            try:
-                if ai_budget > 0:
-                    emit({'event': 'row_start', 'kind': 'controlled', 'drug_id': int(drug.id)})
-                suggestion = get_suggestion(drug.name)
-                app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
-                if not suggestion:
-                    app.logger.info(f"Skipped {drug.name}: AI returned None")
-                    emit({
-                        'event': 'row',
-                        'kind': 'controlled',
-                        'drug_id': int(drug.id),
-                        'dosage_id': None,
-                        'indication': None,
-                        'dosage_adults': None,
-                        'dosage_peds': None,
-                    })
-                    emit({'event': 'tick', 'kind': 'meta'})
-                    continue
-                dosage = ControlledDrugDosage(controlled_drug_id=drug.id, source='ai')
-                changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
-                app.logger.debug(f"Applied {changed} fields to {drug.name} dosage")
-                if changed:
-                    try:
-                        dosage.source = 'ai'
-                    except Exception:
-                        pass
-                    filled_fields += changed
-                    db.session.add(dosage)
-                    db.session.flush()
-                    created += 1
-                    app.logger.info(f"Created dosage for {drug.name} (fields: {changed})")
-
-                    emit({
-                        'event': 'row',
-                        'kind': 'controlled',
-                        'drug_id': int(drug.id),
-                        'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
-                        'indication': dosage.indication,
-                        'dosage_adults': dosage.dosage_adults,
-                        'dosage_peds': dosage.dosage_peds,
-                    })
-                else:
-                    app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
-                    emit({
-                        'event': 'row',
-                        'kind': 'controlled',
-                        'drug_id': int(drug.id),
-                        'dosage_id': None,
-                        'indication': None,
-                        'dosage_adults': None,
-                        'dosage_peds': None,
-                    })
-                emit({'event': 'tick', 'kind': 'meta'})
-            except Exception as e:
-                app.logger.error(f"Error creating dosage for {drug.name}: {e}")
-                errors += 1
-                try:
-                    db.session.rollback()
-                except Exception:
-                    pass
-                emit({'event': 'tick', 'kind': 'meta'})
-                continue
-
-            if created % 200 == 0:
-                db.session.flush()
-
-    # 3) Fill missing fields for existing rows
-    # Normal
-    if update_limit and int(update_limit) > 0:
-        if kind_norm in ('drug', 'both'):
-            candidates = (
-                DrugDosage.query.join(Drug)
-                .filter(_dosage_missing_filter(DrugDosage))
-                .limit(int(update_limit))
-                .all()
-            )
-            for dosage in candidates:
-                if max_run_seconds and (monotonic() - started) > max_run_seconds:
-                    break
-                try:
-                    drug = dosage.drug
-                    if ai_budget > 0:
-                        emit({'event': 'row_start', 'kind': 'drug', 'drug_id': int(getattr(dosage, 'drug_id', 0) or 0)})
-                    suggestion = get_suggestion(drug.name)
-                    if not suggestion:
-                        # Clear spinner; keep existing values.
-                        emit({
-                            'event': 'row',
-                            'kind': 'drug',
-                            'drug_id': int(getattr(dosage, 'drug_id', 0) or 0) or None,
-                            'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
-                            'indication': dosage.indication,
-                            'dosage_adults': dosage.dosage_adults,
-                            'dosage_peds': dosage.dosage_peds,
-                        })
-                        emit({'event': 'tick', 'kind': 'meta'})
-                        continue
-                    before = filled_fields
-                    changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
-                    if changed:
-                        try:
-                            dosage.source = 'ai'
-                        except Exception:
-                            pass
-                    filled_fields += changed
-                    if filled_fields > before:
-                        updated_records += 1
-
-                        emit({
-                            'event': 'row',
-                            'kind': 'drug',
-                            'drug_id': int(getattr(dosage, 'drug_id', 0) or 0) or None,
-                            'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
-                            'indication': dosage.indication,
-                            'dosage_adults': dosage.dosage_adults,
-                            'dosage_peds': dosage.dosage_peds,
-                        })
-
-                    emit({'event': 'tick', 'kind': 'meta'})
-                except Exception:
-                    errors += 1
-                    try:
-                        db.session.rollback()
-                    except Exception:
-                        pass
-                    emit({'event': 'tick', 'kind': 'meta'})
-                    continue
-
-        if kind_norm in ('controlled', 'both'):
-            candidates = (
-                ControlledDrugDosage.query.join(ControlledDrug)
-                .filter(_dosage_missing_filter(ControlledDrugDosage))
-                .limit(int(update_limit))
-                .all()
-            )
-            for dosage in candidates:
-                if max_run_seconds and (monotonic() - started) > max_run_seconds:
-                    break
-                try:
-                    drug = dosage.controlled_drug
-                    if ai_budget > 0:
-                        emit({'event': 'row_start', 'kind': 'controlled', 'drug_id': int(getattr(dosage, 'controlled_drug_id', 0) or 0)})
-                    suggestion = get_suggestion(drug.name)
-                    if not suggestion:
-                        emit({
-                            'event': 'row',
-                            'kind': 'controlled',
-                            'drug_id': int(getattr(dosage, 'controlled_drug_id', 0) or 0) or None,
-                            'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
-                            'indication': dosage.indication,
-                            'dosage_adults': dosage.dosage_adults,
-                            'dosage_peds': dosage.dosage_peds,
-                        })
-                        emit({'event': 'tick', 'kind': 'meta'})
-                        continue
-                    before = filled_fields
-                    changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
-                    if changed:
-                        try:
-                            dosage.source = 'ai'
-                        except Exception:
-                            pass
-                    filled_fields += changed
-                    if filled_fields > before:
-                        updated_records += 1
-
-                        emit({
-                            'event': 'row',
-                            'kind': 'controlled',
-                            'drug_id': int(getattr(dosage, 'controlled_drug_id', 0) or 0) or None,
-                            'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
-                            'indication': dosage.indication,
-                            'dosage_adults': dosage.dosage_adults,
-                            'dosage_peds': dosage.dosage_peds,
-                        })
-
-                    emit({'event': 'tick', 'kind': 'meta'})
-                except Exception:
-                    errors += 1
-                    try:
-                        db.session.rollback()
-                    except Exception:
-                        pass
-                    emit({'event': 'tick', 'kind': 'meta'})
-                    continue
+        suggestion = _ai_generate_dosage_fields_from_name(name, context_entry=None)
+        ai_budget -= 1
+        return suggestion
 
     try:
-        db.session.commit()
-    except Exception:
+        # 1) Create missing dosage rows for normal drugs
+        if kind_norm in ('drug', 'both'):
+            missing_drugs = Drug.query.filter(~Drug.dosage.any()).limit(max(0, int(create_limit or 0))).all()
+            app.logger.info(f"Agent: Found {len(missing_drugs)} drugs without dosage (kind=drug)")
+            for drug in missing_drugs:
+                if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                    break
+                try:
+                    suggestion = get_suggestion(drug.name)
+                    app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
+                    if not suggestion:
+                        app.logger.info(f"Skipped {drug.name}: AI returned None")
+                        continue
+                    dosage = DrugDosage(drug_id=drug.id, source='ai')
+                    changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                    app.logger.debug(f"Applied {changed} fields to {drug.name} dosage")
+                    if changed:
+                        try:
+                            dosage.source = 'ai'
+                        except Exception:
+                            pass
+                        filled_fields += changed
+                        db.session.add(dosage)
+                        created += 1
+                        pending_writes += 1
+                        app.logger.info(f"Created dosage for {drug.name} (fields: {changed})")
+                    else:
+                        app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
+                except Exception as e:
+                    app.logger.error(f"Error creating dosage for {drug.name}: {e}")
+                    errors += 1
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+                    pending_writes = 0
+                    continue
+
+                if pending_writes >= db_batch_size:
+                    _commit_batch()
+
+        # 2) Create missing dosage rows for controlled drugs
+        if kind_norm in ('controlled', 'both'):
+            missing_controlled = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).limit(max(0, int(create_limit or 0))).all()
+            app.logger.info(f"Agent: Found {len(missing_controlled)} controlled drugs without dosage (kind=controlled)")
+            for drug in missing_controlled:
+                if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                    break
+                try:
+                    suggestion = get_suggestion(drug.name)
+                    app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
+                    if not suggestion:
+                        app.logger.info(f"Skipped {drug.name}: AI returned None")
+                        continue
+                    dosage = ControlledDrugDosage(controlled_drug_id=drug.id, source='ai')
+                    changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                    app.logger.debug(f"Applied {changed} fields to {drug.name} dosage")
+                    if changed:
+                        try:
+                            dosage.source = 'ai'
+                        except Exception:
+                            pass
+                        filled_fields += changed
+                        db.session.add(dosage)
+                        created += 1
+                        pending_writes += 1
+                        app.logger.info(f"Created dosage for {drug.name} (fields: {changed})")
+                    else:
+                        app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
+                except Exception as e:
+                    app.logger.error(f"Error creating dosage for {drug.name}: {e}")
+                    errors += 1
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+                    pending_writes = 0
+                    continue
+
+                if pending_writes >= db_batch_size:
+                    _commit_batch()
+
+        # 3) Fill missing fields for existing rows
+        # Normal
+        if update_limit and int(update_limit) > 0:
+            if kind_norm in ('drug', 'both'):
+                candidates = (
+                    DrugDosage.query.join(Drug)
+                    .filter(_dosage_missing_filter(DrugDosage))
+                    .limit(int(update_limit))
+                    .all()
+                )
+                for dosage in candidates:
+                    if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                        break
+                    try:
+                        drug = dosage.drug
+                        suggestion = get_suggestion(drug.name)
+                        if not suggestion:
+                            continue
+                        before = filled_fields
+                        changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                        if changed:
+                            try:
+                                dosage.source = 'ai'
+                            except Exception:
+                                pass
+                        filled_fields += changed
+                        if filled_fields > before:
+                            updated_records += 1
+                            pending_writes += 1
+                    except Exception:
+                        errors += 1
+                        try:
+                            db.session.rollback()
+                        except Exception:
+                            pass
+                        pending_writes = 0
+                        continue
+
+                    if pending_writes >= db_batch_size:
+                        _commit_batch()
+
+            if kind_norm in ('controlled', 'both'):
+                candidates = (
+                    ControlledDrugDosage.query.join(ControlledDrug)
+                    .filter(_dosage_missing_filter(ControlledDrugDosage))
+                    .limit(int(update_limit))
+                    .all()
+                )
+                for dosage in candidates:
+                    if max_run_seconds and (monotonic() - started) > max_run_seconds:
+                        break
+                    try:
+                        drug = dosage.controlled_drug
+                        suggestion = get_suggestion(drug.name)
+                        if not suggestion:
+                            continue
+                        before = filled_fields
+                        changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
+                        if changed:
+                            try:
+                                dosage.source = 'ai'
+                            except Exception:
+                                pass
+                        filled_fields += changed
+                        if filled_fields > before:
+                            updated_records += 1
+                            pending_writes += 1
+                    except Exception:
+                        errors += 1
+                        try:
+                            db.session.rollback()
+                        except Exception:
+                            pass
+                        pending_writes = 0
+                        continue
+
+                    if pending_writes >= db_batch_size:
+                        _commit_batch()
+
+        # Final commit for any remaining work
+        _commit_batch()
+    finally:
         try:
-            db.session.rollback()
+            _AI_DOSAGE_AGENT_LOCK.release()
         except Exception:
             pass
-        errors += 1
     
     reason = None
     if created == 0 and updated_records == 0 and filled_fields == 0:
@@ -2109,94 +2334,54 @@ def run_ai_dosage_agent_once(
     }
     if reason:
         result['reason'] = reason
-    elif errors and last_ai_error:
-        result['reason'] = f"AI encountered {errors} error(s). Last error: {last_ai_error}"
     return result
 
-
-def _is_transient_db_disconnect(exc: Exception) -> bool:
-    """Best-effort detection of stale/closed DB connections worth retrying."""
-    if isinstance(exc, OperationalError):
-        return True
-    if isinstance(exc, DBAPIError) and bool(getattr(exc, 'connection_invalidated', False)):
-        return True
-    msg = (str(exc) or '').lower()
-    return (
-        'ssl connection has been closed unexpectedly' in msg
-        or 'server closed the connection unexpectedly' in msg
-        or 'connection reset by peer' in msg
-        or 'broken pipe' in msg
-    )
-
-
-def _run_ai_dosage_agent_once_with_db_retry(**kwargs):
-    """Run the agent with a small retry if the DB connection was dropped."""
-    max_attempts = int(os.getenv('AI_DOSAGE_DB_RETRY_ATTEMPTS', '2'))
-    max_attempts = max(1, min(max_attempts, 3))
-    last_exc: Exception | None = None
-
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return run_ai_dosage_agent_once(**kwargs)
-        except Exception as e:
-            last_exc = e
-            if not _is_transient_db_disconnect(e) or attempt >= max_attempts:
-                raise
-
-            # Reset session + pool so next attempt uses a fresh connection.
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
-            try:
-                db.session.close()
-            except Exception:
-                pass
-            try:
-                db.engine.dispose()
-            except Exception:
-                pass
-
-            backoff = min(5, attempt)
-            try:
-                app.logger.warning(
-                    f"Transient DB disconnect during AI dosage agent (attempt {attempt}/{max_attempts}): {type(e).__name__}: {e}. Retrying in {backoff}s..."
-                )
-            except Exception:
-                pass
-            time.sleep(backoff)
-
-    # Should not reach here.
-    if last_exc:
-        raise last_exc
-    raise RuntimeError('AI dosage agent retry loop ended unexpectedly')
 
 
 def scheduled_ai_dosage_agent():
     """Background job runner; safe to run periodically."""
     with app.app_context():
-        try:
-            if not _get_ai_dosage_agent_enabled():
-                return
-            # Aggressive DB processing, bounded external/API usage.
-            result = _run_ai_dosage_agent_once_with_db_retry(
-                kind='both',
-                create_limit=50,
-                update_limit=50,
-                ai_generation_limit=50,
-                max_run_seconds=300,
-            )
-            app.logger.info(f"AI dosage agent ran: {result}")
-        except Exception as e:
+        if not _get_ai_dosage_agent_enabled():
+            return
+
+        # Retry once on transient Postgres disconnects (common with SSL idle timeouts).
+        last_exc: Exception | None = None
+        for attempt in (1, 2):
             try:
-                db.session.rollback()
-            except Exception:
-                pass
-            app.logger.error(f"AI dosage agent error: {str(e)}", exc_info=True)
+                # Start clean each attempt.
+                try:
+                    db.session.remove()
+                except Exception:
+                    pass
 
+                # Aggressive DB processing, bounded external/API usage.
+                result = run_ai_dosage_agent_once(
+                    kind='both',
+                    create_limit=50,
+                    update_limit=50,
+                    ai_generation_limit=50,
+                    max_run_seconds=300,
+                )
+                app.logger.info(f"AI dosage agent ran: {result}")
+                return
+            except Exception as e:
+                last_exc = e
+                # If DB connection dropped, recover and retry once.
+                try:
+                    import sqlalchemy
+                    is_operational = isinstance(e, sqlalchemy.exc.OperationalError)
+                except Exception:
+                    is_operational = False
+                if attempt == 1 and is_operational and _is_db_disconnect_error(e):
+                    _recover_db_connection('scheduled_ai_dosage_agent')
+                    continue
+                break
 
-
-
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        app.logger.error(f"AI dosage agent error: {str(last_exc) if last_exc else 'unknown'}", exc_info=True)
 
 class Patient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -4813,6 +4998,10 @@ def allowed_file(filename):
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('home'))
+
+    # Allow verification flow to remain on the login page.
+    prefill_email = (request.args.get('verify_email') or '').strip()
+    show_email_verification = bool(prefill_email)
     
     if request.method == 'POST':
         email = request.form.get('email')
@@ -4830,8 +5019,15 @@ def login():
         
         if user:
             if not getattr(user, 'is_email_verified', True):
-                flash('Your email is not verified. Enter the OTP sent to your email.', 'warning')
-                return redirect(url_for('auth.verify_email'))
+                # Keep the user on the login page and let them request + verify OTP.
+                verification_email = (str(getattr(user, 'email', '') or '')).strip()
+                flash('Your email is not verified. Request an OTP to continue.', 'warning')
+                return render_template(
+                    'auth/login.html',
+                    show_email_verification=True,
+                    prefill_email=verification_email,
+                    prefill_role=role,
+                )
 
             login_user(user, remember=remember)
             user.last_login = get_eat_now()
@@ -4841,7 +5037,11 @@ def login():
         
         flash('Invalid credentials or role', 'danger')
     
-    return render_template('auth/login.html')
+    return render_template(
+        'auth/login.html',
+        show_email_verification=show_email_verification,
+        prefill_email=prefill_email,
+    )
 
 @app.context_processor
 def inject_current_date():
@@ -5056,7 +5256,46 @@ def _parse_iso_dt(val: str | None) -> datetime | None:
         return None
 
 
-def _as_eat_aware(dt: datetime | None) -> datetime | None:
+def _parse_dt_any(val) -> datetime | None:
+    """Best-effort datetime parser.
+
+    Unlike _parse_iso_dt(), this does NOT assume a timezone for naive values.
+    """
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val
+    s = str(val).strip()
+    if not s:
+        return None
+    # Support ISO 'Z'
+    if s.endswith('Z'):
+        s = s[:-1] + '+00:00'
+    try:
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _as_utc_naive(dt) -> datetime | None:
+    """Coerce datetime-like values to UTC-naive for safe comparisons."""
+    parsed = _parse_dt_any(dt)
+    if parsed is None:
+        return None
+    try:
+        if parsed.tzinfo is None:
+            # Treat naive as already UTC.
+            return parsed
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _as_eat_aware(dt) -> datetime | None:
     """Coerce datetimes to EAT-aware for safe comparison.
 
     Many DB DateTime columns are stored without tzinfo (naive). When loaded,
@@ -5064,7 +5303,13 @@ def _as_eat_aware(dt: datetime | None) -> datetime | None:
     """
     if dt is None:
         return None
+    # SQLite (and some drivers/configs) may return DateTime columns as strings.
+    if isinstance(dt, str):
+        return _parse_iso_dt(dt)
     try:
+        if not isinstance(dt, datetime):
+            parsed = _parse_iso_dt(str(dt))
+            return parsed
         if dt.tzinfo is None:
             return dt.replace(tzinfo=EAT)
         return dt.astimezone(EAT)
@@ -5080,7 +5325,8 @@ def _send_user_verification_otp(user: User) -> None:
     code = _generate_user_otp_code()
     user.is_email_verified = False
     user.email_otp_hash = _user_otp_hash(user_id=int(user.id), code=code)
-    user.email_otp_expires_at = get_eat_now() + timedelta(minutes=10)
+    # Store as UTC-naive to avoid timezone conversion issues across DB backends.
+    user.email_otp_expires_at = _utcnow_naive() + timedelta(minutes=10)
     db.session.commit()
 
     html = (
@@ -5197,27 +5443,34 @@ def reset_with_token(token):
 @auth_bp.route('/verify-email', methods=['GET', 'POST'])
 @limiter.limit("10 per minute")
 def verify_email():
+    # Optional redirect target so OTP verification can be completed from the login page.
+    next_target = (request.values.get('next') or '').strip().lower()
+    def _redirect_back(email_val: str):
+        if next_target == 'login':
+            return redirect(url_for('auth.login', verify_email=(email_val or '').strip()))
+        return redirect(url_for('auth.verify_email'))
+
     if request.method == 'POST':
         email = (request.form.get('email') or '').strip()
         code = (request.form.get('code') or '').strip()
         user = _find_user_by_email_plain(email)
         if not user:
             flash('Invalid email or OTP.', 'danger')
-            return redirect(url_for('auth.verify_email'))
+            return _redirect_back(email)
 
         if user.is_email_verified:
             flash('Email already verified. You can login.', 'info')
             return redirect(url_for('auth.login'))
 
-        now = get_eat_now()
-        expires_at = _as_eat_aware(user.email_otp_expires_at)
+        now = _utcnow_naive()
+        expires_at = _as_utc_naive(user.email_otp_expires_at)
         if not user.email_otp_hash or not expires_at or expires_at < now:
             flash('OTP expired. Please request a new code.', 'danger')
-            return redirect(url_for('auth.verify_email'))
+            return _redirect_back(email)
 
         if _user_otp_hash(user_id=int(user.id), code=code) != (user.email_otp_hash or ''):
             flash('Invalid OTP code. Please try again.', 'danger')
-            return redirect(url_for('auth.verify_email'))
+            return _redirect_back(email)
 
         user.is_email_verified = True
         user.email_otp_hash = None
@@ -5233,11 +5486,17 @@ def verify_email():
 @auth_bp.route('/verify-email/resend', methods=['POST'])
 @limiter.limit("5 per minute")
 def resend_verify_email():
+    next_target = (request.values.get('next') or '').strip().lower()
+    def _redirect_back(email_val: str):
+        if next_target == 'login':
+            return redirect(url_for('auth.login', verify_email=(email_val or '').strip()))
+        return redirect(url_for('auth.verify_email'))
+
     email = (request.form.get('email') or '').strip()
     user = _find_user_by_email_plain(email)
     if not user:
         flash('If this email exists in our system, a new OTP has been sent.', 'info')
-        return redirect(url_for('auth.verify_email'))
+        return _redirect_back(email)
     if user.is_email_verified:
         flash('Email already verified. You can login.', 'info')
         return redirect(url_for('auth.login'))
@@ -5246,9 +5505,9 @@ def resend_verify_email():
     except Exception as e:
         current_app.logger.error(f'User OTP send failed: {e}', exc_info=True)
         flash('Failed to send OTP email. Check email settings and try again.', 'danger')
-        return redirect(url_for('auth.verify_email'))
+        return _redirect_back(email)
     flash('A new OTP has been sent to your email.', 'success')
-    return redirect(url_for('auth.verify_email'))
+    return _redirect_back(email)
 
 
 
@@ -14668,38 +14927,11 @@ def admin_load_dosage_index_book():
 @app.before_request
 def log_request_info():
     """Log detailed information about each request"""
-    # Never log sensitive request data in production.
-    if os.environ.get('RENDER'):
-        return
-    if not app.debug:
-        return
-    if request.method != 'POST':
-        return
-
-    # Opt-in only; avoids noisy logs that look like errors.
-    if (os.environ.get('LOG_POST_REQUESTS') or '').strip().lower() not in ('1', 'true', 'yes', 'on'):
-        return
-
-    def _redact_headers(h: dict) -> dict:
-        redacted = dict(h or {})
-        for k in list(redacted.keys()):
-            lk = str(k).lower()
-            if lk in ('cookie', 'authorization'):
-                redacted[k] = '<redacted>'
-        return redacted
-
-    def _redact_form(d: dict) -> dict:
-        redacted = dict(d or {})
-        for k in list(redacted.keys()):
-            lk = str(k).lower()
-            if 'password' in lk or 'csrf' in lk or 'token' in lk:
-                redacted[k] = '<redacted>'
-        return redacted
-
-    app.logger.debug("POST Request to: %s", request.path)
-    app.logger.debug("Headers: %s", _redact_headers(dict(request.headers)))
-    app.logger.debug("Form data: %s", _redact_form(dict(request.form)))
-    app.logger.debug("JSON data: %s", request.get_json(silent=True))
+    if request.method == 'POST':
+        app.logger.info(f"POST Request to: {request.path}")
+        app.logger.info(f"Headers: {dict(request.headers)}")
+        app.logger.info(f"Form data: {dict(request.form)}")
+        app.logger.info(f"JSON data: {request.get_json(silent=True)}")
         
 # Admin Patient Management Routes
 @app.route('/admin/patients', methods=['GET'])
@@ -16216,10 +16448,10 @@ def admin_ai_fill_missing_dosage_fields():
 
     # Keep this conservative to avoid timeouts.
     try:
-        limit = int(request.form.get('limit') or 10)
+        limit = int(request.form.get('limit') or 50)
     except Exception:
-        limit = 10
-    limit = max(1, min(limit, 25))
+        limit = 50
+    limit = max(1, min(limit, 50))
 
     updated_records = 0
     updated_fields = 0
@@ -16373,13 +16605,12 @@ def admin_run_ai_dosage_agent_now():
         kind = 'both'
 
     try:
-        result = _run_ai_dosage_agent_once_with_db_retry(
+        result = run_ai_dosage_agent_once(
             kind=kind,
             create_limit=50,
             update_limit=50,
-            ai_generation_limit=5,
+            ai_generation_limit=50,
             max_run_seconds=300,
-            created_at=get_eat_now()
         )
         app.logger.info(f"AI dosage agent result: {result}")
         reason = result.get('reason', '')
@@ -16399,368 +16630,149 @@ def admin_run_ai_dosage_agent_now():
     return redirect(request.referrer or url_for('manage_dosage'))
 
 
-def _ai_dosage_jobs_dir() -> str:
-    try:
-        os.makedirs(app.instance_path, exist_ok=True)
-    except Exception:
-        pass
-    path = os.path.join(app.instance_path, 'ai_dosage_jobs')
-    try:
-        os.makedirs(path, exist_ok=True)
-    except Exception:
-        pass
-    return path
-
-
-# Guard file reads/writes of per-job JSON state.
-# This prevents Windows rename/replace races with concurrent polling reads.
-_AI_DOSAGE_JOB_STATE_LOCK = Lock()
-
-
-def _ai_dosage_job_path(job_id: str) -> str:
-    safe_id = (job_id or '').strip()
-    return os.path.join(_ai_dosage_jobs_dir(), f'{safe_id}.json')
-
-
-def _write_ai_dosage_job_state(job_id: str, state: dict):
-    path = _ai_dosage_job_path(job_id)
-    # Use unique temp files to avoid collisions and retry os.replace on Windows.
-    tmp_path = f"{path}.{uuid.uuid4()}.tmp"
-    payload = state or {}
-    try:
-        with _AI_DOSAGE_JOB_STATE_LOCK:
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-                try:
-                    f.flush()
-                    os.fsync(f.fileno())
-                except Exception:
-                    pass
-
-            last_exc: Exception | None = None
-            for attempt in range(1, 8):
-                try:
-                    os.replace(tmp_path, path)
-                    last_exc = None
-                    break
-                except PermissionError as e:
-                    last_exc = e
-                    time.sleep(0.02 * attempt)
-                except OSError as e:
-                    # Some environments/AV scanners can briefly lock files.
-                    last_exc = e
-                    time.sleep(0.02 * attempt)
-
-            if last_exc is not None:
-                # Fallback: best-effort direct write (non-atomic) if rename keeps failing.
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        try:
-            current_app.logger.error(f'Failed to write AI dosage job state: {e}', exc_info=True)
-        except Exception:
-            pass
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
-
-
-def _read_ai_dosage_job_state(job_id: str) -> dict | None:
-    path = _ai_dosage_job_path(job_id)
-    try:
-        if not os.path.exists(path):
-            return None
-        with _AI_DOSAGE_JOB_STATE_LOCK:
-            with open(path, 'r', encoding='utf-8') as f:
-                return json.load(f) or {}
-    except Exception:
-        return None
-
-
-def _estimate_ai_dosage_job_total(*, kind: str, limit: int) -> int:
-    """Best-effort estimate for UI progress counters.
-
-    Note: This is used for display only; the worker updates processed as it goes.
-    """
-    kind_norm = (kind or 'both').strip().lower()
-    if kind_norm not in ('drug', 'controlled', 'both'):
-        kind_norm = 'both'
-    lim = max(0, int(limit or 0))
-    if lim == 0:
-        return 0
-
-    total = 0
-    try:
-        if kind_norm in ('drug', 'both'):
-            total += int(Drug.query.filter(~Drug.dosage.any()).count() or 0)
-    except Exception:
-        pass
-    try:
-        if kind_norm in ('controlled', 'both'):
-            total += int(ControlledDrug.query.filter(~ControlledDrug.dosage.any()).count() or 0)
-    except Exception:
-        pass
-
-    return min(total, lim) if total else 0
-
-
-def _estimate_ai_dosage_job_total_v2(*, kind: str, create_limit: int, update_limit: int) -> int:
-    kind_norm = (kind or 'both').strip().lower()
-    if kind_norm not in ('drug', 'controlled', 'both'):
-        kind_norm = 'both'
-
-    create_lim = max(0, int(create_limit or 0))
-    update_lim = max(0, int(update_limit or 0))
-
-    total = 0
-    try:
-        if create_lim and kind_norm in ('drug', 'both'):
-            total += min(create_lim, int(Drug.query.filter(~Drug.dosage.any()).count() or 0))
-    except Exception:
-        pass
-    try:
-        if create_lim and kind_norm in ('controlled', 'both'):
-            total += min(create_lim, int(ControlledDrug.query.filter(~ControlledDrug.dosage.any()).count() or 0))
-    except Exception:
-        pass
-
-    try:
-        if update_lim and kind_norm in ('drug', 'both'):
-            total += min(update_lim, int(DrugDosage.query.filter(_dosage_missing_filter(DrugDosage)).count() or 0))
-    except Exception:
-        pass
-    try:
-        if update_lim and kind_norm in ('controlled', 'both'):
-            total += min(update_lim, int(ControlledDrugDosage.query.filter(_dosage_missing_filter(ControlledDrugDosage)).count() or 0))
-    except Exception:
-        pass
-
-    return int(total or 0)
-
-
-def _ai_dosage_job_worker(job_id: str, *, kind: str, mode: str, limit: int):
-    with app.app_context():
-        started_at = get_eat_now().isoformat()
-
-        kind_norm = (kind or 'both').strip().lower()
-        if kind_norm not in ('drug', 'controlled', 'both'):
-            kind_norm = 'both'
-
-        mode_norm = (mode or 'full').strip().lower()
-        if mode_norm not in ('full', 'fill'):
-            mode_norm = 'full'
-
-        lim = max(0, int(limit or 0))
-
-        # Mode semantics (matches templates):
-        # - full: create missing dosages + fill missing fields
-        # - fill: fill missing fields only (no creation)
-        create_lim = lim if mode_norm == 'full' else 0
-        update_lim = lim
-
-        total = 0
-        try:
-            total = _estimate_ai_dosage_job_total_v2(kind=kind_norm, create_limit=create_lim, update_limit=update_lim)
-        except Exception:
-            total = 0
-
-        state = {
-            'job_id': job_id,
-            'status': 'running',
-            'kind': kind_norm,
-            'mode': mode_norm,
-            'limit': lim,
-            'total': total,
-            'processed': 0,
-            'remaining': total,
-            'completed': 0,
-            'failed': 0,
-            'updates': [],
-            'seq': 0,
-            'started_at': started_at,
-        }
-        _write_ai_dosage_job_state(job_id, state)
-
-        if not _get_ai_dosage_agent_enabled():
-            state.update({
-                'status': 'complete',
-                'reason': 'AI dosage agent is disabled. Enable it first to run.',
-                'finished_at': get_eat_now().isoformat(),
-                'processed': 0,
-                'remaining': total,
-            })
-            _write_ai_dosage_job_state(job_id, state)
-            return
-
-        # update_lim always applies; create_lim depends on mode.
-
-        # Progress reporting closure.
-        seq = 0
-        processed = 0
-        last_write = monotonic()
-
-        def progress_hook(evt: dict):
-            nonlocal seq, processed, last_write, state
-            if not isinstance(evt, dict):
-                return
-
-            ev_type = (evt.get('event') or '').strip().lower()
-            ev_kind = (evt.get('kind') or '').strip().lower()
-
-            if ev_type == 'tick':
-                processed += 1
-                state['processed'] = int(processed)
-                state['completed'] = int(processed)
-                state['remaining'] = max(0, int(state.get('total', 0) or 0) - int(processed))
-
-            elif ev_type in ('row_start', 'row', 'row_done') and ev_kind in ('drug', 'controlled'):
-                # Only append UI updates that the frontend knows how to apply.
-                try:
-                    drug_id = int(evt.get('drug_id') or 0)
-                except Exception:
-                    drug_id = 0
-                if not drug_id:
-                    return
-
-                seq += 1
-                update = dict(evt)
-                update['seq'] = int(seq)
-                update['kind'] = ev_kind
-
-                updates = state.get('updates') or []
-                updates.append(update)
-                # Cap to avoid unbounded growth.
-                if len(updates) > 500:
-                    updates = updates[-500:]
-                state['updates'] = updates
-                state['seq'] = int(seq)
-
-            # Throttle disk writes.
-            now = monotonic()
-            if (processed % 10 == 0) or (now - last_write > 0.75):
-                last_write = now
-                _write_ai_dosage_job_state(job_id, state)
-
-        try:
-            result = _run_ai_dosage_agent_once_with_db_retry(
-                kind=kind_norm,
-                create_limit=create_lim,
-                update_limit=update_lim,
-                ai_generation_limit=max(1, lim) if lim else 1,
-                max_run_seconds=600,
-                created_at=get_eat_now(),
-                progress_hook=progress_hook,
-            )
-
-            state.update({
-                'status': 'complete',
-                'finished_at': get_eat_now().isoformat(),
-                'created': int(result.get('created', 0) or 0),
-                'updated_records': int(result.get('updated_records', 0) or 0),
-                'filled_fields': int(result.get('filled_fields', 0) or 0),
-                'errors': int(result.get('errors', 0) or 0),
-                'reason': result.get('reason', ''),
-            })
-
-            # Finalize counters: if we didn't have a reliable estimate, fall back to processed.
-            final_processed = int(state.get('processed', 0) or 0)
-            final_total = int(state.get('total', 0) or 0)
-            if final_total <= 0:
-                final_total = final_processed
-                state['total'] = final_total
-            state['processed'] = final_processed
-            state['completed'] = final_processed
-            state['failed'] = 0
-            state['remaining'] = max(0, final_total - final_processed)
-            _write_ai_dosage_job_state(job_id, state)
-
-        except Exception as e:
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
-
-            state.update({
-                'status': 'failed',
-                'finished_at': get_eat_now().isoformat(),
-                'reason': f'{type(e).__name__}: {str(e)}',
-                'failed': max(1, int(state.get('failed', 0) or 0)),
-            })
-            _write_ai_dosage_job_state(job_id, state)
-
-
 @app.route('/admin/dosage/ai-agent/start-job', methods=['POST'])
 @login_required
 def admin_start_ai_dosage_agent_job():
-    """Start AI dosage generation as a background job.
-
-    The admin dosage templates use this endpoint via AJAX and expect JSON: {job_id: ...}.
-    """
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
 
     if not _get_ai_dosage_agent_enabled():
-        return jsonify({'error': 'AI dosage agent is disabled. Enable it first to run.'}), 400
+        return jsonify({'error': 'AI dosage agent is disabled. Enable it first.'}), 400
 
     kind = (request.form.get('kind') or 'drug').strip().lower()
+    if kind not in ('drug', 'controlled'):
+        kind = 'drug'
+
     mode = (request.form.get('mode') or 'full').strip().lower()
+    if mode not in ('full', 'fill'):
+        mode = 'full'
+
     try:
-        limit = int((request.form.get('limit') or '50').strip())
+        limit = int(request.form.get('limit') or 10)
     except Exception:
-        limit = 50
-    limit = max(1, min(limit, 5000))
+        limit = 10
+    limit = max(1, min(limit, 25))
 
     job_id = str(uuid.uuid4())
-    initial_state = {
+    initial = {
         'job_id': job_id,
-        'status': 'starting',
         'kind': kind,
         'mode': mode,
-        'limit': limit,
-        'total': 0,
+        'requested_by_user_id': current_user.id,
+        'status': 'starting',
+        'total': int(limit),
         'processed': 0,
-        'remaining': 0,
         'completed': 0,
         'failed': 0,
+        'created': 0,
+        'updated_records': 0,
+        'filled_fields': 0,
+        'errors': 0,
         'updates': [],
-        'seq': 0,
+        'update_seq': 0,
         'started_at': get_eat_now().isoformat(),
+        'updated_at': get_eat_now().isoformat(),
     }
-    _write_ai_dosage_job_state(job_id, initial_state)
+    _write_ai_job_state(job_id, initial)
 
-    t = Thread(target=_ai_dosage_job_worker, args=(job_id,), kwargs={'kind': kind, 'mode': mode, 'limit': limit})
-    t.daemon = True
+    t = threading.Thread(
+        target=_ai_dosage_job_thread,
+        kwargs={
+            'job_id': job_id,
+            'kind': kind,
+            'mode': mode,
+            'limit': limit,
+            'requested_by_user_id': current_user.id,
+        },
+        daemon=True,
+    )
     t.start()
 
+    # Total gets recalculated by the runner based on availability/budget.
     return jsonify({'job_id': job_id})
 
 
-@app.route('/admin/dosage/ai-agent/job/<string:job_id>/status', methods=['GET'])
+@app.route('/admin/dosage/ai-agent/job/<job_id>/status')
 @login_required
-def admin_ai_dosage_agent_job_status(job_id: str):
+def admin_ai_dosage_agent_job_status(job_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
 
-    state = _read_ai_dosage_job_state(job_id)
+    state = _read_ai_job_state(job_id)
     if not state:
         return jsonify({'error': 'Job not found'}), 404
+    if int(state.get('requested_by_user_id') or 0) != int(current_user.id):
+        return jsonify({'error': 'Forbidden'}), 403
 
     try:
-        since = int(request.args.get('since', 0))
+        since = int(request.args.get('since') or 0)
     except Exception:
         since = 0
+    updates = [u for u in (state.get('updates') or []) if int(u.get('seq') or 0) > since]
 
-    updates = state.get('updates') or []
-    if since:
-        try:
-            updates = [u for u in updates if int(u.get('seq', 0) or 0) > since]
-        except Exception:
-            pass
-    state['updates'] = updates
-    return jsonify(state)
+    total = int(state.get('total') or 0)
+    processed = int(state.get('processed') or 0)
+    remaining = max(0, total - processed)
+
+    complete_url = url_for('admin_ai_dosage_agent_job_complete', job_id=job_id)
+    return jsonify({
+        'job_id': job_id,
+        'status': state.get('status') or 'unknown',
+        'kind': state.get('kind'),
+        'mode': state.get('mode'),
+        'total': total,
+        'processed': processed,
+        'completed': int(state.get('completed') or 0),
+        'failed': int(state.get('failed') or 0),
+        'remaining': remaining,
+        'created': int(state.get('created') or 0),
+        'updated_records': int(state.get('updated_records') or 0),
+        'filled_fields': int(state.get('filled_fields') or 0),
+        'errors': int(state.get('errors') or 0),
+        'message': state.get('message') or '',
+        'updates': updates,
+        'last_seq': int(state.get('update_seq') or 0),
+        'complete_url': complete_url,
+    })
+
+
+@app.route('/admin/dosage/ai-agent/job/<job_id>/complete')
+@login_required
+def admin_ai_dosage_agent_job_complete(job_id):
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    state = _read_ai_job_state(job_id)
+    if not state:
+        flash('AI job not found', 'danger')
+        return redirect(url_for('manage_dosage'))
+    if int(state.get('requested_by_user_id') or 0) != int(current_user.id):
+        flash('Forbidden', 'danger')
+        return redirect(url_for('manage_dosage'))
+
+    status = state.get('status') or 'unknown'
+    kind = state.get('kind') or 'drug'
+    created = int(state.get('created') or 0)
+    updated_records = int(state.get('updated_records') or 0)
+    filled_fields = int(state.get('filled_fields') or 0)
+    failed = int(state.get('failed') or 0)
+    errors = int(state.get('errors') or 0)
+    total = int(state.get('total') or 0)
+    processed = int(state.get('processed') or 0)
+
+    if status == 'failed':
+        msg = f'AI dosage generation failed: processed {processed}/{total}. Errors: {errors}. {state.get("message") or ""}'
+        flash(msg, 'danger')
+    else:
+        msg = (
+            f'AI dosage generation complete: processed {processed}/{total}; '
+            f'created {created}, updated {updated_records}, filled {filled_fields} field(s); '
+            f'failed {failed}, errors {errors}.'
+        )
+        flash(msg, 'success' if errors == 0 and failed == 0 else 'warning')
+
+    return redirect(url_for('manage_controlled_dosage' if kind == 'controlled' else 'manage_dosage'))
 
 
 @app.route('/doctor/drugs/<int:drug_id>/dosage')
