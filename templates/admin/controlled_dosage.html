@@ -422,21 +422,58 @@ function _setControlledProgressText(text) {
     if (el) el.textContent = text;
 }
 
+const _aiControlledRowTimers = {};
+
+function _clearControlledRowTimers(drugId) {
+    const key = String(drugId || '');
+    const timers = _aiControlledRowTimers[key] || [];
+    timers.forEach(function(t) {
+        try { clearTimeout(t); } catch (e) {}
+    });
+    _aiControlledRowTimers[key] = [];
+}
+
+function _setCellLoading(cell) {
+    if (!cell) return;
+    cell.innerHTML = '<span class="ai-cell-loading"><i class="fas fa-spinner fa-spin"></i> loading...</span>';
+}
+
+function _setCellText(cell, value) {
+    if (!cell) return;
+    cell.textContent = (value && String(value).trim()) ? String(value) : '-';
+}
+
 function _applyControlledRowUpdate(u) {
     if (!u || !u.drug_id) return;
     const row = document.getElementById(`controlled-row-${u.drug_id}`);
     if (!row) return;
 
-    const indication = (u.indication || '-');
-    const adults = (u.dosage_adults || '-');
-    const peds = (u.dosage_peds || '-');
-
     const c1 = row.querySelector('.col-indication');
     const c2 = row.querySelector('.col-adults');
     const c3 = row.querySelector('.col-peds');
-    if (c1) c1.textContent = indication;
-    if (c2) c2.textContent = adults;
-    if (c3) c3.textContent = peds;
+
+    if ((u.event || '') === 'row_start') {
+        _clearControlledRowTimers(u.drug_id);
+        _setCellLoading(c1);
+        return;
+    }
+
+    const indication = (u.indication || '');
+    const adults = (u.dosage_adults || '');
+    const peds = (u.dosage_peds || '');
+
+    _clearControlledRowTimers(u.drug_id);
+    _setCellText(c1, indication);
+    _setCellLoading(c2);
+    const t1 = setTimeout(function() {
+        _setCellText(c2, adults);
+        _setCellLoading(c3);
+        const t2 = setTimeout(function() {
+            _setCellText(c3, peds);
+        }, 450);
+        _aiControlledRowTimers[String(u.drug_id)].push(t2);
+    }, 450);
+    _aiControlledRowTimers[String(u.drug_id)].push(t1);
 
     if (u.dosage_id) {
         row.setAttribute('data-has-dosage', '1');

@@ -422,21 +422,63 @@ function _setProgressText(text) {
     if (el) el.textContent = text;
 }
 
+const _aiDrugRowTimers = {};
+
+function _clearDrugRowTimers(drugId) {
+    const key = String(drugId || '');
+    const timers = _aiDrugRowTimers[key] || [];
+    timers.forEach(function(t) {
+        try { clearTimeout(t); } catch (e) {}
+    });
+    _aiDrugRowTimers[key] = [];
+}
+
+function _setCellLoading(cell) {
+    if (!cell) return;
+    cell.innerHTML = '<span class="ai-cell-loading"><i class="fas fa-spinner fa-spin"></i> loading...</span>';
+}
+
+function _setCellText(cell, value) {
+    if (!cell) return;
+    cell.textContent = (value && String(value).trim()) ? String(value) : '-';
+}
+
 function _applyDrugRowUpdate(u) {
     if (!u || !u.drug_id) return;
     const row = document.getElementById(`drug-row-${u.drug_id}`);
     if (!row) return;
 
-    const indication = (u.indication || '-');
-    const adults = (u.dosage_adults || '-');
-    const peds = (u.dosage_peds || '-');
-
     const c1 = row.querySelector('.col-indication');
     const c2 = row.querySelector('.col-adults');
     const c3 = row.querySelector('.col-peds');
-    if (c1) c1.textContent = indication;
-    if (c2) c2.textContent = adults;
-    if (c3) c3.textContent = peds;
+
+    // While AI is generating, show a spinner in the active column.
+    if ((u.event || '') === 'row_start') {
+        _clearDrugRowTimers(u.drug_id);
+        _setCellLoading(c1);
+        return;
+    }
+
+    const indication = (u.indication || '');
+    const adults = (u.dosage_adults || '');
+    const peds = (u.dosage_peds || '');
+
+    // Animate across columns once the result arrives:
+    // 1) write indication
+    // 2) show spinner in adults, then write adults
+    // 3) show spinner in peds, then write peds
+    _clearDrugRowTimers(u.drug_id);
+    _setCellText(c1, indication);
+    _setCellLoading(c2);
+    const t1 = setTimeout(function() {
+        _setCellText(c2, adults);
+        _setCellLoading(c3);
+        const t2 = setTimeout(function() {
+            _setCellText(c3, peds);
+        }, 450);
+        _aiDrugRowTimers[String(u.drug_id)].push(t2);
+    }, 450);
+    _aiDrugRowTimers[String(u.drug_id)].push(t1);
 
     if (u.dosage_id) {
         row.setAttribute('data-has-dosage', '1');

@@ -1698,6 +1698,7 @@ def run_ai_dosage_agent_once(
     ai_generation_limit: int = 50,
     max_run_seconds: int = 300,
     created_at: Optional[datetime] = None,
+    progress_hook=None,
     **_ignored_kwargs,
 ):
     """Creates missing dosage rows and fills missing fields (does not overwrite existing values).
@@ -1740,6 +1741,15 @@ def run_ai_dosage_agent_once(
     if kind_norm not in ('drug', 'controlled', 'both'):
         kind_norm = 'both'
 
+    def emit(event: dict):
+        if not progress_hook:
+            return
+        try:
+            progress_hook(event)
+        except Exception:
+            # Never let progress reporting break the actual agent run.
+            pass
+
     def get_suggestion(name: str):
         nonlocal ai_budget, errors, last_ai_error
         if ai_budget <= 0:
@@ -1766,10 +1776,13 @@ def run_ai_dosage_agent_once(
             if max_run_seconds and (monotonic() - started) > max_run_seconds:
                 break
             try:
+                if ai_budget > 0:
+                    emit({'event': 'row_start', 'kind': 'drug', 'drug_id': int(drug.id)})
                 suggestion = get_suggestion(drug.name)
                 app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
                 if not suggestion:
                     app.logger.info(f"Skipped {drug.name}: AI returned None")
+                    emit({'event': 'tick', 'kind': 'meta'})
                     continue
                 dosage = DrugDosage(drug_id=drug.id, source='ai')
                 changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
@@ -1781,10 +1794,22 @@ def run_ai_dosage_agent_once(
                         pass
                     filled_fields += changed
                     db.session.add(dosage)
+                    db.session.flush()
                     created += 1
                     app.logger.info(f"Created dosage for {drug.name} (fields: {changed})")
+
+                    emit({
+                        'event': 'row',
+                        'kind': 'drug',
+                        'drug_id': int(drug.id),
+                        'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
+                        'indication': dosage.indication,
+                        'dosage_adults': dosage.dosage_adults,
+                        'dosage_peds': dosage.dosage_peds,
+                    })
                 else:
                     app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
+                emit({'event': 'tick', 'kind': 'meta'})
             except Exception as e:
                 app.logger.error(f"Error creating dosage for {drug.name}: {e}")
                 errors += 1
@@ -1792,6 +1817,7 @@ def run_ai_dosage_agent_once(
                     db.session.rollback()
                 except Exception:
                     pass
+                emit({'event': 'tick', 'kind': 'meta'})
                 continue
 
             if created % 200 == 0:
@@ -1805,10 +1831,13 @@ def run_ai_dosage_agent_once(
             if max_run_seconds and (monotonic() - started) > max_run_seconds:
                 break
             try:
+                if ai_budget > 0:
+                    emit({'event': 'row_start', 'kind': 'controlled', 'drug_id': int(drug.id)})
                 suggestion = get_suggestion(drug.name)
                 app.logger.debug(f"AI suggestion for '{drug.name}': {suggestion}")
                 if not suggestion:
                     app.logger.info(f"Skipped {drug.name}: AI returned None")
+                    emit({'event': 'tick', 'kind': 'meta'})
                     continue
                 dosage = ControlledDrugDosage(controlled_drug_id=drug.id, source='ai')
                 changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
@@ -1820,10 +1849,22 @@ def run_ai_dosage_agent_once(
                         pass
                     filled_fields += changed
                     db.session.add(dosage)
+                    db.session.flush()
                     created += 1
                     app.logger.info(f"Created dosage for {drug.name} (fields: {changed})")
+
+                    emit({
+                        'event': 'row',
+                        'kind': 'controlled',
+                        'drug_id': int(drug.id),
+                        'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
+                        'indication': dosage.indication,
+                        'dosage_adults': dosage.dosage_adults,
+                        'dosage_peds': dosage.dosage_peds,
+                    })
                 else:
                     app.logger.info(f"Skipped {drug.name}: suggestion had no fields to apply")
+                emit({'event': 'tick', 'kind': 'meta'})
             except Exception as e:
                 app.logger.error(f"Error creating dosage for {drug.name}: {e}")
                 errors += 1
@@ -1831,6 +1872,7 @@ def run_ai_dosage_agent_once(
                     db.session.rollback()
                 except Exception:
                     pass
+                emit({'event': 'tick', 'kind': 'meta'})
                 continue
 
             if created % 200 == 0:
@@ -1851,8 +1893,11 @@ def run_ai_dosage_agent_once(
                     break
                 try:
                     drug = dosage.drug
+                    if ai_budget > 0:
+                        emit({'event': 'row_start', 'kind': 'drug', 'drug_id': int(getattr(dosage, 'drug_id', 0) or 0)})
                     suggestion = get_suggestion(drug.name)
                     if not suggestion:
+                        emit({'event': 'tick', 'kind': 'meta'})
                         continue
                     before = filled_fields
                     changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
@@ -1864,12 +1909,25 @@ def run_ai_dosage_agent_once(
                     filled_fields += changed
                     if filled_fields > before:
                         updated_records += 1
+
+                        emit({
+                            'event': 'row',
+                            'kind': 'drug',
+                            'drug_id': int(getattr(dosage, 'drug_id', 0) or 0) or None,
+                            'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
+                            'indication': dosage.indication,
+                            'dosage_adults': dosage.dosage_adults,
+                            'dosage_peds': dosage.dosage_peds,
+                        })
+
+                    emit({'event': 'tick', 'kind': 'meta'})
                 except Exception:
                     errors += 1
                     try:
                         db.session.rollback()
                     except Exception:
                         pass
+                    emit({'event': 'tick', 'kind': 'meta'})
                     continue
 
         if kind_norm in ('controlled', 'both'):
@@ -1884,8 +1942,11 @@ def run_ai_dosage_agent_once(
                     break
                 try:
                     drug = dosage.controlled_drug
+                    if ai_budget > 0:
+                        emit({'event': 'row_start', 'kind': 'controlled', 'drug_id': int(getattr(dosage, 'controlled_drug_id', 0) or 0)})
                     suggestion = get_suggestion(drug.name)
                     if not suggestion:
+                        emit({'event': 'tick', 'kind': 'meta'})
                         continue
                     before = filled_fields
                     changed = _apply_dosage_suggestion_to_model(dosage, suggestion)
@@ -1897,12 +1958,25 @@ def run_ai_dosage_agent_once(
                     filled_fields += changed
                     if filled_fields > before:
                         updated_records += 1
+
+                        emit({
+                            'event': 'row',
+                            'kind': 'controlled',
+                            'drug_id': int(getattr(dosage, 'controlled_drug_id', 0) or 0) or None,
+                            'dosage_id': int(getattr(dosage, 'id', 0) or 0) or None,
+                            'indication': dosage.indication,
+                            'dosage_adults': dosage.dosage_adults,
+                            'dosage_peds': dosage.dosage_peds,
+                        })
+
+                    emit({'event': 'tick', 'kind': 'meta'})
                 except Exception:
                     errors += 1
                     try:
                         db.session.rollback()
                     except Exception:
                         pass
+                    emit({'event': 'tick', 'kind': 'meta'})
                     continue
 
     try:
@@ -16234,6 +16308,332 @@ def admin_run_ai_dosage_agent_now():
         flash(f'AI dosage agent run failed: {str(e)}', 'danger')
 
     return redirect(request.referrer or url_for('manage_dosage'))
+
+
+def _ai_dosage_jobs_dir() -> str:
+    try:
+        os.makedirs(app.instance_path, exist_ok=True)
+    except Exception:
+        pass
+    path = os.path.join(app.instance_path, 'ai_dosage_jobs')
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        pass
+    return path
+
+
+def _ai_dosage_job_path(job_id: str) -> str:
+    safe_id = (job_id or '').strip()
+    return os.path.join(_ai_dosage_jobs_dir(), f'{safe_id}.json')
+
+
+def _write_ai_dosage_job_state(job_id: str, state: dict):
+    path = _ai_dosage_job_path(job_id)
+    tmp_path = f'{path}.tmp'
+    try:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(state or {}, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except Exception as e:
+        try:
+            current_app.logger.error(f'Failed to write AI dosage job state: {e}', exc_info=True)
+        except Exception:
+            pass
+
+
+def _read_ai_dosage_job_state(job_id: str) -> dict | None:
+    path = _ai_dosage_job_path(job_id)
+    try:
+        if not os.path.exists(path):
+            return None
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f) or {}
+    except Exception:
+        return None
+
+
+def _estimate_ai_dosage_job_total(*, kind: str, limit: int) -> int:
+    """Best-effort estimate for UI progress counters.
+
+    Note: This is used for display only; the worker updates processed as it goes.
+    """
+    kind_norm = (kind or 'both').strip().lower()
+    if kind_norm not in ('drug', 'controlled', 'both'):
+        kind_norm = 'both'
+    lim = max(0, int(limit or 0))
+    if lim == 0:
+        return 0
+
+    total = 0
+    try:
+        if kind_norm in ('drug', 'both'):
+            total += int(Drug.query.filter(~Drug.dosage.any()).count() or 0)
+    except Exception:
+        pass
+    try:
+        if kind_norm in ('controlled', 'both'):
+            total += int(ControlledDrug.query.filter(~ControlledDrug.dosage.any()).count() or 0)
+    except Exception:
+        pass
+
+    return min(total, lim) if total else 0
+
+
+def _estimate_ai_dosage_job_total_v2(*, kind: str, create_limit: int, update_limit: int) -> int:
+    kind_norm = (kind or 'both').strip().lower()
+    if kind_norm not in ('drug', 'controlled', 'both'):
+        kind_norm = 'both'
+
+    create_lim = max(0, int(create_limit or 0))
+    update_lim = max(0, int(update_limit or 0))
+
+    total = 0
+    try:
+        if create_lim and kind_norm in ('drug', 'both'):
+            total += min(create_lim, int(Drug.query.filter(~Drug.dosage.any()).count() or 0))
+    except Exception:
+        pass
+    try:
+        if create_lim and kind_norm in ('controlled', 'both'):
+            total += min(create_lim, int(ControlledDrug.query.filter(~ControlledDrug.dosage.any()).count() or 0))
+    except Exception:
+        pass
+
+    try:
+        if update_lim and kind_norm in ('drug', 'both'):
+            total += min(update_lim, int(DrugDosage.query.filter(_dosage_missing_filter(DrugDosage)).count() or 0))
+    except Exception:
+        pass
+    try:
+        if update_lim and kind_norm in ('controlled', 'both'):
+            total += min(update_lim, int(ControlledDrugDosage.query.filter(_dosage_missing_filter(ControlledDrugDosage)).count() or 0))
+    except Exception:
+        pass
+
+    return int(total or 0)
+
+
+def _ai_dosage_job_worker(job_id: str, *, kind: str, mode: str, limit: int):
+    with app.app_context():
+        started_at = get_eat_now().isoformat()
+
+        kind_norm = (kind or 'both').strip().lower()
+        if kind_norm not in ('drug', 'controlled', 'both'):
+            kind_norm = 'both'
+
+        mode_norm = (mode or 'full').strip().lower()
+        if mode_norm not in ('full', 'fill'):
+            mode_norm = 'full'
+
+        lim = max(0, int(limit or 0))
+
+        # Mode semantics (matches templates):
+        # - full: create missing dosages + fill missing fields
+        # - fill: fill missing fields only (no creation)
+        create_lim = lim if mode_norm == 'full' else 0
+        update_lim = lim
+
+        total = 0
+        try:
+            total = _estimate_ai_dosage_job_total_v2(kind=kind_norm, create_limit=create_lim, update_limit=update_lim)
+        except Exception:
+            total = 0
+
+        state = {
+            'job_id': job_id,
+            'status': 'running',
+            'kind': kind_norm,
+            'mode': mode_norm,
+            'limit': lim,
+            'total': total,
+            'processed': 0,
+            'remaining': total,
+            'completed': 0,
+            'failed': 0,
+            'updates': [],
+            'seq': 0,
+            'started_at': started_at,
+        }
+        _write_ai_dosage_job_state(job_id, state)
+
+        if not _get_ai_dosage_agent_enabled():
+            state.update({
+                'status': 'complete',
+                'reason': 'AI dosage agent is disabled. Enable it first to run.',
+                'finished_at': get_eat_now().isoformat(),
+                'processed': 0,
+                'remaining': total,
+            })
+            _write_ai_dosage_job_state(job_id, state)
+            return
+
+        # update_lim always applies; create_lim depends on mode.
+
+        # Progress reporting closure.
+        seq = 0
+        processed = 0
+        last_write = monotonic()
+
+        def progress_hook(evt: dict):
+            nonlocal seq, processed, last_write, state
+            if not isinstance(evt, dict):
+                return
+
+            ev_type = (evt.get('event') or '').strip().lower()
+            ev_kind = (evt.get('kind') or '').strip().lower()
+
+            if ev_type == 'tick':
+                processed += 1
+                state['processed'] = int(processed)
+                state['completed'] = int(processed)
+                state['remaining'] = max(0, int(state.get('total', 0) or 0) - int(processed))
+
+            elif ev_type in ('row_start', 'row', 'row_done') and ev_kind in ('drug', 'controlled'):
+                # Only append UI updates that the frontend knows how to apply.
+                try:
+                    drug_id = int(evt.get('drug_id') or 0)
+                except Exception:
+                    drug_id = 0
+                if not drug_id:
+                    return
+
+                seq += 1
+                update = dict(evt)
+                update['seq'] = int(seq)
+                update['kind'] = ev_kind
+
+                updates = state.get('updates') or []
+                updates.append(update)
+                # Cap to avoid unbounded growth.
+                if len(updates) > 500:
+                    updates = updates[-500:]
+                state['updates'] = updates
+                state['seq'] = int(seq)
+
+            # Throttle disk writes.
+            now = monotonic()
+            if (processed % 10 == 0) or (now - last_write > 0.75):
+                last_write = now
+                _write_ai_dosage_job_state(job_id, state)
+
+        try:
+            result = _run_ai_dosage_agent_once_with_db_retry(
+                kind=kind_norm,
+                create_limit=create_lim,
+                update_limit=update_lim,
+                ai_generation_limit=max(1, lim) if lim else 1,
+                max_run_seconds=600,
+                created_at=get_eat_now(),
+                progress_hook=progress_hook,
+            )
+
+            state.update({
+                'status': 'complete',
+                'finished_at': get_eat_now().isoformat(),
+                'created': int(result.get('created', 0) or 0),
+                'updated_records': int(result.get('updated_records', 0) or 0),
+                'filled_fields': int(result.get('filled_fields', 0) or 0),
+                'errors': int(result.get('errors', 0) or 0),
+                'reason': result.get('reason', ''),
+            })
+
+            # Finalize counters: if we didn't have a reliable estimate, fall back to processed.
+            final_processed = int(state.get('processed', 0) or 0)
+            final_total = int(state.get('total', 0) or 0)
+            if final_total <= 0:
+                final_total = final_processed
+                state['total'] = final_total
+            state['processed'] = final_processed
+            state['completed'] = final_processed
+            state['failed'] = 0
+            state['remaining'] = max(0, final_total - final_processed)
+            _write_ai_dosage_job_state(job_id, state)
+
+        except Exception as e:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+            state.update({
+                'status': 'failed',
+                'finished_at': get_eat_now().isoformat(),
+                'reason': f'{type(e).__name__}: {str(e)}',
+                'failed': max(1, int(state.get('failed', 0) or 0)),
+            })
+            _write_ai_dosage_job_state(job_id, state)
+
+
+@app.route('/admin/dosage/ai-agent/start-job', methods=['POST'])
+@login_required
+def admin_start_ai_dosage_agent_job():
+    """Start AI dosage generation as a background job.
+
+    The admin dosage templates use this endpoint via AJAX and expect JSON: {job_id: ...}.
+    """
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if not _get_ai_dosage_agent_enabled():
+        return jsonify({'error': 'AI dosage agent is disabled. Enable it first to run.'}), 400
+
+    kind = (request.form.get('kind') or 'drug').strip().lower()
+    mode = (request.form.get('mode') or 'full').strip().lower()
+    try:
+        limit = int((request.form.get('limit') or '50').strip())
+    except Exception:
+        limit = 50
+    limit = max(1, min(limit, 5000))
+
+    job_id = str(uuid.uuid4())
+    initial_state = {
+        'job_id': job_id,
+        'status': 'starting',
+        'kind': kind,
+        'mode': mode,
+        'limit': limit,
+        'total': 0,
+        'processed': 0,
+        'remaining': 0,
+        'completed': 0,
+        'failed': 0,
+        'updates': [],
+        'seq': 0,
+        'started_at': get_eat_now().isoformat(),
+    }
+    _write_ai_dosage_job_state(job_id, initial_state)
+
+    t = Thread(target=_ai_dosage_job_worker, args=(job_id,), kwargs={'kind': kind, 'mode': mode, 'limit': limit})
+    t.daemon = True
+    t.start()
+
+    return jsonify({'job_id': job_id})
+
+
+@app.route('/admin/dosage/ai-agent/job/<string:job_id>/status', methods=['GET'])
+@login_required
+def admin_ai_dosage_agent_job_status(job_id: str):
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    state = _read_ai_dosage_job_state(job_id)
+    if not state:
+        return jsonify({'error': 'Job not found'}), 404
+
+    try:
+        since = int(request.args.get('since', 0))
+    except Exception:
+        since = 0
+
+    updates = state.get('updates') or []
+    if since:
+        try:
+            updates = [u for u in updates if int(u.get('seq', 0) or 0) > since]
+        except Exception:
+            pass
+    state['updates'] = updates
+    return jsonify(state)
 
 
 @app.route('/doctor/drugs/<int:drug_id>/dosage')
