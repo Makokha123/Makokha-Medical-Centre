@@ -569,17 +569,6 @@
     {% endif %}
 
     {% if not is_embed %}
-    <!-- Top navigation bar -->
-    <nav class="navbar navbar-expand-lg navbar-light bg-white fixed-top shadow-sm" style="height: var(--header-height); padding-left: 60px;">
-        <div class="container-fluid">
-            <div class="ms-auto d-flex align-items-center">
-                <!-- EAT Clock (top-right) -->
-                <div id="eatClock" class="text-success small fw-semibold"></div>
-                <!-- User profile dropdown can go here if needed -->
-            </div>
-        </div>
-    </nav>
-
     <!-- PC Hamburger Toggle (Green with white background) -->
     <button class="pc-toggle-nav" id="pcToggleNav">
         <i class="fas fa-bars"></i>
@@ -589,6 +578,9 @@
     <button class="toggle-nav" id="toggleNav">
         <i class="fas fa-bars"></i>
     </button>
+
+    <!-- EAT Clock (floating, no background) -->
+    <div id="eatClock" class="text-success small fw-semibold"></div>
 
     <!-- Sidebar Navigation -->
     <div class="sidebar" id="sidebar">
