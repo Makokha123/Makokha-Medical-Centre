@@ -332,7 +332,17 @@
 }
 
 /* Make table scroll well on small devices */
-@media screen and (max-width: 768px) {
+@media (min-width: 320px) and (max-width: 480px) {
+    .table-container {
+        max-height: 300px; /* smaller on phones */
+    }
+    .table-container th, 
+    .table-container td {
+        max-width: 180px;
+    }
+}
+
+@media (min-width: 481px) and (max-width: 767px) {
     .table-container {
         max-height: 300px; /* smaller on phones */
     }
@@ -403,8 +413,8 @@
             }
         }
         
-        /* Tablet and Landscape Phone */
-        @media (min-width: 768px) and (max-width: 1199px) {
+        /* Tablet and Landscape Phone - 481px to 767px */
+        @media (min-width: 481px) and (max-width: 767px) {
             .sidebar {
                 width: var(--sidebar-width);
                 z-index: 1050;
@@ -420,8 +430,8 @@
             }
         }
         
-        /* Phone Portrait */
-        @media (max-width: 767px) {
+        /* Phone Portrait - 320px to 480px */
+        @media (min-width: 320px) and (max-width: 480px) {
             .sidebar {
                 width: 85%;
                 z-index: 1050;
@@ -519,6 +529,20 @@
             box-shadow: none !important;
             border: 0 !important;
             padding: 0 !important;
+            font-size: 0.75rem;
+        }
+        
+        /* Hide clock on all mobile devices - portrait and landscape */
+        @media (min-width: 320px) and (max-width: 480px) {
+            #eatClock {
+                display: none;
+            }
+        }
+        
+        @media (min-width: 481px) and (max-width: 767px) {
+            #eatClock {
+                display: none;
+            }
         }
     </style>
 

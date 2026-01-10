@@ -315,13 +315,25 @@ login_manager.login_view = 'auth.login'
 # Initialize production-ready email system
 from utils.email_production import EmailConfig, EmailSender, EmailAuditLogger
 
+# Set default sender with proper fallback - use MAIL_USERNAME which is a valid email
+# If MAIL_DEFAULT_SENDER is set but not a valid email, fall back to MAIL_USERNAME
+_mail_username = app.config.get('MAIL_USERNAME', '').strip()
+_mail_default_sender = app.config.get('MAIL_DEFAULT_SENDER', '').strip()
+
+# Check if MAIL_DEFAULT_SENDER is actually an email address (contains @)
+if _mail_default_sender and '@' in _mail_default_sender:
+    _default_sender = _mail_default_sender
+else:
+    # Fall back to MAIL_USERNAME since it's a valid email
+    _default_sender = _mail_username or 'noreply@makokha.local'
+
 _email_config = EmailConfig(
     smtp_server=app.config.get('MAIL_SERVER', 'smtp-relay.brevo.com'),
     smtp_port=int(app.config.get('MAIL_PORT', 587)),
     use_tls=app.config.get('MAIL_USE_TLS', True),
-    username=app.config.get('MAIL_USERNAME', ''),
+    username=_mail_username,
     password=app.config.get('MAIL_PASSWORD', ''),
-    from_address=app.config.get('MAIL_DEFAULT_SENDER', ''),
+    from_address=_default_sender,
     timeout_seconds=int(os.getenv('MAIL_TIMEOUT_SECONDS', '30')),
     max_retries=int(os.getenv('MAIL_MAX_RETRIES', '3')),
 )
@@ -5137,15 +5149,17 @@ def _send_system_email(*, recipient: str, subject: str, html: str, text_body: st
     def _fallback_flask_mail(recipient: str, subject: str, html: str, text_body: str):
         """Fallback to Flask-Mail if production sender unavailable."""
         try:
+            # Use the validated _default_sender from initialization
             msg = Message(
                 subject,
                 recipients=[recipient],
                 html=html,
-                sender=(app.config.get('MAIL_DEFAULT_SENDER') or None),
+                sender=_default_sender,
             )
             if text_body:
                 msg.body = text_body
-            Thread(target=send_async_email, args=(current_app._get_current_object(), msg)).start()
+            # Use send_async_email which properly handles app context
+            send_async_email(current_app._get_current_object(), msg)
             app.logger.info(f"Queued email via Flask-Mail fallback: {subject}")
         except Exception as e:
             app.logger.error(f"Flask-Mail fallback also failed: {e}")

@@ -251,7 +251,7 @@
     }
 
     /* Responsive styles */
-    @media (max-width: 992px) {
+    @media (min-width: 481px) and (max-width: 767px) {
         .inventory-container {
             flex-direction: column;
         }
@@ -262,7 +262,7 @@
         
     }
     
-    @media (max-width: 768px) {
+    @media (min-width: 320px) and (max-width: 480px) {
         
         .drug-card .card-title {
             font-size: 1rem;
@@ -309,7 +309,7 @@
         }
     }
     
-    @media (min-width: 769px) and (max-width: 992px) {
+    @media (min-width: 481px) and (max-width: 767px) {
         /* Tablet styles */
         .drugs-container .col-md-6 {
             flex: 0 0 50%;
@@ -326,7 +326,7 @@
         }
     }
     
-    @media (min-width: 993px) {
+    @media (min-width: 768px) {
         /* Desktop styles */
         .drugs-container .col-md-6 {
             flex: 0 0 33.333%;
@@ -343,7 +343,7 @@
         }
     }
     
-    @media (max-width: 576px) {
+    @media (min-width: 320px) and (max-width: 480px) {
         .header h4 {
             font-size: 1.2rem;
         }
@@ -359,13 +359,13 @@
     }
     
     /* Landscape mode for phones */
-    @media (max-height: 576px) and (orientation: landscape) {
+    @media (max-height: 480px) and (orientation: landscape) {
         .drugs-scroll-container {
             max-height: 200px;
         }
     }
     
-    @media (max-width: 992px) {
+    @media (min-width: 481px) and (max-width: 767px) {
         .sidebar-toggle {
             display: flex;
         }
@@ -376,7 +376,7 @@
         display: none;
     }
     
-    @media (max-width: 768px) {
+    @media (min-width: 320px) and (max-width: 480px) {
         .cart-toggle {
             display: block;
             position: fixed;
@@ -408,7 +408,7 @@
     }
     
     /* Landscape orientation for mobile */
-    @media (max-width: 992px) and (orientation: landscape) {
+    @media (min-width: 481px) and (max-width: 767px) and (orientation: landscape) {
         .inventory-container {
             flex-direction: row;
         }
@@ -433,7 +433,7 @@
     }
     
     /* Portrait orientation for mobile */
-    @media (max-width: 768px) and (orientation: portrait) {
+    @media (min-width: 320px) and (max-width: 480px) and (orientation: portrait) {
         .inventory-container {
             flex-direction: column;
         }
