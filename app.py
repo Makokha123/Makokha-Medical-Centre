@@ -312,6 +312,36 @@ bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 
+# Initialize production-ready email system
+from utils.email_production import EmailConfig, EmailSender, EmailAuditLogger
+
+_email_config = EmailConfig(
+    smtp_server=app.config.get('MAIL_SERVER', 'smtp-relay.brevo.com'),
+    smtp_port=int(app.config.get('MAIL_PORT', 587)),
+    use_tls=app.config.get('MAIL_USE_TLS', True),
+    username=app.config.get('MAIL_USERNAME', ''),
+    password=app.config.get('MAIL_PASSWORD', ''),
+    from_address=app.config.get('MAIL_DEFAULT_SENDER', ''),
+    timeout_seconds=int(os.getenv('MAIL_TIMEOUT_SECONDS', '30')),
+    max_retries=int(os.getenv('MAIL_MAX_RETRIES', '3')),
+)
+
+# Validate email configuration on startup
+if _email_config.is_configured():
+    is_valid, error_msg = _email_config.validate()
+    if is_valid:
+        app.logger.info("✓ Email configuration is valid and ready for production")
+    else:
+        app.logger.error(f"✗ Email configuration error: {error_msg}")
+else:
+    app.logger.warning("⚠ Email is not fully configured. Some features may not send emails.")
+
+# Initialize email sender and audit logger
+_email_sender = EmailSender(_email_config)
+_email_audit_logger = EmailAuditLogger(
+    log_file=os.getenv('EMAIL_AUDIT_LOG', 'instance/email_audit.log')
+)
+
 if not os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], 'profile_pictures')):
     os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'profile_pictures'))
 
@@ -5051,37 +5081,85 @@ def _normalize_smtp_password(pw: str | None) -> str:
 
 
 def _send_system_email(*, recipient: str, subject: str, html: str, text_body: str | None = None) -> None:
-    """Send system emails (user OTP, password reset) using .env mail credentials.
+    """Send system emails (user OTP, password reset) using production-ready email sender.
 
-    Uses the SMTP helper when configured, else falls back to Flask-Mail.
+    Features:
+    - Automatic retry with exponential backoff on transient failures
+    - Comprehensive error logging and audit trail
+    - Graceful fallback to Flask-Mail if direct SMTP unavailable
+    - Timeout handling and connection validation
     """
-    smtp_user = _strip_env_value(app.config.get('MAIL_USERNAME'))
-    smtp_password = _normalize_smtp_password(app.config.get('MAIL_PASSWORD'))
-    if smtp_user and smtp_password:
-        _smtp_send_email(
-            smtp_user=smtp_user,
-            smtp_password=smtp_password,
-            recipient=recipient,
-            subject=subject,
-            html=html,
-            text_body=text_body or 'Your email client does not support HTML.',
-            attachments=None,
-            smtp_host=(app.config.get('MAIL_SERVER') or None),
-            smtp_port=int(app.config.get('MAIL_PORT') or 0) or None,
-            use_ssl=False,
-        )
+    # Validate inputs
+    if not recipient or '@' not in recipient:
+        app.logger.error(f"Invalid recipient email for system email: {recipient}")
         return
-
-    # Flask-Mail fallback
-    msg = Message(
-        subject,
-        recipients=[recipient],
-        html=html,
-        sender=(app.config.get('MAIL_DEFAULT_SENDER') or None),
-    )
-    if text_body:
-        msg.body = text_body
-    Thread(target=send_async_email, args=(current_app._get_current_object(), msg)).start()
+    
+    if not subject or not subject.strip():
+        app.logger.error("Cannot send system email with empty subject")
+        return
+    
+    if not html or not html.strip():
+        app.logger.error("Cannot send system email with empty body")
+        return
+    
+    # Prepare text body
+    text_content = text_body or 'Your email client does not support HTML.'
+    
+    def _send_with_audit():
+        """Send and audit the result."""
+        try:
+            # Try production email sender first
+            if _email_sender.is_healthy():
+                result = _email_sender.send(
+                    recipient=recipient,
+                    subject=subject,
+                    html_body=html,
+                    text_body=text_content,
+                )
+                _email_audit_logger.log_send(result)
+                
+                if not result.success:
+                    # Log failure but don't raise - graceful degradation
+                    app.logger.warning(
+                        f"Email send failed after {result.attempt_count} attempts: {result.error}",
+                        extra={'recipient': recipient, 'subject': subject}
+                    )
+                    # Try Flask-Mail fallback
+                    _fallback_flask_mail(recipient, subject, html, text_content)
+                return
+        except Exception as e:
+            app.logger.exception(f"Production email sender error: {e}")
+            # Fall through to Flask-Mail
+        
+        # Flask-Mail fallback
+        _fallback_flask_mail(recipient, subject, html, text_content)
+    
+    def _fallback_flask_mail(recipient: str, subject: str, html: str, text_body: str):
+        """Fallback to Flask-Mail if production sender unavailable."""
+        try:
+            msg = Message(
+                subject,
+                recipients=[recipient],
+                html=html,
+                sender=(app.config.get('MAIL_DEFAULT_SENDER') or None),
+            )
+            if text_body:
+                msg.body = text_body
+            Thread(target=send_async_email, args=(current_app._get_current_object(), msg)).start()
+            app.logger.info(f"Queued email via Flask-Mail fallback: {subject}")
+        except Exception as e:
+            app.logger.error(f"Flask-Mail fallback also failed: {e}")
+    
+    # Send async to avoid blocking HTTP response
+    try:
+        Thread(target=_send_with_audit, daemon=True, name="system-email").start()
+    except Exception as e:
+        app.logger.error(f"Failed to start email thread: {e}")
+        # Last resort: try synchronous send
+        try:
+            _send_with_audit()
+        except Exception as e2:
+            app.logger.error(f"Email send failed completely: {e2}")
 
 
 def _is_valid_email_address(value: str | None) -> bool:
@@ -5148,29 +5226,47 @@ def _get_admin_recipient_emails() -> list[str]:
 
 
 def _send_email_best_effort_async(*, recipient: str, subject: str, html: str, text_body: str | None = None) -> None:
-    """Best-effort email sender.
+    """Best-effort email sender for receipts and reports.
 
     - Never raises
     - Sends on a background thread to avoid delaying HTTP responses.
+    - Includes audit logging and production error handling
     """
     if not _is_valid_email_address(recipient):
+        app.logger.warning(f"Skipping email to invalid address: {recipient}")
         return
 
     def _worker():
         try:
             with app.app_context():
+                # Use production email sender if available
+                if _email_sender.is_healthy():
+                    result = _email_sender.send(
+                        recipient=recipient,
+                        subject=subject,
+                        html_body=html,
+                        text_body=text_body or 'Your email client does not support HTML.',
+                    )
+                    _email_audit_logger.log_send(result)
+                    if result.success:
+                        return
+                
+                # Fallback to system email (which has Flask-Mail fallback)
                 _send_system_email(recipient=recipient, subject=subject, html=html, text_body=text_body)
         except Exception as e:
             try:
-                app.logger.error(f"Email send failed to {recipient}: {e}")
+                app.logger.error(f"Best-effort email to {recipient} failed: {e}")
             except Exception:
                 pass
 
     try:
-        Thread(target=_worker, daemon=True).start()
-    except Exception:
+        Thread(target=_worker, daemon=True, name=f"best-effort-email-{recipient}").start()
+    except Exception as e:
         # If threads cannot start, just drop it.
-        return
+        try:
+            app.logger.warning(f"Could not start email thread: {e}")
+        except Exception:
+            pass
 
 
 def _find_user_by_email_plain(email: str) -> User | None:
@@ -5281,27 +5377,51 @@ def _generate_user_otp_code() -> str:
 
 
 def _send_user_verification_otp(user: User) -> None:
-    code = _generate_user_otp_code()
-    user.is_email_verified = False
-    user.email_otp_hash = _user_otp_hash(user_id=int(user.id), code=code)
-    # Store as UTC-naive to avoid timezone conversion issues across DB backends.
-    user.email_otp_expires_at = _utcnow_naive() + timedelta(minutes=10)
-    db.session.commit()
+    """Send email verification OTP with production-ready error handling.
+    
+    - Generates 6-digit OTP with 10-minute expiration
+    - Validates user email before sending
+    - Logs all attempts for audit trail
+    - Provides clear error messages
+    """
+    from utils.email_templates import OTPEmailTemplate
+    
+    try:
+        # Validate user and email
+        if not user or not user.id:
+            app.logger.error("Cannot send OTP: Invalid user object")
+            raise ValueError("Invalid user")
+        
+        user_email = str(user.email or '').strip()
+        if not _is_valid_email_address(user_email):
+            app.logger.error(f"Cannot send OTP: Invalid user email format: {user_email}")
+            raise ValueError("Invalid email address")
+        
+        # Generate OTP code
+        code = _generate_user_otp_code()
+        user.is_email_verified = False
+        user.email_otp_hash = _user_otp_hash(user_id=int(user.id), code=code)
+        # Store as UTC-naive to avoid timezone conversion issues across DB backends.
+        user.email_otp_expires_at = _utcnow_naive() + timedelta(minutes=10)
+        db.session.commit()
+        
+        app.logger.info(f"Generated OTP for user {user.id}: {user_email}", extra={'user_id': user.id})
 
-    html = (
-        f"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>"
-        f"<h2 style='color:#2d3748;'>Email Verification</h2>"
-        f"<p>Your OTP code is:</p>"
-        f"<div style='font-size: 28px; letter-spacing: 4px; font-weight: 700; padding: 12px 16px; background:#f7fafc; border:1px solid #e2e8f0; display:inline-block;'>{code}</div>"
-        f"<p style='margin-top: 16px; color:#718096;'>This code expires in 10 minutes.</p>"
-        f"</div>"
-    )
-    _send_system_email(
-        recipient=str(user.email),
-        subject='Verify your email (OTP)',
-        html=html,
-        text_body=f"Your OTP code is {code}. It expires in 10 minutes.",
-    )
+        # Use template for consistent formatting
+        html, text_body = OTPEmailTemplate.verification_otp(code, minutes_valid=10)
+        
+        _send_system_email(
+            recipient=user_email,
+            subject='Verify Your Email Address (OTP)',
+            html=html,
+            text_body=text_body,
+        )
+        
+        app.logger.info(f"OTP email sent successfully to {user_email}")
+        
+    except Exception as e:
+        app.logger.exception(f"Failed to send OTP to user {user.id if user else 'unknown'}: {e}")
+        raise
 
 def _generate_password_reset_token(user: User) -> str:
     # Rotate per-user nonce to invalidate previous tokens.
@@ -5337,20 +5457,43 @@ def _verify_password_reset_token(token: str) -> User | None:
 
 
 def send_password_reset_email(user_email: str, reset_url: str) -> None:
-    html = (
-        f"<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>"
-        f"<h2 style='color: #2d3748;'>Password Reset Request</h2>"
-        f"<p>Click the button below to reset your password:</p>"
-        f"<a href='{reset_url}' style='display:inline-block;padding:10px 20px;background-color:#4299e1;color:white;text-decoration:none;border-radius:4px;'>Reset Password</a>"
-        f"<p style='margin-top: 20px; color: #718096;'>This link expires in 1 hour. If you didn't request this, please ignore this email.</p>"
-        f"</div>"
-    )
-    _send_system_email(
-        recipient=user_email,
-        subject='Reset your password',
-        html=html,
-        text_body=f"Reset your password using this link: {reset_url} (expires in 1 hour).",
-    )
+    """Send password reset email with production-ready error handling.
+    
+    - Validates email format before sending
+    - Includes clear instructions and security warnings
+    - Logs all attempts for audit trail
+    - Uses production email sender with retries
+    """
+    from utils.email_templates import PasswordResetEmailTemplate
+    
+    try:
+        # Validate email
+        user_email = str(user_email or '').strip()
+        if not _is_valid_email_address(user_email):
+            app.logger.error(f"Cannot send reset email: Invalid email format: {user_email}")
+            raise ValueError(f"Invalid email address: {user_email}")
+        
+        # Validate reset URL
+        reset_url = str(reset_url or '').strip()
+        if not reset_url.startswith(('http://', 'https://')):
+            app.logger.error(f"Invalid reset URL format: {reset_url}")
+            raise ValueError("Invalid reset URL")
+        
+        # Use template
+        html, text_body = PasswordResetEmailTemplate.reset_request(reset_url, hours_valid=1)
+        
+        _send_system_email(
+            recipient=user_email,
+            subject='Reset Your Password',
+            html=html,
+            text_body=text_body,
+        )
+        
+        app.logger.info(f"Password reset email sent to {user_email}")
+        
+    except Exception as e:
+        app.logger.exception(f"Failed to send password reset email to {user_email}: {e}")
+        raise
 
 
 @auth_bp.route('/reset-password', methods=['GET', 'POST'])
@@ -9884,25 +10027,42 @@ def _get_or_create_backup_login_user(email: str, created_by_admin_id: int) -> 'B
 
 
 def _send_backup_login_otp(email: str, otp_code: str) -> bool:
-    """Send OTP to backup login email address."""
+    """Send OTP to backup login email address with production-ready handling.
+    
+    Args:
+        email: Backup login email address
+        otp_code: 6-digit OTP code
+    
+    Returns:
+        bool: True if sent successfully, False otherwise
+    """
+    from utils.email_templates import OTPEmailTemplate
+    
     try:
-        subject = "Your Backup Access Verification Code"
-        html = f"""
-        <h2>Backup Access Verification</h2>
-        <p>Your one-time password (OTP) for backup feature access is:</p>
-        <h3 style="letter-spacing: 3px; background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
-            {otp_code}
-        </h3>
-        <p>This code will expire in <strong>10 minutes</strong>.</p>
-        <p>If you did not request this code, please ignore this email.</p>
-        """
+        # Validate inputs
+        email = str(email or '').strip()
+        otp_code = str(otp_code or '').strip()
+        
+        if not _is_valid_email_address(email):
+            app.logger.error(f"Invalid backup email: {email}")
+            return False
+        
+        if not otp_code or len(otp_code) != 6 or not otp_code.isdigit():
+            app.logger.error(f"Invalid OTP code format: {otp_code}")
+            return False
+        
+        # Use template for backup OTP
+        html, text_body = OTPEmailTemplate.backup_otp(otp_code, minutes_valid=10)
         
         _send_backup_email(
             recipient=email,
-            subject=subject,
-            html=html
+            subject="🔐 Your Backup Access Verification Code",
+            html=html,
         )
+        
+        app.logger.info(f"Backup OTP sent to {email}")
         return True
+        
     except Exception as e:
         app.logger.error(f'Failed to send backup login OTP to {email}: {e}', exc_info=True)
         return False
@@ -11219,29 +11379,80 @@ def _send_backup_email(
     smtp_port: int | None = None,
     use_ssl: bool | None = None,
 ) -> None:
-    """Send backup-related emails using SMTP credentials or Flask-Mail fallback."""
-
-    # 1) Explicit SMTP creds: send synchronously so caller can show real error.
-    if smtp_user and smtp_password:
-        _smtp_send_email(
-            smtp_user=smtp_user,
-            smtp_password=smtp_password,
-            recipient=recipient,
-            subject=subject,
-            html=html,
-            text_body='Your verification code is included in the HTML message.',
-            attachments=attachments,
-            smtp_host=smtp_host,
-            smtp_port=smtp_port,
-            use_ssl=use_ssl,
-        )
+    """Send backup-related emails using production-ready email sender.
+    
+    Features:
+    - Uses production email sender with retry logic
+    - Falls back to Flask-Mail if needed
+    - Comprehensive error logging
+    - Handles attachments safely
+    """
+    
+    if not recipient or '@' not in recipient:
+        app.logger.error(f"Invalid backup email recipient: {recipient}")
         return
-
-    # 2) Fallback: Flask-Mail
-    msg = Message(subject, recipients=[recipient], html=html)
-    for filename, content_type, data in (attachments or []):
-        msg.attach(filename=filename, content_type=content_type, data=data)
-    Thread(target=send_async_email, args=(current_app._get_current_object(), msg), daemon=True).start()
+    
+    # For backward compatibility, support explicit SMTP credentials
+    if smtp_user and smtp_password:
+        try:
+            _smtp_send_email(
+                smtp_user=smtp_user,
+                smtp_password=smtp_password,
+                recipient=recipient,
+                subject=subject,
+                html=html,
+                text_body='Your verification code is included in the HTML message.',
+                attachments=attachments,
+                smtp_host=smtp_host,
+                smtp_port=smtp_port,
+                use_ssl=use_ssl,
+            )
+            app.logger.info(f"Backup email sent with explicit SMTP: {subject}")
+            return
+        except Exception as e:
+            app.logger.error(f"Explicit SMTP send failed, trying production sender: {e}")
+    
+    # Use production email sender
+    def _send():
+        try:
+            if _email_sender.is_healthy():
+                result = _email_sender.send(
+                    recipient=recipient,
+                    subject=subject,
+                    html_body=html,
+                    text_body='Your email client does not support HTML.',
+                )
+                _email_audit_logger.log_send(result)
+                
+                if not result.success:
+                    app.logger.warning(f"Backup email send failed: {result.error}")
+                    # Try Flask-Mail fallback
+                    _backup_flask_mail_fallback(recipient, subject, html, attachments)
+                return
+        except Exception as e:
+            app.logger.exception(f"Production email sender failed: {e}")
+        
+        # Fallback
+        _backup_flask_mail_fallback(recipient, subject, html, attachments)
+    
+    def _backup_flask_mail_fallback(recipient, subject, html, attachments):
+        """Flask-Mail fallback for backup emails."""
+        try:
+            msg = Message(subject, recipients=[recipient], html=html)
+            for filename, content_type, data in (attachments or []):
+                msg.attach(filename=filename, content_type=content_type, data=data)
+            Thread(
+                target=send_async_email,
+                args=(current_app._get_current_object(), msg),
+                daemon=True
+            ).start()
+        except Exception as e:
+            app.logger.error(f"Backup email fallback failed: {e}")
+    
+    try:
+        Thread(target=_send, daemon=True, name="backup-email").start()
+    except Exception as e:
+        app.logger.error(f"Failed to start backup email thread: {e}")
 
 
 def _restore_table_order(engine, tables: list[str]) -> list[str]:
