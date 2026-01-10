@@ -14,10 +14,9 @@
                 <p>Manage your pharmacy inventory and drug information</p>
             </div>
             <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
-                <button class="btn btn-outline btn-with-icon" type="button" id="openControlledDrugsBtn"
-                        data-toggle="modal" data-target="#controlledDrugsModal">
+                <a class="btn btn-outline btn-with-icon" href="{{ url_for('manage_controlled_drugs') }}">
                     <i class="fas fa-shield-alt"></i> Manage Controlled Drugs
-                </button>
+                </a>
                 <button class="btn btn-primary btn-with-icon" data-toggle="modal" data-target="#addDrugModal">
                     <i class="fas fa-plus"></i> Add New Drug
                 </button>
@@ -280,23 +279,6 @@
     </div>
 </div>
 
-<!-- Controlled Drugs (In-app) Modal -->
-<div class="modal fade" id="controlledDrugsModal" tabindex="-1" role="dialog" aria-labelledby="controlledDrugsModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-xl" role="document" style="max-width: 1200px;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 class="modal-title" id="controlledDrugsModalLabel"><i class="fas fa-shield-alt"></i> Controlled Drugs</h2>
-                <button type="button" class="close-btn" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body" style="padding: 0;">
-                <iframe id="controlledDrugsFrame" title="Controlled Drugs" style="border:0; width:100%; height:75vh;"></iframe>
-            </div>
-        </div>
-    </div>
-</div>
-
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
@@ -345,6 +327,8 @@
     --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     --transition: all 0.3s ease;
 }
+
+
 
 .drug-management-container {
     padding: 20px;
@@ -483,15 +467,35 @@
 
 .card-content h3 {
     margin: 0;
-    font-size: 16px;
+    font-size: 12px;
     color: var(--gray-600);
     font-weight: 500;
 }
 
 .amount {
-    font-size: 24px;
+    font-size: 18px;
     font-weight: 700;
     margin: 5px 0;
+}
+
+.summary-card.total-value {
+    background: linear-gradient(135deg, #e8f5e9, #c8e6c9);
+    border-left: 4px solid #4caf50;
+}
+
+.summary-card.low-stock {
+    background: linear-gradient(135deg, #fff3e0, #ffe0b2);
+    border-left: 4px solid #ff9800;
+}
+
+.summary-card.expiring {
+    background: linear-gradient(135deg, #fce4ec, #f8bbd0);
+    border-left: 4px solid #e91e63;
+}
+
+.summary-card.out-of-stock {
+    background: linear-gradient(135deg, #ffebee, #ffcdd2);
+    border-left: 4px solid #f44336;
 }
 
 .filter-actions {
@@ -590,6 +594,14 @@
 
 .action-btn.btn-primary:hover {
     background: #3651d3;
+}
+
+.action-btn.btn-success {
+    background: #28a745;
+}
+
+.action-btn.btn-success:hover {
+    background: #218838;
 }
 
 .action-btn.btn-danger {
@@ -905,6 +917,49 @@ $(document).ready(function() {
         loadDrugData(drugId);
     });
 
+    // Export to Controlled Drugs button handler
+    $('#drugsTable').on('click', '.btn-export-controlled', function() {
+        var drugId = $(this).data('id');
+        var btn = $(this);
+        
+        // Get drug details first
+        $.get('/admin/drugs/' + drugId, function(drugData) {
+            // Show confirmation
+            if (confirm(`Export "${drugData.name}" to Controlled Drugs?\n\nThis will:\n- Copy all drug details to Controlled Drugs table\n- Remove the drug from regular Drugs table`)) {
+                // Call export endpoint
+                $.ajax({
+                    url: '/admin/drugs/' + drugId + '/export-to-controlled',
+                    type: 'POST',
+                    headers: {
+                        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            toastr.success('Drug exported to Controlled Drugs successfully!', 'Success');
+                            // Reload the drugs table
+                            drugsTable.ajax.reload();
+                            // Optionally reload controlled drugs if it's visible
+                            if (window.controlledDrugsTable) {
+                                window.controlledDrugsTable.ajax.reload();
+                            }
+                        } else {
+                            toastr.error(response.message || 'Failed to export drug', 'Error');
+                        }
+                    },
+                    error: function(xhr) {
+                        var errorMsg = 'Failed to export drug';
+                        if (xhr.responseJSON && xhr.responseJSON.message) {
+                            errorMsg = xhr.responseJSON.message;
+                        }
+                        toastr.error(errorMsg, 'Error');
+                    }
+                });
+            }
+        }).fail(function() {
+            toastr.error('Failed to load drug details', 'Error');
+        });
+    });
+
     // Delete button handler
     $('#drugsTable').on('click', '.btn-delete', function() {
         $('#delete_drug_id').val($(this).data('id'));
@@ -1144,6 +1199,9 @@ $(document).ready(function() {
                             <div class="action-btns">
                                 <button class="action-btn btn-primary btn-edit" data-id="${data}" data-toggle="modal" data-target="#editDrugModal" title="Edit">
                                     <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="action-btn btn-success btn-export-controlled" data-id="${data}" title="Export to Controlled Drugs">
+                                    <i class="fas fa-arrow-right"></i>
                                 </button>
                                 <button class="action-btn btn-danger btn-delete" data-id="${data}" data-toggle="modal" data-target="#deleteDrugModal" title="Delete">
                                     <i class="fas fa-trash"></i>

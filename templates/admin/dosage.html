@@ -309,7 +309,7 @@
             </thead>
             <tbody>
                 {% for drug in drugs %}
-                {% set dosage = (drug.dosage[0] if drug.dosage else None) %}
+                {% set dosage = (drug.dosages[0] if drug.dosages else None) %}
                 <tr id="drug-row-{{ drug.id }}" data-drug-id="{{ drug.id }}" data-has-dosage="{{ 1 if dosage else 0 }}">
                     <td>{{ drug.drug_number }}</td>
                     <td>{{ drug.name }}</td>

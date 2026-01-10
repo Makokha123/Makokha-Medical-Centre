@@ -327,16 +327,46 @@ else:
     # Fall back to MAIL_USERNAME since it's a valid email
     _default_sender = _mail_username or 'noreply@makokha.local'
 
-_email_config = EmailConfig(
-    smtp_server=app.config.get('MAIL_SERVER', 'smtp-relay.brevo.com'),
-    smtp_port=int(app.config.get('MAIL_PORT', 587)),
-    use_tls=app.config.get('MAIL_USE_TLS', True),
-    username=_mail_username,
-    password=app.config.get('MAIL_PASSWORD', ''),
-    from_address=_default_sender,
-    timeout_seconds=int(os.getenv('MAIL_TIMEOUT_SECONDS', '30')),
-    max_retries=int(os.getenv('MAIL_MAX_RETRIES', '3')),
-)
+# Try to use SendGrid if SENDGRID_API_KEY is available (recommended for Render)
+_use_sendgrid = False
+_sendgrid_api_key = os.getenv('SENDGRID_API_KEY', '').strip()
+if _sendgrid_api_key:
+    try:
+        import sendgrid
+        _use_sendgrid = True
+        app.logger.info("SendGrid API key detected - will use SendGrid for email sending")
+    except ImportError:
+        app.logger.warning("SENDGRID_API_KEY set but sendgrid library not installed. Install with: pip install sendgrid")
+
+# Configure email based on available service
+if _use_sendgrid:
+    # SendGrid configuration - works on Render without network restrictions
+    _email_config = EmailConfig(
+        smtp_server='smtp.sendgrid.net',
+        smtp_port=587,
+        use_tls=True,
+        username='apikey',  # SendGrid requires username='apikey'
+        password=_sendgrid_api_key,
+        from_address=_default_sender,
+        timeout_seconds=int(os.getenv('MAIL_TIMEOUT_SECONDS', '30')),
+        max_retries=int(os.getenv('MAIL_MAX_RETRIES', '3')),
+    )
+    app.logger.info("Email config: Using SendGrid SMTP (port 587)")
+else:
+    # Fall back to configured SMTP server (Gmail, Brevo, etc)
+    _email_config = EmailConfig(
+        smtp_server=app.config.get('MAIL_SERVER', 'smtp-relay.brevo.com'),
+        smtp_port=int(app.config.get('MAIL_PORT', 587)),
+        use_tls=app.config.get('MAIL_USE_TLS', True),
+        username=_mail_username,
+        password=app.config.get('MAIL_PASSWORD', ''),
+        from_address=_default_sender,
+        timeout_seconds=int(os.getenv('MAIL_TIMEOUT_SECONDS', '30')),
+        max_retries=int(os.getenv('MAIL_MAX_RETRIES', '3')),
+    )
+    _smtp_server = app.config.get('MAIL_SERVER', 'smtp-relay.brevo.com')
+    app.logger.info(f"Email config: Using {_smtp_server}:{app.config.get('MAIL_PORT', 587)} (SMTP)")
+
 
 # Validate email configuration on startup
 if _email_config.is_configured():
@@ -954,6 +984,9 @@ class Drug(db.Model):
     expiry_date = db.Column(db.Date, nullable=False)
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    # Relationship to dosages with cascade delete
+    dosages = db.relationship('DrugDosage', back_populates='drug_record', cascade='all, delete-orphan', lazy=True)
 
     @hybrid_property
     def remaining_quantity(self):
@@ -1016,6 +1049,9 @@ class ControlledDrug(db.Model):
         default=get_eat_now,
         onupdate=get_eat_now,
     )
+    
+    # Relationship to dosages with cascade delete
+    dosages = db.relationship('ControlledDrugDosage', back_populates='controlled_drug_record', cascade='all, delete-orphan', lazy=True)
 
     @hybrid_property
     def remaining_quantity(self):
@@ -1174,7 +1210,7 @@ class DrugDosage(db.Model):
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     
-    drug = db.relationship('Drug', backref='dosage')
+    drug_record = db.relationship('Drug', back_populates='dosages')
 
 
 class ControlledDrugDosage(db.Model):
@@ -1192,7 +1228,7 @@ class ControlledDrugDosage(db.Model):
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
-    controlled_drug = db.relationship('ControlledDrug', backref='dosage')
+    controlled_drug_record = db.relationship('ControlledDrug', back_populates='dosages')
 
 
 def _normalize_drug_name(name: str) -> str:
@@ -1787,11 +1823,11 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
 
             if mode_norm == 'full' and create_limit > 0:
                 if kind_norm == 'drug':
-                    missing = Drug.query.filter(~Drug.dosage.any()).limit(create_limit).all()
+                    missing = Drug.query.filter(~Drug.dosages.any()).limit(create_limit).all()
                     for d in missing:
                         queue.append({'action': 'create', 'kind': 'drug', 'drug_id': d.id})
                 else:
-                    missing = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).limit(create_limit).all()
+                    missing = ControlledDrug.query.filter(~ControlledDrug.dosages.any()).limit(create_limit).all()
                     for d in missing:
                         queue.append({'action': 'create', 'kind': 'controlled', 'drug_id': d.id})
 
@@ -1885,9 +1921,9 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
 
                         # fill existing dosage
                         dosage = DrugDosage.query.get(item['dosage_id'])
-                        if not dosage or not dosage.drug:
+                        if not dosage or not dosage.drug_record:
                             raise Exception('Dosage not found')
-                        suggestion = _ai_generate_dosage_fields_from_name(dosage.drug.name, context_entry=None)
+                        suggestion = _ai_generate_dosage_fields_from_name(dosage.drug_record.name, context_entry=None)
                         ai_budget -= 1
                         if not suggestion:
                             state['failed'] = int(state.get('failed') or 0) + 1
@@ -1908,7 +1944,7 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
                         state['completed'] = int(state.get('completed') or 0) + 1
                         push_update({
                             'kind': 'drug',
-                            'drug_id': dosage.drug.id,
+                            'drug_id': dosage.drug_record.id,
                             'dosage_id': dosage.id,
                             'indication': _truncate_for_table(dosage.indication, 50),
                             'dosage_adults': _truncate_for_table(dosage.dosage_adults, 50),
@@ -1951,9 +1987,9 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
                         continue
 
                     dosage = ControlledDrugDosage.query.get(item['dosage_id'])
-                    if not dosage or not dosage.controlled_drug:
+                    if not dosage or not dosage.controlled_drug_record:
                         raise Exception('Controlled dosage not found')
-                    suggestion = _ai_generate_dosage_fields_from_name(dosage.controlled_drug.name, context_entry=None)
+                    suggestion = _ai_generate_dosage_fields_from_name(dosage.controlled_drug_record.name, context_entry=None)
                     ai_budget -= 1
                     if not suggestion:
                         state['failed'] = int(state.get('failed') or 0) + 1
@@ -1974,7 +2010,7 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
                     state['completed'] = int(state.get('completed') or 0) + 1
                     push_update({
                         'kind': 'controlled',
-                        'drug_id': dosage.controlled_drug.id,
+                        'drug_id': dosage.controlled_drug_record.id,
                         'dosage_id': dosage.id,
                         'indication': _truncate_for_table(dosage.indication, 50),
                         'dosage_adults': _truncate_for_table(dosage.dosage_adults, 50),
@@ -2177,7 +2213,7 @@ def run_ai_dosage_agent_once(
     try:
         # 1) Create missing dosage rows for normal drugs
         if kind_norm in ('drug', 'both'):
-            missing_drugs = Drug.query.filter(~Drug.dosage.any()).limit(max(0, int(create_limit or 0))).all()
+            missing_drugs = Drug.query.filter(~Drug.dosages.any()).limit(max(0, int(create_limit or 0))).all()
             app.logger.info(f"Agent: Found {len(missing_drugs)} drugs without dosage (kind=drug)")
             for drug in missing_drugs:
                 if max_run_seconds and (monotonic() - started) > max_run_seconds:
@@ -2218,7 +2254,7 @@ def run_ai_dosage_agent_once(
 
         # 2) Create missing dosage rows for controlled drugs
         if kind_norm in ('controlled', 'both'):
-            missing_controlled = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).limit(max(0, int(create_limit or 0))).all()
+            missing_controlled = ControlledDrug.query.filter(~ControlledDrug.dosages.any()).limit(max(0, int(create_limit or 0))).all()
             app.logger.info(f"Agent: Found {len(missing_controlled)} controlled drugs without dosage (kind=controlled)")
             for drug in missing_controlled:
                 if max_run_seconds and (monotonic() - started) > max_run_seconds:
@@ -2271,7 +2307,7 @@ def run_ai_dosage_agent_once(
                     if max_run_seconds and (monotonic() - started) > max_run_seconds:
                         break
                     try:
-                        drug = dosage.drug
+                        drug = dosage.drug_record
                         suggestion = get_suggestion(drug.name)
                         if not suggestion:
                             continue
@@ -2309,7 +2345,7 @@ def run_ai_dosage_agent_once(
                     if max_run_seconds and (monotonic() - started) > max_run_seconds:
                         break
                     try:
-                        drug = dosage.controlled_drug
+                        drug = dosage.controlled_drug_record
                         suggestion = get_suggestion(drug.name)
                         if not suggestion:
                             continue
@@ -2349,9 +2385,9 @@ def run_ai_dosage_agent_once(
         # Check why nothing was done
         try:
             drug_total = Drug.query.count()
-            drug_missing = Drug.query.filter(~Drug.dosage.any()).count()
+            drug_missing = Drug.query.filter(~Drug.dosages.any()).count()
             controlled_total = ControlledDrug.query.count()
-            controlled_missing = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).count()
+            controlled_missing = ControlledDrug.query.filter(~ControlledDrug.dosages.any()).count()
             
             app.logger.info(f"Diagnostic: Drug total={drug_total}, missing={drug_missing} | Controlled total={controlled_total}, missing={controlled_missing} | kind={kind}")
             
@@ -4666,22 +4702,23 @@ def ensure_database_initialized():
                 # db.create_all()
                 inspector = sa_inspect(engine)
                 new_tables = set(inspector.get_table_names())
-                app.logger.info(f"✓ Database schema initialized successfully. Created {len(new_tables)} tables.")
+                # app.logger.info(f"✓ Database schema initialized successfully. Created {len(new_tables)} tables.")
             else:
-                app.logger.info(f"✓ Database schema verified OK ({len(existing_tables)} tables exist).")
+                pass  # Database schema verification silent
 
             # Ensure all tables/columns exist (runtime-safe migration for older DBs).
             if not _db_schema_synced:
                 _db_schema_synced = True
                 created_tables, added_cols = _ensure_all_tables_and_columns(engine)
-                if created_tables or added_cols:
-                    app.logger.info(
-                        "✓ Schema sync applied: created %d tables, added %d columns.",
-                        created_tables,
-                        added_cols,
-                    )
-                else:
-                    app.logger.info("✓ Schema sync: no changes needed.")
+                # Silently skip schema sync logs
+                # if created_tables or added_cols:
+                #     app.logger.info(
+                #         "✓ Schema sync applied: created %d tables, added %d columns.",
+                #         created_tables,
+                #         added_cols,
+                #     )
+                # else:
+                #     app.logger.info("✓ Schema sync: no changes needed.")
             
             # Create default users if they don't exist
             _create_default_users()
@@ -5158,9 +5195,10 @@ def _send_system_email(*, recipient: str, subject: str, html: str, text_body: st
             )
             if text_body:
                 msg.body = text_body
-            # Use send_async_email which properly handles app context
-            send_async_email(current_app._get_current_object(), msg)
-            app.logger.info(f"Queued email via Flask-Mail fallback: {subject}")
+            # Send within app context - crucial for threads
+            with app.app_context():
+                mail.send(msg)
+            app.logger.info(f"Sent email via Flask-Mail fallback: {subject}")
         except Exception as e:
             app.logger.error(f"Flask-Mail fallback also failed: {e}")
     
@@ -6127,6 +6165,115 @@ def get_drug(drug_id):
     })
 
 
+@app.route('/admin/drugs/<int:drug_id>/export-to-controlled', methods=['POST'])
+@login_required
+def export_drug_to_controlled(drug_id):
+    """Export a regular drug to controlled drugs table with all dosages."""
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'message': 'Unauthorized access'}), 403
+    
+    try:
+        # Get the drug to export (with relationships loaded)
+        drug = db.session.get(Drug, drug_id)
+        if not drug:
+            return jsonify({'success': False, 'message': 'Drug not found'}), 404
+        
+        # Store drug data for logging before deletion
+        drug_name = drug.name
+        drug_number = drug.drug_number
+        
+        # Check if controlled drug with same number already exists
+        existing = db.session.query(ControlledDrug).filter_by(
+            controlled_drug_number=drug.drug_number
+        ).first()
+        
+        if existing:
+            return jsonify({
+                'success': False, 
+                'message': f'Controlled drug with number {drug.drug_number} already exists'
+            }), 400
+        
+        # Step 1: Create controlled drug with same data (excluding drug ID, will auto-generate)
+        controlled_drug = ControlledDrug(
+            controlled_drug_number=drug.drug_number,
+            name=drug.name,
+            specification=drug.specification,
+            buying_price=drug.buying_price,
+            selling_price=drug.selling_price,
+            stocked_quantity=drug.stocked_quantity,
+            sold_quantity=drug.sold_quantity,
+            expiry_date=drug.expiry_date,
+            created_at=drug.created_at,
+            updated_at=drug.updated_at
+        )
+        
+        db.session.add(controlled_drug)
+        db.session.flush()  # Flush to get the controlled_drug.id without committing
+        
+        # Step 2: Copy all drug dosages to controlled drug dosages (excluding drug_id, only copy dosage details)
+        dosages = db.session.query(DrugDosage).filter_by(drug_id=drug_id).all()
+        dosage_count = len(dosages)
+        
+        for dosage in dosages:
+            controlled_dosage = ControlledDrugDosage(
+                controlled_drug_id=controlled_drug.id,
+                source=dosage.source,
+                indication=dosage.indication,
+                contraindication=dosage.contraindication,
+                interaction=dosage.interaction,
+                side_effects=dosage.side_effects,
+                dosage_peds=dosage.dosage_peds,
+                dosage_adults=dosage.dosage_adults,
+                dosage_geriatrics=dosage.dosage_geriatrics,
+                important_notes=dosage.important_notes,
+                created_at=dosage.created_at,
+                updated_at=dosage.updated_at
+            )
+            db.session.add(controlled_dosage)
+        
+        # Step 3: Delete the original drug (cascade will delete related DrugDosage records)
+        db.session.delete(drug)
+        
+        # Step 4: Log the export action
+        log_audit(
+            action='export',
+            table='Drug',
+            record_id=drug_id,
+            changes={
+                'drug_number': drug_number,
+                'name': drug_name,
+                'dosage_count': dosage_count,
+                'action': 'exported_to_controlled_drugs',
+                'new_controlled_drug_id': controlled_drug.id
+            },
+            new_values={
+                'controlled_drug_id': controlled_drug.id,
+                'status': 'successfully_migrated',
+                'dosages_migrated': dosage_count
+            }
+        )
+        
+        # Commit all changes
+        db.session.commit()
+        
+        app.logger.info(f"Drug '{drug_name}' (#{drug_number}, ID: {drug_id}) successfully exported to controlled drugs (New ID: {controlled_drug.id}) with {dosage_count} dosages")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Drug "{drug_name}" successfully exported to Controlled Drugs with {dosage_count} dosages',
+            'controlled_drug_id': controlled_drug.id,
+            'dosages_migrated': dosage_count
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error exporting drug {drug_id} to controlled: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Error exporting drug: {str(e)}'
+        }), 500
+
+
 @app.route('/admin/controlled-drugs', methods=['GET', 'POST'])
 @login_required
 def manage_controlled_drugs():
@@ -6256,7 +6403,7 @@ def manage_controlled_drugs():
     controlled_drugs = db.session.execute(query).scalars().all()
     total_value = sum(float(d.selling_price) * float(d.remaining_quantity) for d in controlled_drugs)
 
-    template_name = 'admin/controlled_drugs_embed.html' if embed else 'admin/controlled_drugs.html'
+    template_name = 'admin/controlled_drugs_embed.html' if embed else 'admin/controlled_drugs_full.html'
     return render_template(
         template_name,
         controlled_drugs=controlled_drugs,
@@ -11455,11 +11602,10 @@ def _send_backup_email(
             msg = Message(subject, recipients=[recipient], html=html)
             for filename, content_type, data in (attachments or []):
                 msg.attach(filename=filename, content_type=content_type, data=data)
-            Thread(
-                target=send_async_email,
-                args=(current_app._get_current_object(), msg),
-                daemon=True
-            ).start()
+            # Send within app context - crucial for threads
+            with app.app_context():
+                mail.send(msg)
+            app.logger.info(f"Sent backup email via Flask-Mail fallback: {subject}")
         except Exception as e:
             app.logger.error(f"Backup email fallback failed: {e}")
     
@@ -14934,7 +15080,7 @@ def manage_dosage():
     drugs = Drug.query.all()
 
     total_drugs = Drug.query.count()
-    drugs_with_dosage = Drug.query.filter(Drug.dosage.any()).count()
+    drugs_with_dosage = Drug.query.filter(Drug.dosages.any()).count()
     drugs_without_dosage = max(0, total_drugs - drugs_with_dosage)
     ai_generated = 0
     try:
@@ -14964,7 +15110,7 @@ def admin_dosage_dashboard():
         return redirect(url_for('home'))
 
     total_drugs = Drug.query.count()
-    drugs_with_dosage = Drug.query.filter(Drug.dosage.any()).count()
+    drugs_with_dosage = Drug.query.filter(Drug.dosages.any()).count()
     drugs_without_dosage = max(0, total_drugs - drugs_with_dosage)
     drugs_ai = 0
     try:
@@ -14973,7 +15119,7 @@ def admin_dosage_dashboard():
         drugs_ai = 0
 
     total_controlled = ControlledDrug.query.count()
-    controlled_with_dosage = ControlledDrug.query.filter(ControlledDrug.dosage.any()).count()
+    controlled_with_dosage = ControlledDrug.query.filter(ControlledDrug.dosages.any()).count()
     controlled_without_dosage = max(0, total_controlled - controlled_with_dosage)
     controlled_ai = 0
     try:
@@ -15009,9 +15155,9 @@ def get_dosage(dosage_id):
     return jsonify({
         'id': dosage.id,
         'drug': {
-            'id': dosage.drug.id,
-            'drug_number': dosage.drug.drug_number,
-            'name': dosage.drug.name
+            'id': dosage.drug_record.id,
+            'drug_number': dosage.drug_record.drug_number,
+            'name': dosage.drug_record.name
         },
         'indication': dosage.indication,
         'contraindication': dosage.contraindication,
@@ -15030,7 +15176,7 @@ def get_drugs_without_dosage():
         return jsonify({'error': 'Unauthorized'}), 403
     
     # Get drugs that don't have dosage information
-    drugs = Drug.query.filter(~Drug.dosage.any()).all()
+    drugs = Drug.query.filter(~Drug.dosages.any()).all()
     
     return jsonify([{
         'id': drug.id,
@@ -15067,6 +15213,35 @@ def get_drug_dosage(drug_id):
     })
 
 
+@app.route('/admin/controlled-drugs/<int:controlled_drug_id>/dosage')
+@login_required
+def get_controlled_drug_dosage(controlled_drug_id):
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    controlled_drug = ControlledDrug.query.get_or_404(controlled_drug_id)
+    dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=controlled_drug.id).first()
+    
+    return jsonify({
+        'drug': {
+            'id': controlled_drug.id,
+            'name': controlled_drug.name,
+            'controlled_drug_number': controlled_drug.controlled_drug_number
+        },
+        'dosage': {
+            'indication': dosage.indication,
+            'contraindication': dosage.contraindication,
+            'interaction': dosage.interaction,
+            'side_effects': dosage.side_effects,
+            'dosage_peds': dosage.dosage_peds,
+            'dosage_adults': dosage.dosage_adults,
+            'dosage_geriatrics': dosage.dosage_geriatrics,
+            'important_notes': dosage.important_notes
+        } if dosage else None,
+        'source': 'db' if dosage else None
+    })
+
+
 @app.route('/admin/dosage/load-index-book', methods=['POST'])
 @login_required
 def admin_load_dosage_index_book():
@@ -15082,7 +15257,7 @@ def admin_load_dosage_index_book():
     name_map = { _normalize_drug_name(e.get('name')): e for e in entries if e.get('name') }
     created = 0
     try:
-        drugs = Drug.query.filter(~Drug.dosage.any()).all()
+        drugs = Drug.query.filter(~Drug.dosages.any()).all()
         for drug in drugs:
             e = name_map.get(_normalize_drug_name(drug.name))
             if not e:
@@ -16252,9 +16427,9 @@ def pharmacist_get_dosage(dosage_id):
     return jsonify({
         'id': dosage.id,
         'drug': {
-            'id': dosage.drug.id,
-            'drug_number': dosage.drug.drug_number,
-            'name': dosage.drug.name
+            'id': dosage.drug_record.id,
+            'drug_number': dosage.drug_record.drug_number,
+            'name': dosage.drug_record.name
         },
         'indication': dosage.indication,
         'contraindication': dosage.contraindication,
@@ -16272,7 +16447,7 @@ def pharmacist_get_drugs_without_dosage():
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    drugs = Drug.query.filter(~Drug.dosage.any()).all()
+    drugs = Drug.query.filter(~Drug.dosages.any()).all()
     
     return jsonify([{
         'id': drug.id,
@@ -16420,7 +16595,7 @@ def manage_controlled_dosage():
     drugs = ControlledDrug.query.all()
 
     total_drugs = ControlledDrug.query.count()
-    drugs_with_dosage = ControlledDrug.query.filter(ControlledDrug.dosage.any()).count()
+    drugs_with_dosage = ControlledDrug.query.filter(ControlledDrug.dosages.any()).count()
     drugs_without_dosage = max(0, total_drugs - drugs_with_dosage)
     ai_generated = 0
     try:
@@ -16450,9 +16625,9 @@ def admin_get_controlled_dosage(dosage_id):
     return jsonify({
         'id': dosage.id,
         'drug': {
-            'id': dosage.controlled_drug.id,
-            'drug_number': dosage.controlled_drug.controlled_drug_number,
-            'name': dosage.controlled_drug.name,
+            'id': dosage.controlled_drug_record.id,
+            'drug_number': dosage.controlled_drug_record.controlled_drug_number,
+            'name': dosage.controlled_drug_record.name,
         },
         'indication': dosage.indication,
         'contraindication': dosage.contraindication,
@@ -16470,7 +16645,7 @@ def admin_get_controlled_dosage(dosage_id):
 def admin_get_controlled_drugs_without_dosage():
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
-    drugs = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).all()
+    drugs = ControlledDrug.query.filter(~ControlledDrug.dosages.any()).all()
     return jsonify([{
         'id': d.id,
         'drug_number': d.controlled_drug_number,
@@ -16520,7 +16695,7 @@ def admin_load_controlled_dosage_index_book():
     name_map = { _normalize_drug_name(e.get('name')): e for e in entries if e.get('name') }
     created = 0
     try:
-        drugs = ControlledDrug.query.filter(~ControlledDrug.dosage.any()).all()
+        drugs = ControlledDrug.query.filter(~ControlledDrug.dosages.any()).all()
         for drug in drugs:
             e = name_map.get(_normalize_drug_name(drug.name))
             if not e:
@@ -16663,7 +16838,7 @@ def admin_ai_fill_missing_dosage_fields():
                         continue
 
                     processed += 1
-                    drug = dosage.drug
+                    drug = dosage.drug_record
                     suggestion = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
                     if not isinstance(suggestion, dict):
                         continue
@@ -16715,7 +16890,7 @@ def admin_ai_fill_missing_dosage_fields():
                         continue
 
                     processed += 1
-                    drug = dosage.controlled_drug
+                    drug = dosage.controlled_drug_record
                     suggestion = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
                     if not isinstance(suggestion, dict):
                         continue
@@ -17012,7 +17187,7 @@ def pharmacist_inventory():
         return redirect(url_for('home'))
     
     try:
-        drugs = Drug.query.options(db.joinedload(Drug.dosage)).order_by(Drug.name).all()
+        drugs = Drug.query.options(db.joinedload(Drug.dosages)).order_by(Drug.name).all()
         
         total_drugs = Drug.query.count()
         low_stock = Drug.query.filter(Drug.remaining_quantity < 10, Drug.remaining_quantity > 0).count()
@@ -22956,7 +23131,115 @@ def api_drug_stats():
         'out_of_stock': out_of_stock
     })
 
-@app.route('/api/patients')
+
+@app.route('/api/controlled-drugs')
+@login_required
+def api_controlled_drugs():
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    filter_type = request.args.get('filter', 'all')
+    query = db.session.query(ControlledDrug)
+    
+    if filter_type == 'low_stock':
+        query = query.filter(ControlledDrug.remaining_quantity < 5, ControlledDrug.remaining_quantity > 0)
+    elif filter_type == 'expiring_soon':
+        thirty_days_later = date.today() + timedelta(days=30)
+        query = query.filter(ControlledDrug.expiry_date <= thirty_days_later, ControlledDrug.expiry_date >= date.today())
+    elif filter_type == 'out_of_stock':
+        query = query.filter(ControlledDrug.remaining_quantity <= 0)
+    elif filter_type == 'expired':
+        today = datetime.now().date()
+        query = query.filter(ControlledDrug.expiry_date < today)
+    
+    controlled_drugs = query.order_by(ControlledDrug.name).all()
+    
+    drugs_data = [{
+        'id': drug.id,
+        'controlled_drug_number': drug.controlled_drug_number,
+        'name': drug.name,
+        'specification': drug.specification,
+        'buying_price': float(drug.buying_price),
+        'selling_price': float(drug.selling_price),
+        'stocked_quantity': drug.stocked_quantity,
+        'sold_quantity': drug.sold_quantity,
+        'remaining_quantity': drug.remaining_quantity,
+        'expiry_date': drug.expiry_date.isoformat() if drug.expiry_date else None,
+        'status': get_controlled_drug_status(drug)
+    } for drug in controlled_drugs]
+    
+    return jsonify(drugs_data)
+
+
+@app.route('/api/controlled-drugs/next-number', methods=['GET'])
+@login_required
+def api_controlled_drugs_next_number():
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    return jsonify({'controlled_drug_number': generate_controlled_drug_number()})
+
+
+@app.route('/api/controlled-drugs/<int:controlled_drug_id>')
+@login_required
+def api_single_controlled_drug(controlled_drug_id):
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    drug = ControlledDrug.query.get_or_404(controlled_drug_id)
+    return jsonify({
+        'id': drug.id,
+        'controlled_drug_number': drug.controlled_drug_number,
+        'name': drug.name,
+        'specification': drug.specification,
+        'buying_price': float(drug.buying_price),
+        'selling_price': float(drug.selling_price),
+        'stocked_quantity': drug.stocked_quantity,
+        'sold_quantity': drug.sold_quantity,
+        'expiry_date': drug.expiry_date.isoformat() if drug.expiry_date else None,
+        'remaining_quantity': drug.remaining_quantity,
+        'is_expired': drug.expiry_date < datetime.now().date(),
+        'expires_soon': drug.expiry_date <= (datetime.now().date() + timedelta(days=30)),
+    })
+
+
+@app.route('/api/controlled-drugs/stats')
+@login_required
+def api_controlled_drug_stats():
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    total_value = db.session.query(func.sum(ControlledDrug.selling_price * (ControlledDrug.stocked_quantity - ControlledDrug.sold_quantity))).scalar() or 0
+    low_stock = db.session.query(func.count(ControlledDrug.id)).filter(ControlledDrug.stocked_quantity - ControlledDrug.sold_quantity < 10).filter(ControlledDrug.stocked_quantity - ControlledDrug.sold_quantity > 0).scalar()
+    expiring_soon = db.session.query(func.count(ControlledDrug.id)).filter(ControlledDrug.expiry_date <= date.today() + timedelta(days=30)).filter(ControlledDrug.expiry_date >= date.today()).scalar()
+    out_of_stock = db.session.query(func.count(ControlledDrug.id)).filter(ControlledDrug.stocked_quantity - ControlledDrug.sold_quantity <= 0).scalar()
+    
+    return jsonify({
+        'total_value': float(total_value),
+        'low_stock': low_stock,
+        'expiring_soon': expiring_soon,
+        'out_of_stock': out_of_stock
+    })
+
+
+def get_controlled_drug_status(drug):
+    """Helper function to determine controlled drug status"""
+    remaining = drug.remaining_quantity
+    expiry_date = drug.expiry_date
+    today = datetime.now().date()
+    
+    if remaining <= 0:
+        return 'Out of Stock'
+    elif remaining < 5:
+        return 'Low Stock'
+    elif expiry_date and expiry_date < today:
+        return 'Expired'
+    elif expiry_date and (expiry_date - today).days < 30:
+        return 'Expiring Soon'
+    else:
+        return 'In Stock'
+
+
 @login_required
 def api_patients():
     search = request.args.get('search', '')
@@ -23855,7 +24138,7 @@ def download_payroll_receipt_employee(receipt_id):
 
 if __name__ == '__main__':
 
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
 
     if not os.path.exists('instance'):
         os.makedirs('instance')

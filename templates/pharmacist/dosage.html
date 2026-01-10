@@ -23,8 +23,8 @@
                             <tbody>
                                 {% for dosage in dosages %}
                                 <tr>
-                                    <td>{{ dosage.drug.drug_number }}</td>
-                                    <td>{{ dosage.drug.name }}</td>
+                                    <td>{{ dosage.drug_record.drug_number }}</td>
+                                    <td>{{ dosage.drug_record.name }}</td>
                                     <td>{{ dosage.indication|truncate(100) if dosage.indication else 'N/A' }}</td>
                                     <td>
                                         <button class="btn btn-info btn-sm view-dosage" data-id="{{ dosage.id }}">

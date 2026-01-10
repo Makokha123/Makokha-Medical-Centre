@@ -309,7 +309,7 @@
             </thead>
             <tbody>
                 {% for drug in drugs %}
-                {% set dosage = (drug.dosage[0] if drug.dosage else None) %}
+                {% set dosage = (drug.dosages[0] if drug.dosages else None) %}
                 <tr id="controlled-row-{{ drug.id }}" data-controlled-drug-id="{{ drug.id }}" data-has-dosage="{{ 1 if dosage else 0 }}">
                     <td>{{ drug.controlled_drug_number }}</td>
                     <td>{{ drug.name }}</td>
@@ -628,7 +628,7 @@ window.addEventListener('storage', function(e) {
                         <select class="form-control" id="controlled_drug_id" name="controlled_drug_id" required>
                             <option value="">-- Select Controlled Drug --</option>
                             {% for drug in drugs %}
-                                {% if not drug.dosage %}
+                                {% if not drug.dosages %}
                                     <option value="{{ drug.id }}">{{ drug.controlled_drug_number }} - {{ drug.name }}</option>
                                 {% endif %}
                             {% endfor %}
