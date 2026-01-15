@@ -45,6 +45,14 @@
                         <span class="widget-label">Pending Bills:</span>
                         <span class="widget-value">Ksh.{{ "%.2f"|format(pending_bills) }}</span>
                     </div>
+                    <div class="widget-actions">
+                        <div style="margin-top: 10px;">
+                            <a href="{{ url_for('financial_dashboard_daily') }}" class="btn btn-info btn-sm">Daily Report</a>
+                            <a href="{{ url_for('financial_dashboard_weekly') }}" class="btn btn-info btn-sm">Weekly Report</a><br><br>
+                            <a href="{{ url_for('financial_dashboard_monthly') }}" class="btn btn-info btn-sm">Monthly Report</a>
+                            <a href="{{ url_for('financial_dashboard_yearly') }}" class="btn btn-info btn-sm">Yearly Report</a>
+                        </div>
+                    </div>
                 </div>
             </div>
             

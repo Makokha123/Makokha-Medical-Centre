@@ -67,6 +67,7 @@ class Config:
     # Basic flags
     DEBUG = _parse_bool(_get_env("DEBUG", "false"))
     TESTING = _parse_bool(_get_env("TESTING", "false"))
+    FAST_DEV = _parse_bool(_get_env("FAST_DEV", "false"))
 
     # Cookies/security headers
     SESSION_COOKIE_SECURE = _parse_bool(_get_env("SESSION_COOKIE_SECURE", "true"))

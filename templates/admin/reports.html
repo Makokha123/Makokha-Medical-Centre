@@ -1346,6 +1346,113 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Initialize yearly charts when inserted (AJAX safe) — called after fragment loads
+    function createYearlyCharts() {
+        // Wait for Chart.js to be loaded
+        if (typeof Chart === 'undefined') {
+            setTimeout(createYearlyCharts, 100);
+            return;
+        }
+
+        const dataEl = document.getElementById('yearly-chart-data');
+        let monthlyData = [];
+        if (dataEl && dataEl.dataset && dataEl.dataset.monthly) {
+            try { monthlyData = JSON.parse(dataEl.dataset.monthly || '[]'); } catch (e) { monthlyData = []; }
+        }
+
+        // If no data, create 12 empty months for display
+        if (!monthlyData || monthlyData.length === 0) {
+            const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+            monthlyData = monthNames.map((name, index) => ({
+                month: index + 1, month_name: name, month_abbr: name.substring(0,3),
+                revenue: 0, expense: 0, profit: 0, margin: 0,
+                pharmacy_revenue: 0, lab_revenue: 0, imaging_revenue: 0, consultation_revenue: 0, insurance_revenue: 0, other_revenue: 0,
+                payroll_expense: 0, pharmacy_expense: 0, equipment_expense: 0, utilities_expense: 0, debt_payment: 0, other_expense: 0
+            }));
+        }
+
+        const monthLabels = monthlyData.map(m => { const abbr = m.month_abbr || m.month_name || ''; return typeof abbr === 'string' ? abbr.substring(0,3) : ''; });
+        const revenues = monthlyData.map(m => Number(m.revenue || 0));
+        const expenses = monthlyData.map(m => Number(m.expense || 0));
+        const profits = monthlyData.map(m => Number(m.profit || 0));
+
+        // Get canvas elements
+        const incomeExpenseEl = document.getElementById('yearly-income-vs-expense-chart');
+        const profitTrendEl = document.getElementById('yearly-profit-trend-chart');
+        const expensesBreakdownEl = document.getElementById('yearly-expenses-breakdown-chart');
+        const incomeBreakdownEl = document.getElementById('yearly-income-breakdown-chart');
+
+        if (!incomeExpenseEl || !profitTrendEl || !expensesBreakdownEl || !incomeBreakdownEl) {
+            console.warn('Yearly chart canvases not found in DOM');
+            return;
+        }
+
+        // Force canvas redraw and verify sizing
+        console.log('Creating yearly charts — canvas check:');
+        console.log('  income-vs-expense:', incomeExpenseEl.offsetWidth, '×', incomeExpenseEl.offsetHeight);
+        console.log('  profit-trend:', profitTrendEl.offsetWidth, '×', profitTrendEl.offsetHeight);
+
+        // Destroy any previous charts
+        if (window._yearlyIncomeExpenseChart) window._yearlyIncomeExpenseChart.destroy();
+        if (window._yearlyProfitTrendChart) window._yearlyProfitTrendChart.destroy();
+        if (window._yearlyExpensesBreakdownChart) window._yearlyExpensesBreakdownChart.destroy();
+        if (window._yearlyIncomeBreakdownChart) window._yearlyIncomeBreakdownChart.destroy();
+
+        // 1. Income vs Expenses Bar
+        window._yearlyIncomeExpenseChart = new Chart(incomeExpenseEl.getContext('2d'), {
+            type: 'bar',
+            data: { 
+                labels: monthLabels, 
+                datasets: [ 
+                    { label: 'Income', data: revenues, backgroundColor: '#28a745', borderColor: '#1e7e34', borderWidth: 1 }, 
+                    { label: 'Expenses', data: expenses, backgroundColor: '#dc3545', borderColor: '#b21f2d', borderWidth: 1 } 
+                ] 
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } }, scales: { x: { title: { display: true, text: 'Month' } }, y: { title: { display: true, text: 'KES' }, beginAtZero: true } } }
+        });
+
+        // 2. Profit Trend Line
+        window._yearlyProfitTrendChart = new Chart(profitTrendEl.getContext('2d'), {
+            type: 'line',
+            data: { labels: monthLabels, datasets: [ { label: 'Monthly Profit', data: profits, borderColor: '#000', backgroundColor: 'rgba(173,216,230,0.25)', borderWidth: 2, tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#000' } ] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { font: { size: 10 } } } }, scales: { x: { title: { display: true, text: 'Month' } }, y: { title: { display: true, text: 'Profit (KES)', beginAtZero: true } } } }
+        });
+
+        // 3. Expenses Breakdown
+        const expenseLabels = ['Payroll','Pharmacy','Equipment','Utilities','Debt Service','Other'];
+        const expenseValues = [ 
+            monthlyData.reduce((sum,m)=>sum+Number(m.payroll_expense||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.pharmacy_expense||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.equipment_expense||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.utilities_expense||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.debt_payment||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.other_expense||0),0) 
+        ];
+        window._yearlyExpensesBreakdownChart = new Chart(expensesBreakdownEl.getContext('2d'), {
+            type: 'doughnut', 
+            data: { labels: expenseLabels, datasets: [{ data: expenseValues, backgroundColor: ['#145A32','#145A32','#145A32','#145A32','#145A32','#145A32'] }] }, 
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { font: { size: 9 } } } } }
+        });
+
+        // 4. Income Breakdown
+        const incomeLabels = ['Pharmacy','Lab Tests','Imaging','Consultation','Insurance','Other'];
+        const incomeValues = [ 
+            monthlyData.reduce((sum,m)=>sum+Number(m.pharmacy_revenue||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.lab_revenue||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.imaging_revenue||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.consultation_revenue||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.insurance_revenue||0),0), 
+            monthlyData.reduce((sum,m)=>sum+Number(m.other_revenue||0),0) 
+        ];
+        window._yearlyIncomeBreakdownChart = new Chart(incomeBreakdownEl.getContext('2d'), { 
+            type: 'pie', 
+            data: { labels: incomeLabels, datasets: [{ data: incomeValues, backgroundColor: ['#FF9800','#FF9800','#FF9800','#FF9800','#FF9800','#FF9800'] }] }, 
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { font: { size: 9 } } } } } 
+        });
+
+        console.log('✅ Yearly charts created successfully');
+    }
+
     function _renderHistogram(canvasId, values, labelPrefix) {
         const ctx = document.getElementById(canvasId);
         if (!ctx) return null;
@@ -2350,6 +2457,7 @@ document.addEventListener('DOMContentLoaded', function() {
 /* Table Styles */
 .table {
     border-collapse: collapse;
+    border: 3px solid #333;
 }
 
 .table thead th {
@@ -2361,12 +2469,27 @@ document.addEventListener('DOMContentLoaded', function() {
     text-transform: uppercase;
     font-size: 0.85rem;
     letter-spacing: 0.5px;
+    border-right: 1px solid #e9ecef;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.table thead th:last-child {
+    border-right: none;
 }
 
 .table tbody td {
     padding: 12px;
     vertical-align: middle;
-    border-color: #e9ecef;
+    border-right: 1px solid #e9ecef;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.table tbody td:last-child {
+    border-right: none;
+}
+
+.table tbody tr:last-child td {
+    border-bottom: none;
 }
 
 .table tbody tr:hover {
@@ -2377,7 +2500,16 @@ document.addEventListener('DOMContentLoaded', function() {
     background-color: #f8f9fa;
     font-weight: 600;
     padding: 12px;
-    border-color: #e9ecef;
+    border-right: 1px solid #e9ecef;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.table tfoot td:last-child {
+    border-right: none;
+}
+
+.table tfoot tr:last-child td {
+    border-bottom: none;
 }
 
 /* Badge Styles */

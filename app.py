@@ -1,6 +1,7 @@
 from logging.handlers import RotatingFileHandler
 from operator import and_
 from sqlalchemy import MetaData, Table
+import calendar
 import csv
 import io
 import threading
@@ -174,92 +175,41 @@ if not SECRET_KEY:
     raise ValueError("No SECRET_KEY set for Flask application. Please set the SECRET_KEY environment variable.")
 app.config['SECRET_KEY'] = SECRET_KEY
 def get_database_uri():
-    is_render = bool(os.environ.get('RENDER'))
-
-    def _sqlite_fallback_url() -> str:
-        fallback = os.getenv('SQLITE_FALLBACK_URL', '').strip()
-        if fallback:
-            return fallback
-        # Stable SQLite path for local development.
-        # Use an absolute path so running via debugger/other CWDs doesn't create multiple DB files.
-        instance_db_path = Path(app.root_path) / 'instance' / 'clinic.db'
-        instance_db_path.parent.mkdir(parents=True, exist_ok=True)
-        return f"sqlite:///{instance_db_path.resolve().as_posix()}"
-
+    """Get database URI from environment. No fallback to SQLite."""
+    
     def _normalize_database_url(raw: str) -> str:
+        """Normalize database URL (handle postgres:// vs postgresql://)."""
         database_url = (raw or '').strip()
-
+        
         # Handle both PostgreSQL URL formats
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
-
-        # If a relative SQLite path is provided, make it absolute under the app instance folder.
-        # This prevents creating different DB files depending on the current working directory.
-        if database_url.startswith('sqlite:///'):
-            sqlite_path = database_url[len('sqlite:///'):]
-            # Windows absolute paths look like C:/... or C:\...
-            is_windows_abs = bool(re.match(r'^[A-Za-z]:[\\/]', sqlite_path))
-            if sqlite_path and (not Path(sqlite_path).is_absolute()) and (not is_windows_abs):
-                instance_dir = Path(app.root_path) / 'instance'
-                instance_dir.mkdir(parents=True, exist_ok=True)
-                if sqlite_path.replace('\\', '/').startswith('instance/'):
-                    abs_path = (Path(app.root_path) / sqlite_path).resolve()
-                else:
-                    abs_path = (instance_dir / sqlite_path).resolve()
-                database_url = f"sqlite:///{abs_path.as_posix()}"
-
+        
         return database_url
 
     def _safe_db_url_for_logging(url: str) -> str:
-        # Avoid leaking credentials in logs.
+        """Format database URL for logging without leaking credentials."""
         try:
             from urllib.parse import urlsplit
             parts = urlsplit(url)
             netloc = parts.netloc
             if '@' in netloc:
-                # strip userinfo
                 netloc = netloc.split('@', 1)[1]
             return f"{parts.scheme}://{netloc}{parts.path}"
         except Exception:
             return '<redacted>'
 
+    # DATABASE_URL is required
     database_url_raw = os.getenv('DATABASE_URL', '').strip()
     if not database_url_raw:
-        if is_render:
-            raise RuntimeError('DATABASE_URL is required in production (Render).')
-        return _sqlite_fallback_url()
+        raise RuntimeError(
+            'DATABASE_URL environment variable is required and must not be empty. '
+            'Please set DATABASE_URL to a valid PostgreSQL connection string.'
+        )
 
     database_url = _normalize_database_url(database_url_raw)
-
-    # If the configured DB is SQLite, just use it.
-    if database_url.startswith('sqlite:'):
-        return database_url
-
-    # Prefer DATABASE_URL, but only fall back to SQLite in local development.
-    try:
-        connect_args = {}
-        # Short startup timeout for Postgres-compatible drivers.
-        if database_url.startswith('postgresql://'):
-            connect_args = {'connect_timeout': 10}
-        engine = create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
-        with engine.connect() as conn:
-            conn.execute(text('SELECT 1'))
-        return database_url
-    except Exception as e:
-        if is_render:
-            app.logger.error(
-                "DATABASE_URL unreachable (%s). Refusing to fall back to SQLite in production.",
-                _safe_db_url_for_logging(database_url),
-            )
-            app.logger.debug("DATABASE_URL connect error: %s", str(e), exc_info=True)
-            raise
-
-        app.logger.warning(
-            "DATABASE_URL unreachable (%s). Falling back to SQLite (development only).",
-            _safe_db_url_for_logging(database_url),
-        )
-        app.logger.debug("DATABASE_URL connect error: %s", str(e), exc_info=True)
-        return _sqlite_fallback_url()
+    app.logger.info(f"Using database: {_safe_db_url_for_logging(database_url)}")
+    return database_url
 app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -298,10 +248,47 @@ app.config['MAIL_PASSWORD'] = (os.getenv('MAIL_PASSWORD') or '').strip()
 app.config['MAIL_DEFAULT_SENDER'] = (os.getenv('MAIL_DEFAULT_SENDER') or app.config['MAIL_USERNAME'] or '').strip()
 app.config['RESET_TOKEN_EXPIRATION'] = int(os.getenv('RESET_TOKEN_EXPIRATION', 3600))
 
+# Custom DateTime type that safely handles NULL and non-string values
+from sqlalchemy import TypeDecorator, DateTime as SQLAlchemyDateTime
+
+class SafeDateTime(TypeDecorator):
+    """Custom DateTime column that safely handles NULL values and prevents fromisoformat errors."""
+    impl = SQLAlchemyDateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        """Convert Python datetime to database format."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except (ValueError, TypeError):
+                return None
+        return value
+
+    def process_result_value(self, value, dialect):
+        """Convert database value back to Python datetime."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                dt = datetime.fromisoformat(value)
+                # Treat naive timestamps as EAT
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=EAT)
+                return dt
+            except (ValueError, TypeError, AttributeError):
+                return None
+        return value
+
 # Initialize database extensions AFTER configuration is finalized.
 db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
 migrate = Migrate(app, db)
-
 
 
 
@@ -2142,6 +2129,14 @@ def run_ai_dosage_agent_once(
     - create/update limits can be large (e.g., 10,000) because DB operations are local.
     - ai_generation_limit and max_run_seconds prevent runaway background runs.
     """
+    if current_app.config.get('FAST_DEV'):
+        return {
+            'enabled': False,
+            'created': 0,
+            'updated_records': 0,
+            'filled_fields': 0,
+            'reason': 'FAST_DEV enabled: AI dosage agent disabled for faster debugging.'
+        }
     if not _get_ai_dosage_agent_enabled():
         return {'enabled': False, 'created': 0, 'updated_records': 0, 'filled_fields': 0, 'reason': 'Agent is disabled.'}
 
@@ -4193,6 +4188,127 @@ class ReportItem(db.Model):
     date = db.Column(db.Date, nullable=False)
     reference_id = db.Column(db.Integer)
     reference_table = db.Column(db.String(50))
+
+# =================================================================================================
+# FINANCIAL DASHBOARD MODELS
+# =================================================================================================
+
+class FinancialMetrics(db.Model):
+    """Stores pre-calculated financial metrics for dashboard performance"""
+    __tablename__ = 'financial_metrics'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    metric_date = db.Column(db.Date, nullable=False, index=True)
+    period_type = db.Column(db.String(20), nullable=False)  # 'daily', 'weekly', 'monthly', 'yearly'
+    
+    # Revenue by category
+    pharmacy_revenue = db.Column(db.Float, default=0)
+    lab_revenue = db.Column(db.Float, default=0)
+    imaging_revenue = db.Column(db.Float, default=0)
+    consultation_revenue = db.Column(db.Float, default=0)
+    admission_revenue = db.Column(db.Float, default=0)
+    other_revenue = db.Column(db.Float, default=0)
+    total_revenue = db.Column(db.Float, default=0)
+    
+    # Expenses by category
+    payroll_expense = db.Column(db.Float, default=0)
+    pharmacy_expense = db.Column(db.Float, default=0)
+    equipment_expense = db.Column(db.Float, default=0)
+    utilities_expense = db.Column(db.Float, default=0)
+    debt_payment = db.Column(db.Float, default=0)
+    other_expense = db.Column(db.Float, default=0)
+    total_expense = db.Column(db.Float, default=0)
+    
+    # Refunds and adjustments
+    refunds = db.Column(db.Float, default=0)
+    adjustments = db.Column(db.Float, default=0)
+    
+    # Net metrics
+    gross_profit = db.Column(db.Float, default=0)
+    net_profit = db.Column(db.Float, default=0)
+    profit_margin = db.Column(db.Float, default=0)  # percentage
+    
+    # Cash flow
+    cash_in = db.Column(db.Float, default=0)
+    cash_out = db.Column(db.Float, default=0)
+    cash_balance = db.Column(db.Float, default=0)
+    
+    # Patient metrics
+    total_patients_served = db.Column(db.Integer, default=0)
+    new_patients = db.Column(db.Integer, default=0)
+    
+    # Outstanding
+    outstanding_invoices = db.Column(db.Float, default=0)
+    overdue_amount = db.Column(db.Float, default=0)
+    
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('metric_date', 'period_type', name='uq_financial_metrics'),
+    )
+
+
+class DepartmentRevenue(db.Model):
+    """Tracks revenue by department"""
+    __tablename__ = 'department_revenue'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    metric_date = db.Column(db.Date, nullable=False, index=True)
+    period_type = db.Column(db.String(20), nullable=False)  # 'daily', 'weekly', 'monthly', 'yearly'
+    department = db.Column(db.String(100), nullable=False)  # pharmacy, lab, imaging, etc
+    revenue_amount = db.Column(db.Float, default=0)
+    transaction_count = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('metric_date', 'period_type', 'department', name='uq_dept_revenue'),
+    )
+
+
+class DepartmentExpense(db.Model):
+    """Tracks expenses by department"""
+    __tablename__ = 'department_expense'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    metric_date = db.Column(db.Date, nullable=False, index=True)
+    period_type = db.Column(db.String(20), nullable=False)  # 'daily', 'weekly', 'monthly', 'yearly'
+    department = db.Column(db.String(100), nullable=False)  # payroll, pharmacy, equipment, etc
+    expense_amount = db.Column(db.Float, default=0)
+    transaction_count = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    
+    __table_args__ = (
+        db.UniqueConstraint('metric_date', 'period_type', 'department', name='uq_dept_expense'),
+    )
+
+
+class CashFlowDaily(db.Model):
+    """Daily cash flow summary"""
+    __tablename__ = 'cash_flow_daily'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    flow_date = db.Column(db.Date, nullable=False, unique=True, index=True)
+    
+    cash_receipts = db.Column(db.Float, default=0)
+    mpesa_receipts = db.Column(db.Float, default=0)
+    card_receipts = db.Column(db.Float, default=0)
+    bank_receipts = db.Column(db.Float, default=0)
+    total_receipts = db.Column(db.Float, default=0)
+    
+    cash_payments = db.Column(db.Float, default=0)
+    mpesa_payments = db.Column(db.Float, default=0)
+    card_payments = db.Column(db.Float, default=0)
+    bank_payments = db.Column(db.Float, default=0)
+    total_payments = db.Column(db.Float, default=0)
+    
+    opening_balance = db.Column(db.Float, default=0)
+    closing_balance = db.Column(db.Float, default=0)
+    net_change = db.Column(db.Float, default=0)
+    
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
     
 # =================================================================================================
 # INSURANCE MODELS
@@ -5138,6 +5254,9 @@ def _send_system_email(*, recipient: str, subject: str, html: str, text_body: st
     - Graceful fallback to Flask-Mail if direct SMTP unavailable
     - Timeout handling and connection validation
     """
+    if app.config.get('FAST_DEV'):
+        app.logger.info("FAST_DEV enabled: system email sending skipped.")
+        return
     # Validate inputs
     if not recipient or '@' not in recipient:
         app.logger.error(f"Invalid recipient email for system email: {recipient}")
@@ -5284,6 +5403,9 @@ def _send_email_best_effort_async(*, recipient: str, subject: str, html: str, te
     - Sends on a background thread to avoid delaying HTTP responses.
     - Includes audit logging and production error handling
     """
+    if app.config.get('FAST_DEV'):
+        app.logger.info("FAST_DEV enabled: best-effort email sending skipped.")
+        return
     if not _is_valid_email_address(recipient):
         app.logger.warning(f"Skipping email to invalid address: {recipient}")
         return
@@ -5820,6 +5942,470 @@ def get_doctor_stats(timeframe='daily'):
         'start_date': start_date,
         'end_date': end_date - timedelta(days=1)  # Subtract 1 day to show inclusive end data
     }
+
+
+# =================================================================================================
+# FINANCIAL DASHBOARD AGGREGATION FUNCTIONS
+# =================================================================================================
+
+def get_financial_metrics(start_date: date, end_date: date, period_type: str = 'daily'):
+    """Calculate comprehensive financial metrics for a date range"""
+    try:
+        metrics = {
+            'period_type': period_type,
+            'start_date': start_date,
+            'end_date': end_date,
+            'date_range': f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+        }
+        
+        # REVENUE CALCULATIONS
+        metrics.update(_calculate_revenue_metrics(start_date, end_date))
+        
+        # EXPENSE CALCULATIONS
+        metrics.update(_calculate_expense_metrics(start_date, end_date))
+        
+        # REFUNDS AND ADJUSTMENTS
+        metrics['refunds'] = float(db.session.query(func.sum(Refund.total_amount)).filter(
+            Refund.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Refund.created_at < datetime.combine(end_date, datetime.max.time())
+        ).scalar() or 0)
+        
+        # NET CALCULATIONS
+        total_revenue = metrics.get('total_revenue', 0)
+        total_expense = metrics.get('total_expense', 0)
+        refunds = metrics.get('refunds', 0)
+        
+        metrics['gross_profit'] = total_revenue - refunds
+        metrics['net_profit'] = metrics['gross_profit'] - total_expense
+        metrics['profit_margin'] = (metrics['net_profit'] / total_revenue * 100) if total_revenue > 0 else 0
+        
+        # CASH FLOW
+        metrics.update(_calculate_cashflow_metrics(start_date, end_date))
+        
+        # OUTSTANDING AND OVERDUE
+        metrics.update(_calculate_outstanding_metrics(start_date, end_date))
+        
+        # PATIENT METRICS
+        metrics.update(_calculate_patient_metrics(start_date, end_date))
+        
+        return metrics
+    except Exception as e:
+        app.logger.error(f"Error calculating financial metrics: {str(e)}")
+        return {}
+
+
+def _calculate_revenue_metrics(start_date: date, end_date: date) -> dict:
+    """Calculate revenue by category"""
+    try:
+        metrics = {}
+        
+        # Pharmacy revenue
+        pharmacy_revenue = db.session.query(func.sum(SaleItem.total_price)).join(Sale).filter(
+            SaleItem.drug_id.isnot(None),
+            Sale.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Sale.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Sale.status == 'completed'
+        ).scalar() or 0
+        metrics['pharmacy_revenue'] = float(pharmacy_revenue)
+        
+        # Lab revenue
+        lab_revenue = db.session.query(func.sum(SaleItem.total_price)).join(Sale).filter(
+            SaleItem.lab_test_id.isnot(None),
+            Sale.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Sale.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Sale.status == 'completed'
+        ).scalar() or 0
+        metrics['lab_revenue'] = float(lab_revenue)
+        
+        # Imaging revenue
+        imaging_revenue = db.session.query(func.sum(SaleItem.total_price)).join(Sale).filter(
+            SaleItem.imaging_test_id.isnot(None),
+            Sale.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Sale.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Sale.status == 'completed'
+        ).scalar() or 0
+        metrics['imaging_revenue'] = float(imaging_revenue)
+        
+        # Service/Consultation revenue
+        consultation_revenue = db.session.query(func.sum(SaleItem.total_price)).join(Sale).filter(
+            SaleItem.service_id.isnot(None),
+            Sale.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Sale.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Sale.status == 'completed'
+        ).scalar() or 0
+        metrics['consultation_revenue'] = float(consultation_revenue)
+        
+        # Insurance claims paid
+        insurance_revenue = db.session.query(func.sum(InsuranceClaim.paid_amount)).filter(
+            InsuranceClaim.created_at >= datetime.combine(start_date, datetime.min.time()),
+            InsuranceClaim.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            InsuranceClaim.status == 'paid'
+        ).scalar() or 0
+        metrics['insurance_revenue'] = float(insurance_revenue)
+        
+        # Other/Misc revenue from transactions marked as revenue
+        other_revenue = db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'IN',
+            Transaction.transaction_type.notin_(['sale', 'lab', 'imaging', 'insurance']),
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0
+        metrics['other_revenue'] = float(other_revenue)
+        
+        metrics['total_revenue'] = (
+            metrics['pharmacy_revenue'] + 
+            metrics['lab_revenue'] + 
+            metrics['imaging_revenue'] + 
+            metrics['consultation_revenue'] + 
+            metrics.get('insurance_revenue', 0) + 
+            metrics['other_revenue']
+        )
+        
+        return metrics
+    except Exception as e:
+        app.logger.error(f"Error calculating revenue metrics: {str(e)}")
+        return {
+            'pharmacy_revenue': 0, 'lab_revenue': 0, 'imaging_revenue': 0,
+            'consultation_revenue': 0, 'insurance_revenue': 0, 'other_revenue': 0,
+            'total_revenue': 0
+        }
+
+
+def _calculate_expense_metrics(start_date: date, end_date: date) -> dict:
+    """Calculate expenses by category"""
+    try:
+        metrics = {}
+        
+        # Payroll expenses
+        payroll_expense = db.session.query(func.sum(Payroll.amount)).filter(
+            Payroll.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Payroll.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Payroll.status == 'pending'
+        ).scalar() or 0
+        metrics['payroll_expense'] = float(payroll_expense)
+        
+        # Drug procurement/inventory costs
+        pharmacy_expense = db.session.query(func.sum(Purchase.amount)).filter(
+            Purchase.purchase_type.ilike('%drug%'),
+            Purchase.purchase_date >= start_date,
+            Purchase.purchase_date <= end_date
+        ).scalar() or 0
+        metrics['pharmacy_expense'] = float(pharmacy_expense)
+        
+        # Equipment and maintenance
+        equipment_expense = db.session.query(func.sum(Expense.amount)).filter(
+            Expense.expense_type.ilike('%equipment%'),
+            Expense.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Expense.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Expense.status == 'paid'
+        ).scalar() or 0
+        metrics['equipment_expense'] = float(equipment_expense)
+        
+        # Utilities
+        utilities_expense = db.session.query(func.sum(Expense.amount)).filter(
+            Expense.expense_type.ilike('%utilit%'),
+            Expense.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Expense.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Expense.status == 'paid'
+        ).scalar() or 0
+        metrics['utilities_expense'] = float(utilities_expense)
+        
+        # Debt payments
+        debt_payment = db.session.query(func.sum(DebtorPayment.amount)).filter(
+            DebtorPayment.created_at >= datetime.combine(start_date, datetime.min.time()),
+            DebtorPayment.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        ).scalar() or 0
+        metrics['debt_payment'] = float(debt_payment)
+        
+        # Other expenses
+        other_expense = db.session.query(func.sum(Expense.amount)).filter(
+            Expense.expense_type.notin_(['equipment', 'utility', 'payroll']),
+            Expense.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Expense.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Expense.status == 'paid'
+        ).scalar() or 0
+        metrics['other_expense'] = float(other_expense)
+        
+        metrics['total_expense'] = (
+            metrics['payroll_expense'] + 
+            metrics['pharmacy_expense'] + 
+            metrics['equipment_expense'] + 
+            metrics['utilities_expense'] + 
+            metrics['debt_payment'] + 
+            metrics['other_expense']
+        )
+        
+        return metrics
+    except Exception as e:
+        app.logger.error(f"Error calculating expense metrics: {str(e)}")
+        return {
+            'payroll_expense': 0, 'pharmacy_expense': 0, 'equipment_expense': 0,
+            'utilities_expense': 0, 'debt_payment': 0, 'other_expense': 0,
+            'total_expense': 0
+        }
+
+
+def _calculate_cashflow_metrics(start_date: date, end_date: date) -> dict:
+    """Calculate cash flow by payment method"""
+    try:
+        metrics = {}
+        
+        # Cash receipts
+        cash_in = db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'IN',
+            Transaction.payment_method == 'cash',
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0
+        metrics['cash_in'] = float(cash_in)
+        
+        # MPESA receipts
+        mpesa_in = db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'IN',
+            Transaction.payment_method == 'mpesa',
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0
+        metrics['mpesa_in'] = float(mpesa_in)
+        
+        # Card receipts
+        card_in = db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'IN',
+            Transaction.payment_method == 'card',
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0
+        metrics['card_in'] = float(card_in)
+        
+        # Bank transfers
+        bank_in = db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'IN',
+            Transaction.payment_method == 'bank',
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0
+        metrics['bank_in'] = float(bank_in)
+        
+        metrics['total_cash_in'] = metrics['cash_in'] + metrics['mpesa_in'] + metrics['card_in'] + metrics['bank_in']
+        
+        # Similar for OUT
+        cash_out = db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'OUT',
+            Transaction.payment_method == 'cash',
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0
+        metrics['cash_out'] = float(cash_out)
+        
+        metrics['mpesa_out'] = float(db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'OUT',
+            Transaction.payment_method == 'mpesa',
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0)
+        
+        metrics['card_out'] = float(db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'OUT',
+            Transaction.payment_method == 'card',
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0)
+        
+        metrics['bank_out'] = float(db.session.query(func.sum(Transaction.amount)).filter(
+            Transaction.direction == 'OUT',
+            Transaction.payment_method == 'bank',
+            Transaction.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Transaction.status == 'posted'
+        ).scalar() or 0)
+        
+        metrics['total_cash_out'] = metrics['cash_out'] + metrics['mpesa_out'] + metrics['card_out'] + metrics['bank_out']
+        
+        # Create cashflow breakdown object for template
+        metrics['cashflow_breakdown'] = {
+            'cash': {
+                'inflow': metrics['cash_in'],
+                'outflow': metrics['cash_out'],
+                'net': metrics['cash_in'] - metrics['cash_out']
+            },
+            'mpesa': {
+                'inflow': metrics['mpesa_in'],
+                'outflow': metrics['mpesa_out'],
+                'net': metrics['mpesa_in'] - metrics['mpesa_out']
+            },
+            'card': {
+                'inflow': metrics['card_in'],
+                'outflow': metrics['card_out'],
+                'net': metrics['card_in'] - metrics['card_out']
+            },
+            'bank': {
+                'inflow': metrics['bank_in'],
+                'outflow': metrics['bank_out'],
+                'net': metrics['bank_in'] - metrics['bank_out']
+            }
+        }
+        
+        return metrics
+    except Exception as e:
+        app.logger.error(f"Error calculating cashflow metrics: {str(e)}")
+        return {
+            'cash_in': 0, 'mpesa_in': 0, 'card_in': 0, 'bank_in': 0, 'total_cash_in': 0,
+            'cash_out': 0, 'mpesa_out': 0, 'card_out': 0, 'bank_out': 0, 'total_cash_out': 0
+        }
+
+
+def _calculate_outstanding_metrics(start_date: date, end_date: date) -> dict:
+    """Calculate outstanding invoices and overdue amounts"""
+    try:
+        metrics = {}
+        
+        # Outstanding invoices (unpaid)
+        outstanding = db.session.query(func.sum(Invoice.total_amount)).filter(
+            Invoice.status == 'unpaid',
+            Invoice.date_issued >= datetime.combine(start_date, datetime.min.time()),
+            Invoice.date_issued < datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        ).scalar() or 0
+        metrics['outstanding_invoices'] = float(outstanding)
+        
+        # Overdue amount
+        overdue = db.session.query(func.sum(Invoice.total_amount - Invoice.paid_amount)).filter(
+            Invoice.status == 'overdue',
+            Invoice.date_issued >= datetime.combine(start_date, datetime.min.time()),
+            Invoice.date_issued < datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        ).scalar() or 0
+        metrics['overdue_amount'] = float(overdue)
+        
+        # Overdue debtor amount
+        overdue_debtors = db.session.query(func.sum(Debtor.amount_owed)).filter(
+            Debtor.next_payment_date < start_date
+        ).scalar() or 0
+        metrics['overdue_debtors'] = float(overdue_debtors)
+        
+        # Outstanding debtor balances
+        outstanding_debtor = db.session.query(func.sum(Debtor.amount_owed)).filter(
+            Debtor.amount_owed > 0
+        ).scalar() or 0
+        metrics['outstanding_debtor'] = float(outstanding_debtor)
+        
+        # Count of debtors with outstanding balance
+        outstanding_debtor_count = db.session.query(func.count(Debtor.id)).filter(
+            Debtor.amount_owed > 0
+        ).scalar() or 0
+        metrics['outstanding_debtor_count'] = int(outstanding_debtor_count)
+        
+        # Outstanding insurance claims
+        outstanding_insurance = db.session.query(func.sum(InsuranceClaim.claimed_amount)).filter(
+            InsuranceClaim.status == 'pending'
+        ).scalar() or 0
+        metrics['outstanding_insurance'] = float(outstanding_insurance)
+        
+        # Count of outstanding insurance claims
+        outstanding_insurance_count = db.session.query(func.count(InsuranceClaim.id)).filter(
+            InsuranceClaim.status == 'pending'
+        ).scalar() or 0
+        metrics['outstanding_insurance_count'] = int(outstanding_insurance_count)
+        
+        return metrics
+    except Exception as e:
+        app.logger.error(f"Error calculating outstanding metrics: {str(e)}")
+        return {
+            'outstanding_invoices': 0, 'overdue_amount': 0, 'overdue_debtors': 0,
+            'outstanding_debtor': 0, 'outstanding_debtor_count': 0,
+            'outstanding_insurance': 0, 'outstanding_insurance_count': 0
+        }
+
+
+def _calculate_patient_metrics(start_date: date, end_date: date) -> dict:
+    """Calculate patient-related metrics"""
+    try:
+        metrics = {}
+        
+        # Total patients served (those with transactions in this period)
+        patients_served = db.session.query(func.count(func.distinct(Sale.patient_id))).filter(
+            Sale.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Sale.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            Sale.status == 'completed'
+        ).scalar() or 0
+        metrics['total_patients_served'] = int(patients_served)
+        
+        # New patients (registration date in period)
+        new_patients = db.session.query(func.count(Patient.id)).filter(
+            Patient.date_of_admission >= start_date,
+            Patient.date_of_admission <= end_date
+        ).scalar() or 0
+        metrics['new_patients'] = int(new_patients)
+        
+        # Returning patients
+        all_patients = db.session.query(func.count(Patient.id)).filter(
+            Patient.date_of_admission <= end_date
+        ).scalar() or 0
+        metrics['returning_patients'] = max(0, int(all_patients) - int(new_patients))
+        
+        return metrics
+    except Exception as e:
+        app.logger.error(f"Error calculating patient metrics: {str(e)}")
+        return {
+            'total_patients_served': 0, 'new_patients': 0, 'returning_patients': 0
+        }
+
+
+def get_daily_financial_summary(target_date: date = None) -> dict:
+    """Get complete daily financial summary"""
+    if target_date is None:
+        target_date = date.today()
+    
+    return get_financial_metrics(target_date, target_date, 'daily')
+
+
+def get_weekly_financial_summary(target_date: date = None) -> dict:
+    """Get complete weekly financial summary"""
+    if target_date is None:
+        target_date = date.today()
+    
+    # Get start of week (Monday)
+    start = target_date - timedelta(days=target_date.weekday())
+    end = start + timedelta(days=6)
+    
+    return get_financial_metrics(start, end, 'weekly')
+
+
+def get_monthly_financial_summary(year: int = None, month: int = None) -> dict:
+    """Get complete monthly financial summary"""
+    today = date.today()
+    if year is None:
+        year = today.year
+    if month is None:
+        month = today.month
+    
+    # First day of month
+    start = date(year, month, 1)
+    # Last day of month
+    if month == 12:
+        end = date(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        end = date(year, month + 1, 1) - timedelta(days=1)
+    
+    return get_financial_metrics(start, end, 'monthly')
+
+
+def get_yearly_financial_summary(year: int = None) -> dict:
+    """Get complete yearly financial summary"""
+    if year is None:
+        year = date.today().year
+    
+    start = date(year, 1, 1)
+    end = date(year, 12, 31)
+    
+    return get_financial_metrics(start, end, 'yearly')
+
 
 # Backup utility functions (implementation is below under BACKUP IMPLEMENTATION)
 
@@ -7102,6 +7688,1155 @@ def delete_financial_report(report_id):
         flash(f'Error deleting report: {str(e)}', 'danger')
 
     return redirect(url_for('financial_reports'))
+
+
+# =================================================================================================
+# FINANCIAL DASHBOARD ROUTES - DAILY, WEEKLY, MONTHLY, YEARLY
+# =================================================================================================
+
+@app.route('/admin/financial/dashboard/daily', methods=['GET', 'POST'])
+@login_required
+def financial_dashboard_daily():
+    """Daily Financial Report Dashboard"""
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    try:
+        target_date = date.today()
+        if request.method == 'POST':
+            date_str = request.form.get('date')
+            if date_str:
+                target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
+        metrics = get_daily_financial_summary(target_date)
+        
+        # Get previous day for comparison
+        previous_date = target_date - timedelta(days=1)
+        previous_metrics = get_daily_financial_summary(previous_date)
+        
+        # Calculate percentage changes
+        metrics['revenue_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_revenue', 0),
+            metrics.get('total_revenue', 0)
+        )
+        metrics['expense_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_expense', 0),
+            metrics.get('total_expense', 0)
+        )
+        metrics['profit_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('net_profit', 0),
+            metrics.get('net_profit', 0)
+        )
+        
+        return render_template('admin/financial_dashboard_daily.html', 
+            metrics=metrics, 
+            target_date=target_date,
+            previous_metrics=previous_metrics
+        )
+    except Exception as e:
+        app.logger.error(f"Error in daily financial dashboard: {str(e)}")
+        flash(f'Error loading dashboard: {str(e)}', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/financial/dashboard/weekly', methods=['GET', 'POST'])
+@login_required
+def financial_dashboard_weekly():
+    """Weekly Financial Report Dashboard"""
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    try:
+        target_date = date.today()
+        if request.method == 'POST':
+            date_str = request.form.get('date')
+            if date_str:
+                target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
+        metrics = get_weekly_financial_summary(target_date)
+        
+        # Get previous week for comparison
+        previous_date = target_date - timedelta(days=7)
+        previous_metrics = get_weekly_financial_summary(previous_date)
+        
+        # Calculate percentage changes
+        metrics['revenue_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_revenue', 0),
+            metrics.get('total_revenue', 0)
+        )
+        metrics['expense_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_expense', 0),
+            metrics.get('total_expense', 0)
+        )
+        metrics['profit_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('net_profit', 0),
+            metrics.get('net_profit', 0)
+        )
+        
+        # Get daily breakdown for the week
+        daily_breakdown = _get_daily_breakdown(metrics['start_date'], metrics['end_date'])
+        
+        return render_template('admin/financial_dashboard_weekly.html', 
+            metrics=metrics, 
+            target_date=target_date,
+            previous_metrics=previous_metrics,
+            daily_breakdown=daily_breakdown
+        )
+    except Exception as e:
+        app.logger.error(f"Error in weekly financial dashboard: {str(e)}")
+        flash(f'Error loading dashboard: {str(e)}', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/financial/dashboard/monthly', methods=['GET', 'POST'])
+@login_required
+def financial_dashboard_monthly():
+    """Monthly Financial Report Dashboard"""
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    try:
+        today = date.today()
+        year = today.year
+        month = today.month
+        
+        if request.method == 'POST':
+            year_str = request.form.get('year')
+            month_str = request.form.get('month')
+            if year_str and month_str:
+                year = int(year_str)
+                month = int(month_str)
+        
+        metrics = get_monthly_financial_summary(year, month)
+        
+        # Get previous month for comparison
+        if month == 1:
+            prev_year, prev_month = year - 1, 12
+        else:
+            prev_year, prev_month = year, month - 1
+        previous_metrics = get_monthly_financial_summary(prev_year, prev_month)
+        
+        # Calculate percentage changes
+        metrics['revenue_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_revenue', 0),
+            metrics.get('total_revenue', 0)
+        )
+        metrics['expense_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_expense', 0),
+            metrics.get('total_expense', 0)
+        )
+        metrics['profit_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('net_profit', 0),
+            metrics.get('net_profit', 0)
+        )
+        
+        # Get weekly breakdown for the month
+        weekly_breakdown = _get_weekly_breakdown(metrics['start_date'], metrics['end_date'])
+        
+        # Get budget variance data
+        budget_data = _get_budget_variance(year, month)
+        
+        return render_template('admin/financial_dashboard_monthly.html', 
+            metrics=metrics, 
+            year=year,
+            month=month,
+            previous_metrics=previous_metrics,
+            weekly_breakdown=weekly_breakdown,
+            budget_data=budget_data
+        )
+    except Exception as e:
+        app.logger.error(f"Error in monthly financial dashboard: {str(e)}")
+        flash(f'Error loading dashboard: {str(e)}', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/financial/dashboard/yearly', methods=['GET', 'POST'])
+@login_required
+def financial_dashboard_yearly():
+    """Yearly Financial Report Dashboard"""
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    try:
+        year = date.today().year
+        
+        if request.method == 'POST':
+            year_str = request.form.get('year')
+            if year_str:
+                year = int(year_str)
+        
+        metrics = get_yearly_financial_summary(year)
+        
+        # Get previous year for comparison
+        previous_metrics = get_yearly_financial_summary(year - 1)
+        
+        # Calculate percentage changes
+        metrics['revenue_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_revenue', 0),
+            metrics.get('total_revenue', 0)
+        )
+        metrics['expense_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_expense', 0),
+            metrics.get('total_expense', 0)
+        )
+        metrics['profit_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('net_profit', 0),
+            metrics.get('net_profit', 0)
+        )
+        
+        # Get monthly breakdown for the year
+        monthly_breakdown = _get_monthly_breakdown(year)
+        
+        # Get department performance
+        dept_performance = _get_department_performance(metrics['start_date'], metrics['end_date'])
+        
+        return render_template('admin/financial_dashboard_yearly.html', 
+            metrics=metrics, 
+            year=year,
+            previous_metrics=previous_metrics,
+            monthly_breakdown=monthly_breakdown,
+            dept_performance=dept_performance
+        )
+    except Exception as e:
+        app.logger.error(f"Error in yearly financial dashboard: {str(e)}")
+        flash(f'Error loading dashboard: {str(e)}', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+
+# =================================================================================================
+# HELPER CLASS FOR DICT TO OBJECT CONVERSION
+# =================================================================================================
+
+class DictToObj:
+    """Convert dict to object for template access with dot notation"""
+    def __init__(self, data):
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    setattr(self, key, DictToObj(value))
+                elif isinstance(value, list):
+                    setattr(self, key, [DictToObj(item) if isinstance(item, dict) else item for item in value])
+                else:
+                    setattr(self, key, value)
+        else:
+            self.__dict__ = data
+
+
+# =================================================================================================
+# FINANCIAL DASHBOARD API ROUTES (For AJAX Loading in Financial Reports Page)
+# =================================================================================================
+
+@app.route('/api/financial/dashboard/daily', methods=['GET'])
+@login_required
+def api_financial_dashboard_daily():
+    """API endpoint to get daily dashboard HTML"""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        target_date = date.today()
+        date_str = request.args.get('date')
+        start_date_str = request.args.get('startDate')
+        end_date_str = request.args.get('endDate')
+        
+        # Check if date range is provided
+        if start_date_str and end_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            
+            # Calculate number of days in range
+            num_days = (end_date - start_date).days + 1
+            
+            # Generate daily metrics for all days in range
+            daily_data = []
+            current = start_date
+            total_revenue = 0
+            total_expense = 0
+            total_profit = 0
+            
+            while current <= end_date:
+                metrics = get_daily_financial_summary(current)
+                daily_data.append({
+                    'date': current,
+                    'revenue': metrics.get('total_revenue', 0),
+                    'expense': metrics.get('total_expense', 0),
+                    'profit': metrics.get('net_profit', 0),
+                    'margin': (metrics.get('net_profit', 0) / metrics.get('total_revenue', 1) * 100) if metrics.get('total_revenue', 0) > 0 else 0
+                })
+                total_revenue += metrics.get('total_revenue', 0)
+                total_expense += metrics.get('total_expense', 0)
+                total_profit += metrics.get('net_profit', 0)
+                current += timedelta(days=1)
+            
+            # Calculate aggregated metrics
+            metrics = {
+                'total_revenue': total_revenue,
+                'total_expense': total_expense,
+                'net_profit': total_profit,
+                'start_date': start_date,
+                'end_date': end_date,
+                'cashflow_breakdown': {'total': total_revenue},  # Simplified for range
+                'profit_margin': (total_profit / total_revenue * 100) if total_revenue > 0 else 0,
+                'outstanding_debtor': 0,
+                'outstanding_debtor_count': 0,
+                'outstanding_insurance': 0,
+                'outstanding_insurance_count': 0,
+                'revenue_breakdown': {
+                    'pharmacy': 0, 'lab': 0, 'imaging': 0, 'consultation': 0, 'insurance': 0, 'other': 0
+                },
+                'expense_breakdown': {
+                    'payroll': 0, 'pharmacy': 0, 'equipment': 0, 'utilities': 0, 'debt': 0, 'other': 0
+                }
+            }
+            
+            cashflow_breakdown = metrics.get('cashflow_breakdown', {})
+            metrics.pop('cashflow_breakdown', None)
+            metrics = DictToObj(metrics)
+            
+            return render_template('admin/_financial_dashboard_daily_fragment.html', 
+                metrics=metrics, cashflow_breakdown=cashflow_breakdown, target_date=start_date, 
+                is_range=True, date_range_label=f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}", 
+                daily_data=daily_data, num_days=num_days, abs=abs)
+        
+        # Single day mode (existing behavior)
+        elif date_str:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
+        metrics = get_daily_financial_summary(target_date)
+        previous_date = target_date - timedelta(days=1)
+        previous_metrics = get_daily_financial_summary(previous_date)
+        
+        metrics['revenue_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_revenue', 0),
+            metrics.get('total_revenue', 0)
+        )
+        metrics['expense_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_expense', 0),
+            metrics.get('total_expense', 0)
+        )
+        metrics['profit_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('net_profit', 0),
+            metrics.get('net_profit', 0)
+        )
+        
+        # Create revenue breakdown object
+        metrics['revenue_breakdown'] = {
+            'pharmacy': metrics.get('pharmacy_revenue', 0),
+            'lab': metrics.get('lab_revenue', 0),
+            'imaging': metrics.get('imaging_revenue', 0),
+            'consultation': metrics.get('consultation_revenue', 0),
+            'insurance': metrics.get('insurance_revenue', 0),
+            'other': metrics.get('other_revenue', 0)
+        }
+        
+        # Create expense breakdown object
+        metrics['expense_breakdown'] = {
+            'payroll': metrics.get('payroll_expense', 0),
+            'pharmacy': metrics.get('pharmacy_expense', 0),
+            'equipment': metrics.get('equipment_expense', 0),
+            'utilities': metrics.get('utilities_expense', 0),
+            'debt': metrics.get('debt_payment', 0),
+            'other': metrics.get('other_expense', 0)
+        }
+        
+        # Save cashflow_breakdown before DictToObj conversion (needs .items() in template)
+        cashflow_breakdown = metrics.get('cashflow_breakdown', {})
+        
+        # Add outstanding/debtor metrics with default values if missing
+        metrics['outstanding_debtor'] = metrics.get('outstanding_debtor', 0)
+        metrics['outstanding_debtor_count'] = metrics.get('outstanding_debtor_count', 0)
+        metrics['outstanding_insurance'] = metrics.get('outstanding_insurance', 0)
+        metrics['outstanding_insurance_count'] = metrics.get('outstanding_insurance_count', 0)
+        
+        # Remove cashflow_breakdown from metrics before conversion to avoid DictToObj wrapping
+        metrics.pop('cashflow_breakdown', None)
+        
+        metrics = DictToObj(metrics)
+        return render_template('admin/_financial_dashboard_daily_fragment.html', metrics=metrics, cashflow_breakdown=cashflow_breakdown, target_date=target_date, is_range=False, abs=abs)
+    except Exception as e:
+        app.logger.error(f"Error in daily API: {str(e)}")
+        return f'<div class="alert alert-danger">Error: {str(e)}</div>', 500
+
+
+@app.route('/api/financial/dashboard/weekly', methods=['GET'])
+@login_required
+def api_financial_dashboard_weekly():
+    """API endpoint to get weekly dashboard HTML"""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        target_date = date.today()
+        date_str = request.args.get('date')
+        start_date_str = request.args.get('startDate')
+        end_date_str = request.args.get('endDate')
+        
+        # Check if date range is provided
+        if start_date_str and end_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            
+            # Calculate number of weeks in range
+            num_weeks = ((end_date - start_date).days // 7) + 1
+            
+            # Generate weekly metrics for all weeks in range
+            weekly_data = _get_weekly_breakdown(start_date, end_date)
+            
+            # Calculate aggregated metrics
+            total_revenue = sum(w.get('revenue', 0) for w in weekly_data)
+            total_expense = sum(w.get('expense', 0) for w in weekly_data)
+            total_profit = sum(w.get('profit', 0) for w in weekly_data)
+            
+            metrics = {
+                'total_revenue': total_revenue,
+                'total_expense': total_expense,
+                'net_profit': total_profit,
+                'start_date': start_date,
+                'end_date': end_date,
+                'cashflow_breakdown': {'total': total_revenue},
+                'profit_margin': (total_profit / total_revenue * 100) if total_revenue > 0 else 0,
+                'outstanding_debtor': 0,
+                'outstanding_debtor_count': 0,
+                'outstanding_insurance': 0,
+                'outstanding_insurance_count': 0,
+                'revenue_breakdown': {
+                    'pharmacy': 0, 'lab': 0, 'imaging': 0, 'consultation': 0, 'insurance': 0, 'other': 0
+                },
+                'expense_breakdown': {
+                    'payroll': 0, 'pharmacy': 0, 'equipment': 0, 'utilities': 0, 'debt': 0, 'other': 0
+                }
+            }
+            
+            cashflow_breakdown = metrics.get('cashflow_breakdown', {})
+            metrics.pop('cashflow_breakdown', None)
+            metrics = DictToObj(metrics)
+            
+            return render_template('admin/_financial_dashboard_weekly_fragment.html', 
+                metrics=metrics, cashflow_breakdown=cashflow_breakdown, target_date=start_date,
+                is_range=True, date_range_label=f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}", 
+                weekly_data=weekly_data, num_weeks=num_weeks, abs=abs)
+        
+        # Single week mode (existing behavior)
+        elif date_str:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
+        metrics = get_weekly_financial_summary(target_date)
+        previous_date = target_date - timedelta(days=7)
+        previous_metrics = get_weekly_financial_summary(previous_date)
+        
+        metrics['revenue_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_revenue', 0),
+            metrics.get('total_revenue', 0)
+        )
+        metrics['expense_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_expense', 0),
+            metrics.get('total_expense', 0)
+        )
+        metrics['profit_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('net_profit', 0),
+            metrics.get('net_profit', 0)
+        )
+        
+        # Create revenue breakdown object
+        metrics['revenue_breakdown'] = {
+            'pharmacy': metrics.get('pharmacy_revenue', 0),
+            'lab': metrics.get('lab_revenue', 0),
+            'imaging': metrics.get('imaging_revenue', 0),
+            'consultation': metrics.get('consultation_revenue', 0),
+            'insurance': metrics.get('insurance_revenue', 0),
+            'other': metrics.get('other_revenue', 0)
+        }
+        
+        # Create expense breakdown object
+        metrics['expense_breakdown'] = {
+            'payroll': metrics.get('payroll_expense', 0),
+            'pharmacy': metrics.get('pharmacy_expense', 0),
+            'equipment': metrics.get('equipment_expense', 0),
+            'utilities': metrics.get('utilities_expense', 0),
+            'debt': metrics.get('debt_payment', 0),
+            'other': metrics.get('other_expense', 0)
+        }
+        
+        # Add outstanding/debtor metrics with default values if missing
+        metrics['outstanding_debtor'] = metrics.get('outstanding_debtor', 0)
+        metrics['outstanding_debtor_count'] = metrics.get('outstanding_debtor_count', 0)
+        metrics['outstanding_insurance'] = metrics.get('outstanding_insurance', 0)
+        metrics['outstanding_insurance_count'] = metrics.get('outstanding_insurance_count', 0)
+        
+        # Save cashflow_breakdown before DictToObj conversion (needs .items() in template)
+        cashflow_breakdown = metrics.get('cashflow_breakdown', {})
+        
+        # Store these values before converting to DictToObj
+        # If custom date range is provided, use those dates; otherwise use metrics dates
+        if start_date_str and end_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+        else:
+            start_date = metrics.get('start_date')
+            end_date = metrics.get('end_date')
+        
+        # Remove cashflow_breakdown from metrics before conversion
+        metrics.pop('cashflow_breakdown', None)
+        
+        daily_breakdown = _get_daily_breakdown(start_date, end_date)
+        metrics = DictToObj(metrics)
+        
+        return render_template('admin/_financial_dashboard_weekly_fragment.html', 
+            metrics=metrics, cashflow_breakdown=cashflow_breakdown, target_date=target_date, 
+            daily_breakdown=daily_breakdown, is_range=False, abs=abs)
+    except Exception as e:
+        app.logger.error(f"Error in weekly API: {str(e)}")
+        return f'<div class="alert alert-danger">Error: {str(e)}</div>', 500
+
+
+@app.route('/api/financial/dashboard/monthly', methods=['GET'])
+@login_required
+def api_financial_dashboard_monthly():
+    """API endpoint to get monthly dashboard HTML"""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        today = date.today()
+        year = today.year
+        month = today.month
+        
+        year_str = request.args.get('year')
+        month_str = request.args.get('month')
+        start_date_str = request.args.get('startDate')
+        end_date_str = request.args.get('endDate')
+        
+        # Check if date range is provided
+        if start_date_str and end_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            
+            # Calculate number of months in range
+            num_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month) + 1
+            
+            # Generate monthly metrics for all months in range
+            monthly_data = []
+            current_year = start_date.year
+            current_month = start_date.month
+            total_revenue = 0
+            total_expense = 0
+            total_profit = 0
+            
+            while (current_year, current_month) <= (end_date.year, end_date.month):
+                m_metrics = get_monthly_financial_summary(current_year, current_month)
+                monthly_data.append({
+                    'year': current_year,
+                    'month': current_month,
+                    'month_name': datetime(current_year, current_month, 1).strftime('%B'),
+                    'revenue': m_metrics.get('total_revenue', 0),
+                    'expense': m_metrics.get('total_expense', 0),
+                    'profit': m_metrics.get('net_profit', 0),
+                    'margin': (m_metrics.get('net_profit', 0) / m_metrics.get('total_revenue', 1) * 100) if m_metrics.get('total_revenue', 0) > 0 else 0
+                })
+                total_revenue += m_metrics.get('total_revenue', 0)
+                total_expense += m_metrics.get('total_expense', 0)
+                total_profit += m_metrics.get('net_profit', 0)
+                
+                if current_month == 12:
+                    current_year += 1
+                    current_month = 1
+                else:
+                    current_month += 1
+            
+            # Calculate aggregated metrics
+            metrics = {
+                'total_revenue': total_revenue,
+                'total_expense': total_expense,
+                'net_profit': total_profit,
+                'start_date': start_date,
+                'end_date': end_date,
+                'cashflow_breakdown': {'total': total_revenue},
+                'profit_margin': (total_profit / total_revenue * 100) if total_revenue > 0 else 0,
+                'revenue_change_pct': 0,
+                'expense_change_pct': 0,
+                'profit_change_pct': 0,
+                'gross_profit': total_profit,
+                'refunds': 0,
+                'outstanding_debtor': 0,
+                'outstanding_debtor_count': 0,
+                'outstanding_insurance': 0,
+                'outstanding_insurance_count': 0,
+                'revenue_breakdown': {
+                    'pharmacy': 0, 'lab': 0, 'imaging': 0, 'consultation': 0, 'insurance': 0, 'other': 0
+                },
+                'expense_breakdown': {
+                    'payroll': 0, 'pharmacy': 0, 'equipment': 0, 'utilities': 0, 'debt': 0, 'other': 0
+                }
+            }
+            
+            # Ensure all required fields have default values
+            metrics.setdefault('total_revenue', 0)
+            metrics.setdefault('total_expense', 0)
+            metrics.setdefault('net_profit', 0)
+            metrics.setdefault('profit_margin', 0)
+            metrics.setdefault('revenue_change_pct', 0)
+            metrics.setdefault('expense_change_pct', 0)
+            metrics.setdefault('profit_change_pct', 0)
+            
+            cashflow_breakdown = metrics.get('cashflow_breakdown', {})
+            metrics.pop('cashflow_breakdown', None)
+            metrics = DictToObj(metrics)
+            
+            # Create previous_metrics with default values for range mode
+            previous_metrics = {
+                'total_revenue': 0,
+                'total_expense': 0,
+                'net_profit': 0,
+                'profit_margin': 0
+            }
+            previous_metrics = DictToObj(previous_metrics)
+            
+            return render_template('admin/_financial_dashboard_monthly_fragment.html', 
+                metrics=metrics, cashflow_breakdown=cashflow_breakdown, year=year, month=month,
+                is_range=True, date_range_label=f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}", 
+                monthly_data=monthly_data, num_months=num_months, previous_metrics=previous_metrics, 
+                weekly_breakdown=[], budget_data=[], abs=abs)
+        
+        # Single month mode (existing behavior)
+        elif year_str and month_str:
+            year = int(year_str)
+            month = int(month_str)
+        
+        metrics = get_monthly_financial_summary(year, month)
+        
+        if month == 1:
+            prev_year, prev_month = year - 1, 12
+        else:
+            prev_year, prev_month = year, month - 1
+        previous_metrics = get_monthly_financial_summary(prev_year, prev_month)
+        
+        metrics['revenue_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_revenue', 0),
+            metrics.get('total_revenue', 0)
+        )
+        metrics['expense_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_expense', 0),
+            metrics.get('total_expense', 0)
+        )
+        metrics['profit_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('net_profit', 0),
+            metrics.get('net_profit', 0)
+        )
+        
+        # Create revenue breakdown object
+        metrics['revenue_breakdown'] = {
+            'pharmacy': metrics.get('pharmacy_revenue', 0),
+            'lab': metrics.get('lab_revenue', 0),
+            'imaging': metrics.get('imaging_revenue', 0),
+            'consultation': metrics.get('consultation_revenue', 0),
+            'insurance': metrics.get('insurance_revenue', 0),
+            'other': metrics.get('other_revenue', 0)
+        }
+        
+        # Create expense breakdown object
+        metrics['expense_breakdown'] = {
+            'payroll': metrics.get('payroll_expense', 0),
+            'pharmacy': metrics.get('pharmacy_expense', 0),
+            'equipment': metrics.get('equipment_expense', 0),
+            'utilities': metrics.get('utilities_expense', 0),
+            'debt': metrics.get('debt_payment', 0),
+            'other': metrics.get('other_expense', 0)
+        }
+        
+        # Add outstanding/debtor metrics with default values if missing
+        metrics['outstanding_debtor'] = metrics.get('outstanding_debtor', 0)
+        metrics['outstanding_debtor_count'] = metrics.get('outstanding_debtor_count', 0)
+        metrics['outstanding_insurance'] = metrics.get('outstanding_insurance', 0)
+        metrics['outstanding_insurance_count'] = metrics.get('outstanding_insurance_count', 0)
+        
+        # Ensure all required fields exist with default values for template rendering
+        # This prevents undefined format errors in Jinja2 templates
+        metrics.setdefault('total_revenue', 0)
+        metrics.setdefault('total_expense', 0)
+        metrics.setdefault('net_profit', 0)
+        metrics.setdefault('profit_margin', 0)
+        metrics.setdefault('revenue_change_pct', 0)
+        metrics.setdefault('expense_change_pct', 0)
+        metrics.setdefault('profit_change_pct', 0)
+        metrics.setdefault('gross_profit', 0)
+        metrics.setdefault('refunds', 0)
+        metrics.setdefault('start_date', date(year, month, 1))
+        metrics.setdefault('end_date', date(year + 1, 1, 1) - timedelta(days=1) if month == 12 else date(year, month + 1, 1) - timedelta(days=1))
+        
+        # Create patient metrics object if it exists
+        if 'patient_metrics' in metrics and isinstance(metrics['patient_metrics'], dict):
+            metrics['patient_metrics'] = DictToObj(metrics['patient_metrics'])
+        
+        # Save cashflow_breakdown before DictToObj conversion (needs .items() in template)
+        cashflow_breakdown = metrics.get('cashflow_breakdown', {})
+        
+        # Calculate start_date and end_date for single month mode
+        start_date = date(year, month, 1)
+        if month == 12:
+            end_date = date(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_date = date(year, month + 1, 1) - timedelta(days=1)
+        
+        # Remove cashflow_breakdown from metrics before conversion
+        metrics.pop('cashflow_breakdown', None)
+        
+        # Ensure previous_metrics also has all required fields with default values
+        previous_metrics.setdefault('total_revenue', 0)
+        previous_metrics.setdefault('total_expense', 0)
+        previous_metrics.setdefault('net_profit', 0)
+        previous_metrics.setdefault('profit_margin', 0)
+        
+        # Convert previous_metrics to DictToObj as well
+        previous_metrics = DictToObj(previous_metrics)
+        
+        weekly_breakdown = _get_weekly_breakdown(start_date, end_date)
+        budget_data = _get_budget_variance(year, month)
+        
+        # Convert weekly_breakdown items to DictToObj for template access
+        weekly_breakdown = [DictToObj(week) for week in weekly_breakdown]
+        
+        metrics = DictToObj(metrics)
+        
+        return render_template('admin/_financial_dashboard_monthly_fragment.html', 
+            metrics=metrics, cashflow_breakdown=cashflow_breakdown, year=year, month=month, 
+            previous_metrics=previous_metrics,
+            weekly_breakdown=weekly_breakdown,
+            budget_data=budget_data,
+            is_range=False,
+            abs=abs)
+    except Exception as e:
+        app.logger.error(f"Error in monthly API: {str(e)}")
+        return f'<div class="alert alert-danger">Error: {str(e)}</div>', 500
+
+
+@app.route('/api/financial/dashboard/yearly', methods=['GET'])
+@login_required
+def api_financial_dashboard_yearly():
+    """API endpoint to get yearly dashboard HTML"""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        year = date.today().year
+        
+        year_str = request.args.get('year')
+        start_date_str = request.args.get('startDate')
+        end_date_str = request.args.get('endDate')
+        
+        # Check if date range is provided
+        if start_date_str and end_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            
+            # Calculate number of years in range
+            num_years = end_date.year - start_date.year + 1
+            
+            # Generate yearly metrics for all years in range
+            yearly_data = []
+            total_revenue = 0
+            total_expense = 0
+            total_profit = 0
+            
+            for y in range(start_date.year, end_date.year + 1):
+                y_metrics = get_yearly_financial_summary(y)
+                yearly_data.append({
+                    'year': y,
+                    'revenue': y_metrics.get('total_revenue', 0),
+                    'expense': y_metrics.get('total_expense', 0),
+                    'profit': y_metrics.get('net_profit', 0),
+                    'margin': (y_metrics.get('net_profit', 0) / y_metrics.get('total_revenue', 1) * 100) if y_metrics.get('total_revenue', 0) > 0 else 0
+                })
+                total_revenue += y_metrics.get('total_revenue', 0)
+                total_expense += y_metrics.get('total_expense', 0)
+                total_profit += y_metrics.get('net_profit', 0)
+            
+            # Calculate aggregated metrics
+            metrics = {
+                'total_revenue': total_revenue,
+                'total_expense': total_expense,
+                'net_profit': total_profit,
+                'start_date': start_date,
+                'end_date': end_date,
+                'profit_margin': (total_profit / total_revenue * 100) if total_revenue > 0 else 0,
+                'revenue_change_pct': 0,
+                'expense_change_pct': 0,
+                'profit_change_pct': 0,
+                'outstanding_debtor': 0,
+                'outstanding_debtor_count': 0,
+                'outstanding_insurance': 0,
+                'outstanding_insurance_count': 0,
+                'revenue_breakdown': {
+                    'pharmacy': 0, 'lab': 0, 'imaging': 0, 'consultation': 0, 'insurance': 0, 'other': 0
+                },
+                'expense_breakdown': {
+                    'payroll': 0, 'pharmacy': 0, 'equipment': 0, 'utilities': 0, 'debt': 0, 'other': 0
+                }
+            }
+            
+            metrics = DictToObj(metrics)
+            
+            # Get monthly breakdown for the first year in range
+            monthly_breakdown = _get_monthly_breakdown(start_date.year)
+            
+            return render_template('admin/_financial_dashboard_yearly_fragment.html', 
+                metrics=metrics, year=start_date.year,
+                is_range=True, date_range_label=f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}", 
+                yearly_data=yearly_data, num_years=num_years, previous_metrics=DictToObj({}), 
+                monthly_breakdown=monthly_breakdown, dept_performance=[], abs=abs)
+        
+        # Single year mode (existing behavior)
+        elif year_str:
+            year = int(year_str)
+        
+        metrics = get_yearly_financial_summary(year)
+        previous_metrics = get_yearly_financial_summary(year - 1)
+        
+        metrics['revenue_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_revenue', 0),
+            metrics.get('total_revenue', 0)
+        )
+        metrics['expense_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('total_expense', 0),
+            metrics.get('total_expense', 0)
+        )
+        metrics['profit_change_pct'] = _calculate_percentage_change(
+            previous_metrics.get('net_profit', 0),
+            metrics.get('net_profit', 0)
+        )
+        
+        # Create revenue breakdown object
+        metrics['revenue_breakdown'] = {
+            'pharmacy': metrics.get('pharmacy_revenue', 0),
+            'lab': metrics.get('lab_revenue', 0),
+            'imaging': metrics.get('imaging_revenue', 0),
+            'consultation': metrics.get('consultation_revenue', 0),
+            'insurance': metrics.get('insurance_revenue', 0),
+            'other': metrics.get('other_revenue', 0)
+        }
+        
+        # Create expense breakdown object
+        metrics['expense_breakdown'] = {
+            'payroll': metrics.get('payroll_expense', 0),
+            'pharmacy': metrics.get('pharmacy_expense', 0),
+            'equipment': metrics.get('equipment_expense', 0),
+            'utilities': metrics.get('utilities_expense', 0),
+            'debt': metrics.get('debt_payment', 0),
+            'other': metrics.get('other_expense', 0)
+        }
+        
+        # Add outstanding/debtor metrics with default values if missing
+        metrics['outstanding_debtor'] = metrics.get('outstanding_debtor', 0)
+        metrics['outstanding_debtor_count'] = metrics.get('outstanding_debtor_count', 0)
+        metrics['outstanding_insurance'] = metrics.get('outstanding_insurance', 0)
+        metrics['outstanding_insurance_count'] = metrics.get('outstanding_insurance_count', 0)
+        
+        # Store these values before converting to DictToObj
+        # If custom date range is provided, use those dates; otherwise use metrics dates
+        if start_date_str and end_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+        else:
+            start_date = metrics.get('start_date')
+            end_date = metrics.get('end_date')
+        
+        monthly_breakdown = _get_monthly_breakdown(year)
+        dept_performance = _get_department_performance(start_date, end_date)
+        
+        # Convert both metrics and previous_metrics to DictToObj for consistent template access
+        previous_metrics = DictToObj(previous_metrics)
+        metrics = DictToObj(metrics)
+        
+        return render_template('admin/_financial_dashboard_yearly_fragment.html', 
+            metrics=metrics, year=year,
+            previous_metrics=previous_metrics,
+            monthly_breakdown=monthly_breakdown,
+            dept_performance=dept_performance,
+            is_range=False,
+            abs=abs)
+    except Exception as e:
+        app.logger.error(f"Error in yearly API: {str(e)}")
+        return f'<div class="alert alert-danger">Error: {str(e)}</div>', 500
+
+
+@app.route('/api/financial/dashboard/yearly/daily_breakdown', methods=['GET'])
+@login_required
+def api_financial_dashboard_yearly_daily_breakdown():
+    """Return daily breakdown for a selected month in a year"""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    try:
+        year_str = request.args.get('year')
+        month_str = request.args.get('month')
+        if not year_str or not month_str:
+            return jsonify({'daily': []})
+
+        year = int(year_str)
+        month = int(month_str)
+        days_in_month = calendar.monthrange(year, month)[1]
+
+        daily_rows = []
+        for day in range(1, days_in_month + 1):
+            target_date = date(year, month, day)
+            metrics = get_daily_financial_summary(target_date)
+
+            revenue_breakdown = {
+                'pharmacy': metrics.get('pharmacy_revenue', 0),
+                'lab': metrics.get('lab_revenue', 0),
+                'imaging': metrics.get('imaging_revenue', 0),
+                'consultation': metrics.get('consultation_revenue', 0),
+                'insurance': metrics.get('insurance_revenue', 0),
+                'other': metrics.get('other_revenue', 0)
+            }
+
+            expense_breakdown = {
+                'payroll': metrics.get('payroll_expense', 0),
+                'pharmacy': metrics.get('pharmacy_expense', 0),
+                'equipment': metrics.get('equipment_expense', 0),
+                'utilities': metrics.get('utilities_expense', 0),
+                'debt': metrics.get('debt_payment', 0),
+                'other': metrics.get('other_expense', 0)
+            }
+
+            total_revenue = metrics.get('total_revenue', 0)
+            total_expense = metrics.get('total_expense', 0)
+            net_profit = metrics.get('net_profit', 0)
+            profit_margin = metrics.get('profit_margin', 0)
+
+            daily_rows.append({
+                'date': target_date.strftime('%Y-%m-%d'),
+                'total_revenue': total_revenue,
+                'total_expense': total_expense,
+                'net_profit': net_profit,
+                'profit_margin': profit_margin,
+                'revenue_breakdown': revenue_breakdown,
+                'expense_breakdown': expense_breakdown
+            })
+
+        return jsonify({'daily': daily_rows})
+    except Exception as e:
+        app.logger.error(f"Error in yearly daily breakdown API: {str(e)}")
+        return jsonify({'daily': [], 'error': str(e)}), 500
+
+
+@app.route('/api/financial/dashboard/yearly/export', methods=['GET'])
+@login_required
+def api_financial_dashboard_yearly_export():
+    """Export yearly report as CSV (optionally filtered by month)"""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    try:
+        year = int(request.args.get('year', date.today().year))
+        month_value = request.args.get('month', 'all')
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        writer.writerow([f'Yearly Financial Report - {year}'])
+        writer.writerow([])
+
+        monthly_breakdown = _get_monthly_breakdown(year)
+        writer.writerow(['Month', 'Revenue (KES)', 'Expense (KES)', 'Profit (KES)', 'Margin %'])
+        for month in monthly_breakdown:
+            writer.writerow([
+                month.get('month_name') or month.get('month_abbr') or '',
+                round(month.get('revenue', 0), 2),
+                round(month.get('expense', 0), 2),
+                round(month.get('profit', 0), 2),
+                round(month.get('margin', 0), 2)
+            ])
+
+        if month_value and month_value != 'all':
+            month = int(month_value)
+            writer.writerow([])
+            writer.writerow([f'Daily Breakdown - {calendar.month_name[month]} {year}'])
+            writer.writerow(['Date', 'Total Income (KES)', 'Total Expense (KES)', 'Net Profit (KES)', 'Margin %'])
+
+            days_in_month = calendar.monthrange(year, month)[1]
+            for day in range(1, days_in_month + 1):
+                target_date = date(year, month, day)
+                metrics = get_daily_financial_summary(target_date)
+                writer.writerow([
+                    target_date.strftime('%Y-%m-%d'),
+                    round(metrics.get('total_revenue', 0), 2),
+                    round(metrics.get('total_expense', 0), 2),
+                    round(metrics.get('net_profit', 0), 2),
+                    round(metrics.get('profit_margin', 0), 2)
+                ])
+
+        output.seek(0)
+        filename = f"yearly_report_{year}.csv" if month_value == 'all' else f"yearly_report_{year}_{month_value}.csv"
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+    except Exception as e:
+        app.logger.error(f"Error exporting yearly report: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# =================================================================================================
+# FINANCIAL DASHBOARD HELPER FUNCTIONS
+# =================================================================================================
+
+def _calculate_percentage_change(old_value: float, new_value: float) -> float:
+    """Calculate percentage change between two values"""
+    try:
+        if old_value == 0:
+            return 100 if new_value > 0 else 0
+        return ((new_value - old_value) / old_value) * 100
+    except Exception:
+        return 0
+
+
+def _get_daily_breakdown(start_date: date, end_date: date) -> list:
+    """Get daily metrics breakdown for a date range"""
+    breakdown = []
+    current = start_date
+    while current <= end_date:
+        metrics = get_daily_financial_summary(current)
+        breakdown.append({
+            'date': current,
+            'revenue': metrics.get('total_revenue', 0),
+            'expense': metrics.get('total_expense', 0),
+            'profit': metrics.get('net_profit', 0)
+        })
+        current += timedelta(days=1)
+    return breakdown
+
+
+def _get_weekly_breakdown(start_date: date, end_date: date) -> list:
+    """Get weekly metrics breakdown for a date range"""
+    breakdown = []
+    current = start_date
+    while current <= end_date:
+        week_start = current - timedelta(days=current.weekday())
+        week_end = min(week_start + timedelta(days=6), end_date)
+        metrics = get_financial_metrics(week_start, week_end, 'weekly')
+        breakdown.append({
+            'start_date': week_start,
+            'end_date': week_end,
+            'week_number': current.isocalendar()[1],
+            'revenue': metrics.get('total_revenue', 0),
+            'expense': metrics.get('total_expense', 0),
+            'profit': metrics.get('net_profit', 0),
+            'margin': (metrics.get('net_profit', 0) / metrics.get('total_revenue', 1) * 100) if metrics.get('total_revenue', 0) > 0 else 0
+        })
+        current = week_end + timedelta(days=1)
+    return breakdown
+
+
+def _get_monthly_breakdown(year: int) -> list:
+    """Get monthly metrics breakdown for a year with detailed revenue and expense breakdowns"""
+    breakdown = []
+    for month in range(1, 13):
+        metrics = get_monthly_financial_summary(year, month)
+        month_name = datetime(year, month, 1).strftime('%B')
+        month_abbr = datetime(year, month, 1).strftime('%b')
+        total_revenue = metrics.get('total_revenue', 0)
+        total_expense = metrics.get('total_expense', 0)
+        
+        breakdown.append({
+            'month': month,
+            'month_name': month_name,
+            'month_abbr': month_abbr,
+            'revenue': total_revenue,
+            'expense': total_expense,
+            'profit': metrics.get('net_profit', 0),
+            'margin': (metrics.get('net_profit', 0) / total_revenue * 100) if total_revenue > 0 else 0,
+            # Revenue breakdown by source (always present)
+            'pharmacy_revenue': metrics.get('pharmacy_revenue', 0) if metrics.get('pharmacy_revenue') is not None else 0,
+            'lab_revenue': metrics.get('lab_revenue', 0) if metrics.get('lab_revenue') is not None else 0,
+            'imaging_revenue': metrics.get('imaging_revenue', 0) if metrics.get('imaging_revenue') is not None else 0,
+            'consultation_revenue': metrics.get('consultation_revenue', 0) if metrics.get('consultation_revenue') is not None else 0,
+            'insurance_revenue': metrics.get('insurance_revenue', 0) if metrics.get('insurance_revenue') is not None else 0,
+            'other_revenue': metrics.get('other_revenue', 0) if metrics.get('other_revenue') is not None else 0,
+            # Expense breakdown by category (always present)
+            'payroll_expense': metrics.get('payroll_expense', 0) if metrics.get('payroll_expense') is not None else 0,
+            'pharmacy_expense': metrics.get('pharmacy_expense', 0) if metrics.get('pharmacy_expense') is not None else 0,
+            'equipment_expense': metrics.get('equipment_expense', 0) if metrics.get('equipment_expense') is not None else 0,
+            'utilities_expense': metrics.get('utilities_expense', 0) if metrics.get('utilities_expense') is not None else 0,
+            'debt_payment': metrics.get('debt_payment', 0) if metrics.get('debt_payment') is not None else 0,
+            'other_expense': metrics.get('other_expense', 0) if metrics.get('other_expense') is not None else 0
+        })
+    return breakdown
+
+
+def _get_budget_variance(year: int, month: int) -> dict:
+    """Get budget vs actual variance data"""
+    try:
+        budget = DepartmentBudget.query.filter_by(
+            fiscal_year=year
+        ).all()
+        
+        budget_data = []
+        for b in budget:
+            budget_data.append({
+                'department': b.department_name,
+                'budgeted': float(b.budgeted_amount),
+                'actual': float(b.actual_amount),
+                'variance': float(b.variance),
+                'variance_pct': float(b.variance_percentage)
+            })
+        
+        return {
+            'budgets': budget_data,
+            'total_budgeted': sum(b['budgeted'] for b in budget_data),
+            'total_actual': sum(b['actual'] for b in budget_data)
+        }
+    except Exception as e:
+        app.logger.error(f"Error getting budget variance: {str(e)}")
+        return {'budgets': [], 'total_budgeted': 0, 'total_actual': 0}
+
+
+def _get_department_performance(start_date: date, end_date: date) -> dict:
+    """Get department-wise revenue and expense performance"""
+    try:
+        dept_revenue = db.session.query(
+            DepartmentRevenue.department,
+            func.sum(DepartmentRevenue.revenue_amount).label('total_revenue')
+        ).filter(
+            DepartmentRevenue.metric_date >= start_date,
+            DepartmentRevenue.metric_date <= end_date
+        ).group_by(DepartmentRevenue.department).all()
+        
+        dept_expense = db.session.query(
+            DepartmentExpense.department,
+            func.sum(DepartmentExpense.expense_amount).label('total_expense')
+        ).filter(
+            DepartmentExpense.metric_date >= start_date,
+            DepartmentExpense.metric_date <= end_date
+        ).group_by(DepartmentExpense.department).all()
+        
+        departments = {}
+        for dept, revenue in dept_revenue:
+            departments[dept] = {'revenue': float(revenue or 0), 'expense': 0}
+        
+        for dept, expense in dept_expense:
+            if dept not in departments:
+                departments[dept] = {'revenue': 0, 'expense': 0}
+            departments[dept]['expense'] = float(expense or 0)
+        
+        dept_perf = []
+        for dept, data in departments.items():
+            dept_perf.append({
+                'department': dept,
+                'revenue': data['revenue'],
+                'expense': data['expense'],
+                'profit': data['revenue'] - data['expense']
+            })
+        
+        return dept_perf
+    except Exception as e:
+        app.logger.error(f"Error getting department performance: {str(e)}")
+        return []
+
 
 @app.route('/admin/employees/<int:employee_id>')
 @login_required
@@ -12835,22 +14570,25 @@ def _scheduler_apply_stock_jobs(scheduler: BackgroundScheduler):
         coalesce=True,
     )
 
-# Initialize scheduler
-if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-    scheduler = BackgroundScheduler()
-    _scheduler_apply_backup_jobs(scheduler)
-    _scheduler_apply_reporting_jobs(scheduler)
-    _scheduler_apply_stock_jobs(scheduler)
-    scheduler.add_job(
-        scheduled_ai_dosage_agent,
-        'interval',
-        minutes=30,
-        id='ai_dosage_agent',
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.start()
+# Initialize scheduler (skip in fast dev mode)
+if not app.config.get('FAST_DEV'):
+    if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        scheduler = BackgroundScheduler()
+        _scheduler_apply_backup_jobs(scheduler)
+        _scheduler_apply_reporting_jobs(scheduler)
+        _scheduler_apply_stock_jobs(scheduler)
+        scheduler.add_job(
+            scheduled_ai_dosage_agent,
+            'interval',
+            minutes=30,
+            id='ai_dosage_agent',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
+else:
+    app.logger.warning('FAST_DEV enabled: background schedulers disabled for faster startup.')
 
 # ======================
 # MONEY MANAGEMENT ROUTES
@@ -17005,6 +18743,9 @@ def admin_start_ai_dosage_agent_job():
     mode = (request.form.get('mode') or 'full').strip().lower()
     if mode not in ('full', 'fill'):
         mode = 'full'
+
+    if current_app.config.get('FAST_DEV'):
+        return jsonify({'error': 'FAST_DEV enabled: AI dosage jobs are disabled.'}), 503
 
     try:
         limit = int(request.form.get('limit') or 10)
