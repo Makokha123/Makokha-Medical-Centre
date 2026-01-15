@@ -24,35 +24,31 @@
         border-radius: var(--yearly-card-radius);
         border: var(--yearly-border);
         box-shadow: var(--yearly-card-shadow);
-        overflow: hidden;
         background: #ffffff;
-    }
-
-    .financial-dashboard-container .card-header {
-        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        /* Removed overflow: hidden to prevent clipping issues with scrolling content */
     }
 
     .financial-dashboard-container .card-body {
-        padding: 16px;
+        padding: 12px; /* Reduced padding */
     }
 
     .annual-report-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        padding: 20px;
+        padding: 16px; /* Reduced padding */
         border-radius: var(--yearly-card-radius);
-        margin-bottom: 20px;
+        margin-bottom: 16px; /* Reduced margin */
         box-shadow: var(--yearly-card-shadow);
     }
 
     .annual-report-header h3 {
         margin: 0;
         font-weight: 700;
-        font-size: 18px;
+        font-size: 16px; /* Reduced font size */
     }
 
     .annual-report-header p {
-        margin: 6px 0 0 0;
+        margin: 4px 0 0 0; /* Reduced margin */
         opacity: 0.9;
     }
 
@@ -62,9 +58,9 @@
         overflow-x: auto;
         overflow-y: hidden;
         flex-wrap: nowrap;
-        gap: 16px;
-        padding: 10px 8px 16px;
-        margin-bottom: 20px;
+        gap: 12px; /* Reduced gap */
+        padding: 8px 4px 12px; /* Reduced padding */
+        margin-bottom: 16px; /* Reduced margin */
         border-radius: var(--yearly-card-radius);
         background: #f8fafc;
         scroll-behavior: smooth;
@@ -72,17 +68,17 @@
     }
 
     .yearly-charts-scroll-container::-webkit-scrollbar {
-        height: 8px;
+        height: 6px; /* Smaller scrollbar */
     }
 
     .yearly-charts-scroll-container::-webkit-scrollbar-track {
         background: #e9ecef;
-        border-radius: 4px;
+        border-radius: 3px;
     }
 
     .yearly-charts-scroll-container::-webkit-scrollbar-thumb {
         background: #667eea;
-        border-radius: 4px;
+        border-radius: 3px;
     }
 
     .yearly-charts-scroll-container::-webkit-scrollbar-thumb:hover {
@@ -91,54 +87,55 @@
 
     .yearly-chart-item {
         flex: 0 0 auto;
-        width: 360px;
-        min-width: 360px;
+        width: 340px; /* Slightly reduced width */
+        min-width: 340px;
     }
     
     .chart-widget {
-        border-radius: 12px;
+        border-radius: 10px; /* Smaller radius */
         background: white;
-        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
-        padding: 12px;
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06); /* Reduced shadow */
+        padding: 10px; /* Reduced padding */
         height: 100%;
         border: 1px solid #e2e8f0;
     }
 
     .chart-widget h6 {
-        font-size: 12px;
+        font-size: 11px; /* Reduced font size */
         color: #1f2937;
-        margin-bottom: 6px;
+        margin-bottom: 4px;
     }
 
     /* Yearly report tables: compact height + bold outer borders */
     .financial-dashboard-container .table {
         border-collapse: collapse;
-        border: 2px solid #1f2937;
+        border: 1px solid #dee2e6; /* Lighter border */
         background: white;
     }
 
     .financial-dashboard-container .table th,
     .financial-dashboard-container .table td {
-        border: 1px solid #e2e8f0;
-        padding: 6px 8px;
-        line-height: 1.2;
+        border: 1px solid #e9ecef; /* Lighter border */
+        padding: 5px 7px; /* Reduced padding */
+        line-height: 1.1; /* Tighter line height */
         vertical-align: middle;
     }
 
     .financial-dashboard-container .table thead th {
         background: #f8fafc;
-        font-weight: 700;
+        font-weight: 600; /* Slightly less bold */
         color: #111827;
     }
 
     .financial-dashboard-container .table-responsive {
-        border-radius: 10px;
+        border-radius: 8px; /* Smaller radius */
         overflow-x: auto;
-        padding: 2px;
+        padding: 1px;
+        border: 1px solid #dee2e6;
     }
 
     .financial-dashboard-container .table-responsive::-webkit-scrollbar {
-        height: 8px;
+        height: 6px; /* Smaller scrollbar */
     }
 
     .financial-dashboard-container .table-responsive::-webkit-scrollbar-track {
@@ -157,7 +154,7 @@
 
     .financial-dashboard-container table {
         width: 100%;
-        min-width: 720px;
+        min-width: 680px; /* Reduced min-width */
         table-layout: fixed;
     }
 
@@ -169,26 +166,29 @@
     /* Reduce category/metric column width */
     .financial-dashboard-container th:first-child,
     .financial-dashboard-container td:first-child {
-        width: 140px;
-        max-width: 140px;
+        width: 120px; /* Reduced width */
+        max-width: 120px; /* Reduced width */
         white-space: normal;
+        word-break: break-word;
     }
 
     .financial-dashboard-container .badge {
-        font-size: 11px;
-        padding: 4px 8px;
+        font-size: 10px; /* Smaller font */
+        padding: 3px 6px; /* Smaller padding */
         border-radius: 999px;
     }
 
     .financial-dashboard-container .btn {
-        border-radius: 10px;
+        border-radius: 8px; /* Smaller radius */
         font-weight: 600;
+        font-size: 11px; /* Smaller font */
+        padding: 4px 8px; /* Smaller padding */
     }
 
     @media (max-width: 1200px) {
         .yearly-chart-item {
-            width: 320px;
-            min-width: 320px;
+            width: 310px;
+            min-width: 310px;
         }
     }
 
@@ -204,31 +204,30 @@
         }
 
         .yearly-chart-item {
-            width: 280px;
+            width: 100%;
             min-width: 280px;
         }
 
         .financial-dashboard-container .card-body {
-            padding: 12px;
+            padding: 10px;
         }
     }
 </style>
-</style>
 
-<div class="financial-dashboard-container">
+<div class="financial-dashboard-container container-fluid">
 
-<div class="row mb-4">
-    <div class="col-md-3">
+<div class="row mb-3">
+    <div class="col-lg-3 col-md-6 mb-3">
         <div class="card border-left-primary h-100">
             <div class="card-body">
-                <div class="text-primary font-weight-bold text-uppercase mb-1">Annual Revenue</div>
-                <div class="h3 mb-0">KES {{ "{:,.0f}".format(metrics.total_revenue) }}</div>
+                <div class="text-primary font-weight-bold text-uppercase mb-1" style="font-size: 10px;">Annual Revenue</div>
+                <div class="h4 mb-0">KES {{ "{:,.0f}".format(metrics.total_revenue) }}</div>
                 <small class="text-muted">
                     {% if metrics.start_date %}
                         {{ metrics.start_date.strftime('%Y') }}
                     {% endif %}
                 </small>
-                <div class="mt-2">
+                <div class="mt-1" style="font-size: 10px;">
                     {% if metrics.revenue_change_pct >= 0 %}
                         <i class="fas fa-arrow-up text-success"></i> {{ "{:.1f}%".format(metrics.revenue_change_pct) }} vs last year
                     {% else %}
@@ -239,13 +238,13 @@
         </div>
     </div>
     
-    <div class="col-md-3">
+    <div class="col-lg-3 col-md-6 mb-3">
         <div class="card border-left-success h-100">
             <div class="card-body">
-                <div class="text-success font-weight-bold text-uppercase mb-1">Annual Expenses</div>
-                <div class="h3 mb-0">KES {{ "{:,.0f}".format(metrics.total_expense) }}</div>
+                <div class="text-success font-weight-bold text-uppercase mb-1" style="font-size: 10px;">Annual Expenses</div>
+                <div class="h4 mb-0">KES {{ "{:,.0f}".format(metrics.total_expense) }}</div>
                 <small class="text-muted">Operating Costs</small>
-                <div class="mt-2">
+                <div class="mt-1" style="font-size: 10px;">
                     {% if metrics.expense_change_pct >= 0 %}
                         <i class="fas fa-arrow-up text-danger"></i> {{ "{:.1f}%".format(metrics.expense_change_pct) }} vs last year
                     {% else %}
@@ -256,13 +255,13 @@
         </div>
     </div>
     
-    <div class="col-md-3">
+    <div class="col-lg-3 col-md-6 mb-3">
         <div class="card border-left-info h-100">
             <div class="card-body">
-                <div class="text-info font-weight-bold text-uppercase mb-1">Annual Net Profit</div>
-                <div class="h3 mb-0">KES {{ "{:,.0f}".format(metrics.net_profit) }}</div>
+                <div class="text-info font-weight-bold text-uppercase mb-1" style="font-size: 10px;">Annual Net Profit</div>
+                <div class="h4 mb-0">KES {{ "{:,.0f}".format(metrics.net_profit) }}</div>
                 <small class="text-muted">Revenue - Expenses</small>
-                <div class="mt-2">
+                <div class="mt-1" style="font-size: 10px;">
                     {% if metrics.profit_change_pct >= 0 %}
                         <i class="fas fa-arrow-up text-success"></i> {{ "{:.1f}%".format(metrics.profit_change_pct) }} vs last year
                     {% else %}
@@ -273,13 +272,13 @@
         </div>
     </div>
     
-    <div class="col-md-3">
+    <div class="col-lg-3 col-md-6 mb-3">
         <div class="card border-left-warning h-100">
             <div class="card-body">
-                <div class="text-warning font-weight-bold text-uppercase mb-1">Profit Margin</div>
-                <div class="h3 mb-0">{{ "{:.1f}%".format(metrics.profit_margin if metrics.profit_margin else 0) }}</div>
+                <div class="text-warning font-weight-bold text-uppercase mb-1" style="font-size: 10px;">Profit Margin</div>
+                <div class="h4 mb-0">{{ "{:.1f}%".format(metrics.profit_margin if metrics.profit_margin else 0) }}</div>
                 <small class="text-muted">Net / Revenue Ratio</small>
-                <div class="mt-2">
+                <div class="mt-1">
                     {% if metrics.profit_margin >= 25 %}
                         <span class="badge badge-success">Excellent</span>
                     {% elif metrics.profit_margin >= 15 %}
@@ -297,7 +296,7 @@
 
 <!-- Multi-Year Range Report -->
 {% if is_range and yearly_data %}
-<div class="row mb-4">
+<div class="row mb-3">
     <div class="col-12">
         <div class="card">
             <div class="card-header bg-primary text-white">
@@ -335,7 +334,7 @@
 {% endif %}
 
 <!-- Professional Financial Analysis Charts - Horizontal Scrolling Row -->
-<div class="row mb-4">
+<div class="row mb-3">
     <div class="col-12">
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-primary text-white">
@@ -352,8 +351,8 @@
                     <!-- Income vs Expenses Bar Chart -->
                     <div class="yearly-chart-item">
                         <div class="chart-widget">
-                            <h6 class="mb-0 font-weight-bold text-primary py-2" style="font-size: 11px;"><i class="fas fa-exchange-alt"></i> Income vs Expenses</h6>
-                            <div class="chart-container p-2" style="position: relative; height: 250px;">
+                            <h6 class="mb-0 font-weight-bold text-primary py-1" style="font-size: 11px;"><i class="fas fa-exchange-alt"></i> Income vs Expenses</h6>
+                            <div class="chart-container p-1" style="position: relative; height: 240px;">
                                 <canvas id="yearly-income-vs-expense-chart"></canvas>
                             </div>
                         </div>
@@ -362,8 +361,8 @@
                     <!-- Profit Trend Line Chart -->
                     <div class="yearly-chart-item">
                         <div class="chart-widget">
-                            <h6 class="mb-0 font-weight-bold text-info py-2" style="font-size: 11px;"><i class="fas fa-chart-line"></i> Monthly Profit Trend</h6>
-                            <div class="chart-container p-2" style="position: relative; height: 250px;">
+                            <h6 class="mb-0 font-weight-bold text-info py-1" style="font-size: 11px;"><i class="fas fa-chart-line"></i> Monthly Profit Trend</h6>
+                            <div class="chart-container p-1" style="position: relative; height: 240px;">
                                 <canvas id="yearly-profit-trend-chart"></canvas>
                             </div>
                         </div>
@@ -372,8 +371,8 @@
                     <!-- Expenses Breakdown Doughnut Chart -->
                     <div class="yearly-chart-item">
                         <div class="chart-widget">
-                            <h6 class="mb-0 font-weight-bold text-success py-2" style="font-size: 11px;"><i class="fas fa-chart-pie"></i> Expenses Breakdown</h6>
-                            <div class="chart-container p-2" style="position: relative; height: 250px;">
+                            <h6 class="mb-0 font-weight-bold text-success py-1" style="font-size: 11px;"><i class="fas fa-chart-pie"></i> Expenses Breakdown</h6>
+                            <div class="chart-container p-1" style="position: relative; height: 240px;">
                                 <canvas id="yearly-expenses-breakdown-chart"></canvas>
                             </div>
                         </div>
@@ -382,22 +381,22 @@
                     <!-- Income Breakdown Pie Chart -->
                     <div class="yearly-chart-item">
                         <div class="chart-widget">
-                            <h6 class="mb-0 font-weight-bold text-warning py-2" style="font-size: 11px;"><i class="fas fa-chart-bar"></i> Income Sources</h6>
-                            <div class="chart-container p-2" style="position: relative; height: 250px;">
+                            <h6 class="mb-0 font-weight-bold text-warning py-1" style="font-size: 11px;"><i class="fas fa-chart-bar"></i> Income Sources</h6>
+                            <div class="chart-container p-1" style="position: relative; height: 240px;">
                                 <canvas id="yearly-income-breakdown-chart"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
-                <small class="text-muted d-block mt-2"><i class="fas fa-arrow-right"></i> Scroll horizontally to view all charts</small>
+                <small class="text-muted d-block mt-2 px-2"><i class="fas fa-arrow-right"></i> Scroll horizontally to view all charts</small>
             </div>
         </div>
     </div>
 </div>
 
 <!-- Income Sources and Expenses Filter Section -->
-<div class="row mb-4">
-    <div class="col-md-6">
+<div class="row mb-3">
+    <div class="col-12">
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-success text-white">
                 <h6 class="mb-0 font-weight-bold"><i class="fas fa-layer-group"></i> Income Sources Detail</h6>
@@ -450,13 +449,13 @@
                 <small class="text-muted d-block mb-2">Click on a source to view detailed breakdown</small>
                 <div id="income-sources-container" class="d-flex flex-wrap gap-2">
                     <button class="btn btn-sm btn-outline-success income-source-btn" data-source="all">
-                        <i class="fas fa-asterisk"></i> All Sources
+                        <i class="fas fa-asterisk"></i> All
                     </button>
                     <button class="btn btn-sm btn-outline-primary income-source-btn" data-source="pharmacy">
                         <i class="fas fa-pills"></i> Pharmacy
                     </button>
                     <button class="btn btn-sm btn-outline-info income-source-btn" data-source="lab">
-                        <i class="fas fa-flask"></i> Lab Tests
+                        <i class="fas fa-flask"></i> Lab
                     </button>
                     <button class="btn btn-sm btn-outline-warning income-source-btn" data-source="imaging">
                         <i class="fas fa-x-ray"></i> Imaging
@@ -491,8 +490,10 @@
             </div>
         </div>
     </div>
+</div>
 
-    <div class="col-md-6">
+<div class="row mb-3">
+    <div class="col-12">
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-danger text-white">
                 <h6 class="mb-0 font-weight-bold"><i class="fas fa-layer-group"></i> Expenses Categories Detail</h6>
