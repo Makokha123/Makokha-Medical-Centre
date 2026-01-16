@@ -293,12 +293,11 @@
     
     <div class="signature-section">
         <div class="signature-box">
-            {% include 'admin/components/digital_signature.html' %}
+            {{ generate_digital_signature(signer_name="Makokha", signer_title="Medical Director") }}
         </div>
         
         <div class="stamp-box">
-            {% set current_date = now.strftime('%d %b %Y') %}
-            {% include 'admin/components/dynamic_stamp.html' %}
+            {{ generate_rubber_stamp() }}
         </div>
     </div>
     

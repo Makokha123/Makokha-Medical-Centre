@@ -6,18 +6,6 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
 
 <div class="money-management-container">
-    <div class="dashboard-header">
-        <div class="header-content">
-            <div class="header-title">
-                <h1><i class="fas fa-money-bill-wave"></i> Money Management</h1>
-                <p>Track and manage your finances</p>
-            </div>
-            <div class="current-date">
-                <span id="current-date"></span>
-            </div>
-        </div>
-    </div>
-
     {% if is_embed %}
     <div id="alert-container">
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -64,14 +52,14 @@
             </div>
         </div>
         
-        <div class="summary-card pending">
+        <div class="summary-card pending" id="pending-card" style="cursor: pointer;">
             <div class="card-icon">
                 <i class="fas fa-clock"></i>
             </div>
             <div class="card-content">
                 <h3>Pending Payments</h3>
                 <div class="amount" id="pending-payments">0</div>
-                <p>Bills and payroll due</p>
+                <p>Bills and payroll due (Click to view)</p>
             </div>
         </div>
     </div>
@@ -1341,6 +1329,24 @@
     </div>
 </div>
 
+<!-- Pending Payments Modal -->
+<div class="modal" id="pending-payments-modal" role="dialog" aria-modal="true" aria-labelledby="pending-payments-title">
+    <div class="modal-content" style="max-width: 900px;">
+        <div class="modal-header">
+            <h2 id="pending-payments-title"><i class="fas fa-clock"></i> Pending Payments</h2>
+            <button class="close-btn" onclick="moneyManagement.closePendingModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="pending-payments-content">
+                <div style="text-align: center; padding: 40px;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 48px; color: #667eea;"></i>
+                    <p style="margin-top: 20px; color: #666;">Loading pending payments...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Add Drawing Modal -->
 <div class="modal" id="add-drawing-modal" role="dialog" aria-modal="true" aria-labelledby="add-drawing-title">
     <div class="modal-content">
@@ -1657,6 +1663,120 @@
             <div class="form-actions">
                 <button type="button" class="btn" data-modal-target="add-purchase-order">Cancel</button>
                 <button type="submit" class="btn btn-primary">Create LPO</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- View LPO Modal -->
+<div class="modal" id="view-purchase-order-modal" role="dialog" aria-modal="true" aria-labelledby="view-lpo-title">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="view-lpo-title">View Local Purchase Order</h2>
+            <button class="close-btn" data-modal-target="view-purchase-order">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>LPO Number</label>
+                <p id="view-lpo-number" style="font-weight: bold; font-size: 16px;">-</p>
+            </div>
+            <div class="form-group">
+                <label>Vendor</label>
+                <p id="view-lpo-vendor">-</p>
+            </div>
+            <div class="form-group">
+                <label>Date Ordered</label>
+                <p id="view-lpo-date">-</p>
+            </div>
+            <div class="form-group">
+                <label>Status</label>
+                <p id="view-lpo-status">-</p>
+            </div>
+            <div class="form-group">
+                <label>Total Amount</label>
+                <p id="view-lpo-total" style="font-weight: bold; color: #27ae60; font-size: 18px;">-</p>
+            </div>
+            <div class="form-group">
+                <label>Items</label>
+                <div id="view-lpo-items" style="margin-top: 10px;">
+                    <p>Loading items...</p>
+                </div>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn" data-modal-target="view-purchase-order">Close</button>
+            <button type="button" class="btn btn-success" onclick="moneyManagement.generateLPOPdf($('#view-lpo-id').val(), $('#view-lpo-number').text())">
+                <i class="fas fa-file-pdf"></i> Generate PDF
+            </button>
+        </div>
+        <input type="hidden" id="view-lpo-id">
+    </div>
+</div>
+
+<!-- Edit LPO Modal -->
+<div class="modal" id="edit-purchase-order-modal" role="dialog" aria-modal="true" aria-labelledby="edit-lpo-title">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="edit-lpo-title">Edit Local Purchase Order</h2>
+            <button class="close-btn" data-modal-target="edit-purchase-order">&times;</button>
+        </div>
+        <form id="edit-purchase-order-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" id="edit-lpo-id" name="po_id">
+            
+            <div class="form-group">
+                <label for="edit-lpo-vendor">Vendor *</label>
+                <select id="edit-lpo-vendor" name="vendor_id" required>
+                    <option value="">Select Vendor</option>
+                    {% for vendor in vendors %}
+                    <option value="{{ vendor.id }}">{{ vendor.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="edit-lpo-status">Status</label>
+                <select id="edit-lpo-status" name="status">
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="received">Received</option>
+                    <option value="cancelled">Cancelled</option>
+                </select>
+            </div>
+            
+            <h3 style="margin: 20px 0 10px 0; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px;">Items</h3>
+            
+            <table class="modern-table" id="edit-lpo-items-table" style="margin-bottom: 10px;">
+                <thead>
+                    <tr>
+                        <th style="width: 40%;">Description</th>
+                        <th style="width: 15%;">Quantity</th>
+                        <th style="width: 20%;">Unit Price (KSH)</th>
+                        <th style="width: 20%;">Total (KSH)</th>
+                        <th style="width: 5%;"></th>
+                    </tr>
+                </thead>
+                <tbody id="edit-lpo-items-body">
+                    <!-- Items will be loaded here -->
+                </tbody>
+            </table>
+            
+            <button type="button" id="edit-add-lpo-item-btn" class="btn btn-secondary" style="margin-bottom: 15px;">
+                <i class="fas fa-plus"></i> Add Item
+            </button>
+            
+            <div style="text-align: right; margin: 15px 0; padding: 10px; background: #ecf0f1; border-radius: 5px;">
+                <strong style="font-size: 16px;">Grand Total: KSH <span id="edit-lpo-grand-total">0.00</span></strong>
+            </div>
+            
+            <div class="form-group">
+                <label for="edit-lpo-notes">Notes / Special Instructions</label>
+                <textarea id="edit-lpo-notes" name="notes" rows="3"></textarea>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" class="btn" data-modal-target="edit-purchase-order">Cancel</button>
+                <button type="submit" class="btn btn-primary">Update LPO</button>
             </div>
         </form>
     </div>
@@ -2272,17 +2392,36 @@
     border: 1px solid #f5c6cb;
 }
 
+/* Custom Scrollbar Styling */
+.table-container::-webkit-scrollbar {
+    height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 10px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #5568d3 0%, #6a3d91 100%);
+}
+
 .summary-cards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 20px;
-    margin-bottom: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
 }
 
 .summary-card {
     background: var(--white);
     border-radius: var(--border-radius);
-    padding: 24px;
+    padding: 16px;
     box-shadow: var(--box-shadow);
     display: flex;
     align-items: center;
@@ -2297,40 +2436,40 @@
 }
 
 .card-icon {
-    width: 70px;
-    height: 70px;
-    border-radius: 15px;
+    width: 50px;
+    height: 50px;
+    border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-right: 20px;
-    font-size: 32px;
+    margin-right: 15px;
+    font-size: 24px;
     color: white;
 }
 
 .income .card-icon {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
 }
 
 .expenses .card-icon {
-    background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
-    box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+    box-shadow: 0 4px 15px rgba(249, 115, 22, 0.4);
 }
 
 .profit .card-icon {
-    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-    box-shadow: 0 4px 15px rgba(67, 233, 123, 0.4);
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
 }
 
 .pending .card-icon {
-    background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
-    box-shadow: 0 4px 15px rgba(250, 112, 154, 0.4);
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
 }
 
 .card-content h3 {
-    margin: 0 0 8px;
-    font-size: 14px;
+    margin: 0 0 6px;
+    font-size: 12px;
     color: #666;
     font-weight: 600;
     text-transform: uppercase;
@@ -2338,18 +2477,30 @@
 }
 
 .amount {
-    font-size: 28px;
+    font-size: 20px;
     font-weight: 700;
-    margin: 5px 0;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    margin: 4px 0;
+}
+
+.income .amount {
+    color: #10b981;
+}
+
+.expenses .amount {
+    color: #f97316;
+}
+
+.profit .amount {
+    color: #3b82f6;
+}
+
+.pending .amount {
+    color: #ef4444;
 }
 
 .card-content p {
     margin: 0;
-    font-size: 13px;
+    font-size: 11px;
     color: #999;
 }
 
@@ -2357,24 +2508,28 @@
     display: flex;
     background: var(--white);
     border-radius: var(--border-radius);
-    margin-bottom: 24px;
+    margin-bottom: 20px;
     box-shadow: var(--box-shadow);
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     gap: 2px;
     padding: 4px;
 }
 
 .tab {
-    padding: 14px 24px;
+    padding: 10px 18px;
     cursor: pointer;
     display: flex;
     align-items: center;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     border-bottom: 3px solid transparent;
     border-radius: 8px;
     font-weight: 600;
     color: #666;
     position: relative;
+    white-space: nowrap;
+    font-size: 13px;
+}
 }
 
 .tab:hover {
@@ -2415,66 +2570,66 @@
 }
 
 .btn {
-    padding: 12px 24px;
+    padding: 8px 16px;
     border-radius: var(--border-radius);
     border: none;
     cursor: pointer;
     font-weight: 600;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    letter-spacing: 0.5px;
+    gap: 6px;
+    letter-spacing: 0.3px;
     text-transform: uppercase;
-    font-size: 12px;
+    font-size: 11px;
 }
 
 .btn-primary {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: var(--white);
-    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
 }
 
 .btn-primary:hover {
     background: linear-gradient(135deg, #5568d3 0%, #6a3d91 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.6);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
 }
 
 .btn-primary:active {
-    transform: translateY(-1px);
+    transform: translateY(0);
 }
 
 .btn-success {
     background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
     color: var(--white);
-    box-shadow: 0 4px 15px rgba(67, 233, 123, 0.4);
+    box-shadow: 0 2px 8px rgba(67, 233, 123, 0.3);
 }
 
 .btn-success:hover {
     background: linear-gradient(135deg, #2dd46f 0%, #1dd9c8 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 20px rgba(67, 233, 123, 0.6);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(67, 233, 123, 0.5);
 }
 
 .btn-success:active {
-    transform: translateY(-1px);
+    transform: translateY(0);
 }
 
 .btn-danger {
     background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
     color: var(--white);
-    box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+    box-shadow: 0 2px 8px rgba(245, 87, 108, 0.3);
 }
 
 .btn-danger:hover {
     background: linear-gradient(135deg, #e54156 0%, #e67dec 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 20px rgba(245, 87, 108, 0.6);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(245, 87, 108, 0.5);
 }
 
 .btn-danger:active {
-    transform: translateY(-1px);
+    transform: translateY(0);
 }
 
 .btn-with-icon {
@@ -2488,14 +2643,35 @@
     border-radius: var(--border-radius);
     box-shadow: var(--box-shadow);
     margin-bottom: 24px;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: visible;
+    position: relative;
+}
+
+.table-container::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 30px;
+    background: linear-gradient(to left, rgba(255, 255, 255, 0.9), transparent);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.table-container.scrollable::after {
+    opacity: 1;
 }
 
 .modern-table {
     width: 100%;
+    min-width: 800px;
     border-collapse: collapse;
     background: var(--white);
-    font-size: 14px;
+    font-size: 13px;
+    table-layout: auto;
 }
 
 .modern-table thead tr {
@@ -2504,25 +2680,25 @@
 }
 
 .modern-table th {
-    padding: 18px 16px;
+    padding: 12px 14px;
     text-align: left;
     font-weight: 600;
     color: var(--white);
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
     text-transform: uppercase;
-    font-size: 12px;
+    font-size: 11px;
+    white-space: nowrap;
 }
 
 .modern-table tbody tr {
     border-bottom: 1px solid #e8eef7;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     background: var(--white);
 }
 
 .modern-table tbody tr:hover {
     background-color: #f7f9fc;
-    box-shadow: inset 0 0 10px rgba(102, 126, 234, 0.1);
-    transform: scale(1.01);
+    box-shadow: inset 0 0 8px rgba(102, 126, 234, 0.08);
 }
 
 .modern-table tbody tr:hover td {
@@ -2530,9 +2706,10 @@
 }
 
 .modern-table td {
-    padding: 18px 16px;
+    padding: 12px 14px;
     color: #333;
     vertical-align: middle;
+    white-space: nowrap;
 }
 
 .modern-table tr:last-child td {
@@ -2543,29 +2720,30 @@
     font-weight: 700;
     font-family: 'Courier New', monospace;
     color: #667eea;
-    font-size: 15px;
+    font-size: 14px;
 }
 
 .currency-symbol {
     color: #999;
-    font-size: 12px;
+    font-size: 11px;
     margin-right: 2px;
 }
 
 .status-badge {
     display: inline-block;
-    padding: 8px 16px;
-    border-radius: 25px;
-    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    transition: all 0.3s ease;
+    letter-spacing: 0.3px;
+    transition: all 0.2s ease;
+    white-space: nowrap;
 }
 
 .status-badge:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 
 .status-paid {
@@ -2600,29 +2778,30 @@
 
 .badge {
     display: inline-block;
-    padding: 6px 12px;
-    border-radius: 12px;
-    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 10px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    transition: all 0.3s ease;
+    letter-spacing: 0.3px;
+    transition: all 0.2s ease;
+    white-space: nowrap;
 }
 
 .badge:hover {
-    transform: translateY(-2px);
+    transform: translateY(-1px);
 }
 
 .badge-type {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: var(--white);
-    box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 1px 4px rgba(102, 126, 234, 0.25);
 }
 
 .badge-period {
     background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
     color: var(--white);
-    box-shadow: 0 2px 6px rgba(245, 87, 108, 0.3);
+    box-shadow: 0 1px 4px rgba(245, 87, 108, 0.25);
 }
 
 .action-btns {
@@ -2631,65 +2810,66 @@
 
 .btn-group {
     display: flex;
-    gap: 10px;
+    gap: 6px;
     align-items: center;
 }
 
 .action-btn {
-    width: 38px;
-    height: 38px;
-    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: none;
     cursor: pointer;
-    transition: all 0.3s ease;
-    font-size: 16px;
+    transition: all 0.2s ease;
+    font-size: 13px;
+    padding: 0;
 }
 
 .action-btn-edit {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: var(--white);
-    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 1px 4px rgba(102, 126, 234, 0.25);
 }
 
 .action-btn-edit:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 12px rgba(102, 126, 234, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
 }
 
 .action-btn-delete {
     background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
     color: var(--white);
-    box-shadow: 0 2px 8px rgba(245, 87, 108, 0.3);
+    box-shadow: 0 1px 4px rgba(245, 87, 108, 0.25);
 }
 
 .action-btn-delete:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 12px rgba(245, 87, 108, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(245, 87, 108, 0.4);
 }
 
 .action-btn-view {
     background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
     color: var(--white);
-    box-shadow: 0 2px 8px rgba(79, 172, 254, 0.3);
+    box-shadow: 0 1px 4px rgba(79, 172, 254, 0.25);
 }
 
 .action-btn-view:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 12px rgba(79, 172, 254, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(79, 172, 254, 0.4);
 }
 
 .action-btn-pay {
     background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
     color: var(--white);
-    box-shadow: 0 2px 8px rgba(67, 233, 123, 0.3);
+    box-shadow: 0 1px 4px rgba(67, 233, 123, 0.25);
 }
 
 .action-btn-pay:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 12px rgba(67, 233, 123, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(67, 233, 123, 0.4);
 }
 
 .employee-cell, .debtor-cell {
@@ -2995,21 +3175,24 @@
 
 window.moneyManagement = {
     init: function() {
-        this.setCurrentDate();
         this.setupEventListeners();
         this.loadSummaryData();
         this.checkPendingPayments();
         this.initDataTables();
-    },
-
-    setCurrentDate: function() {
-        const today = new Date();
-        document.getElementById('current-date').textContent = today.toLocaleDateString('en-US', { 
-            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-        });
+        
+        // Restore previously active tab
+        const savedTab = localStorage.getItem('moneyCurrentTab');
+        if (savedTab) {
+            this.switchTab(savedTab);
+        }
     },
 
     setupEventListeners: function() {
+        // Pending payments card click handler
+        $(document).on('click', '#pending-card', function() {
+            moneyManagement.showPendingPayments();
+        });
+
         // Tab switching
         $(document).on('click', '.tab', function() {
             const tabId = $(this).data('tab');
@@ -3086,6 +3269,12 @@ window.moneyManagement = {
                     break;
                 case 'generate-lpo-pdf':
                     moneyManagement.generateLPOPdf(btn.data('id'), btn.data('po-number'));
+                    break;
+                case 'view-purchase-order':
+                    moneyManagement.viewPurchaseOrder(btn.data('id'), btn.data('po-number'), btn.data('vendor'), btn.data('date'), btn.data('total'), btn.data('status'));
+                    break;
+                case 'edit-purchase-order':
+                    moneyManagement.editPurchaseOrder(btn.data('id'), btn.data('vendor-id'), btn.data('status'), btn.data('notes'));
                     break;
                 case 'edit-insurance-provider':
                     moneyManagement.editInsuranceProvider(btn.data('id'), btn.data('name'), btn.data('contact-person'), btn.data('phone'), btn.data('email'), btn.data('address'), btn.data('is-active'));
@@ -3193,10 +3382,124 @@ window.moneyManagement = {
                     return;
                 }
                 $('#pending-payments').text(data.count);
+                // Store data for modal display
+                this.pendingData = data;
             })
             .catch(error => {
                 console.error('Error checking pending payments:', error);
             });
+    },
+
+    showPendingPayments: function() {
+        // Open modal
+        $('#pending-payments-modal').addClass('active');
+        
+        // Fetch fresh pending payments data
+        fetch('/admin/pending_payments_details')
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    $('#pending-payments-content').html(`
+                        <div style="text-align: center; padding: 40px;">
+                            <i class="fas fa-exclamation-circle" style="font-size: 48px; color: #ef4444;"></i>
+                            <p style="margin-top: 20px; color: #666;">Error loading pending payments</p>
+                        </div>
+                    `);
+                    return;
+                }
+                
+                let html = '';
+                
+                // Pending Bills
+                if (data.pending_bills && data.pending_bills.length > 0) {
+                    html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-file-invoice-dollar"></i> Pending Bills (' + data.pending_bills.length + ')</h3>';
+                    html += '<div class="table-container"><table class="modern-table"><thead><tr><th>Bill #</th><th>Type</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
+                    data.pending_bills.forEach(bill => {
+                        html += `<tr>
+                            <td>${bill.expense_number}</td>
+                            <td>${bill.expense_type}</td>
+                            <td class="amount-cell">Ksh ${parseFloat(bill.amount).toFixed(2)}</td>
+                            <td>${bill.due_date}</td>
+                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.payBillFromModal(${bill.id}, '${bill.expense_type}', ${bill.amount})">Pay Now</button></td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                }
+                
+                // Pending Payroll
+                if (data.pending_payroll && data.pending_payroll.length > 0) {
+                    html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-user-tie"></i> Pending Payroll (' + data.pending_payroll.length + ')</h3>';
+                    html += '<div class="table-container"><table class="modern-table"><thead><tr><th>Payroll #</th><th>Employee</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
+                    data.pending_payroll.forEach(payroll => {
+                        html += `<tr>
+                            <td>${payroll.payroll_number}</td>
+                            <td>${payroll.employee_name}</td>
+                            <td class="amount-cell">Ksh ${parseFloat(payroll.amount).toFixed(2)}</td>
+                            <td>${payroll.payment_date}</td>
+                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.payPayrollFromModal(${payroll.id}, '${payroll.employee_name}', ${payroll.amount})">Pay Now</button></td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                }
+                
+                // Pending Debtor Payments
+                if (data.pending_debtor_payments && data.pending_debtor_payments.length > 0) {
+                    html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-hand-holding-usd"></i> Pending Debtor Payments (' + data.pending_debtor_payments.length + ')</h3>';
+                    html += '<div class="table-container"><table class="modern-table"><thead><tr><th>Debtor</th><th>Amount Owed</th><th>Next Payment</th><th>Actions</th></tr></thead><tbody>';
+                    data.pending_debtor_payments.forEach(debtor => {
+                        html += `<tr>
+                            <td>${debtor.name}</td>
+                            <td class="amount-cell">Ksh ${parseFloat(debtor.amount_owed).toFixed(2)}</td>
+                            <td>${debtor.next_payment_date}</td>
+                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.recordDebtorPaymentFromModal(${debtor.id}, '${debtor.name}')">Record Payment</button></td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                }
+                
+                if (html === '') {
+                    html = '<div style="text-align: center; padding: 40px;"><i class="fas fa-check-circle" style="font-size: 48px; color: #10b981;"></i><p style="margin-top: 20px; color: #666; font-size: 18px;">No pending payments! You\'re all caught up.</p></div>';
+                }
+                
+                $('#pending-payments-content').html(html);
+            })
+            .catch(error => {
+                console.error('Error loading pending payments details:', error);
+                $('#pending-payments-content').html(`
+                    <div style="text-align: center; padding: 40px;">
+                        <i class="fas fa-exclamation-circle" style="font-size: 48px; color: #ef4444;"></i>
+                        <p style="margin-top: 20px; color: #666;">Failed to load pending payments</p>
+                    </div>
+                `);
+            });
+    },
+
+    closePendingModal: function() {
+        $('#pending-payments-modal').removeClass('active');
+    },
+
+    payBillFromModal: function(id, type, amount) {
+        this.closePendingModal();
+        this.switchTab('bills');
+        setTimeout(() => {
+            this.payBill(id, type, amount);
+        }, 300);
+    },
+
+    payPayrollFromModal: function(id, employeeName, amount) {
+        this.closePendingModal();
+        this.switchTab('payroll');
+        setTimeout(() => {
+            this.payPayroll(id, employeeName, amount, 0, 0);
+        }, 300);
+    },
+
+    recordDebtorPaymentFromModal: function(id, name) {
+        this.closePendingModal();
+        this.switchTab('debtors');
+        setTimeout(() => {
+            $(`button[data-action="add-debtor-payment"][data-id="${id}"]`).click();
+        }, 300);
     },
 
     loadEmployeeSalary: function(employeeId) {
@@ -3252,6 +3555,9 @@ window.moneyManagement = {
 
         $('.tab-content').removeClass('active');
         $(`#${tabId}-tab`).addClass('active');
+        
+        // Save current tab to localStorage
+        localStorage.setItem('moneyCurrentTab', tabId);
     },
 
     openModal: function(modalId) {
@@ -3572,6 +3878,85 @@ window.moneyManagement = {
         const url = `/admin/purchase_order/${id}/pdf`;
         window.open(url, '_blank');
     },
+    
+    viewPurchaseOrder: function(id, poNumber, vendor, date, total, status) {
+        $('#view-lpo-id').val(id);
+        $('#view-lpo-number').text(poNumber);
+        $('#view-lpo-vendor').text(vendor);
+        $('#view-lpo-date').text(date);
+        $('#view-lpo-total').text('Ksh ' + moneyManagement.formatCurrency(total));
+        $('#view-lpo-status').html(`<span class="status-badge status-${status}">${status.charAt(0).toUpperCase() + status.slice(1)}</span>`);
+        
+        // Fetch items from server
+        $('#view-lpo-items').html('<p>Loading items...</p>');
+        
+        fetch(`/admin/purchase_orders/${id}`)
+            .then(response => response.text())
+            .then(html => {
+                // Parse the response to extract items - for now show simple message
+                // In production, you'd want a proper API endpoint
+                $('#view-lpo-items').html(`
+                    <table class="modern-table" style="margin-top: 10px;">
+                        <thead>
+                            <tr>
+                                <th>Description</th>
+                                <th>Quantity</th>
+                                <th>Unit Price</th>
+                                <th>Total</th>
+                            </tr>
+                        </thead>
+                        <tbody id="view-items-list"></tbody>
+                    </table>
+                    <p style="margin-top: 10px; font-style: italic; color: #7f8c8d;">Click "Generate PDF" to see full details</p>
+                `);
+            })
+            .catch(error => {
+                $('#view-lpo-items').html('<p style="color: #e74c3c;">Error loading items</p>');
+            });
+        
+        this.openModal('view-purchase-order');
+    },
+    
+    editPurchaseOrder: function(id, vendorId, status, notes) {
+        $('#edit-lpo-id').val(id);
+        $('#edit-lpo-vendor').val(vendorId);
+        $('#edit-lpo-status').val(status);
+        $('#edit-lpo-notes').val(notes);
+        $('#edit-purchase-order-form').attr('action', `/admin/purchase_orders/${id}/edit`);
+        
+        // Fetch current items
+        $('#edit-lpo-items-body').html('<tr><td colspan="5">Loading items...</td></tr>');
+        
+        fetch(`/admin/purchase_orders/${id}`)
+            .then(response => response.text())
+            .then(html => {
+                // For now, start with one empty row - in production you'd parse the items
+                $('#edit-lpo-items-body').html(`
+                    <tr class="lpo-item-row">
+                        <td><input type="text" class="form-control" name="item_description" required placeholder="Item description"></td>
+                        <td><input type="number" class="form-control lpo-quantity" name="item_quantity" value="1" min="1" required></td>
+                        <td><input type="number" step="0.01" class="form-control lpo-unit-price" name="item_unit_price" value="0.00" min="0" required></td>
+                        <td><input type="text" class="form-control lpo-item-total" readonly value="0.00"></td>
+                        <td><button type="button" class="btn btn-danger btn-sm remove-lpo-item" style="padding: 5px 10px;">×</button></td>
+                    </tr>
+                `);
+                moneyManagement.calculateLPOGrandTotal();
+            })
+            .catch(error => {
+                console.error('Error loading items:', error);
+                $('#edit-lpo-items-body').html(`
+                    <tr class="lpo-item-row">
+                        <td><input type="text" class="form-control" name="item_description" required></td>
+                        <td><input type="number" class="form-control lpo-quantity" name="item_quantity" value="1" min="1" required></td>
+                        <td><input type="number" step="0.01" class="form-control lpo-unit-price" name="item_unit_price" value="0.00" min="0" required></td>
+                        <td><input type="text" class="form-control lpo-item-total" readonly value="0.00"></td>
+                        <td><button type="button" class="btn btn-danger btn-sm remove-lpo-item" style="padding: 5px 10px;">×</button></td>
+                    </tr>
+                `);
+            });
+        
+        this.openModal('edit-purchase-order');
+    },
 
     confirmDeleteRecord: function(id, type) {
         $('#delete-record-id').val(id);
@@ -3697,8 +4082,33 @@ function initializeTableScrolling() {
     const tables = document.querySelectorAll('.modern-table');
     
     tables.forEach(table => {
+        const container = table.closest('.table-container');
         const tbody = table.querySelector('tbody');
         const thead = table.querySelector('thead');
+        
+        // Check if table is scrollable
+        if (container) {
+            const isScrollable = table.scrollWidth > container.clientWidth;
+            if (isScrollable) {
+                container.classList.add('scrollable');
+            }
+            
+            // Update scrollable indicator on window resize
+            window.addEventListener('resize', () => {
+                const stillScrollable = table.scrollWidth > container.clientWidth;
+                container.classList.toggle('scrollable', stillScrollable);
+            });
+            
+            // Remove gradient when scrolled to end
+            container.addEventListener('scroll', function() {
+                const isAtEnd = this.scrollLeft >= (this.scrollWidth - this.clientWidth - 5);
+                if (isAtEnd) {
+                    this.classList.remove('scrollable');
+                } else if (table.scrollWidth > this.clientWidth) {
+                    this.classList.add('scrollable');
+                }
+            });
+        }
         
         if (tbody && thead) {
             // Sync horizontal scrolling
@@ -3797,6 +4207,66 @@ $(document).ready(function() {
             console.error('Error:', error);
             moneyManagement.showAlert('danger', 'An error occurred while creating the LPO. Please try again.');
             submitBtn.prop('disabled', false).text('Create LPO');
+        });
+    });
+    
+    // Edit LPO Item Management Event Listeners
+    $(document).on('click', '#edit-add-lpo-item-btn', function() {
+        const newRow = `
+            <tr class="lpo-item-row">
+                <td><input type="text" class="form-control" name="item_description" required></td>
+                <td><input type="number" class="form-control lpo-quantity" name="item_quantity" value="1" min="1" required></td>
+                <td><input type="number" step="0.01" class="form-control lpo-unit-price" name="item_unit_price" value="0.00" min="0" required></td>
+                <td><input type="text" class="form-control lpo-item-total" readonly value="0.00"></td>
+                <td><button type="button" class="btn btn-danger btn-sm remove-lpo-item" style="padding: 5px 10px;">×</button></td>
+            </tr>
+        `;
+        $('#edit-lpo-items-body').append(newRow);
+    });
+    
+    // Handle Edit LPO form submission with AJAX
+    $('#edit-purchase-order-form').on('submit', function(e) {
+        e.preventDefault();
+        
+        const form = this;
+        const formData = new FormData(form);
+        const submitBtn = $(form).find('button[type="submit"]');
+        const action = $(form).attr('action');
+        
+        // Disable submit button to prevent double submission
+        submitBtn.prop('disabled', true).text('Updating...');
+        
+        fetch(action, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': moneyManagement.getCSRFToken()
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                moneyManagement.showAlert('success', data.message || 'LPO updated successfully');
+                moneyManagement.closeModal('edit-purchase-order');
+                
+                // Reload page after short delay to show the updated LPO
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                moneyManagement.showAlert('danger', data.error || 'Failed to update LPO');
+                submitBtn.prop('disabled', false).text('Update LPO');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            moneyManagement.showAlert('danger', 'An error occurred while updating the LPO. Please try again.');
+            submitBtn.prop('disabled', false).text('Update LPO');
         });
     });
 });

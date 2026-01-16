@@ -223,6 +223,14 @@
         </div>
 
         <div class="receipt-footer text-center mt-4">
+            <div class="signature-section" style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:20px;">
+                <div style="flex:0 0 45%;">
+                    {{ generate_digital_signature(signer_name="Makokha", signer_title="Medical Director") }}
+                </div>
+                <div style="flex:0 0 45%;">
+                    {{ generate_rubber_stamp() }}
+                </div>
+            </div>
             <p class="mb-1">Thank you for your purchase!</p>
             <p class="mb-1">Goods sold are not returnable without original receipt</p>
             <p class="mb-1"><strong>Note:</strong> For refunds, present this receipt within 7 days</p>

@@ -83,6 +83,7 @@ from time import monotonic
 import html as html_lib
 
 from utils.encrypted_type import EncryptedType
+from utils.stamp_signature import generate_rubber_stamp, generate_digital_signature
 
 from typing import Optional
 
@@ -226,8 +227,8 @@ if _db_uri.startswith('postgresql://'):
         'pool_size': int(os.getenv('SQLALCHEMY_POOL_SIZE', '5')),
         'max_overflow': int(os.getenv('SQLALCHEMY_MAX_OVERFLOW', '10')),
         'connect_args': {
-            # psycopg2 connect args
-            'connect_timeout': int(os.getenv('PG_CONNECT_TIMEOUT', '10')),
+            # psycopg2 connect args - increased timeout for cloud databases that may be sleeping
+            'connect_timeout': int(os.getenv('PG_CONNECT_TIMEOUT', '30')),
             # TCP keepalives help prevent silent mid-run disconnects.
             'keepalives': 1,
             'keepalives_idle': int(os.getenv('PG_KEEPALIVES_IDLE', '30')),
@@ -4030,10 +4031,11 @@ class Debtor(db.Model):
     contact = db.Column(db.String(100))
     email = db.Column(db.String(100))
     Total_debt = db.Column(db.Float, nullable=False)
-    amount_paid = db.Column(db.Float, nullable=False)
+    amount_paid = db.Column(db.Float, nullable=False, default=0.0)
     amount_owed = db.Column(db.Float, default=0.0)
     last_payment_date = db.Column(db.Date)
     next_payment_date = db.Column(db.Date)
+    notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
@@ -4806,10 +4808,28 @@ def ensure_database_initialized():
         _db_initialized = True
         try:
             from sqlalchemy import inspect as sa_inspect
+            import time
             
             engine = db.engine
-            inspector = sa_inspect(engine)
-            existing_tables = set(inspector.get_table_names())
+            
+            # Retry logic for database connection with exponential backoff
+            max_retries = 3
+            retry_delay = 1  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    inspector = sa_inspect(engine)
+                    existing_tables = set(inspector.get_table_names())
+                    break  # Success, exit retry loop
+                except Exception as conn_err:
+                    if attempt < max_retries - 1:
+                        app.logger.warning(f"Database connection attempt {attempt + 1}/{max_retries} failed. Retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        # All retries exhausted
+                        raise conn_err
+            
             expected_tables = set(db.metadata.tables.keys())
             missing_tables = sorted(expected_tables - existing_tables)
             
@@ -9713,15 +9733,29 @@ def view_payroll(payroll_id):
 @login_required
 def delete_payroll(payroll_id):
     if current_user.role != 'admin':
+        # Detect AJAX request
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         abort(403)
     payroll = Payroll.query.get_or_404(payroll_id)
     try:
         db.session.delete(payroll)
         db.session.commit()
+        
+        # Return JSON for AJAX requests
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': True, 'message': 'Payroll deleted successfully'})
+        
         flash('Payroll deleted successfully.', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f'Error deleting payroll: {str(e)}', 'danger')
+        error_msg = f'Error deleting payroll: {str(e)}'
+        
+        # Return JSON for AJAX requests
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': error_msg}), 500
+        
+        flash(error_msg, 'danger')
     return redirect(url_for('payroll_list'))
 
 @app.route('/admin/payroll/<int:payroll_id>/make_payment', methods=['POST'])
@@ -9811,6 +9845,10 @@ def make_payroll_payment(payroll_id):
                 (f"<div><strong>Notes:</strong> {escape(str(notes))}</div>" if notes else ""),
                 "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
                 "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "<div style='margin-top:30px;display:flex;justify-content:space-between;align-items:flex-end;'>",
+                f"<div style='flex:0 0 45%;'>{generate_digital_signature(signer_name='Makokha', signer_title='Medical Director')}</div>",
+                f"<div style='flex:0 0 45%;'>{generate_rubber_stamp()}</div>",
+                "</div>",
                 "</div>",
             ])
             _ensure_transaction_receipt(transaction, receipt_html, prefix='PAY', force=True)
@@ -14781,10 +14819,46 @@ def edit_purchase_order(po_id):
         po.total_amount = total_amount
         db.session.commit()
         flash('Purchase Order updated successfully', 'success')
-        return redirect(url_for('purchase_orders'))
+        
+        # Handle AJAX requests
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('X-CSRFToken'):
+            return jsonify({
+                'success': True,
+                'message': 'LPO updated successfully'
+            })
+        
+        return redirect(url_for('manage_money'))
         
     vendors = Vendor.query.filter_by(is_active=True).all()
     return render_template('admin/create_edit_purchase_order.html', po=po, vendors=vendors)
+
+
+@app.route('/admin/delete_purchase-order/<int:po_id>', methods=['POST'])
+@login_required
+def delete_purchase_order(po_id):
+    """Delete a purchase order and its items"""
+    try:
+        po = PurchaseOrder.query.get_or_404(po_id)
+        po_number = po.po_number
+        
+        # Delete associated items first
+        PurchaseOrderItem.query.filter_by(purchase_order_id=po.id).delete()
+        
+        # Delete the purchase order
+        db.session.delete(po)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'LPO {po_number} deleted successfully'
+        })
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting purchase order: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to delete LPO: {str(e)}'
+        }), 500
 
 
 @app.route('/admin/expenses')
@@ -14944,29 +15018,75 @@ def debtors_list():
     return render_template('admin/debtors_list.html', debtors=debtors)
 
 @app.route('/admin/debtors/create', methods=['GET', 'POST'])
+@app.route('/admin/add_debtor', methods=['GET', 'POST'])
 @login_required
 def add_debtor():
     if current_user.role != 'admin':
+        # Detect AJAX request
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
     if request.method == 'POST':
-        name = request.form.get('name')
-        contact = request.form.get('contact')
-        amount_owed = float(request.form.get('amount_owed'))
-        notes = request.form.get('notes')
-        
-        debtor = Debtor(
-            name=name,
-            contact_info=contact,
-            amount_owed=amount_owed,
-            notes=notes
-        )
-        db.session.add(debtor)
-        db.session.commit()
-        
-        flash('Debtor created successfully', 'success')
-        return redirect(url_for('debtors_list'))
+        try:
+            name = (request.form.get('name') or '').strip()
+            contact = (request.form.get('contact') or '').strip()
+            email = (request.form.get('email') or '').strip() or None
+            
+            # Handle both 'amount_owed' and 'total_debt' field names
+            total_debt_raw = request.form.get('total_debt') or request.form.get('amount_owed') or request.form.get('Total_debt')
+            if not name or not total_debt_raw:
+                error_msg = 'Name and total debt are required'
+                if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+                    return jsonify({'success': False, 'error': error_msg}), 400
+                flash(error_msg, 'danger')
+                return render_template('admin/add_edit_debtor.html', debtor=None)
+            
+            total_debt = float(total_debt_raw)
+            notes = (request.form.get('notes') or '').strip() or None
+            
+            # Parse dates
+            last_payment_date = None
+            next_payment_date = None
+            if request.form.get('last_payment_date'):
+                try:
+                    last_payment_date = datetime.strptime(request.form.get('last_payment_date'), '%Y-%m-%d').date()
+                except:
+                    pass
+            if request.form.get('next_payment_date'):
+                try:
+                    next_payment_date = datetime.strptime(request.form.get('next_payment_date'), '%Y-%m-%d').date()
+                except:
+                    pass
+            
+            debtor = Debtor(
+                name=name,
+                contact=contact,
+                email=email,
+                Total_debt=total_debt,
+                amount_paid=0.0,
+                amount_owed=total_debt,  # Initially, amount owed equals total debt
+                last_payment_date=last_payment_date,
+                next_payment_date=next_payment_date,
+                notes=notes
+            )
+            db.session.add(debtor)
+            db.session.commit()
+            
+            # Return JSON for AJAX requests
+            if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+                return jsonify({'success': True, 'message': 'Debtor created successfully'})
+            
+            flash('Debtor created successfully', 'success')
+            return redirect(url_for('debtors_list'))
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f'Failed to create debtor: {str(e)}'
+            if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+                return jsonify({'success': False, 'error': error_msg}), 500
+            flash(error_msg, 'danger')
+            return render_template('admin/add_edit_debtor.html', debtor=None)
         
     return render_template('admin/add_edit_debtor.html', debtor=None)
 
@@ -15011,41 +15131,92 @@ def make_debtor_payment(debtor_id):
     return redirect(url_for('view_debtor', debtor_id=debtor_id))
 
 @app.route('/admin/debtors/<int:debtor_id>/edit', methods=['GET', 'POST'])
+@app.route('/admin/edit_debtor/<int:debtor_id>', methods=['GET', 'POST'])
+@app.route('/admin/update_debtor/<int:debtor_id>', methods=['POST'])
 @login_required
 def edit_debtor(debtor_id):
     if current_user.role != 'admin':
+        # Detect AJAX request
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
     debtor = Debtor.query.get_or_404(debtor_id)
     
     if request.method == 'POST':
-        debtor.name = request.form.get('name')
-        debtor.contact_info = request.form.get('contact')
-        debtor.notes = request.form.get('notes')
-        
-        # Debtor amount is usually managed via transactions/payments, but editable for corrections
-        if request.form.get('amount_owed'):
-             debtor.amount_owed = float(request.form.get('amount_owed'))
+        try:
+            debtor.name = (request.form.get('name') or '').strip()
+            debtor.contact = (request.form.get('contact') or '').strip()
+            debtor.email = (request.form.get('email') or '').strip() or None
+            debtor.notes = request.form.get('notes')
+            
+            # Handle both 'amount_owed' and 'total_debt' field names
+            total_debt_field = request.form.get('total_debt') or request.form.get('Total_debt')
+            if total_debt_field:
+                debtor.Total_debt = float(total_debt_field)
+                # Recalculate amount owed
+                debtor.amount_owed = debtor.Total_debt - (debtor.amount_paid or 0.0)
+            
+            # Parse dates
+            if request.form.get('last_payment_date'):
+                try:
+                    debtor.last_payment_date = datetime.strptime(request.form.get('last_payment_date'), '%Y-%m-%d').date()
+                except:
+                    pass
+            if request.form.get('next_payment_date'):
+                try:
+                    debtor.next_payment_date = datetime.strptime(request.form.get('next_payment_date'), '%Y-%m-%d').date()
+                except:
+                    pass
 
-        db.session.commit()
-        flash('Debtor details updated', 'success')
-        return redirect(url_for('debtors_list'))
+            db.session.commit()
+            
+            # Return JSON for AJAX requests
+            if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+                return jsonify({'success': True, 'message': 'Debtor details updated'})
+            
+            flash('Debtor details updated', 'success')
+            return redirect(url_for('debtors_list'))
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f'Failed to update debtor: {str(e)}'
+            if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+                return jsonify({'success': False, 'error': error_msg}), 500
+            flash(error_msg, 'danger')
         
     return render_template('admin/add_edit_debtor.html', debtor=debtor)
 
 @app.route('/admin/debtors/<int:debtor_id>/delete', methods=['POST'])
+@app.route('/admin/delete_debtor/<int:debtor_id>', methods=['POST'])
 @login_required
 def delete_debtor(debtor_id):
     if current_user.role != 'admin':
+        # Detect AJAX request
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
     debtor = Debtor.query.get_or_404(debtor_id)
-    db.session.delete(debtor)
-    db.session.commit()
-    flash('Debtor record deleted', 'success')
-    return redirect(url_for('debtors_list'))
+    try:
+        debtor_name = debtor.name
+        db.session.delete(debtor)
+        db.session.commit()
+        
+        # Return JSON for AJAX requests
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': True, 'message': f'Debtor {debtor_name} deleted successfully'})
+        
+        flash('Debtor record deleted', 'success')
+        return redirect(url_for('debtors_list'))
+    except Exception as e:
+        db.session.rollback()
+        error_msg = f'Failed to delete debtor: {str(e)}'
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': error_msg}), 500
+        flash(error_msg, 'danger')
+        return redirect(url_for('debtors_list'))
 
 
 @app.route('/admin/insurance/provider/add', methods=['POST'])
@@ -15301,6 +15472,10 @@ def admin_record_insurance_claim_payment(claim_id):
                 (f"<div><strong>Notes:</strong> {escape(str(notes))}</div>" if notes else ""),
                 "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
                 "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "<div style='margin-top:30px;display:flex;justify-content:space-between;align-items:flex-end;'>",
+                f"<div style='flex:0 0 45%;'>{generate_digital_signature(signer_name='Makokha', signer_title='Medical Director')}</div>",
+                f"<div style='flex:0 0 45%;'>{generate_rubber_stamp()}</div>",
+                "</div>",
                 "</div>",
             ])
             _ensure_transaction_receipt(transaction, receipt_html, prefix='INS', force=True)
@@ -15313,6 +15488,36 @@ def admin_record_insurance_claim_payment(claim_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': f'Failed to record payment: {str(e)}'}), 400
+
+@app.route('/admin/delete_insurance-policy/<int:policy_id>', methods=['POST'])
+@login_required
+def delete_insurance_policy(policy_id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    try:
+        policy = InsurancePolicy.query.get_or_404(policy_id)
+        db.session.delete(policy)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Insurance policy deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Failed to delete policy: {str(e)}'}), 500
+
+@app.route('/admin/delete_insurance-claim/<int:claim_id>', methods=['POST'])
+@login_required
+def delete_insurance_claim(claim_id):
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    try:
+        claim = InsuranceClaim.query.get_or_404(claim_id)
+        db.session.delete(claim)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Insurance claim deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': f'Failed to delete claim: {str(e)}'}), 500
 
 # ==============
 # DRAWING ROUTES
@@ -15362,6 +15567,10 @@ def add_drawing():
                 (f"<div><strong>Description:</strong> {escape(str(description))}</div>" if description else ""),
                 "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
                 "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "<div style='margin-top:30px;display:flex;justify-content:space-between;align-items:flex-end;'>",
+                f"<div style='flex:0 0 45%;'>{generate_digital_signature(signer_name='Makokha', signer_title='Medical Director')}</div>",
+                f"<div style='flex:0 0 45%;'>{generate_rubber_stamp()}</div>",
+                "</div>",
                 "</div>",
             ])
             _ensure_transaction_receipt(transaction, receipt_html, prefix='DRW', force=True)
@@ -15554,12 +15763,12 @@ def delete_drawing(id):
 @login_required
 def add_bill():
     try:
-        # Extract form data
-        expense_type = request.form.get('expense_type')
+        # Extract form data - handle both 'bill_type' and 'expense_type' for compatibility
+        expense_type = request.form.get('bill_type') or request.form.get('expense_type')
         amount = float(request.form.get('amount', 0))
         due_date = request.form.get('due_date')
         description = request.form.get('description')
-        payment_method = request.form.get('payment_method')
+        payment_method = request.form.get('payment_method', 'cash')
         status = request.form.get('status', 'pending')
         paid_date = request.form.get('paid_date')
         user_id = current_user.id
@@ -15770,6 +15979,10 @@ def pay_bill_v2(id):
                 (f"<div><strong>Description:</strong> {escape(str(bill.description))}</div>" if bill.description else ""),
                 "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
                 "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "<div style='margin-top:30px;display:flex;justify-content:space-between;align-items:flex-end;'>",
+                f"<div style='flex:0 0 45%;'>{generate_digital_signature(signer_name='Makokha', signer_title='Medical Director')}</div>",
+                f"<div style='flex:0 0 45%;'>{generate_rubber_stamp()}</div>",
+                "</div>",
                 "</div>",
             ])
             _ensure_transaction_receipt(transaction, receipt_html, prefix='BILL', force=True)
@@ -15848,6 +16061,10 @@ def add_purchase():
                 (f"<div><strong>Description:</strong> {escape(str(purchase.description))}</div>" if purchase.description else ""),
                 "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
                 "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "<div style='margin-top:30px;display:flex;justify-content:space-between;align-items:flex-end;'>",
+                f"<div style='flex:0 0 45%;'>{generate_digital_signature(signer_name='Makokha', signer_title='Medical Director')}</div>",
+                f"<div style='flex:0 0 45%;'>{generate_rubber_stamp()}</div>",
+                "</div>",
                 "</div>",
             ])
             _ensure_transaction_receipt(transaction, receipt_html, prefix='PUR', force=True)
@@ -16040,6 +16257,10 @@ def add_payroll():
                     (f"<div><strong>Notes:</strong> {escape(str(payroll.notes))}</div>" if payroll.notes else ""),
                     "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
                     "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                    "<div style='margin-top:30px;display:flex;justify-content:space-between;align-items:flex-end;'>",
+                    f"<div style='flex:0 0 45%;'>{generate_digital_signature(signer_name='Makokha', signer_title='Medical Director')}</div>",
+                    f"<div style='flex:0 0 45%;'>{generate_rubber_stamp()}</div>",
+                    "</div>",
                     "</div>",
                 ])
                 _ensure_transaction_receipt(transaction, receipt_html, prefix='PAY')
@@ -16227,6 +16448,10 @@ def add_debtor_payment(debtor_id):
                 (f"<div><strong>Notes:</strong> {escape(str(payment.notes))}</div>" if payment.notes else ""),
                 "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
                 "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "<div style='margin-top:30px;display:flex;justify-content:space-between;align-items:flex-end;'>",
+                f"<div style='flex:0 0 45%;'>{generate_digital_signature(signer_name='Makokha', signer_title='Medical Director')}</div>",
+                f"<div style='flex:0 0 45%;'>{generate_rubber_stamp()}</div>",
+                "</div>",
                 "</div>",
             ])
             _ensure_transaction_receipt(transaction, receipt_html, prefix='DBT')
@@ -16608,6 +16833,10 @@ def add_debt_payment(debt_id):
                 (f"<div><strong>Notes:</strong> {escape(str(notes))}</div>" if notes else ""),
                 "<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />",
                 "<div style='color:#777;font-size:12px;'>Generated automatically by Makokha Medical Centre system.</div>",
+                "<div style='margin-top:30px;display:flex;justify-content:space-between;align-items:flex-end;'>",
+                f"<div style='flex:0 0 45%;'>{generate_digital_signature(signer_name='Makokha', signer_title='Medical Director')}</div>",
+                f"<div style='flex:0 0 45%;'>{generate_rubber_stamp()}</div>",
+                "</div>",
                 "</div>",
             ])
             _ensure_transaction_receipt(transaction, receipt_html, prefix='CRD')
@@ -16707,6 +16936,72 @@ def check_pending_payments():
         'pending_payroll': pending_payroll,
         'pending_debtor_payments': pending_debtor_payments
     })
+
+@app.route('/admin/pending_payments_details')
+@login_required
+def pending_payments_details():
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        today = get_eat_now().date()
+        
+        # Pending bills
+        pending_bills = Expense.query.filter(
+            Expense.status == 'pending',
+            Expense.due_date <= today
+        ).all()
+        
+        bills_data = []
+        for bill in pending_bills:
+            bills_data.append({
+                'id': bill.id,
+                'expense_number': bill.expense_number,
+                'expense_type': bill.expense_type,
+                'amount': float(bill.amount),
+                'due_date': bill.due_date.strftime('%Y-%m-%d') if bill.due_date else ''
+            })
+        
+        # Pending payroll
+        pending_payroll = Payroll.query.filter(
+            Payroll.status.in_(['pending', 'partial']),
+            Payroll.payment_date <= today
+        ).all()
+        
+        payroll_data = []
+        for payroll in pending_payroll:
+            employee = Employee.query.get(payroll.employee_id) if payroll.employee_id else None
+            payroll_data.append({
+                'id': payroll.id,
+                'payroll_number': payroll.payroll_number,
+                'employee_name': employee.name if employee else 'Unknown',
+                'amount': float(payroll.amount),
+                'payment_date': payroll.payment_date.strftime('%Y-%m-%d') if payroll.payment_date else ''
+            })
+        
+        # Pending debtor payments
+        pending_debtor_payments = Debtor.query.filter(
+            Debtor.amount_owed > 0,
+            Debtor.next_payment_date <= today
+        ).all()
+        
+        debtors_data = []
+        for debtor in pending_debtor_payments:
+            debtors_data.append({
+                'id': debtor.id,
+                'name': debtor.name,
+                'amount_owed': float(debtor.amount_owed),
+                'next_payment_date': debtor.next_payment_date.strftime('%Y-%m-%d') if debtor.next_payment_date else ''
+            })
+        
+        return jsonify({
+            'pending_bills': bills_data,
+            'pending_payroll': payroll_data,
+            'pending_debtor_payments': debtors_data
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/admin/money/summary')
 @login_required
 def money_summary():
@@ -16714,21 +17009,23 @@ def money_summary():
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
-        # Calculate totals
+        # Calculate total income from ALL income transactions in the system
         total_income = db.session.query(
-            func.sum(Transaction.amount)
+            func.coalesce(func.sum(Transaction.amount), 0)
         ).filter(
             Transaction.transaction_type == 'income'
         ).scalar() or 0
 
+        # Calculate total expenses from ALL expense-related transactions in the system
         total_expenses = db.session.query(
-            func.sum(Transaction.amount)
+            func.coalesce(func.sum(Transaction.amount), 0)
         ).filter(
-            # Include legacy payroll_payment/payroll types for backward-compat
+            # Include all types of expenses/outflows
             Transaction.transaction_type.in_(['expense', 'drawing', 'purchase', 'payroll', 'payroll_payment'])
         ).scalar() or 0
 
-        net_profit = total_income - total_expenses
+        # Calculate net profit (income - expenses)
+        net_profit = float(total_income) - float(total_expenses)
         
         return jsonify({
             'total_income': float(total_income),
@@ -16736,6 +17033,7 @@ def money_summary():
             'net_profit': float(net_profit),
         })
     except Exception as e:
+        current_app.logger.error(f"Error calculating money summary: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
 @app.route('/admin/dosage', methods=['GET', 'POST'])
@@ -25316,59 +25614,98 @@ def insurance_providers():
 @login_required
 @admin_required
 def add_insurance_provider():
-    name = request.form.get('name')
-    contact_person = request.form.get('contact_person')
-    phone = request.form.get('phone')
-    email = request.form.get('email')
-    address = request.form.get('address')
-    is_active = request.form.get('is_active') == 'true'
+    try:
+        name = request.form.get('name')
+        contact_person = request.form.get('contact_person')
+        phone = request.form.get('phone')
+        email = request.form.get('email')
+        address = request.form.get('address')
+        is_active = request.form.get('is_active') == 'true'
 
-    if not name:
-        flash('Provider name is required.', 'danger')
+        if not name:
+            return jsonify({'success': False, 'error': 'Provider name is required'}), 400
+
+        new_provider = InsuranceProvider(
+            name=name,
+            contact_person=contact_person,
+            phone=phone,
+            email=email,
+            address=address,
+            is_active=is_active
+        )
+        db.session.add(new_provider)
+        db.session.commit()
+        
+        # Return JSON for AJAX or redirect for regular form
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': True, 'message': 'Insurance provider added successfully'})
+        
+        flash('Insurance provider added successfully.', 'success')
         return redirect(url_for('insurance_providers'))
-
-    new_provider = InsuranceProvider(
-        name=name,
-        contact_person=contact_person,
-        phone=phone,
-        email=email,
-        address=address,
-        is_active=is_active
-    )
-    db.session.add(new_provider)
-    db.session.commit()
-    flash('Insurance provider added successfully.', 'success')
-    return redirect(url_for('insurance_providers'))
+    except Exception as e:
+        db.session.rollback()
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash(f'Error adding provider: {str(e)}', 'danger')
+        return redirect(url_for('insurance_providers'))
 
 @app.route('/admin/insurance_providers/edit/<int:provider_id>', methods=['POST'])
 @login_required
 @admin_required
 def edit_insurance_provider(provider_id):
-    provider = InsuranceProvider.query.get_or_404(provider_id)
-    provider.name = request.form.get('name')
-    provider.contact_person = request.form.get('contact_person')
-    provider.phone = request.form.get('phone')
-    provider.email = request.form.get('email')
-    provider.address = request.form.get('address')
-    provider.is_active = request.form.get('is_active') == 'true'
+    try:
+        provider = InsuranceProvider.query.get_or_404(provider_id)
+        provider.name = request.form.get('name')
+        provider.contact_person = request.form.get('contact_person')
+        provider.phone = request.form.get('phone')
+        provider.email = request.form.get('email')
+        provider.address = request.form.get('address')
+        provider.is_active = request.form.get('is_active') == 'true'
 
-    if not provider.name:
-        flash('Provider name is required.', 'danger')
+        if not provider.name:
+            if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+                return jsonify({'success': False, 'error': 'Provider name is required'}), 400
+            flash('Provider name is required.', 'danger')
+            return redirect(url_for('insurance_providers'))
+
+        db.session.commit()
+        
+        # Return JSON for AJAX or redirect for regular form
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': True, 'message': 'Insurance provider updated successfully'})
+        
+        flash('Insurance provider updated successfully.', 'success')
+        return redirect(url_for('insurance_providers'))
+    except Exception as e:
+        db.session.rollback()
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash(f'Error updating provider: {str(e)}', 'danger')
         return redirect(url_for('insurance_providers'))
 
-    db.session.commit()
-    flash('Insurance provider updated successfully.', 'success')
-    return redirect(url_for('insurance_providers'))
-
 @app.route('/admin/insurance_providers/delete/<int:provider_id>', methods=['POST'])
+@app.route('/admin/delete_insurance-provider/<int:provider_id>', methods=['POST'])
 @login_required
 @admin_required
 def delete_insurance_provider(provider_id):
-    provider = InsuranceProvider.query.get_or_404(provider_id)
-    db.session.delete(provider)
-    db.session.commit()
-    flash('Insurance provider deleted successfully.', 'success')
-    return redirect(url_for('insurance_providers'))
+    try:
+        provider = InsuranceProvider.query.get_or_404(provider_id)
+        provider_name = provider.name
+        db.session.delete(provider)
+        db.session.commit()
+        
+        # Return JSON for AJAX or redirect for regular form
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': True, 'message': f'Insurance provider {provider_name} deleted successfully'})
+        
+        flash('Insurance provider deleted successfully.', 'success')
+        return redirect(url_for('insurance_providers'))
+    except Exception as e:
+        db.session.rollback()
+        if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash(f'Error deleting provider: {str(e)}', 'danger')
+        return redirect(url_for('insurance_providers'))
 
 # =================================================================================================
 # END INSURANCE ROUTES
