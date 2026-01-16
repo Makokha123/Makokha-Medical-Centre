@@ -5205,6 +5205,23 @@ def inject_current_date():
 def inject_csrf_token():
     """Expose csrf_token() in all Jinja templates"""
     return dict(csrf_token=generate_csrf, csrf_value=generate_csrf())
+
+@app.context_processor
+def inject_stamp_signature_functions():
+    """Make stamp and signature generators available in all templates"""
+    from utils.stamp_signature import (
+        generate_rubber_stamp, 
+        generate_digital_signature,
+        get_current_stamp_date,
+        get_current_signature_date
+    )
+    return dict(
+        generate_rubber_stamp=generate_rubber_stamp,
+        generate_digital_signature=generate_digital_signature,
+        get_current_stamp_date=get_current_stamp_date,
+        get_current_signature_date=get_current_signature_date
+    )
+
 @app.route('/logout', methods=['POST'])
 @login_required
 def logout():
@@ -14605,6 +14622,8 @@ def manage_money():
                         drawings=Transaction.query.filter_by(transaction_type='drawing').order_by(Transaction.created_at.desc()).all(),
                         expenses=Expense.query.order_by(Expense.created_at.desc()).all(),
                         purchases=Purchase.query.order_by(Purchase.created_at.desc()).all(),
+                        purchase_orders=PurchaseOrder.query.order_by(PurchaseOrder.created_at.desc()).all(),
+                        vendors=Vendor.query.filter_by(is_active=True).order_by(Vendor.name.asc()).all(),
                         payroll=Payroll.query.order_by(Payroll.created_at.desc()).all(),
                         debts=Debt.query.order_by(Debt.created_at.desc()).all(),
                         debtors=Debtor.query.order_by(Debtor.amount_owed.desc()).all(),
@@ -14674,7 +14693,17 @@ def create_purchase_order():
         po.total_amount = total_amount
         db.session.commit()
         flash('Purchase Order created successfully', 'success')
-        return redirect(url_for('purchase_orders'))
+        
+        # Handle AJAX requests
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
+            return jsonify({
+                'success': True,
+                'message': 'LPO created successfully',
+                'po_id': po.id,
+                'po_number': po.po_number
+            })
+        
+        return redirect(url_for('manage_money'))
         
     vendors = Vendor.query.filter_by(is_active=True).all()
     return render_template('admin/create_edit_purchase_order.html', vendors=vendors)
@@ -14688,6 +14717,24 @@ def view_purchase_order(po_id):
         
     po = PurchaseOrder.query.get_or_404(po_id)
     return render_template('admin/view_purchase_order.html', po=po)
+
+@app.route('/admin/purchase_order/<int:po_id>/pdf')
+@login_required
+def purchase_order_pdf(po_id):
+    """Generate printable PDF for Local Purchase Order (LPO)"""
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('dashboard'))
+        
+    po = PurchaseOrder.query.get_or_404(po_id)
+    now = get_eat_now()
+    return render_template('admin/lpo_pdf.html', 
+                         po=po, 
+                         now=now,
+                         current_user=current_user,
+                         signature_date=now.strftime('%d %B %Y'),
+                         signer_name="Dr. J. Makokha",
+                         signer_title="Medical Director")
 
 @app.route('/admin/purchase_orders/<int:po_id>/edit', methods=['GET', 'POST'])
 @login_required
@@ -25604,8 +25651,7 @@ def add_vendor():
 
     new_vendor = Vendor(
         name=name,
-        contact_person=contact_person,
-        phone=phone,
+        contact=contact_person or phone,
         email=email,
         address=address,
         is_active=is_active
@@ -25621,8 +25667,9 @@ def add_vendor():
 def edit_vendor(vendor_id):
     vendor = Vendor.query.get_or_404(vendor_id)
     vendor.name = request.form.get('name')
-    vendor.contact_person = request.form.get('contact_person')
-    vendor.phone = request.form.get('phone')
+    contact_person = request.form.get('contact_person')
+    phone = request.form.get('phone')
+    vendor.contact = contact_person or phone
     vendor.email = request.form.get('email')
     vendor.address = request.form.get('address')
     vendor.is_active = request.form.get('is_active') == 'true'

@@ -250,14 +250,99 @@
     <div class="tab-content" id="purchases-tab">
         <div class="section-header">
             <div class="section-title">
-                <h2><i class="fas fa-shopping-cart"></i> Purchases</h2>
-                <p>Track business purchases and inventory</p>
+                <h2><i class="fas fa-shopping-cart"></i> Purchases & LPOs</h2>
+                <p>Track business purchases, inventory, and local purchase orders</p>
             </div>
-            <button class="btn btn-primary btn-with-icon" data-modal-target="add-purchase">
-                <i class="fas fa-plus"></i> Add Purchase
-            </button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-primary btn-with-icon" data-modal-target="add-purchase">
+                    <i class="fas fa-plus"></i> Add Purchase
+                </button>
+                <button class="btn btn-primary btn-with-icon" data-modal-target="add-purchase-order">
+                    <i class="fas fa-file-invoice"></i> Create LPO
+                </button>
+            </div>
         </div>
+        
+        <div class="table-container" style="margin-bottom:16px;">
+            <h3 style="margin:0 0 10px 0;">Local Purchase Orders (recent)</h3>
+            <table id="purchase-orders-table" class="modern-table">
+                <thead>
+                    <tr>
+                        <th>LPO #</th>
+                        <th>Vendor</th>
+                        <th>Date Ordered</th>
+                        <th>Total Amount</th>
+                        <th>Status</th>
+                        <th class="text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for po in purchase_orders %}
+                    <tr>
+                        <td><span class="badge badge-type">{{ po.po_number }}</span></td>
+                        <td>{{ po.vendor.name if po.vendor else '' }}</td>
+                        <td>{{ po.date_ordered.strftime('%Y-%m-%d') if po.date_ordered else '' }}</td>
+                        <td class="amount-cell">Ksh {{ "%.2f"|format(po.total_amount or 0) }}</td>
+                        <td>
+                            <span class="status-badge {% if po.status == 'received' %}status-paid{% elif po.status == 'pending' %}status-pending{% else %}status-overdue{% endif %}">
+                                {{ (po.status or 'pending')|capitalize }}
+                            </span>
+                        </td>
+                        <td class="action-btns">
+                            <div class="btn-group">
+                                <button class="action-btn btn-info"
+                                        data-action="view-purchase-order"
+                                        data-id="{{ po.id }}"
+                                        data-po-number="{{ po.po_number | replace('"', '&quot;') }}"
+                                        data-vendor="{{ (po.vendor.name if po.vendor else '') | replace('"', '&quot;') }}"
+                                        data-date="{{ po.date_ordered.strftime('%Y-%m-%d') if po.date_ordered else '' }}"
+                                        data-total="{{ po.total_amount or 0 }}"
+                                        data-status="{{ po.status or 'pending' }}">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="action-btn btn-success"
+                                        data-action="generate-lpo-pdf"
+                                        data-id="{{ po.id }}"
+                                        data-po-number="{{ po.po_number | replace('"', '&quot;') }}"
+                                        title="Generate PDF">
+                                    <i class="fas fa-file-pdf"></i>
+                                </button>
+                                <button class="action-btn btn-primary"
+                                        data-action="edit-purchase-order"
+                                        data-id="{{ po.id }}"
+                                        data-po-number="{{ po.po_number | replace('"', '&quot;') }}"
+                                        data-vendor-id="{{ po.vendor_id }}"
+                                        data-date="{{ po.date_ordered.strftime('%Y-%m-%d') if po.date_ordered else '' }}"
+                                        data-expected-delivery="{{ po.expected_delivery_date.strftime('%Y-%m-%d') if po.expected_delivery_date else '' }}"
+                                        data-status="{{ po.status or 'pending' }}"
+                                        data-notes="{{ (po.notes or '') | replace('"', '&quot;') }}">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="action-btn btn-danger"
+                                        data-delete-record="{{ po.id }}"
+                                        data-record-type="purchase-order">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% if not purchase_orders %}
+            <div class="empty-state">
+                <i class="fas fa-file-invoice"></i>
+                <h3>No LPOs yet</h3>
+                <p>Create a local purchase order to order from vendors</p>
+                <button class="btn btn-primary" data-modal-target="add-purchase-order">
+                    <i class="fas fa-plus"></i> Create LPO
+                </button>
+            </div>
+            {% endif %}
+        </div>
+
         <div class="table-container">
+            <h3 style="margin:0 0 10px 0;">Direct Purchases</h3>
             <table id="purchases-table" class="modern-table">
                 <thead>
                     <tr>
@@ -645,16 +730,45 @@
                 <thead>
                     <tr>
                         <th>Name</th>
+                        <th>Contact Person</th>
                         <th>Phone</th>
                         <th>Email</th>
+                        <th>Status</th>
+                        <th class="text-center">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for p in insurance_providers %}
                     <tr>
                         <td>{{ p.name }}</td>
+                        <td>{{ p.contact_person or '' }}</td>
                         <td>{{ p.phone or '' }}</td>
                         <td>{{ p.email or '' }}</td>
+                        <td>
+                            <span class="status-badge {% if p.is_active %}status-paid{% else %}status-pending{% endif %}">
+                                {{ 'Active' if p.is_active else 'Inactive' }}
+                            </span>
+                        </td>
+                        <td class="action-btns">
+                            <div class="btn-group">
+                                <button class="action-btn btn-primary"
+                                        data-action="edit-insurance-provider"
+                                        data-id="{{ p.id }}"
+                                        data-name="{{ p.name | replace('"', '&quot;') }}"
+                                        data-contact-person="{{ (p.contact_person or '') | replace('"', '&quot;') }}"
+                                        data-phone="{{ p.phone or '' }}"
+                                        data-email="{{ p.email or '' }}"
+                                        data-address="{{ (p.address or '') | replace('"', '&quot;') }}"
+                                        data-is-active="{{ '1' if p.is_active else '0' }}">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="action-btn btn-danger"
+                                        data-delete-record="{{ p.id }}"
+                                        data-record-type="insurance-provider">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -676,24 +790,49 @@
             <table class="modern-table" id="insurance-policies-table">
                 <thead>
                     <tr>
-                        <th>Patient ID</th>
+                        <th>Patient</th>
                         <th>Provider</th>
                         <th>Policy #</th>
-                        <th>Member #</th>
+                        <th>Valid From</th>
+                        <th>Valid To</th>
                         <th>Status</th>
+                        <th class="text-center">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for pol in insurance_policies %}
                     <tr>
-                        <td>{{ pol.patient_id }}</td>
+                        <td>{{ pol.patient.firstname if pol.patient else '' }} {{ pol.patient.lastname if pol.patient else '' }} ({{ pol.patient_id }})</td>
                         <td>{{ pol.provider.name if pol.provider else '' }}</td>
                         <td>{{ pol.policy_number or '' }}</td>
-                        <td>{{ pol.member_number or '' }}</td>
+                        <td>{{ pol.valid_from.strftime('%Y-%m-%d') if pol.valid_from else '' }}</td>
+                        <td>{{ pol.valid_to.strftime('%Y-%m-%d') if pol.valid_to else '' }}</td>
                         <td>
                             <span class="status-badge {% if pol.active %}status-paid{% else %}status-pending{% endif %}">
                                 {{ 'Active' if pol.active else 'Inactive' }}
                             </span>
+                        </td>
+                        <td class="action-btns">
+                            <div class="btn-group">
+                                <button class="action-btn btn-primary"
+                                        data-action="edit-insurance-policy"
+                                        data-id="{{ pol.id }}"
+                                        data-patient-id="{{ pol.patient_id }}"
+                                        data-provider-id="{{ pol.provider_id }}"
+                                        data-policy-number="{{ (pol.policy_number or '') | replace('"', '&quot;') }}"
+                                        data-member-number="{{ (pol.member_number or '') | replace('"', '&quot;') }}"
+                                        data-valid-from="{{ pol.valid_from.strftime('%Y-%m-%d') if pol.valid_from else '' }}"
+                                        data-valid-to="{{ pol.valid_to.strftime('%Y-%m-%d') if pol.valid_to else '' }}"
+                                        data-active="{{ '1' if pol.active else '0' }}"
+                                        data-notes="{{ (pol.notes or '') | replace('"', '&quot;') }}">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="action-btn btn-danger"
+                                        data-delete-record="{{ pol.id }}"
+                                        data-record-type="insurance-policy">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
@@ -717,8 +856,9 @@
                 <thead>
                     <tr>
                         <th>Claim #</th>
-                        <th>Sale</th>
+                        <th>Patient</th>
                         <th>Provider</th>
+                        <th>Date Filed</th>
                         <th>Status</th>
                         <th>Claimed</th>
                         <th>Paid</th>
@@ -729,24 +869,50 @@
                     {% for c in insurance_claims %}
                     <tr>
                         <td><span class="badge badge-type">{{ c.claim_number }}</span></td>
-                        <td>{{ c.sale.sale_number if c.sale and c.sale.sale_number else c.sale_id }}</td>
-                        <td>{{ c.provider.name if c.provider else '' }}</td>
+                        <td>{{ c.patient_insurance.patient.firstname if c.patient_insurance and c.patient_insurance.patient else '' }} {{ c.patient_insurance.patient.lastname if c.patient_insurance and c.patient_insurance.patient else '' }}</td>
+                        <td>{{ c.provider.name if c.provider else (c.patient_insurance.provider.name if c.patient_insurance and c.patient_insurance.provider else '') }}</td>
+                        <td>{{ c.date_filed.strftime('%Y-%m-%d') if c.date_filed else '' }}</td>
                         <td>
-                            <span class="status-badge {% if c.status == 'paid' %}status-paid{% else %}status-pending{% endif %}">
+                            <span class="status-badge {% if c.status == 'paid' %}status-paid{% elif c.status == 'submitted' %}status-pending{% else %}status-overdue{% endif %}">
                                 {{ (c.status or 'draft')|capitalize }}
                             </span>
                         </td>
-                        <td class="amount-cell">Ksh {{ "%.2f"|format(c.claimed_amount or 0) }}</td>
-                        <td class="amount-cell">Ksh {{ "%.2f"|format(c.paid_amount or 0) }}</td>
+                        <td class="amount-cell">Ksh {{ "%.2f"|format(c.claimed_amount or c.total_amount or 0) }}</td>
+                        <td class="amount-cell">Ksh {{ "%.2f"|format(c.paid_amount or c.amount_paid or 0) }}</td>
                         <td class="action-btns">
                             <div class="btn-group">
+                                <button class="action-btn btn-info"
+                                        data-action="view-insurance-claim"
+                                        data-id="{{ c.id }}"
+                                        data-claim-number="{{ c.claim_number | replace('"', '&quot;') }}"
+                                        data-patient="{{ ((c.patient_insurance.patient.firstname + ' ' + c.patient_insurance.patient.lastname) if c.patient_insurance and c.patient_insurance.patient else '') | replace('"', '&quot;') }}"
+                                        data-provider="{{ (c.provider.name if c.provider else (c.patient_insurance.provider.name if c.patient_insurance and c.patient_insurance.provider else '')) | replace('"', '&quot;') }}"
+                                        data-date-filed="{{ c.date_filed.strftime('%Y-%m-%d') if c.date_filed else '' }}"
+                                        data-status="{{ c.status or 'draft' }}"
+                                        data-total="{{ c.claimed_amount or c.total_amount or 0 }}"
+                                        data-paid="{{ c.paid_amount or c.amount_paid or 0 }}"
+                                        data-notes="{{ (c.notes or '') | replace('"', '&quot;') }}">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="action-btn btn-primary"
+                                        data-action="edit-insurance-claim"
+                                        data-id="{{ c.id }}"
+                                        data-claim-number="{{ c.claim_number | replace('"', '&quot;') }}"
+                                        data-patient-insurance-id="{{ c.patient_insurance_id }}"
+                                        data-provider-id="{{ c.provider_id }}"
+                                        data-total="{{ c.claimed_amount or c.total_amount or 0 }}"
+                                        data-paid="{{ c.paid_amount or c.amount_paid or 0 }}"
+                                        data-status="{{ c.status or 'draft' }}"
+                                        data-notes="{{ (c.notes or '') | replace('"', '&quot;') }}">
+                                    <i class="fas fa-edit"></i>
+                                </button>
                                 <button class="action-btn btn-success"
                                         data-action="insurance-claim-payment"
                                         data-claim-id="{{ c.id }}"
                                         data-claim-number="{{ c.claim_number | replace('"', '&quot;') }}"
-                                        data-provider="{{ (c.provider.name if c.provider else '') | replace('"', '&quot;') }}"
-                                        data-claimed="{{ c.claimed_amount or 0 }}"
-                                        data-paid="{{ c.paid_amount or 0 }}">
+                                        data-provider="{{ (c.provider.name if c.provider else (c.patient_insurance.provider.name if c.patient_insurance and c.patient_insurance.provider else '')) | replace('"', '&quot;') }}"
+                                        data-claimed="{{ c.claimed_amount or c.total_amount or 0 }}"
+                                        data-paid="{{ c.paid_amount or c.amount_paid or 0 }}">
                                     <i class="fas fa-money-bill-wave"></i>
                                 </button>
                             </div>
@@ -779,8 +945,12 @@
         <form id="add-insurance-provider-form" method="POST" action="/admin/insurance/provider/add">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
-                <label for="insurance-provider-name">Name</label>
+                <label for="insurance-provider-name">Name *</label>
                 <input type="text" id="insurance-provider-name" name="name" required>
+            </div>
+            <div class="form-group">
+                <label for="insurance-provider-contact-person">Contact Person</label>
+                <input type="text" id="insurance-provider-contact-person" name="contact_person">
             </div>
             <div class="form-group">
                 <label for="insurance-provider-phone">Phone</label>
@@ -792,7 +962,14 @@
             </div>
             <div class="form-group">
                 <label for="insurance-provider-address">Address</label>
-                <input type="text" id="insurance-provider-address" name="address">
+                <textarea id="insurance-provider-address" name="address"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="insurance-provider-active">Status</label>
+                <select id="insurance-provider-active" name="is_active">
+                    <option value="1" selected>Active</option>
+                    <option value="0">Inactive</option>
+                </select>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" data-modal-target="add-insurance-provider">Cancel</button>
@@ -812,11 +989,11 @@
         <form id="add-insurance-policy-form" method="POST" action="/admin/insurance/policy/add">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
-                <label for="insurance-policy-patient-id">Patient ID</label>
+                <label for="insurance-policy-patient-id">Patient ID *</label>
                 <input type="number" id="insurance-policy-patient-id" name="patient_id" required>
             </div>
             <div class="form-group">
-                <label for="insurance-policy-provider">Provider</label>
+                <label for="insurance-policy-provider">Provider *</label>
                 <select id="insurance-policy-provider" name="provider_id" required>
                     <option value="">Select Provider</option>
                     {% for p in insurance_providers %}
@@ -831,6 +1008,14 @@
             <div class="form-group">
                 <label for="insurance-policy-member-number">Member #</label>
                 <input type="text" id="insurance-policy-member-number" name="member_number">
+            </div>
+            <div class="form-group">
+                <label for="insurance-policy-valid-from">Valid From</label>
+                <input type="date" id="insurance-policy-valid-from" name="valid_from">
+            </div>
+            <div class="form-group">
+                <label for="insurance-policy-valid-to">Valid To</label>
+                <input type="date" id="insurance-policy-valid-to" name="valid_to">
             </div>
             <div class="form-group">
                 <label for="insurance-policy-active">Active</label>
@@ -943,6 +1128,214 @@
             <div class="form-actions">
                 <button type="button" class="btn" data-modal-target="pay-insurance-claim">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Insurance Provider Modal -->
+<div class="modal" id="edit-insurance-provider-modal" role="dialog" aria-modal="true" aria-labelledby="edit-insurance-provider-title">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="edit-insurance-provider-title">Edit Insurance Provider</h2>
+            <button class="close-btn" data-modal-target="edit-insurance-provider">&times;</button>
+        </div>
+        <form id="edit-insurance-provider-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" id="edit-insurance-provider-id" name="id">
+            <div class="form-group">
+                <label for="edit-insurance-provider-name">Name *</label>
+                <input type="text" id="edit-insurance-provider-name" name="name" required>
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-provider-contact-person">Contact Person</label>
+                <input type="text" id="edit-insurance-provider-contact-person" name="contact_person">
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-provider-phone">Phone</label>
+                <input type="text" id="edit-insurance-provider-phone" name="phone">
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-provider-email">Email</label>
+                <input type="email" id="edit-insurance-provider-email" name="email">
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-provider-address">Address</label>
+                <textarea id="edit-insurance-provider-address" name="address"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-provider-active">Status</label>
+                <select id="edit-insurance-provider-active" name="is_active">
+                    <option value="1">Active</option>
+                    <option value="0">Inactive</option>
+                </select>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" data-modal-target="edit-insurance-provider">Cancel</button>
+                <button type="submit" class="btn btn-primary">Update</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Insurance Policy Modal -->
+<div class="modal" id="edit-insurance-policy-modal" role="dialog" aria-modal="true" aria-labelledby="edit-insurance-policy-title">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="edit-insurance-policy-title">Edit Insurance Policy</h2>
+            <button class="close-btn" data-modal-target="edit-insurance-policy">&times;</button>
+        </div>
+        <form id="edit-insurance-policy-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" id="edit-insurance-policy-id" name="id">
+            <div class="form-group">
+                <label for="edit-insurance-policy-patient-id">Patient ID *</label>
+                <input type="number" id="edit-insurance-policy-patient-id" name="patient_id" required>
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-policy-provider">Provider *</label>
+                <select id="edit-insurance-policy-provider" name="provider_id" required>
+                    <option value="">Select Provider</option>
+                    {% for p in insurance_providers %}
+                    <option value="{{ p.id }}">{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-policy-policy-number">Policy #</label>
+                <input type="text" id="edit-insurance-policy-policy-number" name="policy_number">
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-policy-member-number">Member #</label>
+                <input type="text" id="edit-insurance-policy-member-number" name="member_number">
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-policy-valid-from">Valid From</label>
+                <input type="date" id="edit-insurance-policy-valid-from" name="valid_from">
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-policy-valid-to">Valid To</label>
+                <input type="date" id="edit-insurance-policy-valid-to" name="valid_to">
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-policy-active">Active</label>
+                <select id="edit-insurance-policy-active" name="active">
+                    <option value="1">Yes</option>
+                    <option value="0">No</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="edit-insurance-policy-notes">Notes</label>
+                <textarea id="edit-insurance-policy-notes" name="notes"></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" data-modal-target="edit-insurance-policy">Cancel</button>
+                <button type="submit" class="btn btn-primary">Update</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- View Insurance Claim Modal -->
+<div class="modal" id="view-insurance-claim-modal" role="dialog" aria-modal="true" aria-labelledby="view-insurance-claim-title">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="view-insurance-claim-title">View Claim Details</h2>
+            <button class="close-btn" data-modal-target="view-insurance-claim">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 20px;">
+            <div class="form-group">
+                <label>Claim Number</label>
+                <p id="view-claim-number" style="font-weight:600;"></p>
+            </div>
+            <div class="form-group">
+                <label>Patient</label>
+                <p id="view-claim-patient"></p>
+            </div>
+            <div class="form-group">
+                <label>Provider</label>
+                <p id="view-claim-provider"></p>
+            </div>
+            <div class="form-group">
+                <label>Date Filed</label>
+                <p id="view-claim-date"></p>
+            </div>
+            <div class="form-group">
+                <label>Status</label>
+                <p id="view-claim-status"></p>
+            </div>
+            <div class="form-group">
+                <label>Total Amount</label>
+                <p id="view-claim-total" class="amount-cell"></p>
+            </div>
+            <div class="form-group">
+                <label>Amount Paid</label>
+                <p id="view-claim-paid" class="amount-cell"></p>
+            </div>
+            <div class="form-group">
+                <label>Balance</label>
+                <p id="view-claim-balance" class="amount-cell"></p>
+            </div>
+            <div class="form-group">
+                <label>Notes</label>
+                <p id="view-claim-notes"></p>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="btn" data-modal-target="view-insurance-claim">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Insurance Claim Modal -->
+<div class="modal" id="edit-insurance-claim-modal" role="dialog" aria-modal="true" aria-labelledby="edit-insurance-claim-title">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="edit-insurance-claim-title">Edit Insurance Claim</h2>
+            <button class="close-btn" data-modal-target="edit-insurance-claim">&times;</button>
+        </div>
+        <form id="edit-insurance-claim-form" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" id="edit-claim-id" name="id">
+            <div class="form-group">
+                <label>Claim Number</label>
+                <p id="edit-claim-number-display" style="font-weight:600;"></p>
+            </div>
+            <div class="form-group">
+                <label for="edit-claim-patient-insurance-id">Patient Insurance</label>
+                <select id="edit-claim-patient-insurance-id" name="patient_insurance_id">
+                    <option value="">Select Policy</option>
+                    {% for pol in insurance_policies %}
+                    <option value="{{ pol.id }}">Patient {{ pol.patient_id }} - {{ pol.provider.name if pol.provider else '' }} - {{ pol.policy_number or '' }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="edit-claim-total">Total Amount (Ksh)</label>
+                <input type="number" step="0.01" id="edit-claim-total" name="total_amount">
+            </div>
+            <div class="form-group">
+                <label for="edit-claim-paid">Amount Paid (Ksh)</label>
+                <input type="number" step="0.01" id="edit-claim-paid" name="amount_paid">
+            </div>
+            <div class="form-group">
+                <label for="edit-claim-status">Status</label>
+                <select id="edit-claim-status" name="status">
+                    <option value="draft">Draft</option>
+                    <option value="submitted">Submitted</option>
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="paid">Paid</option>
+                    <option value="rejected">Rejected</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="edit-claim-notes">Notes</label>
+                <textarea id="edit-claim-notes" name="notes"></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" data-modal-target="edit-insurance-claim">Cancel</button>
+                <button type="submit" class="btn btn-primary">Update</button>
             </div>
         </form>
     </div>
@@ -1195,6 +1588,80 @@
     </div>
 </div>
 
+<!-- Add Local Purchase Order (LPO) Modal -->
+<div class="modal" id="add-purchase-order-modal" role="dialog" aria-modal="true" aria-labelledby="add-purchase-order-title">
+    <div class="modal-content" style="max-width: 900px;">
+        <div class="modal-header">
+            <h2 id="add-purchase-order-title">Create Local Purchase Order (LPO)</h2>
+            <button class="close-btn" data-modal-target="add-purchase-order">&times;</button>
+        </div>
+        <form id="add-purchase-order-form" method="POST" action="/admin/purchase_orders/create">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="form-group">
+                <label for="lpo-vendor">Vendor *</label>
+                <select id="lpo-vendor" name="vendor_id" required>
+                    <option value="">Select Vendor</option>
+                    {% for vendor in vendors %}
+                    <option value="{{ vendor.id }}">{{ vendor.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="lpo-date-ordered">Date Ordered</label>
+                <input type="date" id="lpo-date-ordered" name="date_ordered" value="{{ current_date }}">
+            </div>
+            
+            <div class="form-group">
+                <label for="lpo-expected-delivery">Expected Delivery Date</label>
+                <input type="date" id="lpo-expected-delivery" name="expected_delivery_date">
+            </div>
+            
+            <h3 style="margin: 20px 0 10px 0; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px;">Items</h3>
+            
+            <table class="modern-table" id="lpo-items-table" style="margin-bottom: 10px;">
+                <thead>
+                    <tr>
+                        <th style="width: 40%;">Description</th>
+                        <th style="width: 15%;">Quantity</th>
+                        <th style="width: 20%;">Unit Price (KSH)</th>
+                        <th style="width: 20%;">Total (KSH)</th>
+                        <th style="width: 5%;"></th>
+                    </tr>
+                </thead>
+                <tbody id="lpo-items-body">
+                    <tr class="lpo-item-row">
+                        <td><input type="text" class="form-control" name="item_description" required></td>
+                        <td><input type="number" class="form-control lpo-quantity" name="item_quantity" value="1" min="1" required></td>
+                        <td><input type="number" step="0.01" class="form-control lpo-unit-price" name="item_unit_price" value="0.00" min="0" required></td>
+                        <td><input type="text" class="form-control lpo-item-total" readonly value="0.00"></td>
+                        <td><button type="button" class="btn btn-danger btn-sm remove-lpo-item" style="padding: 5px 10px;">×</button></td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <button type="button" id="add-lpo-item-btn" class="btn btn-secondary" style="margin-bottom: 15px;">
+                <i class="fas fa-plus"></i> Add Item
+            </button>
+            
+            <div style="text-align: right; margin: 15px 0; padding: 10px; background: #ecf0f1; border-radius: 5px;">
+                <strong style="font-size: 16px;">Grand Total: KSH <span id="lpo-grand-total">0.00</span></strong>
+            </div>
+            
+            <div class="form-group">
+                <label for="lpo-notes">Notes / Special Instructions</label>
+                <textarea id="lpo-notes" name="notes" rows="3"></textarea>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" class="btn" data-modal-target="add-purchase-order">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create LPO</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- Add Payroll Modal -->
 <div class="modal" id="add-payroll-modal" role="dialog" aria-modal="true" aria-labelledby="add-payroll-title">
     <div class="modal-content">
@@ -1222,8 +1689,8 @@
                 <input type="number" step="0.01" id="payroll-amount-paid" name="amount_paid" value="0" required>
             </div>
             <div class="form-group">
-                <label for="payroll-payment-date">Payment Date</label>
-                <input type="date" id="payroll-payment-date" name="payment_date" required>
+                <label for="payroll-payment-date-add">Payment Date</label>
+                <input type="date" id="payroll-payment-date-add" name="payment_date" required>
             </div>
             <div class="form-group">
                 <label for="payroll-pay-period">Pay Period</label>
@@ -1689,24 +2156,6 @@
                 <button type="submit" class="btn btn-success">Record Payment</button>
             </div>
         </form>
-    </div>
-</div>
-
-<!-- View Payroll Receipts Modal -->
-<div class="modal" id="payroll-receipts-modal" role="dialog" aria-modal="true" aria-labelledby="payroll-receipts-title">
-    <div class="modal-content" style="max-width: 900px;">
-        <div class="modal-header">
-            <h2 id="payroll-receipts-title">Payroll Receipts - <span id="receipt-employee-name"></span></h2>
-            <button class="close-btn" data-modal-target="payroll-receipts">&times;</button>
-        </div>
-        <div class="modal-body" style="max-height: 600px; overflow-y: auto;">
-            <div id="receipts-container">
-                <!-- Receipts will be loaded here -->
-            </div>
-        </div>
-        <div class="form-actions">
-            <button type="button" class="btn" data-modal-target="payroll-receipts">Close</button>
-        </div>
     </div>
 </div>
 
@@ -2568,7 +3017,14 @@ window.moneyManagement = {
         });
 
         // Modal handling
+        // Treat in-modal "Cancel"/"Close" buttons as close actions.
+        // Those buttons use data-modal-target for consistency, but should close the current modal.
+        $('.modal button[type="button"][data-modal-target]').addClass('close-btn');
+
         $(document).on('click', '[data-modal-target]', function() {
+            if ($(this).hasClass('close-btn')) {
+                return;
+            }
             const modalId = $(this).data('modal-target');
             moneyManagement.openModal(modalId);
         });
@@ -2627,6 +3083,21 @@ window.moneyManagement = {
                     break;
                 case 'insurance-claim-payment':
                     moneyManagement.payInsuranceClaim(btn.data('claim-id'), btn.data('claim-number'), btn.data('provider'), btn.data('claimed'), btn.data('paid'));
+                    break;
+                case 'generate-lpo-pdf':
+                    moneyManagement.generateLPOPdf(btn.data('id'), btn.data('po-number'));
+                    break;
+                case 'edit-insurance-provider':
+                    moneyManagement.editInsuranceProvider(btn.data('id'), btn.data('name'), btn.data('contact-person'), btn.data('phone'), btn.data('email'), btn.data('address'), btn.data('is-active'));
+                    break;
+                case 'edit-insurance-policy':
+                    moneyManagement.editInsurancePolicy(btn.data('id'), btn.data('patient-id'), btn.data('provider-id'), btn.data('policy-number'), btn.data('member-number'), btn.data('valid-from'), btn.data('valid-to'), btn.data('active'), btn.data('notes'));
+                    break;
+                case 'view-insurance-claim':
+                    moneyManagement.viewInsuranceClaim(btn.data('id'), btn.data('claim-number'), btn.data('patient'), btn.data('provider'), btn.data('date-filed'), btn.data('status'), btn.data('total'), btn.data('paid'), btn.data('notes'));
+                    break;
+                case 'edit-insurance-claim':
+                    moneyManagement.editInsuranceClaim(btn.data('id'), btn.data('claim-number'), btn.data('patient-insurance-id'), btn.data('total'), btn.data('paid'), btn.data('status'), btn.data('notes'));
                     break;
             }
         });
@@ -3033,6 +3504,75 @@ window.moneyManagement = {
         this.openModal('pay-insurance-claim');
     },
 
+    editInsuranceProvider: function(id, name, contactPerson, phone, email, address, isActive) {
+        $('#edit-insurance-provider-id').val(id);
+        $('#edit-insurance-provider-name').val(name);
+        $('#edit-insurance-provider-contact-person').val(contactPerson || '');
+        $('#edit-insurance-provider-phone').val(phone || '');
+        $('#edit-insurance-provider-email').val(email || '');
+        $('#edit-insurance-provider-address').val(address || '');
+        $('#edit-insurance-provider-active').val(isActive ? '1' : '0');
+        $('#edit-insurance-provider-form').attr('action', `/admin/insurance/provider/edit/${id}`);
+        this.openModal('edit-insurance-provider');
+    },
+
+    generateLPOPdf: function(id, poNumber) {
+        // Open LPO in new window for PDF generation
+        const url = `/admin/purchase_order/${id}/pdf`;
+        window.open(url, '_blank');
+    },
+
+    editInsurancePolicy: function(id, patientId, providerId, policyNumber, memberNumber, validFrom, validTo, active, notes) {
+        $('#edit-insurance-policy-id').val(id);
+        $('#edit-insurance-policy-patient-id').val(patientId);
+        $('#edit-insurance-policy-provider').val(providerId);
+        $('#edit-insurance-policy-policy-number').val(policyNumber || '');
+        $('#edit-insurance-policy-member-number').val(memberNumber || '');
+        $('#edit-insurance-policy-valid-from').val(validFrom || '');
+        $('#edit-insurance-policy-valid-to').val(validTo || '');
+        $('#edit-insurance-policy-active').val(active ? '1' : '0');
+        $('#edit-insurance-policy-notes').val(notes || '');
+        $('#edit-insurance-policy-form').attr('action', `/admin/insurance/policy/edit/${id}`);
+        this.openModal('edit-insurance-policy');
+    },
+
+    viewInsuranceClaim: function(id, claimNumber, patient, provider, dateFiled, status, total, paid, notes) {
+        $('#view-claim-number').text(claimNumber || 'N/A');
+        $('#view-claim-patient').text(patient || 'N/A');
+        $('#view-claim-provider').text(provider || 'N/A');
+        $('#view-claim-date').text(dateFiled || 'N/A');
+        $('#view-claim-status').text((status || 'draft').toUpperCase());
+        
+        const totalAmount = parseFloat(total) || 0;
+        const paidAmount = parseFloat(paid) || 0;
+        const balance = Math.max(0, totalAmount - paidAmount);
+        
+        $('#view-claim-total').text('Ksh ' + moneyManagement.formatCurrency(totalAmount));
+        $('#view-claim-paid').text('Ksh ' + moneyManagement.formatCurrency(paidAmount));
+        $('#view-claim-balance').text('Ksh ' + moneyManagement.formatCurrency(balance));
+        $('#view-claim-notes').text(notes || 'No notes');
+        
+        this.openModal('view-insurance-claim');
+    },
+
+    editInsuranceClaim: function(id, claimNumber, patientInsuranceId, total, paid, status, notes) {
+        $('#edit-claim-id').val(id);
+        $('#edit-claim-number-display').text(claimNumber || 'N/A');
+        $('#edit-claim-patient-insurance-id').val(patientInsuranceId || '');
+        $('#edit-claim-total').val(total || '');
+        $('#edit-claim-paid').val(paid || '');
+        $('#edit-claim-status').val(status || 'draft');
+        $('#edit-claim-notes').val(notes || '');
+        $('#edit-insurance-claim-form').attr('action', `/admin/insurance/claim/edit/${id}`);
+        this.openModal('edit-insurance-claim');
+    },
+
+    generateLPOPdf: function(id, poNumber) {
+        // Open LPO in new window for PDF generation
+        const url = `/admin/purchase_order/${id}/pdf`;
+        window.open(url, '_blank');
+    },
+
     confirmDeleteRecord: function(id, type) {
         $('#delete-record-id').val(id);
         $('#delete-record-type').val(type);
@@ -3042,9 +3582,13 @@ window.moneyManagement = {
             case 'drawing': message = 'Are you sure you want to delete this drawing?'; break;
             case 'bill': message = 'Are you sure you want to delete this bill?'; break;
             case 'purchase': message = 'Are you sure you want to delete this purchase?'; break;
+            case 'purchase-order': message = 'Are you sure you want to delete this Local Purchase Order (LPO)?'; break;
             case 'payroll': message = 'Are you sure you want to delete this payroll record?'; break;
             case 'debt': message = 'Are you sure you want to delete this creditor debt? You cannot delete debts that already have payments.'; break;
             case 'debtor': message = 'Are you sure you want to delete this debtor? Payments and transactions will NOT be deleted.'; break;
+            case 'insurance-provider': message = 'Are you sure you want to delete this insurance provider? This will affect all related policies and claims.'; break;
+            case 'insurance-policy': message = 'Are you sure you want to delete this insurance policy? This will affect related claims.'; break;
+            case 'insurance-claim': message = 'Are you sure you want to delete this insurance claim?'; break;
             default: message = 'Are you sure you want to delete this record?';
         }
         
@@ -3104,6 +3648,47 @@ window.moneyManagement = {
             return;
         }
         window.alert(String(message ?? ''));
+    },
+    
+    // LPO Item Management
+    calculateLPOItemTotal: function(row) {
+        const quantity = parseFloat($(row).find('.lpo-quantity').val()) || 0;
+        const unitPrice = parseFloat($(row).find('.lpo-unit-price').val()) || 0;
+        const total = quantity * unitPrice;
+        $(row).find('.lpo-item-total').val(total.toFixed(2));
+        this.calculateLPOGrandTotal();
+    },
+    
+    calculateLPOGrandTotal: function() {
+        let grandTotal = 0;
+        $('#lpo-items-body .lpo-item-row').each(function() {
+            const itemTotal = parseFloat($(this).find('.lpo-item-total').val()) || 0;
+            grandTotal += itemTotal;
+        });
+        $('#lpo-grand-total').text(moneyManagement.formatCurrency(grandTotal));
+    },
+    
+    addLPOItem: function() {
+        const newRow = `
+            <tr class="lpo-item-row">
+                <td><input type="text" class="form-control" name="item_description" required></td>
+                <td><input type="number" class="form-control lpo-quantity" name="item_quantity" value="1" min="1" required></td>
+                <td><input type="number" step="0.01" class="form-control lpo-unit-price" name="item_unit_price" value="0.00" min="0" required></td>
+                <td><input type="text" class="form-control lpo-item-total" readonly value="0.00"></td>
+                <td><button type="button" class="btn btn-danger btn-sm remove-lpo-item" style="padding: 5px 10px;">×</button></td>
+            </tr>
+        `;
+        $('#lpo-items-body').append(newRow);
+    },
+    
+    removeLPOItem: function(btn) {
+        const rowCount = $('#lpo-items-body .lpo-item-row').length;
+        if (rowCount > 1) {
+            $(btn).closest('tr').remove();
+            this.calculateLPOGrandTotal();
+        } else {
+            this.showAlert('warning', 'LPO must have at least one item');
+        }
     }
 };
 
@@ -3136,6 +3721,84 @@ function initializeTableScrolling() {
 $(document).ready(function() {
     moneyManagement.init();
     initializeTableScrolling();
+    
+    // LPO Item Management Event Listeners
+    $(document).on('click', '#add-lpo-item-btn', function() {
+        moneyManagement.addLPOItem();
+    });
+    
+    $(document).on('click', '.remove-lpo-item', function() {
+        moneyManagement.removeLPOItem(this);
+    });
+    
+    $(document).on('input', '.lpo-quantity, .lpo-unit-price', function() {
+        const row = $(this).closest('tr');
+        moneyManagement.calculateLPOItemTotal(row);
+    });
+    
+    // Reset LPO form when modal opens
+    $(document).on('click', '[data-modal-target="add-purchase-order"]', function() {
+        if (!$(this).hasClass('close-btn')) {
+            // Reset form
+            $('#add-purchase-order-form')[0].reset();
+            // Reset to one item
+            $('#lpo-items-body').html(`
+                <tr class="lpo-item-row">
+                    <td><input type="text" class="form-control" name="item_description" required></td>
+                    <td><input type="number" class="form-control lpo-quantity" name="item_quantity" value="1" min="1" required></td>
+                    <td><input type="number" step="0.01" class="form-control lpo-unit-price" name="item_unit_price" value="0.00" min="0" required></td>
+                    <td><input type="text" class="form-control lpo-item-total" readonly value="0.00"></td>
+                    <td><button type="button" class="btn btn-danger btn-sm remove-lpo-item" style="padding: 5px 10px;">×</button></td>
+                </tr>
+            `);
+            moneyManagement.calculateLPOGrandTotal();
+        }
+    });
+    
+    // Handle LPO form submission with AJAX
+    $('#add-purchase-order-form').on('submit', function(e) {
+        e.preventDefault();
+        
+        const form = this;
+        const formData = new FormData(form);
+        const submitBtn = $(form).find('button[type="submit"]');
+        
+        // Disable submit button to prevent double submission
+        submitBtn.prop('disabled', true).text('Creating...');
+        
+        fetch('/admin/purchase_orders/create', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': moneyManagement.getCSRFToken()
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                moneyManagement.showAlert('success', data.message || 'LPO created successfully');
+                moneyManagement.closeModal('add-purchase-order');
+                
+                // Reload page after short delay to show the new LPO
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                moneyManagement.showAlert('danger', data.error || 'Failed to create LPO');
+                submitBtn.prop('disabled', false).text('Create LPO');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            moneyManagement.showAlert('danger', 'An error occurred while creating the LPO. Please try again.');
+            submitBtn.prop('disabled', false).text('Create LPO');
+        });
+    });
 });
 </script>
 
