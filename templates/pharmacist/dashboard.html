@@ -26,6 +26,26 @@
         --dark-color: #343a40;
     }
     
+    /* Set base font size to 9px for entire dashboard */
+    body, html {
+        font-size: 9px !important;
+    }
+    
+    /* Ensure all elements inherit the smaller font */
+    .main-content, .card, .card-body, .card-header, .table, .form-label, .form-control, 
+    .form-select, .btn, .nav-tabs, .tab-content, .modal-body, .modal-header, .modal-footer,
+    .dropdown-menu, .badge, p, span, div, label, input, select, textarea {
+        font-size: 9px !important;
+    }
+    
+    /* Adjust heading sizes proportionally */
+    h1 { font-size: 16px !important; }
+    h2 { font-size: 14px !important; }
+    h3 { font-size: 12px !important; }
+    h4 { font-size: 11px !important; }
+    h5 { font-size: 10px !important; }
+    h6 { font-size: 9px !important; }
+    
     .main-content {
         margin-left: 0;
         padding: 0;
@@ -599,23 +619,28 @@
                         <label class="form-label fw-bold">Payment Method:</label>
                         <div class="d-flex gap-2 flex-wrap">
                             <input type="radio" class="btn-check" name="payment-method" id="payment-cash" value="cash" checked>
-                            <label class="btn btn-sm btn-outline-success rounded-pill" for="payment-cash" title="Cash Payment">
-                                <i class="bi bi-cash-coin"></i> Cash
+                            <label class="btn btn-sm p-2" for="payment-cash" title="Cash Payment" style="background: transparent; border: none;">
+                                <img src="{{ url_for('static', filename='images/cash-logo.png') }}" alt="Cash" style="height: 28px; width: auto;">
                             </label>
                             
                             <input type="radio" class="btn-check" name="payment-method" id="payment-mpesa" value="mpesa">
-                            <label class="btn btn-sm btn-outline-primary rounded-pill" for="payment-mpesa" title="M-Pesa Payment">
-                                <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height: 16px; width: auto; vertical-align: middle; margin-right: 3px;"> M-Pesa
+                            <label class="btn btn-sm p-2" for="payment-mpesa" title="M-Pesa Payment" style="background: transparent; border: none;">
+                                <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height: 28px; width: auto;">
                             </label>
                             
                             <input type="radio" class="btn-check" name="payment-method" id="payment-insurance" value="insurance">
-                            <label class="btn btn-sm btn-outline-info rounded-pill" for="payment-insurance" title="Insurance Payment">
-                                <i class="bi bi-shield-check"></i> Insurance
+                            <label class="btn btn-sm p-2" for="payment-insurance" title="Insurance Payment" style="background: transparent; border: none;">
+                                <img src="{{ url_for('static', filename='images/insurance-logo.png') }}" alt="Insurance" style="height: 28px; width: auto;">
                             </label>
                             
                             <input type="radio" class="btn-check" name="payment-method" id="payment-card" value="card">
-                            <label class="btn btn-sm btn-outline-warning rounded-pill" for="payment-card" title="Card Payment">
-                                <i class="bi bi-credit-card"></i> Card
+                            <label class="btn btn-sm p-2" for="payment-card" title="Card Payment" style="background: transparent; border: none;">
+                                <img src="{{ url_for('static', filename='images/visa-logo.png') }}" alt="Card" style="height: 28px; width: auto;">
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="payment-method" id="payment-paypal" value="paypal">
+                            <label class="btn btn-sm p-2" for="payment-paypal" title="PayPal Payment" style="background: transparent; border: none;">
+                                <img src="{{ url_for('static', filename='images/paypal-logo.png') }}" alt="PayPal" style="height: 28px; width: auto;">
                             </label>
                         </div>
                     </div>

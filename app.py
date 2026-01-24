@@ -25365,9 +25365,9 @@ def receptionist_dashboard():
         return redirect(url_for('home'))
     
     # Calculate today's patients
-    today_patients = Patient.query.filter(
+    today_patients = db.session.query(Patient).join(Sale).filter(
         func.date(Sale.created_at) == date.today()
-    ).count()
+    ).distinct().count()
     
     # Calculate active patients
     active_patients = Patient.query.filter_by(status='active').count()
