@@ -1,3 +1,4 @@
+from __future__ import annotations
 from logging.handlers import RotatingFileHandler
 from operator import and_
 from sqlalchemy import MetaData, Table
@@ -139,6 +140,13 @@ else:
     app.logger.info('Clinic Management System starting in development mode')
 
 app.config.from_object('config.Config')
+
+# Override cookie security settings for development (HTTP)
+if not os.environ.get('RENDER'):
+    app.config['SESSION_COOKIE_SECURE'] = False
+    app.config['REMEMBER_COOKIE_SECURE'] = False
+    app.logger.info('Session cookies set to non-secure for development (HTTP)')
+
 Config.init_fernet(app)
 EncryptionUtils.init_fernet(app)
 # Socket.IO removed - using standard Flask dev server
@@ -248,6 +256,59 @@ app.config['MAIL_USERNAME'] = (os.getenv('MAIL_USERNAME') or '').strip()
 app.config['MAIL_PASSWORD'] = (os.getenv('MAIL_PASSWORD') or '').strip()
 app.config['MAIL_DEFAULT_SENDER'] = (os.getenv('MAIL_DEFAULT_SENDER') or app.config['MAIL_USERNAME'] or '').strip()
 app.config['RESET_TOKEN_EXPIRATION'] = int(os.getenv('RESET_TOKEN_EXPIRATION', 3600))
+
+# --- Safaricom Daraja (M-Pesa) configuration (env-driven) ---
+# Receive (Till / Buy Goods): STK Push + manual Till confirmation (C2B URLs)
+app.config['MPESA_ENV'] = (os.getenv('MPESA_ENV') or 'sandbox').strip().lower()  # sandbox|production
+app.config['MPESA_BASE_URL'] = (os.getenv('MPESA_BASE_URL') or (
+    'https://sandbox.safaricom.co.ke' if app.config['MPESA_ENV'] != 'production' else 'https://api.safaricom.co.ke'
+)).strip()
+app.config['MPESA_CONSUMER_KEY'] = (os.getenv('MPESA_CONSUMER_KEY') or '').strip()
+app.config['MPESA_CONSUMER_SECRET'] = (os.getenv('MPESA_CONSUMER_SECRET') or '').strip()
+
+# Till / Buy Goods shortcode
+app.config['MPESA_TILL_SHORTCODE'] = (os.getenv('MPESA_TILL_SHORTCODE') or '').strip()
+# Daraja Lipa Na Mpesa Online passkey (for STK password generation)
+app.config['MPESA_PASSKEY'] = (os.getenv('MPESA_PASSKEY') or '').strip()
+
+# Public callback URLs (must be HTTPS in production)
+app.config['MPESA_STK_CALLBACK_URL'] = (os.getenv('MPESA_STK_CALLBACK_URL') or '').strip()
+app.config['MPESA_C2B_VALIDATION_URL'] = (os.getenv('MPESA_C2B_VALIDATION_URL') or '').strip()
+app.config['MPESA_C2B_CONFIRMATION_URL'] = (os.getenv('MPESA_C2B_CONFIRMATION_URL') or '').strip()
+
+# Outgoing (admin) + verification endpoints
+app.config['MPESA_INITIATOR_NAME'] = (os.getenv('MPESA_INITIATOR_NAME') or '').strip()
+app.config['MPESA_SECURITY_CREDENTIAL'] = (os.getenv('MPESA_SECURITY_CREDENTIAL') or '').strip()
+app.config['MPESA_OUTGOING_SHORTCODE'] = (os.getenv('MPESA_OUTGOING_SHORTCODE') or '').strip()
+
+app.config['MPESA_TRANSACTION_STATUS_ENDPOINT'] = (os.getenv('MPESA_TRANSACTION_STATUS_ENDPOINT') or '/mpesa/transactionstatus/v1/query').strip()
+app.config['MPESA_TRANSACTION_STATUS_RESULT_URL'] = (os.getenv('MPESA_TRANSACTION_STATUS_RESULT_URL') or '').strip()
+app.config['MPESA_TRANSACTION_STATUS_TIMEOUT_URL'] = (os.getenv('MPESA_TRANSACTION_STATUS_TIMEOUT_URL') or '').strip()
+
+app.config['MPESA_B2C_ENDPOINT'] = (os.getenv('MPESA_B2C_ENDPOINT') or '/mpesa/b2c/v1/paymentrequest').strip()
+app.config['MPESA_B2C_RESULT_URL'] = (os.getenv('MPESA_B2C_RESULT_URL') or '').strip()
+app.config['MPESA_B2C_TIMEOUT_URL'] = (os.getenv('MPESA_B2C_TIMEOUT_URL') or '').strip()
+
+app.config['MPESA_B2B_ENDPOINT'] = (os.getenv('MPESA_B2B_ENDPOINT') or '/mpesa/b2b/v1/paymentrequest').strip()
+app.config['MPESA_B2B_RESULT_URL'] = (os.getenv('MPESA_B2B_RESULT_URL') or '').strip()
+app.config['MPESA_B2B_TIMEOUT_URL'] = (os.getenv('MPESA_B2B_TIMEOUT_URL') or '').strip()
+
+app.config['MPESA_B2POCHI_ENDPOINT'] = (os.getenv('MPESA_B2POCHI_ENDPOINT') or '').strip()
+app.config['MPESA_B2POCHI_RESULT_URL'] = (os.getenv('MPESA_B2POCHI_RESULT_URL') or '').strip()
+app.config['MPESA_B2POCHI_TIMEOUT_URL'] = (os.getenv('MPESA_B2POCHI_TIMEOUT_URL') or '').strip()
+
+# Optional: attribute webhook-posted ledger entries to this user id (admin/system).
+try:
+    _mpesa_sys_uid = (os.getenv('MPESA_SYSTEM_USER_ID') or '').strip()
+    app.config['MPESA_SYSTEM_USER_ID'] = int(_mpesa_sys_uid) if _mpesa_sys_uid else None
+except Exception:
+    app.config['MPESA_SYSTEM_USER_ID'] = None
+
+# Optional: default timeout for Daraja requests
+try:
+    app.config['MPESA_HTTP_TIMEOUT'] = float(os.getenv('MPESA_HTTP_TIMEOUT', '45'))
+except Exception:
+    app.config['MPESA_HTTP_TIMEOUT'] = 45.0
 
 # Custom DateTime type that safely handles NULL and non-string values
 from sqlalchemy import TypeDecorator, DateTime as SQLAlchemyDateTime
@@ -481,6 +542,24 @@ class BackupRecord(db.Model):
     
     def __repr__(self):
         return f'<BackupRecord {self.backup_id}>'
+
+
+class DrawnSignature(db.Model):
+    """Store hand-drawn digital signatures"""
+    __tablename__ = 'drawn_signatures'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    signature_data = db.Column(db.Text, nullable=False)  # Base64 encoded PNG
+    signature_type = db.Column(db.String(50), default='admin')  # admin, doctor, etc.
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    user = db.relationship('User', backref='signatures')
+    
+    def __repr__(self):
+        return f'<DrawnSignature {self.id} User:{self.user_id}>'
 
 
 _BACKUP_STATS_MARKER = "\n\n__BACKUP_STATS__:\n"
@@ -3538,6 +3617,9 @@ class Transaction(db.Model):
     reference_id = db.Column(db.Integer)  # ID of related record (sale, expense, etc.)
     # Optional metadata to make the ledger self-describing (kept nullable for backward-compat)
     reference_table = db.Column(db.String(80))
+    # Optional linkage to higher-level payment records (kept nullable for backward-compat)
+    payment_intent_id = db.Column(db.Integer)
+    provider_txn_id = db.Column(db.Integer)
     direction = db.Column(db.String(3))  # IN / OUT
     status = db.Column(db.String(20))  # posted, void, draft
     department = db.Column(db.String(100))
@@ -3556,12 +3638,515 @@ class Transaction(db.Model):
     
     user = db.relationship('User', backref='transactions')
 
+    @property
+    def clinic_transaction_code(self) -> str:
+        """Human-facing unique clinic transaction code.
+
+        Backward compatible: uses the existing transaction_number.
+        """
+        return str(self.transaction_number or '')
+
+
+class MpesaPayment(db.Model):
+    """Stores incoming M-Pesa payments (STK Push + C2B confirmations).
+
+    This table is the system-of-record for the M-Pesa transaction code (receipt).
+    """
+
+    __tablename__ = 'mpesa_payments'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # stk | c2b
+    source = db.Column(db.String(10), nullable=False)
+
+    # pending | success | failed
+    status = db.Column(db.String(20), nullable=False, default='pending')
+
+    # Links (optional) for auto-posting
+    invoice_id = db.Column(db.Integer, db.ForeignKey('invoices.id'))
+    invoice_number = db.Column(db.String(80))
+    initiated_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+
+    # Common payment fields
+    phone_number = db.Column(db.String(20))
+    amount_expected = db.Column(db.Numeric(10, 2))
+    amount_received = db.Column(db.Numeric(10, 2))
+
+    # STK identifiers
+    merchant_request_id = db.Column(db.String(120), unique=True)
+    checkout_request_id = db.Column(db.String(120), unique=True)
+    result_code = db.Column(db.Integer)
+    result_desc = db.Column(db.String(255))
+
+    # The M-Pesa transaction code (receipt). For C2B it is TransID; for STK it is MpesaReceiptNumber.
+    mpesa_receipt_number = db.Column(db.String(30), unique=True)
+
+    # C2B fields (manual Till / reference)
+    bill_ref_number = db.Column(db.String(120))
+    trans_time = db.Column(db.String(32))
+    business_short_code = db.Column(db.String(20))
+
+    raw_payload = db.Column(db.Text)
+
+    # Optional linkage to PaymentIntent/MpesaProviderTxn
+    payment_intent_id = db.Column(db.Integer)
+    provider_txn_id = db.Column(db.Integer)
+
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    invoice = db.relationship('Invoice', backref='mpesa_payments')
+    initiated_by = db.relationship('User', backref='mpesa_initiated_payments')
+
+
+class MpesaPayout(db.Model):
+    """Stores outgoing M-Pesa payments initiated by admin (B2C/B2B/B2Pochi).
+
+    This is separate from Transaction ledger entries; the ledger entry is created when status is known.
+    """
+
+    __tablename__ = 'mpesa_payouts'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # b2c | b2b | b2pochi
+    payout_type = db.Column(db.String(10), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='pending')  # pending|success|failed
+
+    initiated_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+    # Beneficiary details (one of these depends on type)
+    beneficiary_msisdn = db.Column(db.String(20))
+    beneficiary_paybill = db.Column(db.String(20))
+    beneficiary_till = db.Column(db.String(20))
+    beneficiary_pochi = db.Column(db.String(20))
+
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    remarks = db.Column(db.String(255))
+    occasion = db.Column(db.String(255))
+
+    # Daraja async identifiers
+    conversation_id = db.Column(db.String(120), unique=True)
+    originator_conversation_id = db.Column(db.String(120), unique=True)
+    response_code = db.Column(db.String(20))
+    response_description = db.Column(db.String(255))
+
+    # Result identifiers
+    result_code = db.Column(db.Integer)
+    result_desc = db.Column(db.String(255))
+    mpesa_transaction_id = db.Column(db.String(30), unique=True)
+
+    raw_request = db.Column(db.Text)
+    raw_result = db.Column(db.Text)
+
+    # Optional linkage to PaymentIntent/MpesaProviderTxn
+    payment_intent_id = db.Column(db.Integer)
+    provider_txn_id = db.Column(db.Integer)
+
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    initiated_by = db.relationship('User', backref='mpesa_payouts')
+
+
+class MpesaTransactionStatusQuery(db.Model):
+    """Tracks Transaction Status API queries (used for manual Till verification + reconciliation)."""
+
+    __tablename__ = 'mpesa_txn_status_queries'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    transaction_id = db.Column(db.String(30), nullable=False)  # TransID / receipt code being queried
+    status = db.Column(db.String(20), nullable=False, default='pending')  # pending|success|failed
+
+    requested_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    invoice_id = db.Column(db.Integer, db.ForeignKey('invoices.id'))
+    invoice_number = db.Column(db.String(80))
+
+    amount_expected = db.Column(db.Numeric(10, 2))
+    payer_phone_number = db.Column(db.String(20))
+
+    conversation_id = db.Column(db.String(120), unique=True)
+    originator_conversation_id = db.Column(db.String(120), unique=True)
+
+    result_code = db.Column(db.Integer)
+    result_desc = db.Column(db.String(255))
+
+    raw_request = db.Column(db.Text)
+    raw_result = db.Column(db.Text)
+
+    # Optional linkage to PaymentIntent/MpesaProviderTxn
+    payment_intent_id = db.Column(db.Integer)
+    provider_txn_id = db.Column(db.Integer)
+
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    requested_by = db.relationship('User', backref='mpesa_txn_status_queries')
+    invoice = db.relationship('Invoice', backref='mpesa_txn_status_queries')
+
+
+class PaymentIntent(db.Model):
+    """High-level payment attempt (what the user is trying to do).
+
+    This is the stable anchor for: reports, audit, and receipt consistency.
+    """
+
+    __tablename__ = 'payment_intents'
+
+    id = db.Column(db.Integer, primary_key=True)
+    intent_code = db.Column(db.String(60), unique=True, nullable=False)
+
+    # IN / OUT
+    direction = db.Column(db.String(3), nullable=False)
+
+    # STK_C2B, MANUAL_TILL, B2C, B2B, B2POCHI, RATIBA_RUN
+    intent_type = db.Column(db.String(20), nullable=False)
+
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    currency = db.Column(db.String(10), nullable=False, default='KES')
+
+    # Human reference (invoice number / sale number / supplier id / etc)
+    reference = db.Column(db.String(120))
+
+    # Optional linkage to business records
+    invoice_id = db.Column(db.Integer, db.ForeignKey('invoices.id'))
+    invoice_number = db.Column(db.String(80))
+    sale_id = db.Column(db.Integer, db.ForeignKey('sales.id'))
+    sale_number = db.Column(db.String(80))
+
+    initiated_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    initiated_by_role = db.Column(db.String(40))
+    department = db.Column(db.String(40))  # pharmacy/frontdesk/admin
+
+    # pending/success/failed/cancelled
+    status = db.Column(db.String(20), nullable=False, default='pending')
+
+    notes = db.Column(db.Text)
+
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    initiated_by = db.relationship('User', backref='payment_intents')
+    invoice = db.relationship('Invoice', backref='payment_intents')
+    sale = db.relationship('Sale', backref='payment_intents')
+
+
+class MpesaProviderTxn(db.Model):
+    """Provider-level transaction record for M-Pesa, linked to PaymentIntent.
+
+    Stores raw requests/callbacks for audit and idempotency.
+    """
+
+    __tablename__ = 'mpesa_provider_txns'
+
+    id = db.Column(db.Integer, primary_key=True)
+    payment_intent_id = db.Column(db.Integer, db.ForeignKey('payment_intents.id'), nullable=False)
+
+    # IN / OUT
+    direction = db.Column(db.String(3), nullable=False)
+    provider_action = db.Column(db.String(30))  # stk_push | c2b_confirmation | txn_status_query | b2c | b2b | b2pochi
+
+    # pending/success/failed/cancelled
+    status = db.Column(db.String(20), nullable=False, default='pending')
+
+    # Incoming identifiers
+    mpesa_receipt_number = db.Column(db.String(30))
+    checkout_request_id = db.Column(db.String(120))
+    merchant_request_id = db.Column(db.String(120))
+
+    # Outgoing identifiers
+    conversation_id = db.Column(db.String(120))
+    originator_conversation_id = db.Column(db.String(120))
+    mpesa_transaction_id = db.Column(db.String(30))
+
+    result_code = db.Column(db.Integer)
+    result_desc = db.Column(db.String(255))
+
+    raw_request = db.Column(db.Text)
+    raw_callback = db.Column(db.Text)
+
+    initiated_at = db.Column(db.DateTime, default=get_eat_now)
+    callback_received_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    payment_intent = db.relationship('PaymentIntent', backref='mpesa_provider_txns')
+
+
+class RatibaSchedule(db.Model):
+    """Recurrent M-Pesa payouts (Ratiba-style) managed by the clinic."""
+
+    __tablename__ = 'ratiba_schedules'
+
+    id = db.Column(db.Integer, primary_key=True)
+    schedule_code = db.Column(db.String(60), unique=True, nullable=False)
+
+    # active/paused/cancelled
+    status = db.Column(db.String(20), nullable=False, default='active')
+
+    # b2c | b2b | b2pochi
+    payout_type = db.Column(db.String(10), nullable=False)
+
+    # Beneficiary details
+    beneficiary_msisdn = db.Column(db.String(20))
+    beneficiary_paybill = db.Column(db.String(20))
+    beneficiary_till = db.Column(db.String(20))
+    beneficiary_pochi = db.Column(db.String(20))
+
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    currency = db.Column(db.String(10), nullable=False, default='KES')
+
+    # daily/weekly/monthly
+    frequency = db.Column(db.String(12), nullable=False)
+    start_at = db.Column(db.DateTime)
+    end_at = db.Column(db.DateTime)
+    next_run_at = db.Column(db.DateTime)
+
+    remarks = db.Column(db.String(255))
+    account_reference = db.Column(db.String(120))
+
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    created_by = db.relationship('User', backref='ratiba_schedules')
+
+
+class RatibaRun(db.Model):
+    """One execution/run of a RatibaSchedule (creates PaymentIntent + provider txn + payout)."""
+
+    __tablename__ = 'ratiba_runs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    schedule_id = db.Column(db.Integer, db.ForeignKey('ratiba_schedules.id'), nullable=False)
+
+    # pending/success/failed
+    status = db.Column(db.String(20), nullable=False, default='pending')
+
+    payment_intent_id = db.Column(db.Integer)
+    provider_txn_id = db.Column(db.Integer)
+    mpesa_payout_id = db.Column(db.Integer)
+
+    started_at = db.Column(db.DateTime, default=get_eat_now)
+    completed_at = db.Column(db.DateTime)
+
+    error = db.Column(db.Text)
+
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    schedule = db.relationship('RatibaSchedule', backref='runs')
+
 def generate_transaction_number():
     return f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def generate_receipt_number(prefix: str = 'RCPT'):
     return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+
+
+def generate_payment_intent_code(prefix: str = 'PI') -> str:
+    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+
+
+def generate_ratiba_code(prefix: str = 'RAT') -> str:
+    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+
+
+def _infer_department_for_user(user: 'User') -> str | None:
+    try:
+        role = (getattr(user, 'role', None) or '').strip().lower()
+    except Exception:
+        role = ''
+    if role == 'pharmacist':
+        return 'pharmacy'
+    if role == 'receptionist':
+        return 'frontdesk'
+    if role == 'admin':
+        return 'admin'
+    return None
+
+
+def _payment_intents_supported() -> bool:
+    try:
+        return database_has_table('payment_intents') and database_has_table('mpesa_provider_txns')
+    except Exception:
+        return False
+
+
+def _maybe_set_link_fields(obj, **fields):
+    if not obj:
+        return
+    for k, v in (fields or {}).items():
+        try:
+            setattr(obj, k, v)
+        except Exception:
+            pass
+
+
+def _create_payment_intent(
+    *,
+    direction: str,
+    intent_type: str,
+    amount: Decimal,
+    currency: str = 'KES',
+    reference: str | None = None,
+    invoice: 'Invoice' | None = None,
+    sale: 'Sale' | None = None,
+    initiated_by_user_id: int | None = None,
+    status: str = 'pending',
+    notes: str | None = None,
+) -> 'PaymentIntent' | None:
+    if not database_has_table('payment_intents'):
+        return None
+
+    initiated_by_role = None
+    department = None
+    try:
+        if initiated_by_user_id:
+            u = User.query.get(int(initiated_by_user_id))
+            if u:
+                initiated_by_role = getattr(u, 'role', None)
+                department = _infer_department_for_user(u)
+    except Exception:
+        pass
+
+    pi = PaymentIntent(
+        intent_code=generate_payment_intent_code(),
+        direction=(direction or '').strip().upper(),
+        intent_type=(intent_type or '').strip().upper(),
+        amount=_to_decimal_2dp(amount),
+        currency=(currency or 'KES').strip().upper(),
+        reference=(reference or None),
+        invoice_id=getattr(invoice, 'id', None) if invoice else None,
+        invoice_number=getattr(invoice, 'invoice_number', None) if invoice else None,
+        sale_id=getattr(sale, 'id', None) if sale else None,
+        sale_number=getattr(sale, 'sale_number', None) if sale else None,
+        initiated_by_user_id=int(initiated_by_user_id) if initiated_by_user_id else None,
+        initiated_by_role=(initiated_by_role or None),
+        department=(department or None),
+        status=(status or 'pending').strip().lower(),
+        notes=notes,
+    )
+    db.session.add(pi)
+    db.session.flush()
+    return pi
+
+
+def _create_mpesa_provider_txn(
+    *,
+    payment_intent_id: int,
+    direction: str,
+    provider_action: str,
+    status: str = 'pending',
+    mpesa_receipt_number: str | None = None,
+    checkout_request_id: str | None = None,
+    merchant_request_id: str | None = None,
+    conversation_id: str | None = None,
+    originator_conversation_id: str | None = None,
+    mpesa_transaction_id: str | None = None,
+    result_code: int | None = None,
+    result_desc: str | None = None,
+    raw_request: str | None = None,
+    raw_callback: str | None = None,
+) -> 'MpesaProviderTxn' | None:
+    if not database_has_table('mpesa_provider_txns'):
+        return None
+
+    txn = MpesaProviderTxn(
+        payment_intent_id=int(payment_intent_id),
+        direction=(direction or '').strip().upper(),
+        provider_action=(provider_action or '').strip(),
+        status=(status or 'pending').strip().lower(),
+        mpesa_receipt_number=mpesa_receipt_number,
+        checkout_request_id=checkout_request_id,
+        merchant_request_id=merchant_request_id,
+        conversation_id=conversation_id,
+        originator_conversation_id=originator_conversation_id,
+        mpesa_transaction_id=mpesa_transaction_id,
+        result_code=result_code,
+        result_desc=(result_desc or None),
+        raw_request=raw_request,
+        raw_callback=raw_callback,
+    )
+    db.session.add(txn)
+    db.session.flush()
+    return txn
+
+
+def _receipt_clinic_name() -> str:
+    return (app.config.get('CLINIC_NAME') or os.getenv('CLINIC_NAME') or 'Makokha Medical Centre').strip()
+
+
+def _build_mpesa_receipt_html(
+    *,
+    receipt_title: str,
+    direction: str,
+    clinic_txn_code: str | None,
+    mpesa_code: str | None,
+    party_label: str,
+    party_name: str | None,
+    party_phone: str | None,
+    amount: Decimal,
+    currency: str = 'KES',
+    purpose: str | None = None,
+    served_by_user_id: int | None = None,
+    served_by_label: str | None = None,
+    created_at: datetime | None = None,
+) -> str:
+    dt = created_at or get_eat_now()
+
+    served_by = served_by_label
+    if not served_by and served_by_user_id:
+        try:
+            u = User.query.get(int(served_by_user_id))
+            if u:
+                served_by = getattr(u, 'username', None) or getattr(u, 'name', None) or None
+                try:
+                    role = getattr(u, 'role', None)
+                    if role:
+                        served_by = f"{served_by} ({role})" if served_by else str(role)
+                except Exception:
+                    pass
+        except Exception:
+            served_by = None
+
+    parts = [
+        "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
+        f"<h2 style='margin:0 0 6px 0;'>{escape(_receipt_clinic_name())}</h2>",
+        f"<div style='color:#555;margin-bottom:10px;'>{escape(dt.strftime('%Y-%m-%d %H:%M'))}</div>",
+        f"<h3 style='margin:0 0 10px 0;'>{escape(str(receipt_title or 'Receipt'))}</h3>",
+        "<table style='width:100%;border-collapse:collapse;'>",
+    ]
+
+    def row(k: str, v: str | None):
+        if v is None or str(v).strip() == '':
+            return
+        parts.append(
+            "<tr>"
+            "<td style='padding:6px 8px;border:1px solid #eee;width:38%;background:#fafafa;'><strong>" + escape(str(k)) + "</strong></td>"
+            "<td style='padding:6px 8px;border:1px solid #eee;'>" + escape(str(v)) + "</td>"
+            "</tr>"
+        )
+
+    row('Clinic Transaction Code', clinic_txn_code)
+    row('Direction', (direction or '').upper())
+    row('M-Pesa Code / Reference', mpesa_code)
+    row(party_label, (party_name or '').strip() if party_name else None)
+    row('Phone', party_phone)
+    row('Amount', f"{(currency or 'KES').upper()} {str(_to_decimal_2dp(amount))}")
+    row('What it was for', purpose)
+    row('Served by', served_by)
+    parts.append("</table>")
+    parts.append("<hr style='margin:12px 0;border:none;border-top:1px solid #eee;' />")
+    parts.append("<div style='color:#777;font-size:12px;'>Receipt snapshot stored for audit/reprint.</div>")
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def _inject_reprint_banner(html, reprinted_at=None, reprint_count=None):
@@ -4784,6 +5369,8 @@ def _ensure_known_backward_compat_columns(engine) -> None:
         'transaction',
         {
             'reference_table': 'VARCHAR(80)',
+            'payment_intent_id': 'INTEGER',
+            'provider_txn_id': 'INTEGER',
             'direction': 'VARCHAR(3)',
             'status': 'VARCHAR(20)',
             'department': 'VARCHAR(100)',
@@ -4797,6 +5384,32 @@ def _ensure_known_backward_compat_columns(engine) -> None:
             'receipt_reprinted_at': 'DATETIME',
             'receipt_reprint_count': 'INTEGER DEFAULT 0',
             'updated_at': 'DATETIME',
+        },
+    )
+
+    # Keep M-Pesa tables compatible with optional PaymentIntent/ProviderTxn linking.
+    _ensure_table_columns(
+        engine,
+        'mpesa_payments',
+        {
+            'payment_intent_id': 'INTEGER',
+            'provider_txn_id': 'INTEGER',
+        },
+    )
+    _ensure_table_columns(
+        engine,
+        'mpesa_payouts',
+        {
+            'payment_intent_id': 'INTEGER',
+            'provider_txn_id': 'INTEGER',
+        },
+    )
+    _ensure_table_columns(
+        engine,
+        'mpesa_txn_status_queries',
+        {
+            'payment_intent_id': 'INTEGER',
+            'provider_txn_id': 'INTEGER',
         },
     )
 
@@ -5029,6 +5642,24 @@ def admin_required_json(f):
     return wrapper
 
 
+def roles_required_json(*allowed_roles: str):
+    """Require an authenticated user whose role is in allowed_roles."""
+
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if not current_user.is_authenticated:
+                return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+            role = getattr(current_user, 'role', None)
+            if role not in set([r for r in allowed_roles if r]):
+                return jsonify({'success': False, 'error': 'Forbidden'}), 403
+            return f(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def parse_price(value):
     try:
         amount = Decimal(str(value))
@@ -5106,16 +5737,32 @@ def get_database_dialect():
         return inspector.dialect.name
     except:
         return 'unknown'
+
+
+def database_has_table(table_name: str) -> bool:
+    try:
+        inspector = sa_inspect(db.engine)
+        return table_name in (inspector.get_table_names() or [])
+    except Exception:
+        return False
+
+@app.route('/keep-alive', methods=['GET'])
+def keep_alive():
+    """Fast keep-alive endpoint that performs no database writes."""
+    return jsonify({'status': 'ok'}), 200
+
 @app.route('/')
 def home():
     if current_user.is_authenticated:
-        if current_user.role == 'admin':
+        # Compare roles as strings (handles EncryptedType)
+        user_role = str(current_user.role).lower().strip() if current_user.role else ''
+        if user_role == 'admin':
             return redirect(url_for('admin_dashboard'))
-        elif current_user.role == 'doctor':
+        elif user_role == 'doctor':
             return redirect(url_for('doctor_dashboard'))
-        elif current_user.role == 'pharmacist':
+        elif user_role == 'pharmacist':
             return redirect(url_for('pharmacist_dashboard'))
-        elif current_user.role == 'receptionist':
+        elif user_role == 'receptionist':
             return redirect(url_for('receptionist_dashboard'))
     return redirect(url_for('auth.login'))
 @app.route('/profile', methods=['GET', 'POST'])
@@ -5186,7 +5833,11 @@ def login():
         # Since email and username are encrypted, we must fetch all users and check in Python
         user = None
         for candidate in User.query.all():
-            if (candidate.email == email or candidate.username == email) and candidate.is_active and candidate.role == role:
+            # Compare roles as strings (handles EncryptedType comparison properly)
+            candidate_role = str(candidate.role).lower().strip() if candidate.role else ''
+            target_role = str(role).lower().strip() if role else ''
+            
+            if (candidate.email == email or candidate.username == email) and candidate.is_active and candidate_role == target_role:
                 if candidate.check_password(password):
                     user = candidate
                     break
@@ -5203,11 +5854,32 @@ def login():
                     prefill_role=role,
                 )
 
-            login_user(user, remember=remember)
+            login_user(user, remember=remember, fresh=True)
             user.last_login = get_eat_now()
-            db.session.commit()
+            try:
+                db.session.commit()
+            except Exception as e:
+                current_app.logger.error(f"Error committing user login: {str(e)}")
+                db.session.rollback()
+            
             flash('Login successful!', 'success')
-            return redirect(url_for('home'))
+            
+            # Get the redirect target based on user role (compare as strings)
+            user_role = str(user.role).lower().strip() if user.role else ''
+            next_page = request.args.get('next')
+            if not next_page or not next_page.startswith('/'):
+                if user_role == 'admin':
+                    next_page = url_for('admin_dashboard')
+                elif user_role == 'doctor':
+                    next_page = url_for('doctor_dashboard')
+                elif user_role == 'pharmacist':
+                    next_page = url_for('pharmacist_dashboard')
+                elif user_role == 'receptionist':
+                    next_page = url_for('receptionist_dashboard')
+                else:
+                    next_page = url_for('home')
+            
+            return redirect(next_page)
         
         flash('Invalid credentials or role', 'danger')
     
@@ -14655,6 +15327,53 @@ def manage_money():
     if current_user.role != 'admin':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
+
+    mpesa_payouts = []
+    mpesa_status_queries = []
+    mpesa_payout_receipt_urls = {}
+    mpesa_status_receipt_urls = {}
+    try:
+        if database_has_table('mpesa_payouts'):
+            mpesa_payouts = MpesaPayout.query.order_by(MpesaPayout.created_at.desc()).limit(50).all()
+        if database_has_table('mpesa_txn_status_queries'):
+            mpesa_status_queries = MpesaTransactionStatusQuery.query.order_by(MpesaTransactionStatusQuery.created_at.desc()).limit(50).all()
+
+        # Map each row to a posted ledger Transaction receipt (when available)
+        if _transaction_supports_metadata():
+            if mpesa_payouts:
+                payout_ids = [int(p.id) for p in mpesa_payouts if getattr(p, 'id', None) is not None]
+                if payout_ids:
+                    txs = (
+                        Transaction.query
+                        .filter(Transaction.reference_table == 'mpesa_payouts')
+                        .filter(Transaction.reference_id.in_(payout_ids))
+                        .all()
+                    )
+                    for tx in (txs or []):
+                        try:
+                            mpesa_payout_receipt_urls[int(tx.reference_id)] = url_for('admin_transaction_receipt', transaction_id=int(tx.id))
+                        except Exception:
+                            pass
+
+            if mpesa_status_queries:
+                query_ids = [int(q.id) for q in mpesa_status_queries if getattr(q, 'id', None) is not None]
+                if query_ids:
+                    txs = (
+                        Transaction.query
+                        .filter(Transaction.reference_table == 'mpesa_txn_status_queries')
+                        .filter(Transaction.reference_id.in_(query_ids))
+                        .all()
+                    )
+                    for tx in (txs or []):
+                        try:
+                            mpesa_status_receipt_urls[int(tx.reference_id)] = url_for('admin_transaction_receipt', transaction_id=int(tx.id))
+                        except Exception:
+                            pass
+    except Exception:
+        mpesa_payouts = []
+        mpesa_status_queries = []
+        mpesa_payout_receipt_urls = {}
+        mpesa_status_receipt_urls = {}
     
     return render_template('admin/money.html',
                         drawings=Transaction.query.filter_by(transaction_type='drawing').order_by(Transaction.created_at.desc()).all(),
@@ -14669,7 +15388,149 @@ def manage_money():
                         insurance_policies=InsurancePolicy.query.order_by(InsurancePolicy.created_at.desc()).limit(200).all(),
                         insurance_claims=InsuranceClaim.query.order_by(InsuranceClaim.created_at.desc()).limit(200).all(),
                         employees=Employee.query.all(),
+                        mpesa_payouts=mpesa_payouts,
+                        mpesa_status_queries=mpesa_status_queries,
+                        mpesa_payout_receipt_urls=mpesa_payout_receipt_urls,
+                        mpesa_status_receipt_urls=mpesa_status_receipt_urls,
                         current_date=get_eat_now().date())
+
+
+@app.route('/admin/money/mpesa/verify', methods=['POST'])
+@login_required
+def admin_money_mpesa_verify():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    if not database_has_table('mpesa_txn_status_queries'):
+        flash('M-Pesa tables not ready. Run migrations (flask db upgrade).', 'warning')
+        return redirect(url_for('manage_money'))
+
+    from utils.mpesa_daraja import normalize_msisdn_ke
+
+    mpesa_code = (request.form.get('mpesa_code') or '').strip().upper()
+    invoice_number = (request.form.get('invoice_number') or '').strip()
+    phone_raw = (request.form.get('phone_number') or '').strip()
+    phone = normalize_msisdn_ke(phone_raw) if phone_raw else None
+    amount = (request.form.get('amount') or '').strip()
+
+    if not mpesa_code:
+        flash('M-Pesa code is required.', 'danger')
+        return redirect(url_for('manage_money'))
+
+    payload = {
+        'mpesa_code': mpesa_code,
+        'invoice_number': invoice_number,
+        'phone_number': phone,
+        'amount': amount,
+    }
+    ok, result = _mpesa_initiate_transaction_status_query(payload, requested_by_user_id=int(current_user.id))
+    if not ok:
+        flash(result.get('error') or 'Transaction status query failed.', 'danger')
+    else:
+        qid = result.get('query_id')
+        flash(f'Transaction Status query submitted{(" (ID %s)" % qid) if qid else ""}. Await callback result.', 'success')
+
+    return redirect(url_for('manage_money'))
+
+
+@app.route('/admin/money/mpesa/payout/b2c', methods=['POST'])
+@login_required
+def admin_money_mpesa_payout_b2c():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    if not database_has_table('mpesa_payouts'):
+        flash('M-Pesa tables not ready. Run migrations (flask db upgrade).', 'warning')
+        return redirect(url_for('manage_money'))
+
+    from utils.mpesa_daraja import normalize_msisdn_ke
+
+    phone = normalize_msisdn_ke((request.form.get('phone_number') or '').strip())
+    amount = (request.form.get('amount') or '').strip()
+    remarks = (request.form.get('remarks') or 'Clinic payout').strip()
+    occasion = (request.form.get('occasion') or '').strip()
+
+    payload = {
+        'phone_number': phone,
+        'amount': amount,
+        'remarks': remarks,
+        'occasion': occasion,
+    }
+    ok, result = _mpesa_initiate_payout_b2c(payload, initiated_by_user_id=int(current_user.id))
+    if not ok:
+        flash(result.get('error') or 'B2C payout failed.', 'danger')
+    else:
+        flash('B2C payout submitted. Await callback result.', 'success')
+
+    return redirect(url_for('manage_money'))
+
+
+@app.route('/admin/money/mpesa/payout/b2b', methods=['POST'])
+@login_required
+def admin_money_mpesa_payout_b2b():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    if not database_has_table('mpesa_payouts'):
+        flash('M-Pesa tables not ready. Run migrations (flask db upgrade).', 'warning')
+        return redirect(url_for('manage_money'))
+
+    amount = (request.form.get('amount') or '').strip()
+    remarks = (request.form.get('remarks') or 'Clinic payout').strip()
+    account_ref = (request.form.get('account_reference') or '').strip()
+    paybill = (request.form.get('paybill') or '').strip()
+    till = (request.form.get('till') or '').strip()
+
+    payload = {
+        'amount': amount,
+        'remarks': remarks,
+        'account_reference': account_ref,
+        'paybill': paybill,
+        'till': till,
+    }
+    ok, result = _mpesa_initiate_payout_b2b(payload, initiated_by_user_id=int(current_user.id))
+    if not ok:
+        flash(result.get('error') or 'B2B payout failed.', 'danger')
+    else:
+        flash('B2B payout submitted. Await callback result.', 'success')
+
+    return redirect(url_for('manage_money'))
+
+
+@app.route('/admin/money/mpesa/payout/b2pochi', methods=['POST'])
+@login_required
+def admin_money_mpesa_payout_b2pochi():
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    if not database_has_table('mpesa_payouts'):
+        flash('M-Pesa tables not ready. Run migrations (flask db upgrade).', 'warning')
+        return redirect(url_for('manage_money'))
+
+    from utils.mpesa_daraja import normalize_msisdn_ke
+
+    phone = normalize_msisdn_ke((request.form.get('phone_number') or '').strip())
+    amount = (request.form.get('amount') or '').strip()
+    remarks = (request.form.get('remarks') or 'Clinic payout').strip()
+    occasion = (request.form.get('occasion') or '').strip()
+
+    payload = {
+        'phone_number': phone,
+        'amount': amount,
+        'remarks': remarks,
+        'occasion': occasion,
+    }
+    ok, result = _mpesa_initiate_payout_b2pochi(payload, initiated_by_user_id=int(current_user.id))
+    if not ok:
+        flash(result.get('error') or 'B2Pochi payout failed.', 'danger')
+    else:
+        flash('B2Pochi payout submitted. Await callback result.', 'success')
+
+    return redirect(url_for('manage_money'))
 
 
 @app.route('/admin/purchase_orders')
@@ -18014,7 +18875,9 @@ def delete_imaging_test(id):
 @login_required
 def pharmacist_dashboard():
     try:
-        if current_user.role != 'pharmacist':
+        # Compare role as string (handles EncryptedType)
+        user_role = str(current_user.role).lower().strip() if current_user.role else ''
+        if user_role != 'pharmacist':
             flash('Unauthorized access', 'danger')
             return redirect(url_for('home'))
         
@@ -19307,6 +20170,7 @@ def pharmacist_controlled_inventory():
     try:
         search_query = (request.args.get('search') or '').strip()
         filter_type = (request.args.get('filter') or 'all').strip()
+        is_embed = request.args.get('embed') == '1'
 
         query = ControlledDrug.query
 
@@ -19341,6 +20205,7 @@ def pharmacist_controlled_inventory():
             search_query=search_query,
             filter_type=filter_type,
             controlled_sales=controlled_sales,
+            is_embed=is_embed,
         )
     except Exception as e:
         current_app.logger.error(f"Error loading controlled inventory: {str(e)}")
@@ -20249,6 +21114,7 @@ def process__cart_sale():
         
         items = data.get('items', [])
         payment_method = data.get('payment_method', 'cash')
+        amount_given = data.get('amount_given', None)  # Amount client gave (for cash payments)
         
         if not items:
             return jsonify({'success': False, 'error': 'No items in cart'}), 400
@@ -20267,6 +21133,12 @@ def process__cart_sale():
         
         # Calculate total amount
         total_amount = sum(float(item.get('unit_price', 0)) * int(item.get('quantity', 0)) for item in items)
+        
+        # Calculate change (for cash payments)
+        change = 0
+        if payment_method == 'cash' and amount_given is not None:
+            amount_given = float(amount_given)
+            change = amount_given - total_amount
         
         # Create sale record
         sale = Sale(
@@ -20373,6 +21245,8 @@ def process__cart_sale():
                 sale=sale_for_receipt,
                 related_sales=related_sales,
                 now=datetime.now(),
+                amount_given=amount_given,
+                change=change,
             )
             _ensure_transaction_receipt(transaction, receipt_html, prefix='SALE')
         except Exception as e:
@@ -24516,6 +25390,7 @@ def create_bill():
         prescription_item_ids = _coerce_int_list(data.get('prescription_items', []))
         include_ward_stay = bool(data.get('include_ward_stay'))
         payment_method = data.get('payment_method', 'cash')
+        amount_given = data.get('amount_given', None)  # Amount client gave (for cash payments)
         notes = data.get('notes')
     else:
         patient_id = request.form.get('patient_id')
@@ -24525,6 +25400,8 @@ def create_bill():
         prescription_item_ids = _coerce_int_list(request.form.getlist('prescription_items'))
         include_ward_stay = request.form.get('include_ward_stay') in ('1', 'true', 'True', 'on', 'yes')
         payment_method = request.form.get('payment_method', 'cash')
+        amount_given_str = request.form.get('amount_given', None)
+        amount_given = float(amount_given_str) if amount_given_str else None
         notes = request.form.get('notes')
     
     patient = Patient.query.get(patient_id)
@@ -24692,6 +25569,12 @@ def create_bill():
         # Update sale total
         sale.total_amount = total_amount
         
+        # Calculate change (for cash payments)
+        change = 0
+        if payment_method == 'cash' and amount_given is not None:
+            amount_given = float(amount_given)
+            change = amount_given - total_amount
+        
         # Create transaction
         transaction = Transaction(
             transaction_number=generate_transaction_number(),
@@ -24712,7 +25595,10 @@ def create_bill():
         )
         db.session.add(transaction)
 
-        receipt_html = render_template('receptionist/receipt.html', sale=sale)
+        receipt_html = render_template('receptionist/receipt.html', 
+                                        sale=sale, 
+                                        amount_given=amount_given,
+                                        change=change)
         _ensure_transaction_receipt(transaction, receipt_html, prefix='SALE', force=True)
         
         db.session.commit()
@@ -24729,7 +25615,11 @@ def create_bill():
                 'sale_number': sale.sale_number,
                 'total_amount': total_amount
             })
-        return redirect(url_for('receptionist_receipt', sale_id=sale.id))
+        # Pass amount_given and change as query parameters for the receipt
+        receipt_url = url_for('receptionist_receipt', sale_id=sale.id)
+        if payment_method == 'cash' and amount_given is not None:
+            receipt_url += f'?amount_given={amount_given}&change={change}'
+        return redirect(receipt_url)
     except Exception as e:
         db.session.rollback()
         if request.is_json:
@@ -24749,13 +25639,24 @@ def receptionist_receipt(sale_id):
         flash('Sale not found', 'danger')
         return redirect(url_for('receptionist_dashboard'))
     
-    return render_template('receptionist/receipt.html', sale=sale)
+    # Get amount_given and change from query params (for cash payments)
+    amount_given = request.args.get('amount_given', type=float)
+    change = request.args.get('change', type=float)
+    
+    return render_template('receptionist/receipt.html', 
+                          sale=sale,
+                          amount_given=amount_given,
+                          change=change)
 
 # API Routes
 @app.route('/api/drugs')
 @login_required
 def api_drugs():
-    if current_user.role == 'admin':
+    # Get role as string for safe comparison (handles EncryptedType)
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    
+    # Admin and pharmacist get full access to drugs
+    if user_role in ('admin', 'pharmacist'):
         filter_type = request.args.get('filter', 'all')
         
         query = db.session.query(Drug)
@@ -25960,6 +26861,1529 @@ def delete_invoice(invoice_id):
     flash('Invoice deleted successfully.', 'success')
     return redirect(url_for('invoices'))
 
+
+# =================================================================================================
+# M-PESA (Safaricom Daraja) - Receive money via Till (Buy Goods)
+#   - STK Push: auto-callback includes MpesaReceiptNumber
+#   - Manual Till: if Safaricom pushes C2B confirmation callbacks for your shortcode, capture TransID
+#     (Note: some setups don't send callbacks for pure Till payments; STK is the most reliable.)
+# =================================================================================================
+
+def _to_decimal_2dp(value) -> Decimal:
+    try:
+        d = Decimal(str(value))
+    except Exception:
+        d = Decimal('0')
+    return d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+def _invoice_recalc_status(invoice: 'Invoice') -> None:
+    total = _to_decimal_2dp(invoice.total_amount)
+    paid = _to_decimal_2dp(invoice.paid_amount)
+    if paid >= total and total > 0:
+        invoice.status = 'paid'
+        return
+    # Keep overdue if already overdue, otherwise unpaid
+    if invoice.status == 'overdue':
+        return
+    invoice.status = 'unpaid'
+
+
+def _apply_payment_to_invoice(invoice: 'Invoice', amount: Decimal) -> None:
+    if invoice.status == 'void':
+        return
+    invoice.paid_amount = _to_decimal_2dp(_to_decimal_2dp(invoice.paid_amount) + _to_decimal_2dp(amount))
+    _invoice_recalc_status(invoice)
+
+
+@app.post('/api/mpesa/stkpush')
+@login_required
+@roles_required_json('receptionist', 'pharmacist')
+@limiter.limit('20/minute')
+def mpesa_stkpush():
+    """Initiate an STK Push (Till / Buy Goods).
+
+    Body JSON:
+      - phone_number: 07.. or 254..
+      - amount: optional (defaults to invoice outstanding if invoice_number supplied)
+      - invoice_number: optional (recommended)
+
+    Returns Daraja response including CheckoutRequestID.
+    """
+    from utils.mpesa_daraja import (
+        daraja_post_json,
+        daraja_timestamp,
+        generate_stk_password,
+        get_access_token,
+        normalize_msisdn_ke,
+        safe_json_dumps,
+    )
+
+    data = request.get_json(silent=True) or {}
+    phone = normalize_msisdn_ke(data.get('phone_number') or '')
+    invoice_number = (data.get('invoice_number') or '').strip()
+
+    if not phone:
+        return jsonify({'error': 'phone_number is required and must be a valid KE number'}), 400
+
+    till_shortcode = (app.config.get('MPESA_TILL_SHORTCODE') or '').strip()
+    passkey = (app.config.get('MPESA_PASSKEY') or '').strip()
+    callback_url = (app.config.get('MPESA_STK_CALLBACK_URL') or '').strip()
+    consumer_key = (app.config.get('MPESA_CONSUMER_KEY') or '').strip()
+    consumer_secret = (app.config.get('MPESA_CONSUMER_SECRET') or '').strip()
+    base_url = (app.config.get('MPESA_BASE_URL') or '').strip()
+    timeout = float(app.config.get('MPESA_HTTP_TIMEOUT') or 45.0)
+
+    missing = [k for k, v in {
+        'MPESA_TILL_SHORTCODE': till_shortcode,
+        'MPESA_PASSKEY': passkey,
+        'MPESA_STK_CALLBACK_URL': callback_url,
+        'MPESA_CONSUMER_KEY': consumer_key,
+        'MPESA_CONSUMER_SECRET': consumer_secret,
+        'MPESA_BASE_URL': base_url,
+    }.items() if not v]
+    if missing:
+        return jsonify({'error': 'M-Pesa is not configured', 'missing': missing}), 500
+
+    invoice = None
+    amount = data.get('amount')
+    if invoice_number:
+        invoice = Invoice.query.filter_by(invoice_number=invoice_number).first()
+        if not invoice:
+            return jsonify({'error': f'invoice_number not found: {invoice_number}'}), 404
+        outstanding = _to_decimal_2dp(_to_decimal_2dp(invoice.total_amount) - _to_decimal_2dp(invoice.paid_amount))
+        if amount is None or str(amount).strip() == '':
+            amount = outstanding
+        if _to_decimal_2dp(amount) <= 0:
+            return jsonify({'error': 'Invoice has no outstanding balance'}), 400
+    else:
+        if amount is None or str(amount).strip() == '':
+            return jsonify({'error': 'amount is required when invoice_number is not provided'}), 400
+
+    amount_dec = _to_decimal_2dp(amount)
+    if amount_dec <= 0:
+        return jsonify({'error': 'amount must be > 0'}), 400
+
+    timestamp = daraja_timestamp(get_eat_now())
+    password = generate_stk_password(till_shortcode, passkey, timestamp)
+
+    payment = MpesaPayment(
+        source='stk',
+        status='pending',
+        invoice_id=invoice.id if invoice else None,
+        invoice_number=invoice.invoice_number if invoice else (invoice_number or None),
+        initiated_by_user_id=int(current_user.id),
+        phone_number=phone,
+        amount_expected=amount_dec,
+        raw_payload=safe_json_dumps({'request': data}),
+    )
+    db.session.add(payment)
+    db.session.flush()
+
+    # Create a high-level PaymentIntent + ProviderTxn anchor (best-effort; does not block).
+    payment_intent = None
+    provider_txn = None
+    try:
+        if _payment_intents_supported():
+            payment_intent = _create_payment_intent(
+                direction='IN',
+                intent_type='STK_C2B',
+                amount=amount_dec,
+                currency='KES',
+                reference=invoice.invoice_number if invoice else (invoice_number or f"MPESA-{payment.id}"),
+                invoice=invoice,
+                initiated_by_user_id=int(current_user.id),
+                status='pending',
+                notes='STK push initiated',
+            )
+    except Exception:
+        payment_intent = None
+
+    body = {
+        'BusinessShortCode': till_shortcode,
+        'Password': password,
+        'Timestamp': timestamp,
+        'TransactionType': 'CustomerBuyGoodsOnline',
+        'Amount': int(amount_dec),
+        'PartyA': phone,
+        'PartyB': till_shortcode,
+        'PhoneNumber': phone,
+        'CallBackURL': callback_url,
+        'AccountReference': invoice.invoice_number if invoice else (invoice_number or f'MPESA-{payment.id}'),
+        'TransactionDesc': f'Clinic payment {invoice.invoice_number}' if invoice else 'Clinic payment',
+    }
+
+    try:
+        if payment_intent is not None and database_has_table('mpesa_provider_txns'):
+            provider_txn = _create_mpesa_provider_txn(
+                payment_intent_id=int(payment_intent.id),
+                direction='IN',
+                provider_action='stk_push',
+                status='pending',
+                raw_request=safe_json_dumps(body),
+            )
+            _maybe_set_link_fields(payment, payment_intent_id=int(payment_intent.id), provider_txn_id=int(provider_txn.id) if provider_txn else None)
+            db.session.add(payment)
+            db.session.flush()
+    except Exception:
+        provider_txn = None
+
+    try:
+        token = get_access_token(base_url=base_url, consumer_key=consumer_key, consumer_secret=consumer_secret, timeout=timeout)
+        resp = daraja_post_json(base_url=base_url, path='/mpesa/stkpush/v1/processrequest', token=token, json_body=body, timeout=timeout)
+    except Exception as e:
+        app.logger.exception('STK push failed')
+        payment.status = 'failed'
+        payment.result_desc = str(e)[:250]
+        db.session.commit()
+        return jsonify({'error': 'STK push failed', 'detail': str(e)}), 502
+
+    payment.merchant_request_id = (resp.get('MerchantRequestID') or None)
+    payment.checkout_request_id = (resp.get('CheckoutRequestID') or None)
+    payment.result_desc = (resp.get('ResponseDescription') or resp.get('CustomerMessage') or None)
+
+    try:
+        if provider_txn is not None:
+            _maybe_set_link_fields(
+                provider_txn,
+                merchant_request_id=payment.merchant_request_id,
+                checkout_request_id=payment.checkout_request_id,
+            )
+            db.session.add(provider_txn)
+    except Exception:
+        pass
+    db.session.commit()
+
+    return jsonify({'ok': True, 'daraja': resp, 'payment_id': payment.id}), 200
+
+
+@app.post('/api/mpesa/stk/callback')
+@csrf.exempt
+@limiter.limit('120/minute')
+def mpesa_stk_callback():
+    from utils.mpesa_daraja import parse_stk_callback, safe_json_dumps
+
+    payload = request.get_json(silent=True) or {}
+    parsed = parse_stk_callback(payload)
+
+    checkout_id = (parsed.get('checkout_request_id') or '').strip()
+    merchant_id = (parsed.get('merchant_request_id') or '').strip()
+    result_code = parsed.get('result_code')
+    result_desc = parsed.get('result_desc')
+
+    payment = None
+    if checkout_id:
+        payment = MpesaPayment.query.filter_by(checkout_request_id=checkout_id).first()
+    if not payment and merchant_id:
+        payment = MpesaPayment.query.filter_by(merchant_request_id=merchant_id).first()
+    if not payment:
+        payment = MpesaPayment(source='stk', status='pending')
+        db.session.add(payment)
+
+    payment.raw_payload = safe_json_dumps(payload)
+    payment.checkout_request_id = checkout_id or payment.checkout_request_id
+    payment.merchant_request_id = merchant_id or payment.merchant_request_id
+    try:
+        payment.result_code = int(result_code) if result_code is not None else None
+    except Exception:
+        payment.result_code = None
+    payment.result_desc = (result_desc or '')[:250] if result_desc else None
+
+    if payment.result_code == 0:
+        receipt = (parsed.get('mpesa_receipt_number') or '').strip() or None
+        payment.mpesa_receipt_number = payment.mpesa_receipt_number or receipt
+        payment.phone_number = payment.phone_number or (parsed.get('phone_number') or None)
+        if parsed.get('amount') is not None:
+            payment.amount_received = _to_decimal_2dp(parsed.get('amount'))
+        payment.status = 'success'
+
+        # Update intent/provider txn (best-effort)
+        try:
+            if _payment_intents_supported():
+                provider_txn = None
+                if getattr(payment, 'provider_txn_id', None):
+                    provider_txn = MpesaProviderTxn.query.get(int(payment.provider_txn_id))
+                if not provider_txn and checkout_id:
+                    provider_txn = MpesaProviderTxn.query.filter_by(checkout_request_id=checkout_id).first()
+                if not provider_txn and merchant_id:
+                    provider_txn = MpesaProviderTxn.query.filter_by(merchant_request_id=merchant_id).first()
+                if provider_txn:
+                    provider_txn.status = 'success'
+                    provider_txn.mpesa_receipt_number = provider_txn.mpesa_receipt_number or payment.mpesa_receipt_number
+                    provider_txn.result_code = 0
+                    provider_txn.result_desc = (payment.result_desc or provider_txn.result_desc)
+                    provider_txn.raw_callback = safe_json_dumps(payload)
+                    provider_txn.callback_received_at = provider_txn.callback_received_at or get_eat_now()
+                    provider_txn.completed_at = provider_txn.completed_at or get_eat_now()
+                    db.session.add(provider_txn)
+                    _maybe_set_link_fields(payment, provider_txn_id=int(provider_txn.id), payment_intent_id=int(provider_txn.payment_intent_id))
+
+                    pi = PaymentIntent.query.get(int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
+                    if pi:
+                        pi.status = 'success'
+                        db.session.add(pi)
+        except Exception:
+            pass
+
+        # Auto-post to invoice if linked
+        if payment.invoice_id:
+            invoice = Invoice.query.get(payment.invoice_id)
+            if invoice and payment.amount_received:
+                _apply_payment_to_invoice(invoice, _to_decimal_2dp(payment.amount_received))
+
+        # Ledger transaction (only if we know who initiated the request)
+        if payment.initiated_by_user_id and payment.amount_received:
+            tx_exists = None
+            if payment.mpesa_receipt_number:
+                tx_exists = Transaction.query.filter(
+                    Transaction.payment_method == 'mpesa',
+                    Transaction.notes.ilike(f"%{payment.mpesa_receipt_number}%"),
+                ).first()
+            if not tx_exists:
+                tx = Transaction(
+                    transaction_number=generate_transaction_number(),
+                    transaction_type='payment',
+                    amount=float(_to_decimal_2dp(payment.amount_received)),
+                    user_id=int(payment.initiated_by_user_id),
+                    reference_id=int(payment.invoice_id) if payment.invoice_id else None,
+                    reference_table='invoices' if payment.invoice_id else None,
+                    payment_intent_id=getattr(payment, 'payment_intent_id', None),
+                    provider_txn_id=getattr(payment, 'provider_txn_id', None),
+                    direction='IN',
+                    status='posted',
+                    payer=str(payment.phone_number or ''),
+                    payment_method='mpesa',
+                    notes=f"M-Pesa receipt: {payment.mpesa_receipt_number}" if payment.mpesa_receipt_number else 'M-Pesa payment',
+                    receipt_number=payment.invoice_number if payment.invoice_number else None,
+                )
+                db.session.add(tx)
+
+                # Store a printable receipt for admin/reprint workflows
+                try:
+                    payer_name = None
+                    purpose = None
+                    if payment.invoice_id:
+                        inv = Invoice.query.get(payment.invoice_id)
+                        if inv:
+                            purpose = f"Invoice {getattr(inv, 'invoice_number', '')}".strip()
+                            try:
+                                patient = Patient.query.get(inv.patient_id) if getattr(inv, 'patient_id', None) else None
+                                if patient:
+                                    payer_name = getattr(patient, 'full_name', None) or getattr(patient, 'name', None) or None
+                            except Exception:
+                                payer_name = None
+
+                    receipt_html = _build_mpesa_receipt_html(
+                        receipt_title='Reception Payment Receipt',
+                        direction='IN',
+                        clinic_txn_code=getattr(tx, 'clinic_transaction_code', None) or tx.transaction_number,
+                        mpesa_code=payment.mpesa_receipt_number,
+                        party_label='Payer',
+                        party_name=payer_name,
+                        party_phone=payment.phone_number,
+                        amount=_to_decimal_2dp(payment.amount_received),
+                        currency='KES',
+                        purpose=purpose,
+                        served_by_user_id=int(payment.initiated_by_user_id) if payment.initiated_by_user_id else None,
+                        created_at=get_eat_now(),
+                    )
+                    _ensure_transaction_receipt(tx, receipt_html, prefix='PAY', force=True)
+                except Exception:
+                    pass
+    else:
+        payment.status = 'failed'
+
+        try:
+            if _payment_intents_supported():
+                provider_txn = None
+                if getattr(payment, 'provider_txn_id', None):
+                    provider_txn = MpesaProviderTxn.query.get(int(payment.provider_txn_id))
+                if not provider_txn and checkout_id:
+                    provider_txn = MpesaProviderTxn.query.filter_by(checkout_request_id=checkout_id).first()
+                if not provider_txn and merchant_id:
+                    provider_txn = MpesaProviderTxn.query.filter_by(merchant_request_id=merchant_id).first()
+                if provider_txn:
+                    provider_txn.status = 'failed'
+                    provider_txn.result_code = int(payment.result_code) if payment.result_code is not None else None
+                    provider_txn.result_desc = (payment.result_desc or provider_txn.result_desc)
+                    provider_txn.raw_callback = safe_json_dumps(payload)
+                    provider_txn.callback_received_at = provider_txn.callback_received_at or get_eat_now()
+                    provider_txn.completed_at = provider_txn.completed_at or get_eat_now()
+                    db.session.add(provider_txn)
+
+                    pi = PaymentIntent.query.get(int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
+                    if pi:
+                        pi.status = 'failed'
+                        db.session.add(pi)
+        except Exception:
+            pass
+
+    db.session.commit()
+    # Safaricom expects 200 OK; body not strictly required
+    return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
+
+@app.post('/api/mpesa/c2b/validation')
+@csrf.exempt
+@limiter.limit('120/minute')
+def mpesa_c2b_validation():
+    """C2B validation endpoint.
+
+    For most clinics, accept all and validate later. You can enforce shortcode checks here.
+    """
+    payload = request.get_json(silent=True) or {}
+    short_code = (payload.get('BusinessShortCode') or payload.get('ShortCode') or '').strip()
+    expected = (app.config.get('MPESA_TILL_SHORTCODE') or '').strip()
+
+    if expected and short_code and short_code != expected:
+        return jsonify({'ResultCode': 1, 'ResultDesc': 'Rejected: invalid shortcode'}), 200
+    return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
+
+@app.post('/api/mpesa/c2b/confirmation')
+@csrf.exempt
+@limiter.limit('120/minute')
+def mpesa_c2b_confirmation():
+    """C2B confirmation endpoint.
+
+    NOTE: Depending on your Safaricom setup, pure Till (Buy Goods) manual payments may not trigger these callbacks.
+    STK Push is the recommended reliable flow.
+    """
+    from utils.mpesa_daraja import parse_c2b_payload, safe_json_dumps
+
+    payload = request.get_json(silent=True) or {}
+    parsed = parse_c2b_payload(payload)
+
+    receipt = parsed.get('trans_id')
+    existing = MpesaPayment.query.filter_by(mpesa_receipt_number=receipt).first() if receipt else None
+    if existing:
+        # idempotent replay
+        return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
+    bill_ref = (parsed.get('bill_ref') or '').strip() or None
+    invoice = Invoice.query.filter_by(invoice_number=bill_ref).first() if bill_ref else None
+
+    payment = MpesaPayment(
+        source='c2b',
+        status='success',
+        invoice_id=invoice.id if invoice else None,
+        invoice_number=invoice.invoice_number if invoice else bill_ref,
+        phone_number=parsed.get('msisdn'),
+        amount_received=_to_decimal_2dp(parsed.get('amount')) if parsed.get('amount') is not None else None,
+        mpesa_receipt_number=receipt,
+        bill_ref_number=bill_ref,
+        trans_time=parsed.get('trans_time'),
+        business_short_code=parsed.get('short_code'),
+        raw_payload=safe_json_dumps(payload),
+    )
+    db.session.add(payment)
+
+    # Anchor to PaymentIntent/ProviderTxn (best-effort)
+    try:
+        if _payment_intents_supported() and payment.amount_received:
+            pi = _create_payment_intent(
+                direction='IN',
+                intent_type='MANUAL_TILL',
+                amount=_to_decimal_2dp(payment.amount_received),
+                currency='KES',
+                reference=invoice.invoice_number if invoice else (bill_ref or receipt),
+                invoice=invoice,
+                initiated_by_user_id=None,
+                status='success',
+                notes='C2B confirmation received',
+            )
+            ptxn = _create_mpesa_provider_txn(
+                payment_intent_id=int(pi.id),
+                direction='IN',
+                provider_action='c2b_confirmation',
+                status='success',
+                mpesa_receipt_number=receipt,
+                result_code=0,
+                result_desc='C2B confirmation',
+                raw_callback=safe_json_dumps(payload),
+            )
+            _maybe_set_link_fields(payment, payment_intent_id=int(pi.id), provider_txn_id=int(ptxn.id) if ptxn else None)
+    except Exception:
+        pass
+
+    if invoice and payment.amount_received:
+        _apply_payment_to_invoice(invoice, _to_decimal_2dp(payment.amount_received))
+
+        # Post to ledger as IN (best-effort). For manual Till, we attribute to a "system" user if none.
+        try:
+            system_user_id = app.config.get('MPESA_SYSTEM_USER_ID')
+            if not system_user_id:
+                # If you want ledger posting for webhooks, set MPESA_SYSTEM_USER_ID to an existing admin user id.
+                system_user_id = None
+
+            if not system_user_id:
+                raise RuntimeError('MPESA_SYSTEM_USER_ID not set')
+
+            tx = Transaction(
+                transaction_number=generate_transaction_number(),
+                transaction_type='payment',
+                amount=float(_to_decimal_2dp(payment.amount_received)),
+                user_id=int(system_user_id),
+                reference_id=int(invoice.id),
+                notes=f"Manual Till payment. M-Pesa receipt: {payment.mpesa_receipt_number}",
+                created_at=get_eat_now(),
+            )
+            _maybe_set_transaction_meta(
+                tx,
+                reference_table='invoices',
+                direction='IN',
+                status='posted',
+                payment_method='mpesa',
+                payer=str(payment.phone_number or ''),
+            )
+            _maybe_set_link_fields(
+                tx,
+                payment_intent_id=getattr(payment, 'payment_intent_id', None),
+                provider_txn_id=getattr(payment, 'provider_txn_id', None),
+            )
+            db.session.add(tx)
+
+            # Receipt HTML
+            try:
+                purpose = f"Invoice {getattr(invoice, 'invoice_number', '')}".strip() if invoice else None
+                receipt_html = _build_mpesa_receipt_html(
+                    receipt_title='Reception Payment Receipt',
+                    direction='IN',
+                    clinic_txn_code=getattr(tx, 'clinic_transaction_code', None) or tx.transaction_number,
+                    mpesa_code=payment.mpesa_receipt_number,
+                    party_label='Payer',
+                    party_name=None,
+                    party_phone=payment.phone_number,
+                    amount=_to_decimal_2dp(payment.amount_received),
+                    currency='KES',
+                    purpose=purpose,
+                    served_by_user_id=int(system_user_id) if system_user_id else None,
+                    served_by_label='SYSTEM' if not system_user_id else None,
+                    created_at=get_eat_now(),
+                )
+                _ensure_transaction_receipt(tx, receipt_html, prefix='PAY', force=True)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    db.session.commit()
+    return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
+
+def _daraja_extract_result(payload: dict) -> dict:
+    """Best-effort extraction for Daraja async callbacks (B2C/B2B/TxnStatus/etc)."""
+    result = payload.get('Result') or payload.get('result') or {}
+    out = {
+        'conversation_id': result.get('ConversationID') or result.get('conversationID') or payload.get('ConversationID'),
+        'originator_conversation_id': result.get('OriginatorConversationID') or result.get('originatorConversationID') or payload.get('OriginatorConversationID'),
+        'result_code': result.get('ResultCode'),
+        'result_desc': result.get('ResultDesc') or result.get('ResultDescription'),
+        'transaction_id': None,
+    }
+
+    try:
+        params = (result.get('ResultParameters') or {}).get('ResultParameter') or []
+        for p in params:
+            key = (p.get('Key') or '').strip()
+            val = p.get('Value')
+            if not key:
+                continue
+            if key in {'TransactionID', 'TransID', 'ReceiptNo', 'TransactionReceipt'}:
+                out['transaction_id'] = str(val) if val is not None else None
+                break
+    except Exception:
+        pass
+    return out
+
+
+@app.post('/api/mpesa/transaction-status/query')
+@login_required
+@roles_required_json('receptionist', 'pharmacist', 'admin')
+@limiter.limit('20/minute')
+def mpesa_transaction_status_query():
+    """Request a Daraja Transaction Status query for an M-Pesa receipt code.
+
+    Use this as a fallback when manual Till payments don't trigger C2B confirmations.
+
+    Body JSON:
+      - mpesa_code (required): e.g. QAB123XYZ
+      - invoice_number (optional)
+      - amount (optional): amount you expect to post if verified
+      - phone_number (optional)
+    """
+    data = request.get_json(silent=True) or {}
+    ok, result = _mpesa_initiate_transaction_status_query(data, requested_by_user_id=int(current_user.id))
+    if not ok:
+        return jsonify(result), int(result.get('_status') or 400)
+    return jsonify(result), 200
+
+
+def _mpesa_initiate_transaction_status_query(data: dict, requested_by_user_id: int) -> tuple[bool, dict]:
+    """Shared implementation for Transaction Status query (used by JSON API + admin dashboard)."""
+    from utils.mpesa_daraja import (
+        daraja_post_json,
+        get_access_token,
+        normalize_msisdn_ke,
+        safe_json_dumps,
+    )
+
+    if not database_has_table('mpesa_txn_status_queries'):
+        return False, {'error': 'M-Pesa tables not ready. Run migrations.', '_status': 500}
+
+    mpesa_code = (data.get('mpesa_code') or '').strip().upper()
+    invoice_number = (data.get('invoice_number') or '').strip()
+    phone = normalize_msisdn_ke(data.get('phone_number') or '') if data.get('phone_number') else None
+    amount = data.get('amount')
+
+    if not mpesa_code:
+        return False, {'error': 'mpesa_code is required', '_status': 400}
+
+    # Avoid duplicate queries for the same code (best-effort)
+    existing = MpesaTransactionStatusQuery.query.filter_by(transaction_id=mpesa_code).order_by(MpesaTransactionStatusQuery.id.desc()).first()
+    if existing and existing.status == 'pending':
+        return True, {'ok': True, 'query_id': existing.id, 'status': existing.status}
+
+    initiator = (app.config.get('MPESA_INITIATOR_NAME') or '').strip()
+    sec_cred = (app.config.get('MPESA_SECURITY_CREDENTIAL') or '').strip()
+    party_a = (app.config.get('MPESA_OUTGOING_SHORTCODE') or '').strip()
+    result_url = (app.config.get('MPESA_TRANSACTION_STATUS_RESULT_URL') or '').strip()
+    timeout_url = (app.config.get('MPESA_TRANSACTION_STATUS_TIMEOUT_URL') or '').strip()
+    endpoint = (app.config.get('MPESA_TRANSACTION_STATUS_ENDPOINT') or '').strip()
+
+    consumer_key = (app.config.get('MPESA_CONSUMER_KEY') or '').strip()
+    consumer_secret = (app.config.get('MPESA_CONSUMER_SECRET') or '').strip()
+    base_url = (app.config.get('MPESA_BASE_URL') or '').strip()
+    timeout = float(app.config.get('MPESA_HTTP_TIMEOUT') or 45.0)
+
+    missing = [k for k, v in {
+        'MPESA_INITIATOR_NAME': initiator,
+        'MPESA_SECURITY_CREDENTIAL': sec_cred,
+        'MPESA_OUTGOING_SHORTCODE': party_a,
+        'MPESA_TRANSACTION_STATUS_RESULT_URL': result_url,
+        'MPESA_TRANSACTION_STATUS_TIMEOUT_URL': timeout_url,
+        'MPESA_TRANSACTION_STATUS_ENDPOINT': endpoint,
+        'MPESA_CONSUMER_KEY': consumer_key,
+        'MPESA_CONSUMER_SECRET': consumer_secret,
+        'MPESA_BASE_URL': base_url,
+    }.items() if not v]
+    if missing:
+        return False, {'error': 'M-Pesa Transaction Status is not configured', 'missing': missing, '_status': 500}
+
+    invoice = Invoice.query.filter_by(invoice_number=invoice_number).first() if invoice_number else None
+    if invoice_number and not invoice:
+        return False, {'error': f'invoice_number not found: {invoice_number}', '_status': 404}
+
+    amount_dec = _to_decimal_2dp(amount) if amount is not None and str(amount).strip() != '' else None
+    if invoice and amount_dec is None:
+        outstanding = _to_decimal_2dp(_to_decimal_2dp(invoice.total_amount) - _to_decimal_2dp(invoice.paid_amount))
+        amount_dec = outstanding if outstanding > 0 else None
+
+    body = {
+        'Initiator': initiator,
+        'SecurityCredential': sec_cred,
+        'CommandID': 'TransactionStatusQuery',
+        'TransactionID': mpesa_code,
+        'PartyA': party_a,
+        'IdentifierType': 4,
+        'ResultURL': result_url,
+        'QueueTimeOutURL': timeout_url,
+        'Remarks': f'Verify manual Till for {invoice_number}' if invoice_number else 'Verify manual Till',
+        'Occasion': invoice_number or '',
+    }
+
+    # PaymentIntent + ProviderTxn anchor (best-effort)
+    pi = None
+    ptxn = None
+    try:
+        if _payment_intents_supported():
+            pi = _create_payment_intent(
+                direction='IN',
+                intent_type='MANUAL_TILL',
+                amount=_to_decimal_2dp(amount_dec) if amount_dec is not None else Decimal('0.00'),
+                currency='KES',
+                reference=invoice.invoice_number if invoice else (invoice_number or mpesa_code),
+                invoice=invoice,
+                initiated_by_user_id=int(requested_by_user_id),
+                status='pending',
+                notes=f"Transaction status query for {mpesa_code}",
+            )
+            if pi is not None:
+                ptxn = _create_mpesa_provider_txn(
+                    payment_intent_id=int(pi.id),
+                    direction='IN',
+                    provider_action='txn_status_query',
+                    status='pending',
+                    mpesa_receipt_number=mpesa_code,
+                    raw_request=safe_json_dumps(body),
+                )
+    except Exception:
+        pi = None
+        ptxn = None
+
+    q = MpesaTransactionStatusQuery(
+        transaction_id=mpesa_code,
+        status='pending',
+        requested_by_user_id=int(requested_by_user_id),
+        invoice_id=invoice.id if invoice else None,
+        invoice_number=invoice.invoice_number if invoice else (invoice_number or None),
+        amount_expected=amount_dec,
+        payer_phone_number=phone,
+        raw_request=safe_json_dumps(body),
+        payment_intent_id=int(pi.id) if pi else None,
+        provider_txn_id=int(ptxn.id) if ptxn else None,
+    )
+    db.session.add(q)
+    db.session.flush()
+
+    try:
+        token = get_access_token(base_url=base_url, consumer_key=consumer_key, consumer_secret=consumer_secret, timeout=timeout)
+        resp = daraja_post_json(base_url=base_url, path=endpoint, token=token, json_body=body, timeout=timeout)
+    except Exception as e:
+        app.logger.exception('Transaction status query failed')
+        q.status = 'failed'
+        q.result_desc = str(e)[:250]
+        db.session.commit()
+        return False, {'error': 'Transaction status query failed', 'detail': str(e), '_status': 502}
+
+    q.conversation_id = resp.get('ConversationID') or resp.get('ConversationId') or q.conversation_id
+    q.originator_conversation_id = resp.get('OriginatorConversationID') or resp.get('OriginatorConversationId') or q.originator_conversation_id
+    q.result_desc = (resp.get('ResponseDescription') or q.result_desc)
+    q.raw_result = safe_json_dumps(resp)
+
+    try:
+        if ptxn is not None:
+            _maybe_set_link_fields(
+                ptxn,
+                conversation_id=q.conversation_id,
+                originator_conversation_id=q.originator_conversation_id,
+                result_desc=(resp.get('ResponseDescription') or None),
+            )
+            db.session.add(ptxn)
+    except Exception:
+        pass
+    db.session.commit()
+
+    return True, {'ok': True, 'query_id': q.id, 'daraja': resp}
+
+
+@app.post('/api/mpesa/transaction-status/result')
+@csrf.exempt
+@limiter.limit('120/minute')
+def mpesa_transaction_status_result():
+    from utils.mpesa_daraja import safe_json_dumps
+
+    payload = request.get_json(silent=True) or {}
+    extracted = _daraja_extract_result(payload)
+
+    q = None
+    oid = (extracted.get('originator_conversation_id') or '').strip()
+    cid = (extracted.get('conversation_id') or '').strip()
+    if oid:
+        q = MpesaTransactionStatusQuery.query.filter_by(originator_conversation_id=oid).first()
+    if not q and cid:
+        q = MpesaTransactionStatusQuery.query.filter_by(conversation_id=cid).first()
+
+    # Always accept callback even if we can't match
+    if not q:
+        return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
+    q.raw_result = safe_json_dumps(payload)
+    try:
+        q.result_code = int(extracted.get('result_code')) if extracted.get('result_code') is not None else None
+    except Exception:
+        q.result_code = None
+    q.result_desc = (extracted.get('result_desc') or '')[:250] if extracted.get('result_desc') else None
+
+    # Update canonical ProviderTxn/PaymentIntent (best-effort)
+    try:
+        if _payment_intents_supported():
+            if getattr(q, 'provider_txn_id', None):
+                ptxn = MpesaProviderTxn.query.get(int(q.provider_txn_id))
+                if ptxn:
+                    _maybe_set_link_fields(
+                        ptxn,
+                        status='success' if q.result_code == 0 else 'failed',
+                        result_code=q.result_code,
+                        result_desc=q.result_desc,
+                        raw_callback=q.raw_result,
+                    )
+                    db.session.add(ptxn)
+            if getattr(q, 'payment_intent_id', None):
+                pi = PaymentIntent.query.get(int(q.payment_intent_id))
+                if pi:
+                    pi.status = 'success' if q.result_code == 0 else 'failed'
+                    pi.updated_at = get_eat_now()
+                    db.session.add(pi)
+    except Exception:
+        pass
+
+    if q.result_code == 0:
+        q.status = 'success'
+
+        # If we can post, do it idempotently.
+        invoice = Invoice.query.get(q.invoice_id) if q.invoice_id else None
+        amount = _to_decimal_2dp(q.amount_expected) if q.amount_expected is not None else None
+
+        if invoice and amount and amount > 0:
+            # Avoid duplicate MpesaPayment/Transaction for same code
+            already = MpesaPayment.query.filter_by(mpesa_receipt_number=q.transaction_id).first()
+            if not already:
+                mp = MpesaPayment(
+                    source='c2b_verify',
+                    status='success',
+                    invoice_id=invoice.id,
+                    invoice_number=invoice.invoice_number,
+                    phone_number=q.payer_phone_number,
+                    amount_received=amount,
+                    mpesa_receipt_number=q.transaction_id,
+                    bill_ref_number=invoice.invoice_number,
+                    raw_payload=q.raw_result,
+                    initiated_by_user_id=q.requested_by_user_id,
+                )
+                _maybe_set_link_fields(
+                    mp,
+                    payment_intent_id=getattr(q, 'payment_intent_id', None),
+                    provider_txn_id=getattr(q, 'provider_txn_id', None),
+                )
+                db.session.add(mp)
+
+            _apply_payment_to_invoice(invoice, amount)
+
+            tx = Transaction.query.filter_by(reference_table='mpesa_txn_status_queries', reference_id=q.id).first()
+            if not tx:
+                tx = Transaction(
+                    transaction_number=generate_transaction_number(),
+                    transaction_type='payment',
+                    amount=float(amount),
+                    user_id=int(q.requested_by_user_id),
+                    reference_id=int(q.id),
+                    notes=f"Manual Till verified. M-Pesa receipt: {q.transaction_id}. Invoice: {invoice.invoice_number}",
+                    created_at=get_eat_now(),
+                )
+                _maybe_set_transaction_meta(
+                    tx,
+                    reference_table='mpesa_txn_status_queries',
+                    direction='IN',
+                    status='posted',
+                    payment_method='mpesa',
+                    payer=str(q.payer_phone_number or ''),
+                )
+                _maybe_set_link_fields(
+                    tx,
+                    payment_intent_id=getattr(q, 'payment_intent_id', None),
+                    provider_txn_id=getattr(q, 'provider_txn_id', None),
+                )
+                db.session.add(tx)
+
+                try:
+                    receipt_html = _build_mpesa_receipt_html(
+                        receipt_title='Reception Payment Receipt',
+                        direction='IN',
+                        clinic_txn_code=getattr(tx, 'clinic_transaction_code', None) or tx.transaction_number,
+                        mpesa_code=q.transaction_id,
+                        party_label='Payer',
+                        party_name=None,
+                        party_phone=q.payer_phone_number,
+                        amount=amount,
+                        currency='KES',
+                        purpose=f"Invoice {invoice.invoice_number}",
+                        served_by_user_id=int(q.requested_by_user_id) if q.requested_by_user_id else None,
+                        created_at=get_eat_now(),
+                    )
+                    _ensure_transaction_receipt(tx, receipt_html, prefix='PAY', force=True)
+                except Exception:
+                    pass
+    else:
+        q.status = 'failed'
+
+    db.session.commit()
+    return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
+
+@app.post('/api/mpesa/transaction-status/timeout')
+@csrf.exempt
+@limiter.limit('120/minute')
+def mpesa_transaction_status_timeout():
+    from utils.mpesa_daraja import safe_json_dumps
+
+    payload = request.get_json(silent=True) or {}
+    extracted = _daraja_extract_result(payload)
+    oid = (extracted.get('originator_conversation_id') or '').strip()
+    cid = (extracted.get('conversation_id') or '').strip()
+
+    q = None
+    if oid:
+        q = MpesaTransactionStatusQuery.query.filter_by(originator_conversation_id=oid).first()
+    if not q and cid:
+        q = MpesaTransactionStatusQuery.query.filter_by(conversation_id=cid).first()
+    if q:
+        q.status = 'failed'
+        q.raw_result = safe_json_dumps(payload)
+        q.result_desc = (q.result_desc or 'Timeout')[:250]
+
+        # Update canonical ProviderTxn/PaymentIntent (best-effort)
+        try:
+            if _payment_intents_supported():
+                if getattr(q, 'provider_txn_id', None):
+                    ptxn = MpesaProviderTxn.query.get(int(q.provider_txn_id))
+                    if ptxn:
+                        _maybe_set_link_fields(
+                            ptxn,
+                            status='failed',
+                            result_desc=(q.result_desc or 'Timeout')[:250],
+                            raw_callback=q.raw_result,
+                        )
+                        db.session.add(ptxn)
+                if getattr(q, 'payment_intent_id', None):
+                    pi = PaymentIntent.query.get(int(q.payment_intent_id))
+                    if pi:
+                        pi.status = 'failed'
+                        pi.updated_at = get_eat_now()
+                        db.session.add(pi)
+        except Exception:
+            pass
+        db.session.commit()
+
+    return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
+
+def _mpesa_outgoing_common_config():
+    initiator = (app.config.get('MPESA_INITIATOR_NAME') or '').strip()
+    sec_cred = (app.config.get('MPESA_SECURITY_CREDENTIAL') or '').strip()
+    party_a = (app.config.get('MPESA_OUTGOING_SHORTCODE') or '').strip()
+    consumer_key = (app.config.get('MPESA_CONSUMER_KEY') or '').strip()
+    consumer_secret = (app.config.get('MPESA_CONSUMER_SECRET') or '').strip()
+    base_url = (app.config.get('MPESA_BASE_URL') or '').strip()
+    timeout = float(app.config.get('MPESA_HTTP_TIMEOUT') or 45.0)
+    return {
+        'initiator': initiator,
+        'security_credential': sec_cred,
+        'party_a': party_a,
+        'consumer_key': consumer_key,
+        'consumer_secret': consumer_secret,
+        'base_url': base_url,
+        'timeout': timeout,
+    }
+
+
+def _post_mpesa_payout_receipt(tx: 'Transaction', payout: 'MpesaPayout') -> None:
+    try:
+        beneficiary = (
+            payout.beneficiary_msisdn
+            or payout.beneficiary_paybill
+            or payout.beneficiary_till
+            or payout.beneficiary_pochi
+            or ''
+        )
+        receipt_html = _build_mpesa_receipt_html(
+            receipt_title='Outgoing Payment Receipt (Admin)',
+            direction='OUT',
+            clinic_txn_code=getattr(tx, 'clinic_transaction_code', None) or tx.transaction_number,
+            mpesa_code=payout.mpesa_transaction_id,
+            party_label='Beneficiary',
+            party_name=None,
+            party_phone=(payout.beneficiary_msisdn or payout.beneficiary_pochi),
+            amount=_to_decimal_2dp(payout.amount),
+            currency='KES',
+            purpose=f"M-Pesa payout ({payout.payout_type})",
+            extra_lines=[
+                (f"Beneficiary: {beneficiary}" if beneficiary else ""),
+                (f"Remarks: {payout.remarks}" if payout.remarks else ""),
+            ],
+            served_by_user_id=int(payout.initiated_by_user_id) if payout.initiated_by_user_id else None,
+            created_at=get_eat_now(),
+        )
+        _ensure_transaction_receipt(tx, receipt_html, prefix='PAY', force=True)
+    except Exception:
+        pass
+
+
+@app.post('/api/mpesa/payout/b2c')
+@login_required
+@roles_required_json('admin')
+@limiter.limit('10/minute')
+def mpesa_payout_b2c():
+    """Admin: Send money to a phone number (B2C)."""
+    data = request.get_json(silent=True) or {}
+    ok, result = _mpesa_initiate_payout_b2c(data, initiated_by_user_id=int(current_user.id))
+    if not ok:
+        return jsonify(result), int(result.get('_status') or 400)
+    return jsonify(result), 200
+
+
+def _mpesa_initiate_payout_b2c(data: dict, initiated_by_user_id: int) -> tuple[bool, dict]:
+    from utils.mpesa_daraja import (
+        daraja_post_json,
+        get_access_token,
+        normalize_msisdn_ke,
+        safe_json_dumps,
+    )
+
+    if not database_has_table('mpesa_payouts'):
+        return False, {'error': 'M-Pesa tables not ready. Run migrations.', '_status': 500}
+
+    phone = normalize_msisdn_ke(data.get('phone_number') or '')
+    amount = _to_decimal_2dp(data.get('amount'))
+    remarks = (data.get('remarks') or 'Clinic payout').strip()
+    occasion = (data.get('occasion') or '').strip() or None
+    command_id = (data.get('command_id') or 'BusinessPayment').strip()
+
+    if not phone:
+        return False, {'error': 'phone_number is required', '_status': 400}
+    if amount <= 0:
+        return False, {'error': 'amount must be > 0', '_status': 400}
+
+    pi = None
+    ptxn = None
+    try:
+        if _payment_intents_supported():
+            pi = _create_payment_intent(
+                direction='OUT',
+                intent_type='B2C',
+                amount=_to_decimal_2dp(amount),
+                currency='KES',
+                reference=f"B2C {phone}",
+                initiated_by_user_id=int(initiated_by_user_id),
+                status='pending',
+                notes=(remarks or None),
+            )
+            if pi is not None:
+                ptxn = _create_mpesa_provider_txn(
+                    payment_intent_id=int(pi.id),
+                    direction='OUT',
+                    provider_action='b2c',
+                    status='pending',
+                )
+    except Exception:
+        pi = None
+        ptxn = None
+
+    cfg = _mpesa_outgoing_common_config()
+    endpoint = (app.config.get('MPESA_B2C_ENDPOINT') or '').strip()
+    result_url = (app.config.get('MPESA_B2C_RESULT_URL') or '').strip()
+    timeout_url = (app.config.get('MPESA_B2C_TIMEOUT_URL') or '').strip()
+    missing = [k for k, v in {
+        'MPESA_INITIATOR_NAME': cfg['initiator'],
+        'MPESA_SECURITY_CREDENTIAL': cfg['security_credential'],
+        'MPESA_OUTGOING_SHORTCODE': cfg['party_a'],
+        'MPESA_B2C_ENDPOINT': endpoint,
+        'MPESA_B2C_RESULT_URL': result_url,
+        'MPESA_B2C_TIMEOUT_URL': timeout_url,
+        'MPESA_CONSUMER_KEY': cfg['consumer_key'],
+        'MPESA_CONSUMER_SECRET': cfg['consumer_secret'],
+        'MPESA_BASE_URL': cfg['base_url'],
+    }.items() if not v]
+    if missing:
+        return False, {'error': 'M-Pesa B2C is not configured', 'missing': missing, '_status': 500}
+
+    payout = MpesaPayout(
+        payout_type='b2c',
+        status='pending',
+        initiated_by_user_id=int(initiated_by_user_id),
+        beneficiary_msisdn=phone,
+        amount=amount,
+        remarks=remarks,
+        occasion=occasion,
+        payment_intent_id=int(pi.id) if pi else None,
+        provider_txn_id=int(ptxn.id) if ptxn else None,
+    )
+    db.session.add(payout)
+    db.session.flush()
+
+    body = {
+        'InitiatorName': cfg['initiator'],
+        'SecurityCredential': cfg['security_credential'],
+        'CommandID': command_id,
+        'Amount': int(amount),
+        'PartyA': cfg['party_a'],
+        'PartyB': phone,
+        'Remarks': remarks,
+        'QueueTimeOutURL': timeout_url,
+        'ResultURL': result_url,
+        'Occasion': occasion or '',
+    }
+    payout.raw_request = safe_json_dumps(body)
+    try:
+        if ptxn is not None:
+            _maybe_set_link_fields(ptxn, raw_request=payout.raw_request)
+            db.session.add(ptxn)
+    except Exception:
+        pass
+
+    try:
+        token = get_access_token(base_url=cfg['base_url'], consumer_key=cfg['consumer_key'], consumer_secret=cfg['consumer_secret'], timeout=cfg['timeout'])
+        resp = daraja_post_json(base_url=cfg['base_url'], path=endpoint, token=token, json_body=body, timeout=cfg['timeout'])
+    except Exception as e:
+        app.logger.exception('B2C payout failed')
+        payout.status = 'failed'
+        payout.result_desc = str(e)[:250]
+        db.session.commit()
+        return False, {'error': 'B2C payout failed', 'detail': str(e), '_status': 502}
+
+    payout.conversation_id = resp.get('ConversationID') or resp.get('ConversationId')
+    payout.originator_conversation_id = resp.get('OriginatorConversationID') or resp.get('OriginatorConversationId')
+    payout.response_code = resp.get('ResponseCode')
+    payout.response_description = resp.get('ResponseDescription')
+    payout.raw_result = safe_json_dumps(resp)
+
+    try:
+        if ptxn is not None:
+            _maybe_set_link_fields(
+                ptxn,
+                conversation_id=payout.conversation_id,
+                originator_conversation_id=payout.originator_conversation_id,
+                result_desc=(payout.response_description or None),
+                raw_callback=payout.raw_result,
+            )
+            db.session.add(ptxn)
+    except Exception:
+        pass
+    db.session.commit()
+    return True, {'ok': True, 'payout_id': payout.id, 'daraja': resp}
+
+
+@app.post('/api/mpesa/payout/b2b')
+@login_required
+@roles_required_json('admin')
+@limiter.limit('10/minute')
+def mpesa_payout_b2b():
+    """Admin: Pay a PayBill or Till (B2B)."""
+    data = request.get_json(silent=True) or {}
+    ok, result = _mpesa_initiate_payout_b2b(data, initiated_by_user_id=int(current_user.id))
+    if not ok:
+        return jsonify(result), int(result.get('_status') or 400)
+    return jsonify(result), 200
+
+
+def _mpesa_initiate_payout_b2b(data: dict, initiated_by_user_id: int) -> tuple[bool, dict]:
+    from utils.mpesa_daraja import (
+        daraja_post_json,
+        get_access_token,
+        safe_json_dumps,
+    )
+
+    if not database_has_table('mpesa_payouts'):
+        return False, {'error': 'M-Pesa tables not ready. Run migrations.', '_status': 500}
+
+    amount = _to_decimal_2dp(data.get('amount'))
+    remarks = (data.get('remarks') or 'Clinic payout').strip()
+    account_ref = (data.get('account_reference') or '').strip() or None
+    command_id = (data.get('command_id') or '').strip()  # if empty, infer below
+    paybill = (data.get('paybill') or '').strip() or None
+    till = (data.get('till') or '').strip() or None
+
+    if amount <= 0:
+        return False, {'error': 'amount must be > 0', '_status': 400}
+    if not paybill and not till:
+        return False, {'error': 'Provide paybill or till', '_status': 400}
+    if paybill and till:
+        return False, {'error': 'Provide only one of paybill or till', '_status': 400}
+
+    receiver = paybill or till
+    receiver_identifier_type = 4 if paybill else 2
+    if not command_id:
+        command_id = 'BusinessPayBill' if paybill else 'BusinessBuyGoods'
+
+    pi = None
+    ptxn = None
+    try:
+        if _payment_intents_supported():
+            pi = _create_payment_intent(
+                direction='OUT',
+                intent_type='B2B',
+                amount=_to_decimal_2dp(amount),
+                currency='KES',
+                reference=f"B2B {receiver}",
+                initiated_by_user_id=int(initiated_by_user_id),
+                status='pending',
+                notes=(remarks or None),
+            )
+            if pi is not None:
+                ptxn = _create_mpesa_provider_txn(
+                    payment_intent_id=int(pi.id),
+                    direction='OUT',
+                    provider_action='b2b',
+                    status='pending',
+                )
+    except Exception:
+        pi = None
+        ptxn = None
+
+    cfg = _mpesa_outgoing_common_config()
+    endpoint = (app.config.get('MPESA_B2B_ENDPOINT') or '').strip()
+    result_url = (app.config.get('MPESA_B2B_RESULT_URL') or '').strip()
+    timeout_url = (app.config.get('MPESA_B2B_TIMEOUT_URL') or '').strip()
+    missing = [k for k, v in {
+        'MPESA_INITIATOR_NAME': cfg['initiator'],
+        'MPESA_SECURITY_CREDENTIAL': cfg['security_credential'],
+        'MPESA_OUTGOING_SHORTCODE': cfg['party_a'],
+        'MPESA_B2B_ENDPOINT': endpoint,
+        'MPESA_B2B_RESULT_URL': result_url,
+        'MPESA_B2B_TIMEOUT_URL': timeout_url,
+        'MPESA_CONSUMER_KEY': cfg['consumer_key'],
+        'MPESA_CONSUMER_SECRET': cfg['consumer_secret'],
+        'MPESA_BASE_URL': cfg['base_url'],
+    }.items() if not v]
+    if missing:
+        return False, {'error': 'M-Pesa B2B is not configured', 'missing': missing, '_status': 500}
+
+    payout = MpesaPayout(
+        payout_type='b2b',
+        status='pending',
+        initiated_by_user_id=int(initiated_by_user_id),
+        beneficiary_paybill=paybill,
+        beneficiary_till=till,
+        amount=amount,
+        remarks=remarks,
+        payment_intent_id=int(pi.id) if pi else None,
+        provider_txn_id=int(ptxn.id) if ptxn else None,
+    )
+    db.session.add(payout)
+    db.session.flush()
+
+    body = {
+        'Initiator': cfg['initiator'],
+        'SecurityCredential': cfg['security_credential'],
+        'CommandID': command_id,
+        'Amount': int(amount),
+        'PartyA': cfg['party_a'],
+        'PartyB': receiver,
+        'SenderIdentifierType': 4,
+        'ReceiverIdentifierType': receiver_identifier_type,
+        'Remarks': remarks,
+        'AccountReference': account_ref or f'PAYOUT-{payout.id}',
+        'QueueTimeOutURL': timeout_url,
+        'ResultURL': result_url,
+    }
+    payout.raw_request = safe_json_dumps(body)
+    try:
+        if ptxn is not None:
+            _maybe_set_link_fields(ptxn, raw_request=payout.raw_request)
+            db.session.add(ptxn)
+    except Exception:
+        pass
+
+    try:
+        token = get_access_token(base_url=cfg['base_url'], consumer_key=cfg['consumer_key'], consumer_secret=cfg['consumer_secret'], timeout=cfg['timeout'])
+        resp = daraja_post_json(base_url=cfg['base_url'], path=endpoint, token=token, json_body=body, timeout=cfg['timeout'])
+    except Exception as e:
+        app.logger.exception('B2B payout failed')
+        payout.status = 'failed'
+        payout.result_desc = str(e)[:250]
+        db.session.commit()
+        return False, {'error': 'B2B payout failed', 'detail': str(e), '_status': 502}
+
+    payout.conversation_id = resp.get('ConversationID') or resp.get('ConversationId')
+    payout.originator_conversation_id = resp.get('OriginatorConversationID') or resp.get('OriginatorConversationId')
+    payout.response_code = resp.get('ResponseCode')
+    payout.response_description = resp.get('ResponseDescription')
+    payout.raw_result = safe_json_dumps(resp)
+
+    try:
+        if ptxn is not None:
+            _maybe_set_link_fields(
+                ptxn,
+                conversation_id=payout.conversation_id,
+                originator_conversation_id=payout.originator_conversation_id,
+                result_desc=(payout.response_description or None),
+                raw_callback=payout.raw_result,
+            )
+            db.session.add(ptxn)
+    except Exception:
+        pass
+    db.session.commit()
+    return True, {'ok': True, 'payout_id': payout.id, 'daraja': resp}
+
+
+@app.post('/api/mpesa/payout/b2pochi')
+@login_required
+@roles_required_json('admin')
+@limiter.limit('10/minute')
+def mpesa_payout_b2pochi():
+    """Admin: Send money to a Pochi la Biashara target.
+
+    NOTE: Endpoint varies by setup; configure MPESA_B2POCHI_ENDPOINT + callback URLs.
+    """
+    data = request.get_json(silent=True) or {}
+    ok, result = _mpesa_initiate_payout_b2pochi(data, initiated_by_user_id=int(current_user.id))
+    if not ok:
+        return jsonify(result), int(result.get('_status') or 400)
+    return jsonify(result), 200
+
+
+def _mpesa_initiate_payout_b2pochi(data: dict, initiated_by_user_id: int) -> tuple[bool, dict]:
+    from utils.mpesa_daraja import (
+        daraja_post_json,
+        get_access_token,
+        normalize_msisdn_ke,
+        safe_json_dumps,
+    )
+
+    if not database_has_table('mpesa_payouts'):
+        return False, {'error': 'M-Pesa tables not ready. Run migrations.', '_status': 500}
+
+    phone = normalize_msisdn_ke(data.get('phone_number') or '')
+    amount = _to_decimal_2dp(data.get('amount'))
+    remarks = (data.get('remarks') or 'Clinic payout').strip()
+    occasion = (data.get('occasion') or '').strip() or None
+    command_id = (data.get('command_id') or 'BusinessPayment').strip()
+
+    if not phone:
+        return False, {'error': 'phone_number is required', '_status': 400}
+    if amount <= 0:
+        return False, {'error': 'amount must be > 0', '_status': 400}
+
+    pi = None
+    ptxn = None
+    try:
+        if _payment_intents_supported():
+            pi = _create_payment_intent(
+                direction='OUT',
+                intent_type='B2POCHI',
+                amount=_to_decimal_2dp(amount),
+                currency='KES',
+                reference=f"B2POCHI {phone}",
+                initiated_by_user_id=int(initiated_by_user_id),
+                status='pending',
+                notes=(remarks or None),
+            )
+            if pi is not None:
+                ptxn = _create_mpesa_provider_txn(
+                    payment_intent_id=int(pi.id),
+                    direction='OUT',
+                    provider_action='b2pochi',
+                    status='pending',
+                )
+    except Exception:
+        pi = None
+        ptxn = None
+
+    cfg = _mpesa_outgoing_common_config()
+    endpoint = (app.config.get('MPESA_B2POCHI_ENDPOINT') or '').strip()
+    result_url = (app.config.get('MPESA_B2POCHI_RESULT_URL') or '').strip()
+    timeout_url = (app.config.get('MPESA_B2POCHI_TIMEOUT_URL') or '').strip()
+    missing = [k for k, v in {
+        'MPESA_INITIATOR_NAME': cfg['initiator'],
+        'MPESA_SECURITY_CREDENTIAL': cfg['security_credential'],
+        'MPESA_OUTGOING_SHORTCODE': cfg['party_a'],
+        'MPESA_B2POCHI_ENDPOINT': endpoint,
+        'MPESA_B2POCHI_RESULT_URL': result_url,
+        'MPESA_B2POCHI_TIMEOUT_URL': timeout_url,
+        'MPESA_CONSUMER_KEY': cfg['consumer_key'],
+        'MPESA_CONSUMER_SECRET': cfg['consumer_secret'],
+        'MPESA_BASE_URL': cfg['base_url'],
+    }.items() if not v]
+    if missing:
+        return False, {'error': 'M-Pesa B2Pochi is not configured', 'missing': missing, '_status': 500}
+
+    payout = MpesaPayout(
+        payout_type='b2pochi',
+        status='pending',
+        initiated_by_user_id=int(initiated_by_user_id),
+        beneficiary_pochi=phone,
+        amount=amount,
+        remarks=remarks,
+        occasion=occasion,
+        payment_intent_id=int(pi.id) if pi else None,
+        provider_txn_id=int(ptxn.id) if ptxn else None,
+    )
+    db.session.add(payout)
+    db.session.flush()
+
+    body = {
+        'Initiator': cfg['initiator'],
+        'SecurityCredential': cfg['security_credential'],
+        'CommandID': command_id,
+        'Amount': int(amount),
+        'PartyA': cfg['party_a'],
+        'PartyB': phone,
+        'Remarks': remarks,
+        'QueueTimeOutURL': timeout_url,
+        'ResultURL': result_url,
+        'Occasion': occasion or '',
+    }
+    payout.raw_request = safe_json_dumps(body)
+    try:
+        if ptxn is not None:
+            _maybe_set_link_fields(ptxn, raw_request=payout.raw_request)
+            db.session.add(ptxn)
+    except Exception:
+        pass
+
+    try:
+        token = get_access_token(base_url=cfg['base_url'], consumer_key=cfg['consumer_key'], consumer_secret=cfg['consumer_secret'], timeout=cfg['timeout'])
+        resp = daraja_post_json(base_url=cfg['base_url'], path=endpoint, token=token, json_body=body, timeout=cfg['timeout'])
+    except Exception as e:
+        app.logger.exception('B2Pochi payout failed')
+        payout.status = 'failed'
+        payout.result_desc = str(e)[:250]
+        db.session.commit()
+        return False, {'error': 'B2Pochi payout failed', 'detail': str(e), '_status': 502}
+
+    payout.conversation_id = resp.get('ConversationID') or resp.get('ConversationId')
+    payout.originator_conversation_id = resp.get('OriginatorConversationID') or resp.get('OriginatorConversationId')
+    payout.response_code = resp.get('ResponseCode')
+    payout.response_description = resp.get('ResponseDescription')
+    payout.raw_result = safe_json_dumps(resp)
+
+    try:
+        if ptxn is not None:
+            _maybe_set_link_fields(
+                ptxn,
+                conversation_id=payout.conversation_id,
+                originator_conversation_id=payout.originator_conversation_id,
+                result_desc=(payout.response_description or None),
+                raw_callback=payout.raw_result,
+            )
+            db.session.add(ptxn)
+    except Exception:
+        pass
+    db.session.commit()
+    return True, {'ok': True, 'payout_id': payout.id, 'daraja': resp}
+
+
+def _mpesa_payout_handle_result(payload: dict) -> None:
+    from utils.mpesa_daraja import safe_json_dumps
+
+    extracted = _daraja_extract_result(payload)
+    oid = (extracted.get('originator_conversation_id') or '').strip()
+    cid = (extracted.get('conversation_id') or '').strip()
+
+    payout = None
+    if oid:
+        payout = MpesaPayout.query.filter_by(originator_conversation_id=oid).first()
+    if not payout and cid:
+        payout = MpesaPayout.query.filter_by(conversation_id=cid).first()
+    if not payout:
+        return
+
+    payout.raw_result = safe_json_dumps(payload)
+    try:
+        payout.result_code = int(extracted.get('result_code')) if extracted.get('result_code') is not None else None
+    except Exception:
+        payout.result_code = None
+    payout.result_desc = (extracted.get('result_desc') or '')[:250] if extracted.get('result_desc') else None
+    payout.mpesa_transaction_id = payout.mpesa_transaction_id or (extracted.get('transaction_id') or None)
+
+    # Update canonical ProviderTxn/PaymentIntent (best-effort)
+    try:
+        if _payment_intents_supported():
+            if getattr(payout, 'provider_txn_id', None):
+                ptxn = MpesaProviderTxn.query.get(int(payout.provider_txn_id))
+                if ptxn:
+                    _maybe_set_link_fields(
+                        ptxn,
+                        status='success' if payout.result_code == 0 else 'failed',
+                        result_code=payout.result_code,
+                        result_desc=payout.result_desc,
+                        mpesa_transaction_id=payout.mpesa_transaction_id,
+                        raw_callback=payout.raw_result,
+                    )
+                    db.session.add(ptxn)
+            if getattr(payout, 'payment_intent_id', None):
+                pi = PaymentIntent.query.get(int(payout.payment_intent_id))
+                if pi:
+                    pi.status = 'success' if payout.result_code == 0 else 'failed'
+                    pi.updated_at = get_eat_now()
+                    db.session.add(pi)
+    except Exception:
+        pass
+
+    if payout.result_code == 0:
+        payout.status = 'success'
+
+        # Idempotent ledger posting
+        tx = Transaction.query.filter_by(reference_table='mpesa_payouts', reference_id=payout.id).first()
+        if not tx:
+            tx = Transaction(
+                transaction_number=generate_transaction_number(),
+                transaction_type='expense',
+                amount=float(_to_decimal_2dp(payout.amount)),
+                user_id=int(payout.initiated_by_user_id),
+                reference_id=int(payout.id),
+                notes=(
+                    f"M-Pesa payout ({payout.payout_type}). "
+                    f"M-Pesa Txn: {payout.mpesa_transaction_id or ''}"
+                ).strip(),
+                created_at=get_eat_now(),
+            )
+            _maybe_set_transaction_meta(
+                tx,
+                reference_table='mpesa_payouts',
+                direction='OUT',
+                status='posted',
+                payment_method='mpesa',
+                department='admin',
+                category='mpesa_payout',
+            )
+            _maybe_set_link_fields(
+                tx,
+                payment_intent_id=getattr(payout, 'payment_intent_id', None),
+                provider_txn_id=getattr(payout, 'provider_txn_id', None),
+            )
+            db.session.add(tx)
+            _post_mpesa_payout_receipt(tx, payout)
+    else:
+        payout.status = 'failed'
+
+
+@app.post('/api/mpesa/payout/result')
+@csrf.exempt
+@limiter.limit('120/minute')
+def mpesa_payout_result():
+    payload = request.get_json(silent=True) or {}
+    _mpesa_payout_handle_result(payload)
+    db.session.commit()
+    return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
+
+@app.post('/api/mpesa/payout/timeout')
+@csrf.exempt
+@limiter.limit('120/minute')
+def mpesa_payout_timeout():
+    from utils.mpesa_daraja import safe_json_dumps
+
+    payload = request.get_json(silent=True) or {}
+    extracted = _daraja_extract_result(payload)
+    oid = (extracted.get('originator_conversation_id') or '').strip()
+    cid = (extracted.get('conversation_id') or '').strip()
+
+    payout = None
+    if oid:
+        payout = MpesaPayout.query.filter_by(originator_conversation_id=oid).first()
+    if not payout and cid:
+        payout = MpesaPayout.query.filter_by(conversation_id=cid).first()
+    if payout:
+        payout.status = 'failed'
+        payout.raw_result = safe_json_dumps(payload)
+        payout.result_desc = (payout.result_desc or 'Timeout')[:250]
+
+        # Update canonical ProviderTxn/PaymentIntent (best-effort)
+        try:
+            if _payment_intents_supported():
+                if getattr(payout, 'provider_txn_id', None):
+                    ptxn = MpesaProviderTxn.query.get(int(payout.provider_txn_id))
+                    if ptxn:
+                        _maybe_set_link_fields(
+                            ptxn,
+                            status='failed',
+                            result_desc=(payout.result_desc or 'Timeout')[:250],
+                            raw_callback=payout.raw_result,
+                        )
+                        db.session.add(ptxn)
+                if getattr(payout, 'payment_intent_id', None):
+                    pi = PaymentIntent.query.get(int(payout.payment_intent_id))
+                    if pi:
+                        pi.status = 'failed'
+                        pi.updated_at = get_eat_now()
+                        db.session.add(pi)
+        except Exception:
+            pass
+        db.session.commit()
+
+    return jsonify({'ResultCode': 0, 'ResultDesc': 'Accepted'}), 200
+
 # =================================================================================================
 # VENDOR ROUTES
 # =================================================================================================
@@ -26260,6 +28684,124 @@ def download_payroll_receipt_employee(receipt_id):
     resp.headers['Content-Type'] = 'text/html; charset=utf-8'
     resp.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
     return resp
+
+# =====================
+# SIGNATURE API ROUTES
+# =====================
+
+@app.route('/api/signature/save', methods=['POST'])
+@login_required
+def api_signature_save():
+    """Save a drawn signature for the current user"""
+    try:
+        data = request.get_json()
+        signature_data = data.get('signature_data')
+        signature_type = data.get('signature_type', 'admin')
+        
+        if not signature_data:
+            return jsonify({'success': False, 'error': 'No signature data provided'}), 400
+        
+        # Check if user already has an active signature
+        existing = DrawnSignature.query.filter_by(
+            user_id=current_user.id,
+            is_active=True
+        ).first()
+        
+        if existing:
+            # Update existing signature
+            existing.signature_data = signature_data
+            existing.signature_type = signature_type
+            existing.updated_at = get_eat_now()
+        else:
+            # Create new signature
+            signature = DrawnSignature(
+                user_id=current_user.id,
+                signature_data=signature_data,
+                signature_type=signature_type
+            )
+            db.session.add(signature)
+        
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Signature saved successfully'})
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/signature/load', methods=['GET'])
+@login_required
+def api_signature_load():
+    """Load the active signature for the current user"""
+    try:
+        signature = DrawnSignature.query.filter_by(
+            user_id=current_user.id,
+            is_active=True
+        ).first()
+        
+        if signature:
+            return jsonify({
+                'success': True,
+                'signature_data': signature.signature_data,
+                'signature_type': signature.signature_type,
+                'created_at': signature.created_at.isoformat(),
+                'updated_at': signature.updated_at.isoformat()
+            })
+        else:
+            return jsonify({'success': True, 'signature_data': None})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/signature/delete', methods=['POST'])
+@login_required
+def api_signature_delete():
+    """Delete the active signature for the current user"""
+    try:
+        signature = DrawnSignature.query.filter_by(
+            user_id=current_user.id,
+            is_active=True
+        ).first()
+        
+        if signature:
+            signature.is_active = False
+            db.session.commit()
+            return jsonify({'success': True, 'message': 'Signature deleted successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'No active signature found'}), 404
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/signature/<int:user_id>', methods=['GET'])
+@login_required
+def api_signature_get(user_id):
+    """Get signature for a specific user (for admin use)"""
+    try:
+        # Only allow admins to view other users' signatures
+        if current_user.role != 'admin' and current_user.id != user_id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+        signature = DrawnSignature.query.filter_by(
+            user_id=user_id,
+            is_active=True
+        ).first()
+        
+        if signature:
+            return jsonify({
+                'success': True,
+                'signature_data': signature.signature_data,
+                'signature_type': signature.signature_type
+            })
+        else:
+            return jsonify({'success': True, 'signature_data': None})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 if __name__ == '__main__':
 

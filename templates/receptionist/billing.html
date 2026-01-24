@@ -125,14 +125,48 @@
                             </div>
                         </div>
                         
-                        <div class="form-group">
-                            <label for="payment-method">Payment Method</label>
-                            <select id="payment-method" name="payment_method" class="form-control" required>
-                                <option value="cash">Cash</option>
-                                <option value="card">Credit/Debit Card</option>
-                                <option value="insurance">Insurance</option>
-                                <option value="mpesa">M-Pesa</option>
-                            </select>
+                        <!-- Payment Method Selection -->
+                        <div class="payment-method-section">
+                            <h6 class="payment-title"><i class="fas fa-credit-card"></i> Select Payment Method</h6>
+                            <div class="payment-buttons">
+                                <button type="button" class="payment-btn" data-method="mpesa" id="mpesaPaymentBtn">
+                                    <div class="payment-icon mpesa-icon">
+                                        <i class="fas fa-mobile-alt"></i>
+                                    </div>
+                                    <span>M-Pesa</span>
+                                </button>
+                                <button type="button" class="payment-btn active" data-method="cash" id="cashPaymentBtn">
+                                    <div class="payment-icon cash-icon">
+                                        <i class="fas fa-money-bill-wave"></i>
+                                    </div>
+                                    <span>Cash</span>
+                                </button>
+                                <button type="button" class="payment-btn" data-method="insurance" id="insurancePaymentBtn">
+                                    <div class="payment-icon insurance-icon">
+                                        <i class="fas fa-shield-alt"></i>
+                                    </div>
+                                    <span>Insurance</span>
+                                </button>
+                            </div>
+                            <input type="hidden" id="payment-method" name="payment_method" value="cash" required>
+                        </div>
+                        
+                        <div id="cash-amount-section" style="display: block;" class="form-group">
+                            <label for="cash-amount-given-billing">Amount Given by Client</label>
+                            <input type="number" id="cash-amount-given-billing" name="amount_given" class="form-control" placeholder="Enter amount client gave" min="0" step="0.01">
+                            <small class="form-text text-muted">Enter the amount the client gave. Change will be calculated on the receipt.</small>
+                        </div>
+                        
+                        <div id="mpesa-collect-section" style="display: none;" class="form-group">
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle"></i> M-Pesa payment selected. After creating the bill, you can collect payment via STK Push or verify manual Till payment.
+                            </div>
+                        </div>
+                        
+                        <div id="insurance-billing-section" style="display: none;" class="form-group">
+                            <label for="insurance-policy-number">Patient Insurance Policy Number</label>
+                            <input type="text" id="insurance-policy-number-billing" name="insurance_policy_number" class="form-control" placeholder="Enter patient insurance policy number">
+                            <small class="form-text text-muted">Insurance claim will be created for this invoice</small>
                         </div>
                         
                         <div class="form-group">
@@ -185,6 +219,69 @@
     </div>
 </div>
 
+<!-- M-Pesa Collection Modal -->
+<div class="modal fade" id="mpesaCollectModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-mobile-alt"></i> Collect M-Pesa Payment</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="mpesa-invoice-id">
+                <input type="hidden" id="mpesa-invoice-number">
+                <div class="mb-3">
+                    <strong>Invoice:</strong> <span id="mpesa-invoice-display"></span><br>
+                    <strong>Amount Due:</strong> <span id="mpesa-amount-display"></span>
+                </div>
+                
+                <ul class="nav nav-tabs" role="tablist">
+                    <li class="nav-item">
+                        <a class="nav-link active" data-toggle="tab" href="#stk-tab">STK Push</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" data-toggle="tab" href="#verify-tab">Verify Manual Till</a>
+                    </li>
+                </ul>
+                
+                <div class="tab-content mt-3">
+                    <div id="stk-tab" class="tab-pane fade show active">
+                        <div class="form-group">
+                            <label>Customer Phone Number</label>
+                            <input type="text" id="stk-phone" class="form-control" placeholder="254712345678">
+                            <small class="form-text text-muted">Format: 254712345678</small>
+                        </div>
+                        <button class="btn btn-primary btn-block" id="stkPushBtn">
+                            <i class="fas fa-paper-plane"></i> Send STK Push
+                        </button>
+                        <div id="stk-status" class="mt-2"></div>
+                    </div>
+                    
+                    <div id="verify-tab" class="tab-pane fade">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i> Customer paid manually via Till? Enter the M-Pesa code to verify.
+                        </div>
+                        <div class="form-group">
+                            <label>M-Pesa Transaction Code</label>
+                            <input type="text" id="verify-mpesa-code" class="form-control" placeholder="e.g. SH12AB3CD4">
+                        </div>
+                        <div class="form-group">
+                            <label>Customer Phone (optional)</label>
+                            <input type="text" id="verify-phone" class="form-control" placeholder="254712345678">
+                        </div>
+                        <button class="btn btn-success btn-block" id="verifyTillBtn">
+                            <i class="fas fa-check-circle"></i> Verify Payment
+                        </button>
+                        <div id="verify-status" class="mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- DataTables and other JS libraries -->
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -197,6 +294,147 @@ function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     sidebar.classList.toggle('collapsed');
 }
+
+// Payment Method Button Handlers
+$('.payment-btn').click(function() {
+    // Remove active class from all buttons
+    $('.payment-btn').removeClass('active');
+    
+    // Add active class to clicked button
+    $(this).addClass('active');
+    
+    // Get selected method
+    const method = $(this).data('method');
+    $('#payment-method').val(method);
+    
+    // Hide all payment-specific sections
+    $('#mpesa-collect-section, #insurance-billing-section, #cash-amount-section').hide();
+    
+    // Show relevant section based on method
+    if (method === 'mpesa') {
+        $('#mpesa-collect-section').slideDown();
+    } else if (method === 'insurance') {
+        $('#insurance-billing-section').slideDown();
+    } else if (method === 'cash') {
+        $('#cash-amount-section').slideDown();
+    }
+});
+
+// M-Pesa Collection Functions
+function showMpesaCollectModal(invoiceId, invoiceNumber, amountDue) {
+    $('#mpesa-invoice-id').val(invoiceId);
+    $('#mpesa-invoice-number').val(invoiceNumber);
+    $('#mpesa-invoice-display').text(invoiceNumber);
+    $('#mpesa-amount-display').text('Ksh ' + parseFloat(amountDue).toFixed(2));
+    $('#stk-phone').val('');
+    $('#verify-mpesa-code').val('');
+    $('#verify-phone').val('');
+    $('#stk-status').html('');
+    $('#verify-status').html('');
+    $('#mpesaCollectModal').modal('show');
+}
+
+$('#stkPushBtn').click(function() {
+    const phone = $('#stk-phone').val().trim();
+    const invoiceId = $('#mpesa-invoice-id').val();
+    const amount = $('#mpesa-amount-display').text().replace('Ksh ', '').trim();
+    
+    if (!phone) {
+        $('#stk-status').html('<div class="alert alert-danger">Phone number is required</div>');
+        return;
+    }
+    
+    const $btn = $(this);
+    $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Sending...');
+    $('#stk-status').html('<div class="alert alert-info"><i class="fas fa-spinner fa-spin"></i> Initiating STK Push...</div>');
+    
+    $.ajax({
+        url: '/api/mpesa/stkpush',
+        method: 'POST',
+        contentType: 'application/json',
+        headers: { 'X-CSRFToken': $('input[name="csrf_token"]').val() },
+        data: JSON.stringify({
+            phone_number: phone,
+            amount: parseFloat(amount),
+            invoice_id: parseInt(invoiceId)
+        }),
+        success: function(response) {
+            if (response.ok) {
+                $('#stk-status').html(`
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i> STK Push sent! Customer should see prompt on their phone.
+                        <br><small>Payment will be automatically recorded once customer completes.</small>
+                    </div>
+                `);
+                setTimeout(() => {
+                    $('#mpesaCollectModal').modal('hide');
+                    location.reload();
+                }, 3000);
+            } else {
+                $('#stk-status').html(`<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ${response.error || 'Failed to send STK Push'}</div>`);
+            }
+        },
+        error: function(xhr) {
+            const msg = xhr.responseJSON?.error || 'Request failed';
+            $('#stk-status').html(`<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ${msg}</div>`);
+        },
+        complete: function() {
+            $btn.prop('disabled', false).html('<i class="fas fa-paper-plane"></i> Send STK Push');
+        }
+    });
+});
+
+$('#verifyTillBtn').click(function() {
+    const mpesaCode = $('#verify-mpesa-code').val().trim();
+    const phone = $('#verify-phone').val().trim();
+    const invoiceNumber = $('#mpesa-invoice-number').val();
+    const amount = $('#mpesa-amount-display').text().replace('Ksh ', '').trim();
+    
+    if (!mpesaCode) {
+        $('#verify-status').html('<div class="alert alert-danger">M-Pesa code is required</div>');
+        return;
+    }
+    
+    const $btn = $(this);
+    $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Verifying...');
+    $('#verify-status').html('<div class="alert alert-info"><i class="fas fa-spinner fa-spin"></i> Verifying payment with Safaricom...</div>');
+    
+    $.ajax({
+        url: '/api/mpesa/transaction-status/query',
+        method: 'POST',
+        contentType: 'application/json',
+        headers: { 'X-CSRFToken': $('input[name="csrf_token"]').val() },
+        data: JSON.stringify({
+            mpesa_code: mpesaCode,
+            phone_number: phone || undefined,
+            invoice_number: invoiceNumber,
+            amount: parseFloat(amount)
+        }),
+        success: function(response) {
+            if (response.ok) {
+                $('#verify-status').html(`
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i> Verification request submitted!
+                        <br><small>Payment will be recorded once verification completes (usually within 30 seconds).</small>
+                    </div>
+                `);
+                setTimeout(() => {
+                    $('#mpesaCollectModal').modal('hide');
+                    location.reload();
+                }, 3000);
+            } else {
+                $('#verify-status').html(`<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ${response.error || 'Verification failed'}</div>`);
+            }
+        },
+        error: function(xhr) {
+            const msg = xhr.responseJSON?.error || 'Request failed';
+            $('#verify-status').html(`<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ${msg}</div>`);
+        },
+        complete: function() {
+            $btn.prop('disabled', false).html('<i class="fas fa-check-circle"></i> Verify Payment');
+        }
+    });
+});
 
 // Patient search functionality
 document.getElementById('patient-search').addEventListener('input', function(e) {
@@ -379,4 +617,121 @@ document.getElementById('billing-form').addEventListener('change', function() {
     document.getElementById('total-amount').textContent = `$${totalAmount.toFixed(2)}`;
 });
 </script>
+
+<style>
+/* Payment Method Button Styles */
+.payment-method-section {
+    margin: 20px 0;
+    padding: 20px;
+    background: #ffffff;
+    border: 2px solid #e3e6ea;
+    border-radius: 10px;
+}
+
+.payment-title {
+    margin-bottom: 15px;
+    font-weight: 600;
+    color: #333;
+    font-size: 16px;
+}
+
+.payment-buttons {
+    display: flex;
+    gap: 15px;
+    justify-content: space-around;
+    flex-wrap: wrap;
+}
+
+.payment-btn {
+    flex: 1;
+    min-width: 120px;
+    padding: 20px 15px;
+    background: #f8f9fa;
+    border: 2px solid #dee2e6;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.payment-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    border-color: #007bff;
+}
+
+.payment-btn.active {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-color: #0056b3;
+    color: white;
+    box-shadow: 0 6px 15px rgba(0,123,255,0.4);
+}
+
+.payment-btn.active .payment-icon {
+    color: white;
+}
+
+.payment-icon {
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 28px;
+    transition: all 0.3s ease;
+}
+
+.mpesa-icon {
+    background: #00a651;
+    color: white;
+}
+
+.payment-btn.active[data-method="mpesa"] {
+    background: linear-gradient(135deg, #00a651 0%, #007a3d 100%);
+    border-color: #007a3d;
+}
+
+.cash-icon {
+    background: #28a745;
+    color: white;
+}
+
+.payment-btn.active[data-method="cash"] {
+    background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+    border-color: #1e7e34;
+}
+
+.insurance-icon {
+    background: #17a2b8;
+    color: white;
+}
+
+.payment-btn.active[data-method="insurance"] {
+    background: linear-gradient(135deg, #17a2b8 0%, #117a8b 100%);
+    border-color: #117a8b;
+}
+
+.payment-btn span {
+    font-weight: 600;
+    font-size: 15px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .payment-buttons {
+        flex-direction: column;
+        gap: 12px;
+    }
+    
+    .payment-btn {
+        width: 100%;
+        min-width: auto;
+    }
+}
+</style>
+
 {% endblock %}

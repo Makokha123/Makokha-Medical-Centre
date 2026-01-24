@@ -93,6 +93,10 @@
             <i class="fas fa-shield-alt"></i>
             <span>Insurance</span>
         </div>
+        <div class="tab" data-tab="mpesa">
+            <i class="fas fa-mobile-alt"></i>
+            <span>M-Pesa</span>
+        </div>
     </div>
 
     <!-- Drawings Tab -->
@@ -922,6 +926,228 @@
         </div>
     </div>
 </div>
+
+    <!-- M-Pesa Tab -->
+    <div class="tab-content" id="mpesa-tab">
+        <div class="section-header">
+            <div class="section-title">
+                <h2><i class="fas fa-mobile-alt"></i> M-Pesa</h2>
+                <p>Verify manual Till payments and initiate admin payouts (B2C/B2B/B2Pochi)</p>
+            </div>
+        </div>
+
+        <div class="table-container" style="margin-bottom:16px;">
+            <h3 style="margin:0 0 10px 0;">Verify Manual Till (Transaction Status)</h3>
+            <form method="POST" action="/admin/money/mpesa/verify" style="display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:10px;align-items:end;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-group" style="margin:0;">
+                    <label for="mpesa-verify-code">M-Pesa Code *</label>
+                    <input id="mpesa-verify-code" name="mpesa_code" type="text" placeholder="e.g. QAB123XYZ" required>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="mpesa-verify-invoice">Invoice # (optional)</label>
+                    <input id="mpesa-verify-invoice" name="invoice_number" type="text" placeholder="INV-...">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="mpesa-verify-amount">Amount (optional)</label>
+                    <input id="mpesa-verify-amount" name="amount" type="number" step="0.01" placeholder="Ksh">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label for="mpesa-verify-phone">Phone (optional)</label>
+                    <input id="mpesa-verify-phone" name="phone_number" type="text" placeholder="07.. or 254..">
+                </div>
+                <div style="grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;">
+                    <button type="submit" class="btn btn-primary btn-with-icon">
+                        <i class="fas fa-search"></i> Submit Verification
+                    </button>
+                    <div style="color:#666;font-size:12px;line-height:1.4;">
+                        This submits a Transaction Status query to Safaricom. The invoice will auto-update once the callback returns success.
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <div class="table-container" style="margin-bottom:16px;">
+            <h3 style="margin:0 0 10px 0;">Admin Payouts</h3>
+            <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:12px;">
+                <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
+                    <h4 style="margin:0 0 8px 0;"><i class="fas fa-phone"></i> B2C (Phone)</h4>
+                    <form method="POST" action="/admin/money/mpesa/payout/b2c" style="display:grid;gap:10px;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="form-group" style="margin:0;">
+                            <label>Phone *</label>
+                            <input name="phone_number" type="text" placeholder="07.. or 254.." required>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Amount *</label>
+                            <input name="amount" type="number" step="0.01" required>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Remarks</label>
+                            <input name="remarks" type="text" placeholder="e.g. Supplier payout">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Occasion</label>
+                            <input name="occasion" type="text" placeholder="Optional">
+                        </div>
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Send</button>
+                    </form>
+                </div>
+
+                <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
+                    <h4 style="margin:0 0 8px 0;"><i class="fas fa-building"></i> B2B (PayBill/Till)</h4>
+                    <form method="POST" action="/admin/money/mpesa/payout/b2b" style="display:grid;gap:10px;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="form-group" style="margin:0;">
+                            <label>PayBill (fill one)</label>
+                            <input name="paybill" type="text" placeholder="PayBill Shortcode">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Till (fill one)</label>
+                            <input name="till" type="text" placeholder="Till Number">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Account Reference</label>
+                            <input name="account_reference" type="text" placeholder="e.g. INV-123 / KPLC">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Amount *</label>
+                            <input name="amount" type="number" step="0.01" required>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Remarks</label>
+                            <input name="remarks" type="text" placeholder="e.g. Utility bill">
+                        </div>
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Pay</button>
+                    </form>
+                </div>
+
+                <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
+                    <h4 style="margin:0 0 8px 0;"><i class="fas fa-wallet"></i> B2Pochi</h4>
+                    <form method="POST" action="/admin/money/mpesa/payout/b2pochi" style="display:grid;gap:10px;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="form-group" style="margin:0;">
+                            <label>Pochi Phone *</label>
+                            <input name="phone_number" type="text" placeholder="07.. or 254.." required>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Amount *</label>
+                            <input name="amount" type="number" step="0.01" required>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Remarks</label>
+                            <input name="remarks" type="text" placeholder="e.g. Pochi payment">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Occasion</label>
+                            <input name="occasion" type="text" placeholder="Optional">
+                        </div>
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Send</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-container" style="margin-bottom:16px;">
+            <h3 style="margin:0 0 10px 0;">Recent Verification Queries</h3>
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>M-Pesa Code</th>
+                        <th>Invoice</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Receipt</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for q in (mpesa_status_queries or []) %}
+                    <tr>
+                        <td>{{ q.created_at.strftime('%Y-%m-%d %H:%M') if q.created_at else '' }}</td>
+                        <td>{{ q.transaction_id }}</td>
+                        <td>{{ q.invoice_number or '' }}</td>
+                        <td class="amount-cell">Ksh {{ "%.2f"|format(q.amount_expected or 0) }}</td>
+                        <td>
+                            <span class="status-badge {% if q.status == 'success' %}status-paid{% elif q.status == 'failed' %}status-overdue{% else %}status-pending{% endif %}">
+                                {{ q.status }}
+                            </span>
+                        </td>
+                        <td>
+                            {% set receipt_url = (mpesa_status_receipt_urls or {}).get(q.id) %}
+                            {% if receipt_url %}
+                                <a class="btn btn-primary" style="padding:6px 10px;font-size:12px;" href="{{ receipt_url }}" target="_blank" rel="noopener">View receipt</a>
+                            {% else %}
+                                <span style="color:#888;font-size:12px;">—</span>
+                            {% endif %}
+                        </td>
+                        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            {{ q.result_desc or '' }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% if not (mpesa_status_queries or []) %}
+            <div class="empty-state">
+                <i class="fas fa-search"></i>
+                <h3>No verification queries yet</h3>
+                <p>Submit a Transaction Status verification above.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="table-container">
+            <h3 style="margin:0 0 10px 0;">Recent Payouts</h3>
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Beneficiary</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>M-Pesa Txn</th>
+                        <th>Receipt</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in (mpesa_payouts or []) %}
+                    <tr>
+                        <td>{{ p.created_at.strftime('%Y-%m-%d %H:%M') if p.created_at else '' }}</td>
+                        <td>{{ p.payout_type }}</td>
+                        <td>{{ p.beneficiary_msisdn or p.beneficiary_paybill or p.beneficiary_till or p.beneficiary_pochi or '' }}</td>
+                        <td class="amount-cell">Ksh {{ "%.2f"|format(p.amount or 0) }}</td>
+                        <td>
+                            <span class="status-badge {% if p.status == 'success' %}status-paid{% elif p.status == 'failed' %}status-overdue{% else %}status-pending{% endif %}">
+                                {{ p.status }}
+                            </span>
+                        </td>
+                        <td>{{ p.mpesa_transaction_id or '' }}</td>
+                        <td>
+                            {% set receipt_url = (mpesa_payout_receipt_urls or {}).get(p.id) %}
+                            {% if receipt_url %}
+                                <a class="btn btn-primary" style="padding:6px 10px;font-size:12px;" href="{{ receipt_url }}" target="_blank" rel="noopener">View receipt</a>
+                            {% else %}
+                                <span style="color:#888;font-size:12px;">—</span>
+                            {% endif %}
+                        </td>
+                        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ p.result_desc or '' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% if not (mpesa_payouts or []) %}
+            <div class="empty-state">
+                <i class="fas fa-paper-plane"></i>
+                <h3>No payouts yet</h3>
+                <p>Send a payout using the forms above.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
 
 <!-- Add Insurance Provider Modal -->
 <div class="modal" id="add-insurance-provider-modal" role="dialog" aria-modal="true" aria-labelledby="add-insurance-provider-title">

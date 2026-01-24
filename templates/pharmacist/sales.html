@@ -43,32 +43,74 @@
                         <label for="prescriptionNumber">Prescription Number</label>
                         <input type="text" id="prescriptionNumber" class="form-control" placeholder="Enter prescription number">
                     </div>
-                    <div class="form-group">
-                        <label>Payment Method</label>
-                        <div class="payment-methods">
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="paymentMethod" id="cashMethod" value="cash" checked>
-                                <label class="form-check-label" for="cashMethod">Cash</label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="paymentMethod" id="mpesaMethod" value="mpesa">
-                                <label class="form-check-label" for="mpesaMethod">M-Pesa</label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="paymentMethod" id="cardMethod" value="credit_card">
-                                <label class="form-check-label" for="cardMethod">Credit Card</label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="paymentMethod" id="insuranceMethod" value="insurance">
-                                <label class="form-check-label" for="insuranceMethod">Insurance</label>
-                            </div>
-                        </div>
-                    </div>
                 </div>
                 <div class="cart-total">
                     <span>Total:</span>
                     <span id="cartTotal">Ksh 0.00</span>
                 </div>
+                
+                <!-- Payment Method Selection (appears when cart has items) -->
+                <div id="payment-method-section" style="display: none;" class="payment-method-section">
+                    <h6 class="payment-title"><i class="fas fa-credit-card"></i> Select Payment Method</h6>
+                    <div class="payment-buttons">
+                        <button type="button" class="payment-btn" data-method="mpesa" id="mpesaPaymentBtn">
+                            <div class="payment-icon mpesa-icon">
+                                <i class="fas fa-mobile-alt"></i>
+                            </div>
+                            <span>M-Pesa</span>
+                        </button>
+                        <button type="button" class="payment-btn active" data-method="cash" id="cashPaymentBtn">
+                            <div class="payment-icon cash-icon">
+                                <i class="fas fa-money-bill-wave"></i>
+                            </div>
+                            <span>Cash</span>
+                        </button>
+                        <button type="button" class="payment-btn" data-method="insurance" id="insurancePaymentBtn">
+                            <div class="payment-icon insurance-icon">
+                                <i class="fas fa-shield-alt"></i>
+                            </div>
+                            <span>Insurance</span>
+                        </button>
+                    </div>
+                    <input type="hidden" id="selectedPaymentMethod" value="cash">
+                </div>
+                
+                <!-- Payment Method Specific Fields -->
+                <div class="payment-details">
+                    <div id="mpesa-options" style="display: none;" class="form-group">
+                        <label>M-Pesa Collection</label>
+                        <div class="btn-group btn-group-sm w-100" role="group">
+                            <button type="button" class="btn btn-outline-primary" id="mpesa-stk-option" data-method="stk">
+                                <i class="fas fa-mobile-alt"></i> STK Push
+                            </button>
+                            <button type="button" class="btn btn-outline-success" id="mpesa-manual-option" data-method="manual">
+                                <i class="fas fa-check-circle"></i> Manual Till
+                            </button>
+                        </div>
+                        <small class="form-text text-muted">Choose how to collect M-Pesa payment</small>
+                    </div>
+                    <div id="cash-section" style="display: block;" class="form-group">
+                        <label>Amount Given by Client</label>
+                        <input type="number" id="cash-amount-given" class="form-control" placeholder="Enter amount client gave" min="0" step="0.01">
+                        <small class="form-text text-muted">Enter the amount the client gave. Change will be calculated automatically.</small>
+                    </div>
+                    <div id="mpesa-stk-section" style="display: none;" class="form-group">
+                        <label>Customer Phone</label>
+                        <input type="text" id="mpesa-stk-phone" class="form-control" placeholder="254712345678">
+                        <small class="form-text text-muted">STK Push will be sent after completing sale</small>
+                    </div>
+                    <div id="mpesa-manual-section" style="display: none;" class="form-group">
+                        <label>M-Pesa Code (from customer)</label>
+                        <input type="text" id="mpesa-manual-code" class="form-control" placeholder="e.g. SH12AB3CD4">
+                        <small class="form-text text-muted">Manual Till payment will be verified after completing sale</small>
+                    </div>
+                    <div id="insurance-section" style="display: none;" class="form-group">
+                        <label>Patient Insurance ID/Policy Number</label>
+                        <input type="text" id="insurance-policy-number" class="form-control" placeholder="Enter patient insurance policy number">
+                        <small class="form-text text-muted">Insurance claim will be created for this sale</small>
+                    </div>
+                </div>
+                
                 <div class="cart-buttons">
                     <button class="btn btn-primary" id="confirmSaleBtn">
                         <i class="fas fa-check"></i> Complete Sale
@@ -177,6 +219,13 @@ $(document).ready(function() {
         });
         
         $('#cartTotal').text('Ksh ' + total.toFixed(2));
+        
+        // Show/hide payment method section based on cart items
+        if (cart.items.length > 0) {
+            $('#payment-method-section').slideDown();
+        } else {
+            $('#payment-method-section').slideUp();
+        }
     }
 
     function renderCartItems() {
@@ -322,6 +371,44 @@ $(document).ready(function() {
         updateCartSummary();
     });
 
+// Payment Method Button Handlers
+$('.payment-btn').click(function() {
+    // Remove active class from all buttons
+    $('.payment-btn').removeClass('active');
+    
+    // Add active class to clicked button
+    $(this).addClass('active');
+    
+    // Get selected method
+    const method = $(this).data('method');
+    $('#selectedPaymentMethod').val(method);
+    
+    // Hide all payment-specific sections
+    $('#mpesa-options, #mpesa-stk-section, #mpesa-manual-section, #insurance-section, #cash-section').hide();
+    
+    // Show relevant section based on method
+    if (method === 'mpesa') {
+        $('#mpesa-options').slideDown();
+    } else if (method === 'insurance') {
+        $('#insurance-section').slideDown();
+    } else if (method === 'cash') {
+        $('#cash-section').slideDown();
+    }
+});
+
+$('#mpesa-stk-option, #mpesa-manual-option').click(function() {
+    $('#mpesa-stk-option, #mpesa-manual-option').removeClass('active');
+    $(this).addClass('active');
+    const method = $(this).data('method');
+    if (method === 'stk') {
+        $('#mpesa-stk-section').show();
+        $('#mpesa-manual-section').hide();
+    } else {
+        $('#mpesa-manual-section').show();
+        $('#mpesa-stk-section').hide();
+    }
+});
+
 // Confirm sale
 $('#confirmSaleBtn').click(function() {
     const patientAge = parseInt($('#patientAge').val()) || 0;
@@ -339,8 +426,52 @@ $('#confirmSaleBtn').click(function() {
         return;
     }
     
-    // Get selected payment method
-    const paymentMethod = $('input[name="paymentMethod"]:checked').val();
+    // Get selected payment method from button selection
+    const paymentMethod = $('#selectedPaymentMethod').val();
+    
+    // Validate M-Pesa fields if M-Pesa is selected
+    if (paymentMethod === 'mpesa') {
+        const mpesaMethod = $('#mpesa-stk-option').hasClass('active') ? 'stk' : ($('#mpesa-manual-option').hasClass('active') ? 'manual' : null);
+        if (!mpesaMethod) {
+            alert('Please select M-Pesa collection method (STK Push or Manual Till)');
+            return;
+        }
+        if (mpesaMethod === 'stk') {
+            const phone = $('#mpesa-stk-phone').val().trim();
+            if (!phone) {
+                alert('Customer phone number is required for STK Push');
+                $('#mpesa-stk-phone').focus();
+                return;
+            }
+        } else if (mpesaMethod === 'manual') {
+            const code = $('#mpesa-manual-code').val().trim();
+            if (!code) {
+                alert('M-Pesa transaction code is required for Manual Till verification');
+                $('#mpesa-manual-code').focus();
+                return;
+            }
+        }
+    } else if (paymentMethod === 'insurance') {
+        const policyNumber = $('#insurance-policy-number').val().trim();
+        if (!policyNumber) {
+            alert('Patient insurance policy number is required for insurance payment');
+            $('#insurance-policy-number').focus();
+            return;
+        }
+    } else if (paymentMethod === 'cash') {
+        const amountGiven = parseFloat($('#cash-amount-given').val());
+        if (!amountGiven || amountGiven <= 0) {
+            alert('Please enter the amount given by the client');
+            $('#cash-amount-given').focus();
+            return;
+        }
+        const cartTotal = parseFloat($('#cartTotal').text().replace('Ksh ', '').trim());
+        if (amountGiven < cartTotal) {
+            alert(`Amount given (Ksh ${amountGiven.toFixed(2)}) is less than total (Ksh ${cartTotal.toFixed(2)})`);
+            $('#cash-amount-given').focus();
+            return;
+        }
+    }
     
     // Prepare items with unit prices
     const items = cart.items.map(item => ({
@@ -349,6 +480,24 @@ $('#confirmSaleBtn').click(function() {
         unit_price: item.price
     }));
     
+    // Prepare request payload
+    const requestData = {
+        items: items,
+        payment_method: paymentMethod,
+        patient_age: patientAge,
+        prescription_number: prescriptionNumber
+    };
+    
+    // Add insurance policy number if insurance selected
+    if (paymentMethod === 'insurance') {
+        requestData.insurance_policy_number = $('#insurance-policy-number').val().trim();
+    }
+    
+    // Add amount given if cash selected
+    if (paymentMethod === 'cash') {
+        requestData.amount_given = parseFloat($('#cash-amount-given').val());
+    }
+    
     const $btn = $(this);
     $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Processing...');
     
@@ -356,23 +505,51 @@ $('#confirmSaleBtn').click(function() {
         url: '/pharmacist/sale',
         method: 'POST',
         contentType: 'application/json',
-        data: JSON.stringify({
-            items: items,
-            payment_method: paymentMethod,
-            patient_age: patientAge,
-            prescription_number: prescriptionNumber
-        }),
+        data: JSON.stringify(requestData),
         success: function(response) {
             if (response.success) {
-                // Clear cart
+                const saleId = response.sale_id;
+                const saleTotal = $('#cartTotal').text().replace('Ksh ', '').trim();
+                
+                // Clear cart and form
                 saveCart({ items: [] });
                 renderCartItems();
                 updateCartSummary();
                 $('#patientAge').val('');
                 $('#prescriptionNumber').val('');
+                $('#cash-amount-given').val('');
                 
-                // Show receipt
-                showReceipt(response.sale_id);
+                // Handle M-Pesa collection if selected
+                if (paymentMethod === 'mpesa') {
+                    const mpesaMethod = $('#mpesa-stk-option').hasClass('active') ? 'stk' : 'manual';
+                    if (mpesaMethod === 'stk') {
+                        const phone = $('#mpesa-stk-phone').val().trim();
+                        initiateSTKPush(saleId, phone, saleTotal);
+                    } else {
+                        const code = $('#mpesa-manual-code').val().trim();
+                        verifyManualTill(saleId, code, saleTotal);
+                    }
+                    // Reset M-Pesa fields
+                    $('#mpesa-stk-phone, #mpesa-manual-code').val('');
+                    $('#mpesa-stk-option, #mpesa-manual-option').removeClass('active');
+                    $('#mpesa-options, #mpesa-stk-section, #mpesa-manual-section').hide();
+                    // Reset to cash payment
+                    $('.payment-btn').removeClass('active');
+                    $('#cashPaymentBtn').addClass('active');
+                    $('#selectedPaymentMethod').val('cash');
+                } else if (paymentMethod === 'insurance') {
+                    // Insurance claim created on backend, just show receipt
+                    $('#insurance-policy-number').val('');
+                    $('#insurance-section').hide();
+                    // Reset to cash payment
+                    $('.payment-btn').removeClass('active');
+                    $('#cashPaymentBtn').addClass('active');
+                    $('#selectedPaymentMethod').val('cash');
+                    showReceipt(saleId);
+                } else {
+                    // Cash or card - show receipt immediately
+                    showReceipt(saleId);
+                }
             } else {
                 alert('Error: ' + (response.error || 'Failed to process sale'));
             }
@@ -422,6 +599,61 @@ $('#confirmSaleBtn').click(function() {
     $('#receiptModal').on('hidden.bs.modal', function () {
         // Any cleanup if needed
     });
+    
+    // M-Pesa STK Push for pharmacy sales
+    function initiateSTKPush(saleId, phone, amount) {
+        $.ajax({
+            url: '/api/mpesa/stkpush',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                phone_number: phone,
+                amount: parseFloat(amount),
+                reference: 'SALE-' + saleId,
+                account_reference: 'Pharmacy Sale #' + saleId
+            }),
+            success: function(response) {
+                if (response.ok) {
+                    alert('STK Push sent to customer! Payment will be automatically recorded once completed.');
+                    showReceipt(saleId);
+                } else {
+                    alert('STK Push failed: ' + (response.error || 'Unknown error') + '. Sale recorded but payment not initiated.');
+                    showReceipt(saleId);
+                }
+            },
+            error: function(xhr) {
+                alert('STK Push request failed. Sale recorded but payment not initiated.');
+                showReceipt(saleId);
+            }
+        });
+    }
+    
+    // M-Pesa Manual Till verification for pharmacy sales
+    function verifyManualTill(saleId, mpesaCode, amount) {
+        $.ajax({
+            url: '/api/mpesa/transaction-status/query',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                mpesa_code: mpesaCode,
+                amount: parseFloat(amount),
+                reference: 'SALE-' + saleId
+            }),
+            success: function(response) {
+                if (response.ok) {
+                    alert('Till payment verification submitted! Payment will be recorded once verification completes.');
+                    showReceipt(saleId);
+                } else {
+                    alert('Verification failed: ' + (response.error || 'Unknown error') + '. Sale recorded but payment not verified.');
+                    showReceipt(saleId);
+                }
+            },
+            error: function(xhr) {
+                alert('Verification request failed. Sale recorded but payment not verified.');
+                showReceipt(saleId);
+            }
+        });
+    }
 });
 </script>
 
@@ -509,6 +741,110 @@ $('#confirmSaleBtn').click(function() {
     border-radius: 5px;
 }
 
+.payment-method-section {
+    margin: 15px 0;
+    padding: 15px;
+    background: #ffffff;
+    border: 2px solid #e3e6ea;
+    border-radius: 8px;
+}
+
+.payment-title {
+    margin-bottom: 15px;
+    font-weight: 600;
+    color: #333;
+    font-size: 15px;
+}
+
+.payment-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: space-around;
+    flex-wrap: wrap;
+}
+
+.payment-btn {
+    flex: 1;
+    min-width: 100px;
+    padding: 15px 10px;
+    background: #f8f9fa;
+    border: 2px solid #dee2e6;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.payment-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    border-color: #007bff;
+}
+
+.payment-btn.active {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border-color: #0056b3;
+    color: white;
+    box-shadow: 0 4px 12px rgba(0,123,255,0.3);
+}
+
+.payment-btn.active .payment-icon {
+    color: white;
+}
+
+.payment-icon {
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 24px;
+    transition: all 0.3s ease;
+}
+
+.mpesa-icon {
+    background: #00a651;
+    color: white;
+}
+
+.payment-btn.active[data-method="mpesa"] {
+    background: linear-gradient(135deg, #00a651 0%, #007a3d 100%);
+    border-color: #007a3d;
+}
+
+.cash-icon {
+    background: #28a745;
+    color: white;
+}
+
+.payment-btn.active[data-method="cash"] {
+    background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+    border-color: #1e7e34;
+}
+
+.insurance-icon {
+    background: #17a2b8;
+    color: white;
+}
+
+.payment-btn.active[data-method="insurance"] {
+    background: linear-gradient(135deg, #17a2b8 0%, #117a8b 100%);
+    border-color: #117a8b;
+}
+
+.payment-btn span {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.payment-details {
+    margin-top: 10px;
+}
+
 .payment-methods {
     display: flex;
     flex-wrap: wrap;
@@ -542,6 +878,16 @@ $('#confirmSaleBtn').click(function() {
     
     .beer-list {
         grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    }
+    
+    .payment-buttons {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .payment-btn {
+        width: 100%;
+        min-width: auto;
     }
     
     .payment-methods {

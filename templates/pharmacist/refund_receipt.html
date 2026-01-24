@@ -182,5 +182,33 @@
     .no-print {
         display: none !important;
     }
+    
+    /* Hide signature drawing tools and buttons */
+    .signature-drawing {
+        display: none !important;
+    }
+    
+    .signature-display button,
+    .signature-display .btn {
+        display: none !important;
+    }
+    
+    #signatureCanvas {
+        border: none !important;
+    }
+    
+    .signature-display img {
+        border: none !important;
+        max-width: 100%;
+    }
+    
+    #penModeIndicator {
+        display: none !important;
+    }
+    
+    /* Ensure rubber stamp is visible */
+    svg {
+        display: block !important;
+    }
 }
 </style>

@@ -106,6 +106,11 @@ class Config:
         "max_retries": _parse_int(_get_env("DEEPSEEK_MAX_RETRIES", "3"), 3),
     }
 
+    # Google OAuth Configuration
+    GOOGLE_CLIENT_ID = _get_env("GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET = _get_env("GOOGLE_CLIENT_SECRET")
+    GOOGLE_REDIRECT_URI = _get_env("GOOGLE_REDIRECT_URI", "http://localhost:5000/auth/google/callback")
+
     # Dosage AI generation (admin dosage/monographs)
     # These are intentionally separate from DEEPSEEK_CONFIG because dosage generation can be much longer.
     DOSAGE_AI_TIMEOUT_SECONDS = float(_get_env("DOSAGE_AI_TIMEOUT_SECONDS", "1200"))

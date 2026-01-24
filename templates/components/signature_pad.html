@@ -1,0 +1,442 @@
+<!-- Signature Pad Component -->
+<!-- Include this in documents/receipts where signature is needed -->
+<div class="signature-pad-container" id="signaturePadContainer" 
+     style="display: inline-block; width: 100%; max-width: 400px; margin: 20px 0;">
+    
+    <!-- Signature Display (when saved) -->
+    <div class="signature-display" id="signatureDisplay" 
+         style="display: none; position: relative;">
+        <img id="signatureImage" 
+             src="" 
+             alt="Signature" 
+             style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; background: white;">
+        <div style="text-align: center; margin-top: 10px;">
+            <button type="button" 
+                    class="btn btn-sm btn-warning" 
+                    onclick="editSignature()"
+                    style="margin-right: 5px;">
+                <i class="fas fa-edit"></i> Edit
+            </button>
+            <button type="button" 
+                    class="btn btn-sm btn-danger" 
+                    onclick="deleteSignature()">
+                <i class="fas fa-trash"></i> Delete
+            </button>
+        </div>
+        <div style="text-align: center; font-size: 11px; color: #2c3e50; margin-top: 5px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+            Medical Director
+        </div>
+        <div style="text-align: center; font-size: 9px; color: #7f8c8d; margin-top: 2px;">
+            Signed: <span id="signatureDate"></span>
+        </div>
+    </div>
+    
+    <!-- Drawing Interface (when drawing) -->
+    <div class="signature-drawing" id="signatureDrawing" style="display: none;">
+        <div style="text-align: center; margin-bottom: 10px; color: #555; font-size: 14px;">
+            <i class="fas fa-pen"></i> Draw your signature below
+        </div>
+        
+        <!-- Canvas for drawing -->
+        <div style="border: 2px solid #3498db; border-radius: 8px; background: white; position: relative;">
+            <canvas id="signatureCanvas" 
+                    width="380" 
+                    height="150" 
+                    style="display: block; cursor: crosshair; touch-action: none;">
+            </canvas>
+            <!-- Pen mode indicator -->
+            <div id="penModeIndicator" 
+                 style="position: absolute; top: 5px; right: 5px; background: rgba(52, 152, 219, 0.9); color: white; padding: 3px 8px; border-radius: 3px; font-size: 11px; display: none;">
+                <i class="fas fa-pen"></i> Pen Mode
+            </div>
+        </div>
+        
+        <!-- Drawing Tools -->
+        <div style="margin-top: 10px; text-align: center;">
+            <!-- Pen Color -->
+            <div style="display: inline-block; margin-right: 15px;">
+                <label style="font-size: 12px; margin-right: 5px;">Pen:</label>
+                <input type="color" 
+                       id="penColor" 
+                       value="#000000" 
+                       style="width: 40px; height: 30px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
+            </div>
+            
+            <!-- Pen Size -->
+            <div style="display: inline-block; margin-right: 15px;">
+                <label style="font-size: 12px; margin-right: 5px;">Size:</label>
+                <input type="range" 
+                       id="penSize" 
+                       min="1" 
+                       max="5" 
+                       value="2" 
+                       style="width: 80px; vertical-align: middle;">
+                <span id="penSizeValue" style="font-size: 12px; margin-left: 5px;">2</span>
+            </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div style="margin-top: 15px; text-align: center;">
+            <button type="button" 
+                    class="btn btn-sm btn-secondary" 
+                    onclick="undoSignature()"
+                    style="margin-right: 5px;">
+                <i class="fas fa-undo"></i> Undo
+            </button>
+            <button type="button" 
+                    class="btn btn-sm btn-secondary" 
+                    onclick="redoSignature()"
+                    style="margin-right: 5px;">
+                <i class="fas fa-redo"></i> Redo
+            </button>
+            <button type="button" 
+                    class="btn btn-sm btn-warning" 
+                    onclick="clearSignature()"
+                    style="margin-right: 5px;">
+                <i class="fas fa-eraser"></i> Clear
+            </button>
+            <button type="button" 
+                    class="btn btn-sm btn-success" 
+                    onclick="saveSignature()"
+                    style="margin-right: 5px;">
+                <i class="fas fa-save"></i> Save
+            </button>
+            <button type="button" 
+                    class="btn btn-sm btn-danger" 
+                    onclick="cancelSignatureDrawing()">
+                <i class="fas fa-times"></i> Cancel
+            </button>
+        </div>
+    </div>
+    
+    <!-- Draw Button (when no signature exists) -->
+    <div class="signature-placeholder" id="signaturePlaceholder">
+        <button type="button" 
+                class="btn btn-primary" 
+                onclick="startDrawingSignature()"
+                style="padding: 15px 30px;">
+            <i class="fas fa-signature"></i> Draw Signature
+        </button>
+        <div style="text-align: center; font-size: 11px; color: #7f8c8d; margin-top: 10px;">
+            Click to draw your digital signature
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Canvas and context
+    let signatureCanvas;
+    let signatureCtx;
+    
+    // Drawing state
+    let isDrawing = false;
+    let drawingEnabled = false;
+    let currentPath = [];
+    let paths = [];
+    let redoStack = [];
+    let savedSignature = null;
+    
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        signatureCanvas = document.getElementById('signatureCanvas');
+        if (signatureCanvas) {
+            signatureCtx = signatureCanvas.getContext('2d');
+            setupCanvas();
+            loadExistingSignature();
+        }
+    });
+    
+    function setupCanvas() {
+        const canvas = signatureCanvas;
+        const ctx = signatureCtx;
+        
+        // Set canvas background
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Mouse events
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+        
+        // Touch events
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+        canvas.addEventListener('touchend', stopDrawing);
+        
+        // Pen size change
+        const penSizeInput = document.getElementById('penSize');
+        if (penSizeInput) {
+            penSizeInput.addEventListener('input', function() {
+                document.getElementById('penSizeValue').textContent = this.value;
+            });
+        }
+    }
+    
+    function startDrawing(e) {
+        if (!drawingEnabled) return;
+        
+        isDrawing = true;
+        currentPath = [];
+        
+        const rect = signatureCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        currentPath.push({ x, y });
+        redoStack = []; // Clear redo stack on new action
+    }
+    
+    function draw(e) {
+        if (!isDrawing || !drawingEnabled) return;
+        
+        const rect = signatureCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        currentPath.push({ x, y });
+        
+        // Draw line
+        const ctx = signatureCtx;
+        const color = document.getElementById('penColor').value;
+        const size = document.getElementById('penSize').value;
+        
+        const len = currentPath.length;
+        if (len >= 2) {
+            const prevPoint = currentPath[len - 2];
+            const currPoint = currentPath[len - 1];
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = size;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            ctx.beginPath();
+            ctx.moveTo(prevPoint.x, prevPoint.y);
+            ctx.lineTo(currPoint.x, currPoint.y);
+            ctx.stroke();
+        }
+    }
+    
+    function stopDrawing() {
+        if (isDrawing && currentPath.length > 0) {
+            const color = document.getElementById('penColor').value;
+            const size = document.getElementById('penSize').value;
+            
+            paths.push({
+                points: [...currentPath],
+                color: color,
+                size: size
+            });
+        }
+        isDrawing = false;
+        currentPath = [];
+    }
+    
+    function handleTouchStart(e) {
+        e.preventDefault();
+        if (!drawingEnabled) return;
+        
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent('mousedown', {
+            clientX: touch.clientX,
+            clientY: touch.clientY
+        });
+        signatureCanvas.dispatchEvent(mouseEvent);
+    }
+    
+    function handleTouchMove(e) {
+        e.preventDefault();
+        if (!drawingEnabled) return;
+        
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent('mousemove', {
+            clientX: touch.clientX,
+            clientY: touch.clientY
+        });
+        signatureCanvas.dispatchEvent(mouseEvent);
+    }
+    
+    window.startDrawingSignature = function() {
+        document.getElementById('signaturePlaceholder').style.display = 'none';
+        document.getElementById('signatureDrawing').style.display = 'block';
+        document.getElementById('signatureDisplay').style.display = 'none';
+        drawingEnabled = true;
+        
+        // Show pen mode indicator
+        document.getElementById('penModeIndicator').style.display = 'block';
+    };
+    
+    window.clearSignature = function() {
+        paths = [];
+        redoStack = [];
+        const ctx = signatureCtx;
+        const canvas = signatureCanvas;
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    };
+    
+    window.undoSignature = function() {
+        if (paths.length > 0) {
+            const lastPath = paths.pop();
+            redoStack.push(lastPath);
+            redrawCanvas();
+        }
+    };
+    
+    window.redoSignature = function() {
+        if (redoStack.length > 0) {
+            const path = redoStack.pop();
+            paths.push(path);
+            redrawCanvas();
+        }
+    };
+    
+    function redrawCanvas() {
+        const ctx = signatureCtx;
+        const canvas = signatureCanvas;
+        
+        // Clear canvas
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Redraw all paths
+        paths.forEach(path => {
+            ctx.strokeStyle = path.color;
+            ctx.lineWidth = path.size;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            if (path.points.length >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(path.points[0].x, path.points[0].y);
+                for (let i = 1; i < path.points.length; i++) {
+                    ctx.lineTo(path.points[i].x, path.points[i].y);
+                }
+                ctx.stroke();
+            }
+        });
+    }
+    
+    window.saveSignature = function() {
+        if (paths.length === 0) {
+            alert('Please draw your signature first');
+            return;
+        }
+        
+        // Get canvas data as base64
+        const signatureData = signatureCanvas.toDataURL('image/png');
+        
+        // Save to server
+        fetch('/api/signature/save', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                signature_data: signatureData,
+                signature_type: '{{ signature_type|default("admin") }}'
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                savedSignature = signatureData;
+                displaySavedSignature(signatureData);
+                drawingEnabled = false;
+                document.getElementById('penModeIndicator').style.display = 'none';
+                alert('Signature saved successfully!');
+            } else {
+                alert('Error saving signature: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error saving signature');
+        });
+    };
+    
+    window.editSignature = function() {
+        document.getElementById('signatureDisplay').style.display = 'none';
+        document.getElementById('signatureDrawing').style.display = 'block';
+        drawingEnabled = true;
+        document.getElementById('penModeIndicator').style.display = 'block';
+    };
+    
+    window.deleteSignature = function() {
+        if (!confirm('Are you sure you want to delete this signature?')) return;
+        
+        fetch('/api/signature/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                savedSignature = null;
+                paths = [];
+                redoStack = [];
+                clearSignature();
+                document.getElementById('signatureDisplay').style.display = 'none';
+                document.getElementById('signaturePlaceholder').style.display = 'block';
+                alert('Signature deleted successfully!');
+            } else {
+                alert('Error deleting signature: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error deleting signature');
+        });
+    };
+    
+    window.cancelSignatureDrawing = function() {
+        drawingEnabled = false;
+        document.getElementById('penModeIndicator').style.display = 'none';
+        
+        if (savedSignature) {
+            displaySavedSignature(savedSignature);
+        } else {
+            document.getElementById('signatureDrawing').style.display = 'none';
+            document.getElementById('signaturePlaceholder').style.display = 'block';
+        }
+        
+        // Restore canvas to saved state
+        if (savedSignature) {
+            const img = new Image();
+            img.onload = function() {
+                signatureCtx.drawImage(img, 0, 0);
+            };
+            img.src = savedSignature;
+        } else {
+            clearSignature();
+        }
+    };
+    
+    function displaySavedSignature(signatureData) {
+        document.getElementById('signatureImage').src = signatureData;
+        document.getElementById('signatureDate').textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        document.getElementById('signatureDisplay').style.display = 'block';
+        document.getElementById('signatureDrawing').style.display = 'none';
+        document.getElementById('signaturePlaceholder').style.display = 'none';
+    }
+    
+    function loadExistingSignature() {
+        fetch('/api/signature/load')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.signature_data) {
+                    savedSignature = data.signature_data;
+                    displaySavedSignature(data.signature_data);
+                }
+            })
+            .catch(error => {
+                console.error('Error loading signature:', error);
+            });
+    }
+})();
+</script>

@@ -1,8 +1,10 @@
+{% if not is_embed %}
 {% extends "base.html" %}
 
 {% block title %}Controlled Drug Inventory{% endblock %}
 
 {% block content %}
+{% endif %}
 <style>
   /* Match normal Drug Inventory card styling (from pharmacist dashboard) */
   .drug-card {
@@ -1106,4 +1108,6 @@
   renderCart();
 })();
 </script>
+{% if not is_embed %}
 {% endblock %}
+{% endif %}

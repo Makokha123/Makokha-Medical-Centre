@@ -60,10 +60,25 @@
                         {% endfor %}
                     </tbody>
                     <tfoot>
+                        {% if sale.payment_method == 'cash' and amount_given is not none %}
+                        <tr>
+                            <th colspan="3" class="text-end">Total Amount</th>
+                            <th class="text-end">{{ "%.2f"|format(sale.total_amount or 0) }}</th>
+                        </tr>
+                        <tr>
+                            <th colspan="3" class="text-end">Amount Given</th>
+                            <th class="text-end">{{ "%.2f"|format(amount_given) }}</th>
+                        </tr>
+                        <tr>
+                            <th colspan="3" class="text-end">Change</th>
+                            <th class="text-end">{{ "%.2f"|format(change) }}</th>
+                        </tr>
+                        {% else %}
                         <tr>
                             <th colspan="3" class="text-end">Grand Total</th>
                             <th class="text-end">{{ "%.2f"|format(sale.total_amount or 0) }}</th>
                         </tr>
+                        {% endif %}
                     </tfoot>
                 </table>
             </div>

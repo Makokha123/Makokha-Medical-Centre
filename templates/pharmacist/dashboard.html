@@ -499,6 +499,9 @@
     <div class="header">
         <h4 class="mb-0">Pharmacist Dashboard</h4>
         <div class="d-flex align-items-center">
+            <a href="{{ url_for('receptionist_dashboard') }}" class="btn btn-sm btn-outline-primary me-3" title="Open Reception Dashboard">
+                <i class="bi bi-people me-1"></i><span class="d-none d-md-inline">Open Reception</span>
+            </a>
             <span class="me-3 d-none d-md-block">Welcome, Pharmacist</span>
             <div class="dropdown">
                 <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="userDropdown" data-bs-toggle="dropdown">
@@ -1205,23 +1208,39 @@
             const totalItems = controlledCart.reduce((sum, item) => sum + item.quantity, 0);
             const totalPrice = controlledCart.reduce((sum, item) => sum + item.total_price, 0);
             
-            cartCountBadge.textContent = `${totalItems} items`;
-            cartTotalSpan.textContent = totalPrice.toFixed(2);
+            // Safely update text content with null checks
+            if (cartCountBadge) {
+                cartCountBadge.textContent = `${totalItems} items`;
+            }
+            if (cartTotalSpan) {
+                cartTotalSpan.textContent = totalPrice.toFixed(2);
+            }
             
-            document.getElementById('mobile-controlled-cart-count').textContent = totalItems;
-            document.getElementById('mobile-controlled-cart-total').textContent = totalPrice.toFixed(2);
+            const mobileCartCount = document.getElementById('mobile-controlled-cart-count');
+            const mobileCartTotal = document.getElementById('mobile-controlled-cart-total');
+            if (mobileCartCount) {
+                mobileCartCount.textContent = totalItems;
+            }
+            if (mobileCartTotal) {
+                mobileCartTotal.textContent = totalPrice.toFixed(2);
+            }
             
-            confirmBtn.disabled = controlledCart.length === 0;
-            document.getElementById('mobile-controlled-confirm-sale-btn').disabled = controlledCart.length === 0;
+            if (confirmBtn) {
+                confirmBtn.disabled = controlledCart.length === 0;
+            }
+            const mobileConfirmBtn = document.getElementById('mobile-controlled-confirm-sale-btn');
+            if (mobileConfirmBtn) {
+                mobileConfirmBtn.disabled = controlledCart.length === 0;
+            }
             
-            if (controlledCart.length === 0) {
+            if (cartItemsDiv && controlledCart.length === 0) {
                 cartItemsDiv.innerHTML = `
                     <div class="text-center py-4 text-muted" id="controlled-empty-cart-message">
                         <i class="bi bi-cart-x" style="font-size: 3rem;"></i>
                         <p>Your controlled cart is empty</p>
                     </div>
                 `;
-            } else {
+            } else if (cartItemsDiv) {
                 cartItemsDiv.innerHTML = `
                     <div class="list-group">
                         ${controlledCart.map((item, idx) => `
@@ -1385,7 +1404,10 @@
 
             async function showControlledRxDetails(id) {
                 activeControlledPrescriptionId = id;
-                document.getElementById('controlled-rx-details-dash').textContent = 'Loading...';
+                const detailsElement = document.getElementById('controlled-rx-details-dash');
+                if (detailsElement) {
+                    detailsElement.textContent = 'Loading...';
+                }
 
                 const res = await fetch(`/pharmacist/api/controlled-prescription/${id}`, {
                     headers: csrfToken ? { 'X-CSRFToken': csrfToken } : {}

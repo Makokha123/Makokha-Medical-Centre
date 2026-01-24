@@ -5,6 +5,13 @@ $(document).ready(function() {
         $('#pharmaDrugList').html('<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Loading drugs...</div>');
         
         $.get('/api/drugs', function(data) {
+            // Check if data is actually an array (not HTML from redirect)
+            if (!Array.isArray(data)) {
+                console.error('Expected array but got:', typeof data);
+                $('#pharmaDrugList').html('<div class="error-loading"><i class="fas fa-exclamation-circle"></i> Session expired. Please <a href="/auth/login">login</a> again.</div>');
+                return;
+            }
+            
             if (data.length > 0) {
                 let html = '';
                 data.forEach(function(drug) {
@@ -30,8 +37,13 @@ $(document).ready(function() {
             } else {
                 $('#pharmaDrugList').html('<div class="empty-list"><i class="fas fa-box-open"></i> No drugs available</div>');
             }
-        }).fail(function() {
-            $('#pharmaDrugList').html('<div class="error-loading"><i class="fas fa-exclamation-circle"></i> Failed to load drugs</div>');
+        }).fail(function(jqXHR, textStatus, errorThrown) {
+            console.error('Failed to load drugs:', textStatus, errorThrown);
+            if (jqXHR.status === 302 || jqXHR.status === 401) {
+                $('#pharmaDrugList').html('<div class="error-loading"><i class="fas fa-exclamation-circle"></i> Session expired. Please <a href="/auth/login">login</a> again.</div>');
+            } else {
+                $('#pharmaDrugList').html('<div class="error-loading"><i class="fas fa-exclamation-circle"></i> Failed to load drugs. Please refresh the page.</div>');
+            }
         });
     }
     
@@ -40,6 +52,11 @@ $(document).ready(function() {
         $('#salesTable tbody').html('<tr><td colspan="6" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading sales...</td></tr>');
         
         $.get('/pharmacist/sales', function(data) {
+            if (!Array.isArray(data)) {
+                console.error('Expected array but got:', typeof data);
+                $('#salesTable tbody').html('<tr><td colspan="6" class="text-center"><i class="fas fa-exclamation-circle"></i> Session expired. Please <a href="/auth/login">login</a> again.</td></tr>');
+                return;
+            }
             if (data.length > 0) {
                 let html = '';
                 data.forEach(function(sale) {
@@ -70,6 +87,11 @@ $(document).ready(function() {
         $('#inventoryTable tbody').html('<tr><td colspan="6" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading inventory...</td></tr>');
         
         $.get('/api/drugs?limit=100', function(data) {
+            if (!Array.isArray(data)) {
+                console.error('Expected array but got:', typeof data);
+                $('#inventoryTable tbody').html('<tr><td colspan="6" class="text-center"><i class="fas fa-exclamation-circle"></i> Session expired. Please <a href="/auth/login">login</a> again.</td></tr>');
+                return;
+            }
             if (data.length > 0) {
                 let html = '';
                 data.forEach(function(drug) {
@@ -110,6 +132,11 @@ $(document).ready(function() {
         $('#prescriptionsTable tbody').html('<tr><td colspan="6" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading prescriptions...</td></tr>');
         
         $.get('/pharmacist/prescriptions', function(data) {
+            if (!Array.isArray(data)) {
+                console.error('Expected array but got:', typeof data);
+                $('#prescriptionsTable tbody').html('<tr><td colspan="6" class="text-center"><i class="fas fa-exclamation-circle"></i> Session expired. Please <a href="/auth/login">login</a> again.</td></tr>');
+                return;
+            }
             if (data.length > 0) {
                 let html = '';
                 data.forEach(function(prescription) {
@@ -146,7 +173,7 @@ $(document).ready(function() {
         const prescriptionId = $(this).data('id');
         
         $.get(`/pharmacist/prescription/${prescriptionId}`, function(data) {
-            if (data.items && data.items.length > 0) {
+            if (data && data.items && Array.isArray(data.items) && data.items.length > 0) {
                 // Clear cart first
                 clearCart();
                 
@@ -282,7 +309,7 @@ $(document).ready(function() {
         }
         
         $.get(`/api/sales/${saleNumber}`, function(sale) {
-            if (sale) {
+            if (sale && sale.items && Array.isArray(sale.items)) {
                 $('#refundSaleNo').text(sale.sale_number);
                 $('#refundSaleDate').text(sale.created_at);
                 $('#refundPatient').text(sale.patient_name || 'Walk-in');
@@ -577,6 +604,11 @@ $(document).ready(function() {
         }
         
         $.get('/api/patients', { search: searchTerm }, function(patients) {
+            if (!Array.isArray(patients)) {
+                console.error('Expected array but got:', typeof patients);
+                alert('Session expired. Please login again.');
+                return;
+            }
             if (patients.length > 0) {
                 let html = '';
                 patients.forEach(function(patient) {
@@ -628,6 +660,11 @@ $(document).ready(function() {
         $('#servicesTable tbody').html('<tr><td colspan="4" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading services...</td></tr>');
         
         $.get(`/api/patients/${patientId}/services`, function(services) {
+            if (!Array.isArray(services)) {
+                console.error('Expected array but got:', typeof services);
+                $('#servicesTable tbody').html('<tr><td colspan="4" class="text-center"><i class="fas fa-exclamation-circle"></i> Session expired. Please <a href="/auth/login">login</a> again.</td></tr>');
+                return;
+            }
             if (services.length > 0) {
                 let html = '';
                 services.forEach(function(service) {
@@ -655,6 +692,11 @@ $(document).ready(function() {
         $('#labTestsTable tbody').html('<tr><td colspan="4" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading lab tests...</td></tr>');
         
         $.get(`/api/patients/${patientId}/lab-tests`, function(tests) {
+            if (!Array.isArray(tests)) {
+                console.error('Expected array but got:', typeof tests);
+                $('#labTestsTable tbody').html('<tr><td colspan="4" class="text-center"><i class="fas fa-exclamation-circle"></i> Session expired. Please <a href="/auth/login">login</a> again.</td></tr>');
+                return;
+            }
             if (tests.length > 0) {
                 let html = '';
                 tests.forEach(function(test) {
@@ -682,6 +724,11 @@ $(document).ready(function() {
         $('#prescriptionsTable tbody').html('<tr><td colspan="5" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading prescriptions...</td></tr>');
         
         $.get(`/api/patients/${patientId}/prescriptions`, function(prescriptions) {
+            if (!Array.isArray(prescriptions)) {
+                console.error('Expected array but got:', typeof prescriptions);
+                $('#prescriptionsTable tbody').html('<tr><td colspan="5" class="text-center"><i class="fas fa-exclamation-circle"></i> Session expired. Please <a href="/auth/login">login</a> again.</td></tr>');
+                return;
+            }
             if (prescriptions.length > 0) {
                 let html = '';
                 prescriptions.forEach(function(prescription) {

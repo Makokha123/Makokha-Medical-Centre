@@ -96,6 +96,38 @@
         .no-print {
             display: none !important;
         }
+
+        /* Hide signature drawing tools and buttons */
+        .signature-drawing {
+            display: none !important;
+        }
+
+        /* Hide edit/delete buttons on signature */
+        .signature-display button,
+        .signature-display .btn {
+            display: none !important;
+        }
+
+        /* Remove blue border from signature canvas */
+        #signatureCanvas {
+            border: none !important;
+        }
+
+        /* Clean signature display for print */
+        .signature-display img {
+            border: none !important;
+            max-width: 100%;
+        }
+
+        /* Hide pen mode indicator */
+        #penModeIndicator {
+            display: none !important;
+        }
+
+        /* Ensure rubber stamp is visible */
+        svg {
+            display: block !important;
+        }
     }
     </style>
 {% if not embedded %}
@@ -204,6 +236,20 @@
                         <th class="text-end">{{ "Ksh {:,.2f}".format(sale.total_amount - (sale.insurance_cover or 0)) }}</th>
                     </tr>
                     {% endif %}
+                    {% if sale.payment_method == 'cash' and amount_given is not none %}
+                    <tr>
+                        <th colspan="4" class="text-end">Total Amount:</th>
+                        <th class="text-end">{{ "Ksh {:,.2f}".format(sale.total_amount) }}</th>
+                    </tr>
+                    <tr>
+                        <th colspan="4" class="text-end">Amount Given:</th>
+                        <th class="text-end">{{ "Ksh {:,.2f}".format(amount_given) }}</th>
+                    </tr>
+                    <tr>
+                        <th colspan="4" class="text-end">Change:</th>
+                        <th class="text-end">{{ "Ksh {:,.2f}".format(change) }}</th>
+                    </tr>
+                    {% endif %}
                     <tr>
                         <th colspan="4" class="text-end">Payment Method:</th>
                         <th class="text-end">
@@ -223,17 +269,18 @@
         </div>
 
         <div class="receipt-footer text-center mt-4">
-            <div class="signature-section" style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:20px;">
-                <div style="flex:0 0 45%;">
-                    {{ generate_digital_signature(signer_name="Makokha", signer_title="Medical Director") }}
+            <div class="signature-section" style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;">
+                <div style="flex:0 0 45%;min-width:250px;margin-bottom:15px;">
+                    {% include 'components/signature_pad.html' %}
                 </div>
-                <div style="flex:0 0 45%;">
+                <div style="flex:0 0 45%;min-width:200px;margin-bottom:15px;">
                     {{ generate_rubber_stamp() }}
                 </div>
             </div>
             <p class="mb-1">Thank you for your purchase!</p>
             <p class="mb-1">Goods sold are not returnable without original receipt</p>
             <p class="mb-1"><strong>Note:</strong> For refunds, present this receipt within 7 days</p>
+            <p class="mb-1" style="font-size: 10px; color: #999;">Powered by Makokha Medical Centre System</p>
         </div>
     </div>
 

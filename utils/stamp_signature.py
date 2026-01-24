@@ -1,17 +1,18 @@
 """
 Digital Stamp and Signature Generator
-Generates dynamic, date-stamped official stamps and signatures for all documents
+Generates dynamic, date-stamped official stamps and loads hand-drawn signatures
 """
 from datetime import datetime
 from markupsafe import Markup
+import os
 
 def generate_rubber_stamp(facility_name="MAKOKHA MEDICAL CENTRE", 
-                          email="makokhamedicalcentre2026@gmail.com",
-                          phone1="0741 256 831",
+                          email="makokhamedicalcentre2025@gmail.com",
+                          phone1="0741 256 531",
                           phone2="0713 580 997",
                           current_date=None,
                           stamp_color="#2e3192",
-                          size=300):
+                          size=200):
     """
     Generate SVG for a rectangular rubber stamp matching the provided image
     
@@ -22,7 +23,7 @@ def generate_rubber_stamp(facility_name="MAKOKHA MEDICAL CENTRE",
         phone2: Second phone number
         current_date: Date to display (default: today in format "21 DEC 2025")
         stamp_color: Color of stamp (default: blue #2e3192)
-        size: Width in pixels (default: 300)
+        size: Width in pixels (default: 200 for receipts)
     
     Returns:
         Markup: Safe HTML/SVG for rubber stamp
@@ -118,64 +119,33 @@ def generate_rubber_stamp(facility_name="MAKOKHA MEDICAL CENTRE",
 def generate_digital_signature(signer_name="Makokha",
                                signer_title="Medical Director",
                                signature_date=None,
-                               include_date=True):
+                               include_date=True,
+                               user_id=None):
     """
-    Generate SVG for a cursive handwritten-style signature matching the provided image
+    Load hand-drawn signature from database or show placeholder
+    
+    This function is now a placeholder that tells templates to use the signature_pad component.
+    The actual signature rendering happens client-side via JavaScript.
     
     Args:
         signer_name: Name of person signing (default: Makokha)
-        signer_title: Title/position of signer
+        signer_title: Title/position of signer  
         signature_date: Date of signature (default: today)
         include_date: Whether to show signature date
+        user_id: User ID to load signature for (optional)
     
     Returns:
-        Markup: Safe HTML/SVG for signature
+        Markup: HTML comment indicating signature pad should be used
     """
     if signature_date is None:
         signature_date = datetime.now().strftime('%d %B %Y')
     
-    date_html = f'<div style="text-align: center; font-size: 9px; color: #7f8c8d; margin-top: 2px;">Signed: {signature_date}</div>' if include_date else ''
-    
-    # SVG path for cursive handwritten signature resembling "Makokha" in cursive style
+    # Return a marker that indicates signature pad component should be included
+    # The actual rendering is handled by the signature_pad.html template
     signature_html = f"""
-    <div style="display: inline-block; margin: 20px 0;">
-        <svg width="280" height="80" viewBox="0 0 280 80" xmlns="http://www.w3.org/2000/svg" style="background: transparent;">
-            <!-- Cursive signature path (resembling handwritten "Makokha") -->
-            <g stroke="#1e3a8a" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                <!-- M -->
-                <path d="M 15,45 Q 15,20 25,25 L 30,45 Q 32,25 40,30 L 43,50" stroke-width="3"/>
-                
-                <!-- a -->
-                <path d="M 50,38 Q 55,32 62,36 Q 68,40 64,48 Q 60,55 52,52 Q 48,50 50,45" stroke-width="2.5"/>
-                <path d="M 64,36 L 66,52" stroke-width="2.5"/>
-                
-                <!-- k -->
-                <path d="M 75,22 L 75,52" stroke-width="2.8"/>
-                <path d="M 75,38 Q 82,32 88,38 M 75,42 Q 82,48 90,52" stroke-width="2.5"/>
-                
-                <!-- o -->
-                <path d="M 95,36 Q 102,32 108,36 Q 114,42 108,48 Q 102,54 95,48 Q 90,42 95,36" stroke-width="2.5"/>
-                
-                <!-- k -->
-                <path d="M 118,22 L 118,52" stroke-width="2.8"/>
-                <path d="M 118,38 Q 125,32 131,38 M 118,42 Q 125,48 133,52" stroke-width="2.5"/>
-                
-                <!-- h -->
-                <path d="M 142,20 L 142,52" stroke-width="2.8"/>
-                <path d="M 142,36 Q 148,32 154,36 L 154,52" stroke-width="2.5"/>
-                
-                <!-- a -->
-                <path d="M 162,38 Q 167,32 174,36 Q 180,40 176,48 Q 172,55 164,52 Q 160,50 162,45" stroke-width="2.5"/>
-                <path d="M 176,36 L 178,52" stroke-width="2.5"/>
-                
-                <!-- Underline flourish -->
-                <path d="M 10,58 Q 140,62 270,58" stroke-width="1.8" opacity="0.6"/>
-            </g>
-        </svg>
-        <div style="text-align: center; font-size: 11px; color: #2c3e50; margin-top: 5px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
-            {signer_title}
-        </div>
-        {date_html}
+    <!-- SIGNATURE_PAD: title="{signer_title}" date="{signature_date}" -->
+    <div class="signature-container" data-signer-title="{signer_title}" data-signature-date="{signature_date}">
+        <!-- Signature will be loaded here by signature_pad.html component -->
     </div>
     """
     
