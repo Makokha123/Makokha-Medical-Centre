@@ -8446,14 +8446,17 @@ def delete_financial_report(report_id):
 @app.route("/db-keepalive")
 def db_keepalive():
     if request.headers.get("X-CRON-SECRET") != os.getenv("CRON_SECRET"):
-        return {"error": "unauthorized"}, 401
+        return jsonify({"error": "unauthorized"}), 401
 
-    cur = db.cursor()
-    cur.execute("SELECT 1")
-    cur.fetchone()
-    cur.close()
+    try:
+        db.session.execute(text("SELECT 1"))
+        db.session.commit()
 
-    return {"db": "awake"}, 200
+        return jsonify({"db": "awake"}), 200
+
+    except Exception as e:
+        print("DB keepalive error:", str(e))
+        return jsonify({"error": "db error"}), 500
 
 
 # =================================================================================================

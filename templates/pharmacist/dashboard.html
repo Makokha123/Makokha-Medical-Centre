@@ -597,24 +597,24 @@
                     <!-- Payment Method Selection -->
                     <div class="payment-methods mt-3 mb-3">
                         <label class="form-label fw-bold">Payment Method:</label>
-                        <div class="d-grid gap-2">
+                        <div class="d-flex gap-2 flex-wrap">
                             <input type="radio" class="btn-check" name="payment-method" id="payment-cash" value="cash" checked>
-                            <label class="btn btn-outline-success rounded-pill" for="payment-cash" title="Cash Payment">
+                            <label class="btn btn-sm btn-outline-success rounded-pill" for="payment-cash" title="Cash Payment">
                                 <i class="bi bi-cash-coin"></i> Cash
                             </label>
                             
                             <input type="radio" class="btn-check" name="payment-method" id="payment-mpesa" value="mpesa">
-                            <label class="btn btn-outline-primary rounded-pill" for="payment-mpesa" title="M-Pesa Payment">
-                                <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height: 20px; width: auto; vertical-align: middle; margin-right: 5px;"> M-Pesa
+                            <label class="btn btn-sm btn-outline-primary rounded-pill" for="payment-mpesa" title="M-Pesa Payment">
+                                <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height: 16px; width: auto; vertical-align: middle; margin-right: 3px;"> M-Pesa
                             </label>
                             
                             <input type="radio" class="btn-check" name="payment-method" id="payment-insurance" value="insurance">
-                            <label class="btn btn-outline-info rounded-pill" for="payment-insurance" title="Insurance Payment">
+                            <label class="btn btn-sm btn-outline-info rounded-pill" for="payment-insurance" title="Insurance Payment">
                                 <i class="bi bi-shield-check"></i> Insurance
                             </label>
                             
                             <input type="radio" class="btn-check" name="payment-method" id="payment-card" value="card">
-                            <label class="btn btn-outline-warning rounded-pill" for="payment-card" title="Card Payment">
+                            <label class="btn btn-sm btn-outline-warning rounded-pill" for="payment-card" title="Card Payment">
                                 <i class="bi bi-credit-card"></i> Card
                             </label>
                         </div>
