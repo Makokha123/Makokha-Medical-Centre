@@ -236,7 +236,7 @@
                         <th class="text-end">{{ "Ksh {:,.2f}".format(sale.total_amount - (sale.insurance_cover or 0)) }}</th>
                     </tr>
                     {% endif %}
-                    {% if sale.payment_method == 'cash' and amount_given is not none %}
+                    {% if sale.payment_method == 'cash' and amount_given is defined and amount_given is not none %}
                     <tr>
                         <th colspan="4" class="text-end">Total Amount:</th>
                         <th class="text-end">{{ "Ksh {:,.2f}".format(sale.total_amount) }}</th>
@@ -247,7 +247,7 @@
                     </tr>
                     <tr>
                         <th colspan="4" class="text-end">Change:</th>
-                        <th class="text-end">{{ "Ksh {:,.2f}".format(change) }}</th>
+                        <th class="text-end">{{ "Ksh {:,.2f}".format(change if (change is defined and change is not none) else 0) }}</th>
                     </tr>
                     {% endif %}
                     <tr>

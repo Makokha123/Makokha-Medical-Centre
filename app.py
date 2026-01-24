@@ -79,6 +79,13 @@ from markupsafe import Markup, escape
 from utils.encryption import EncryptionUtils
 import bleach
 
+# Try to import CSSSanitizer, but continue without it if not available
+try:
+    from bleach.css_sanitizer import CSSSanitizer
+    HAS_CSS_SANITIZER = True
+except ImportError:
+    HAS_CSS_SANITIZER = False
+
 from time import monotonic
 
 import html as html_lib
@@ -4419,15 +4426,37 @@ _RECEIPT_ALLOWED_ATTRS = {
     'script': ['type'],
 }
 
+# CSS sanitizer to allow safe inline styles (if available)
+if HAS_CSS_SANITIZER:
+    _RECEIPT_CSS_SANITIZER = CSSSanitizer(
+        allowed_css_properties=[
+            'color', 'background-color', 'background', 'border', 'border-collapse',
+            'font-family', 'font-size', 'font-weight', 'font-style',
+            'text-align', 'text-decoration', 'text-transform',
+            'margin', 'margin-top', 'margin-bottom', 'margin-left', 'margin-right',
+            'padding', 'padding-top', 'padding-bottom', 'padding-left', 'padding-right',
+            'width', 'max-width', 'height', 'min-height',
+            'display', 'position', 'top', 'bottom', 'left', 'right',
+            'border-radius', 'box-shadow',
+        ]
+    )
+else:
+    _RECEIPT_CSS_SANITIZER = None
+
 
 def _sanitize_receipt_html(raw_html: str) -> str:
-    return bleach.clean(
-        raw_html or '',
-        tags=_RECEIPT_ALLOWED_TAGS,
-        attributes=_RECEIPT_ALLOWED_ATTRS,
-        strip=True,
-        strip_comments=True,
-    )
+    clean_params = {
+        'tags': _RECEIPT_ALLOWED_TAGS,
+        'attributes': _RECEIPT_ALLOWED_ATTRS,
+        'strip': True,
+        'strip_comments': True,
+    }
+    
+    # Only add css_sanitizer if it's available
+    if HAS_CSS_SANITIZER and _RECEIPT_CSS_SANITIZER:
+        clean_params['css_sanitizer'] = _RECEIPT_CSS_SANITIZER
+    
+    return bleach.clean(raw_html or '', **clean_params)
 
 
 def _ensure_transaction_receipt(transaction: 'Transaction', html: str, prefix: str = 'RCPT', force: bool = False):
@@ -5830,6 +5859,8 @@ def login():
         role = request.form.get('role')
         remember = True if request.form.get('remember') else False
         
+        current_app.logger.info(f"Login attempt - email/username: {email}, role: {role}")
+        
         # Since email and username are encrypted, we must fetch all users and check in Python
         user = None
         for candidate in User.query.all():
@@ -5837,10 +5868,21 @@ def login():
             candidate_role = str(candidate.role).lower().strip() if candidate.role else ''
             target_role = str(role).lower().strip() if role else ''
             
-            if (candidate.email == email or candidate.username == email) and candidate.is_active and candidate_role == target_role:
+            # Compare email/username as strings (handles EncryptedType)
+            candidate_email = str(candidate.email).lower().strip() if candidate.email else ''
+            candidate_username = str(candidate.username).lower().strip() if candidate.username else ''
+            input_email = str(email).lower().strip() if email else ''
+            
+            current_app.logger.debug(f"Checking candidate - username: {candidate_username}, email: {candidate_email}, role: {candidate_role}, active: {candidate.is_active}")
+            
+            if (candidate_email == input_email or candidate_username == input_email) and candidate.is_active and candidate_role == target_role:
+                current_app.logger.info(f"Found matching user: {candidate_username}")
                 if candidate.check_password(password):
                     user = candidate
+                    current_app.logger.info(f"Password verified for user: {candidate_username}")
                     break
+                else:
+                    current_app.logger.warning(f"Password mismatch for user: {candidate_username}")
         
         if user:
             if not getattr(user, 'is_email_verified', True):
@@ -5854,6 +5896,7 @@ def login():
                     prefill_role=role,
                 )
 
+            current_app.logger.info(f"Logging in user: {user.username}, role: {user.role}")
             login_user(user, remember=remember, fresh=True)
             user.last_login = get_eat_now()
             try:
@@ -5879,8 +5922,10 @@ def login():
                 else:
                     next_page = url_for('home')
             
+            current_app.logger.info(f"Redirecting to: {next_page}")
             return redirect(next_page)
         
+        current_app.logger.warning(f"Login failed for email/username: {email}, role: {role}")
         flash('Invalid credentials or role', 'danger')
     
     return render_template(
@@ -8397,6 +8442,18 @@ def delete_financial_report(report_id):
         flash(f'Error deleting report: {str(e)}', 'danger')
 
     return redirect(url_for('financial_reports'))
+
+@app.route("/db-keepalive")
+def db_keepalive():
+    if request.headers.get("X-CRON-SECRET") != os.getenv("CRON_SECRET"):
+        return {"error": "unauthorized"}, 401
+
+    cur = db.cursor()
+    cur.execute("SELECT 1")
+    cur.fetchone()
+    cur.close()
+
+    return {"db": "awake"}, 200
 
 
 # =================================================================================================
@@ -18934,6 +18991,29 @@ def pharmacist_dashboard_stats():
         current_app.logger.error(f"Failed to load pharmacist dashboard stats: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': 'Failed to load dashboard stats'}), 500
 
+@app.route('/pharmacist/api/insurance-providers')
+@login_required
+def pharmacist_insurance_providers():
+    """Fetch all insurance providers for pharmacist use."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('pharmacist', 'receptionist', 'admin'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        providers = InsuranceProvider.query.order_by(InsuranceProvider.name).all()
+        return jsonify({
+            'success': True,
+            'providers': [{
+                'id': p.id,
+                'name': p.name,
+                'phone': p.phone,
+                'email': p.email
+            } for p in providers]
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error fetching insurance providers: {str(e)}")
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
+
 @app.route('/pharmacist/sale/<int:sale_id>/receipt-data')
 @login_required
 def pharmacist_sale_receipt_data(sale_id):
@@ -21332,6 +21412,8 @@ def generate_receipt(sale_id):
         sale=sale,
         related_sales=related_sales,
         now=datetime.now(),
+        amount_given=None,
+        change=None,
     )
 
     # Persist for future reprints if transaction exists
@@ -25273,7 +25355,9 @@ def complete_prescription():
 @app.route('/receptionist')
 @login_required
 def receptionist_dashboard():
-    if current_user.role != 'receptionist':
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
@@ -25320,7 +25404,9 @@ def receptionist_dashboard():
 @app.route('/receptionist/patients')
 @login_required
 def receptionist_patients():
-    if current_user.role != 'receptionist':
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
@@ -25330,7 +25416,9 @@ def receptionist_patients():
 @app.route('/receptionist/patient/<int:patient_id>')
 @login_required
 def receptionist_patient_details(patient_id):
-    if current_user.role != 'receptionist':
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
@@ -25368,7 +25456,9 @@ def receptionist_patient_details(patient_id):
 @app.route('/receptionist/billing', methods=['POST'])
 @login_required
 def create_bill():
-    if current_user.role != 'receptionist':
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
 
@@ -25630,7 +25720,9 @@ def create_bill():
 @app.route('/receptionist/sale/<int:sale_id>/receipt')
 @login_required
 def receptionist_receipt(sale_id):
-    if current_user.role != 'receptionist':
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
@@ -26301,7 +26393,9 @@ def get_notifications():
 @app.route('/receptionist/billing')
 @login_required
 def receptionist_billing():
-    if current_user.role != 'receptionist':
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     

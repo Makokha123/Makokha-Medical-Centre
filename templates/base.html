@@ -518,34 +518,6 @@
         }
     </style>
     
-    <style>
-        /* EAT Clock (floating, no background) */
-        #eatClock {
-            position: fixed;
-            top: 12px;
-            right: 12px;
-            z-index: 2000;
-            background: transparent !important;
-            box-shadow: none !important;
-            border: 0 !important;
-            padding: 0 !important;
-            font-size: 0.75rem;
-        }
-        
-        /* Hide clock on all mobile devices - portrait and landscape */
-        @media (min-width: 320px) and (max-width: 480px) {
-            #eatClock {
-                display: none;
-            }
-        }
-        
-        @media (min-width: 481px) and (max-width: 767px) {
-            #eatClock {
-                display: none;
-            }
-        }
-    </style>
-
     {% block extra_css %}{% endblock %}
     <!-- jQuery 3.7.1 with correct SRI and robust fallback -->
     <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
@@ -602,9 +574,6 @@
     <button class="toggle-nav" id="toggleNav">
         <i class="fas fa-bars"></i>
     </button>
-
-    <!-- EAT Clock (floating, no background) -->
-    <div id="eatClock" class="text-success small fw-semibold"></div>
 
     <!-- Sidebar Navigation -->
     <div class="sidebar" id="sidebar">
@@ -1597,40 +1566,6 @@ document.addEventListener("DOMContentLoaded", () => {
             subtree: true
         });
     });
-    </script>
-
-    <!-- EAT Clock Script (Africa/Nairobi) -->
-    <script>
-    (function(){
-        function formatEAT(){
-            try {
-                return new Intl.DateTimeFormat('en-KE', {
-                    timeZone: 'Africa/Nairobi',
-                    weekday: 'short',
-                    year: 'numeric',
-                    month: 'short',
-                    day: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: false
-                }).format(new Date());
-            } catch (e) {
-                return new Date().toLocaleString();
-            }
-        }
-
-        function tick(){
-            var el = document.getElementById('eatClock');
-            if (!el) return;
-            el.textContent = formatEAT() + ' EAT';
-        }
-
-        document.addEventListener('DOMContentLoaded', function(){
-            tick();
-            setInterval(tick, 1000);
-        });
-    })();
     </script>
     
     {% block extra_js %}{% endblock %}

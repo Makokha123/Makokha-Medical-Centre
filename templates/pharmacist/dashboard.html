@@ -492,9 +492,6 @@
     </style>
 </head>
 <body>
-    <!-- EAT Clock (top-right) -->
-    <div id="eatClock" class="position-fixed top-0 start-50 translate-middle-x p-2 text-success bg-transparent fs-4 fw-semibold" style="z-index: 1100; pointer-events: none;"></div>
-
     <!-- Header -->
     <div class="header">
         <h4 class="mb-0">Pharmacist Dashboard</h4>
@@ -595,6 +592,32 @@
                     
                     <div class="cart-total mt-3">
                         Total: Ksh <span id="cart-total">0.00</span>
+                    </div>
+                    
+                    <!-- Payment Method Selection -->
+                    <div class="payment-methods mt-3 mb-3">
+                        <label class="form-label fw-bold">Payment Method:</label>
+                        <div class="d-grid gap-2">
+                            <input type="radio" class="btn-check" name="payment-method" id="payment-cash" value="cash" checked>
+                            <label class="btn btn-outline-success rounded-pill" for="payment-cash" title="Cash Payment">
+                                <i class="bi bi-cash-coin"></i> Cash
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="payment-method" id="payment-mpesa" value="mpesa">
+                            <label class="btn btn-outline-primary rounded-pill" for="payment-mpesa" title="M-Pesa Payment">
+                                <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height: 20px; width: auto; vertical-align: middle; margin-right: 5px;"> M-Pesa
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="payment-method" id="payment-insurance" value="insurance">
+                            <label class="btn btn-outline-info rounded-pill" for="payment-insurance" title="Insurance Payment">
+                                <i class="bi bi-shield-check"></i> Insurance
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="payment-method" id="payment-card" value="card">
+                            <label class="btn btn-outline-warning rounded-pill" for="payment-card" title="Card Payment">
+                                <i class="bi bi-credit-card"></i> Card
+                            </label>
+                        </div>
                     </div>
                     
                     <div class="d-flex justify-content-between mt-3">
@@ -858,6 +881,39 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Insurance Provider Modal -->
+    <div class="modal fade" id="insuranceProviderModal" tabindex="-1" aria-labelledby="insuranceProviderModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="insuranceProviderModalLabel">Insurance Payment</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Total Amount: Ksh <span id="insurance-total-amount">0.00</span></label>
+                    </div>
+                    <div class="mb-3">
+                        <label for="insurance-provider-select" class="form-label">Select Insurance Provider</label>
+                        <select class="form-select" id="insurance-provider-select" required>
+                            <option value="">-- Select Provider --</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="policy-number-input" class="form-label">Policy/Member Number</label>
+                        <input type="text" class="form-control" id="policy-number-input" placeholder="Enter policy or member number" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirm-insurance-payment-btn">
+                        <i class="bi bi-check-circle"></i> Confirm Payment
+                    </button>
                 </div>
             </div>
         </div>
@@ -1330,9 +1386,32 @@
             let prescriptionCheckInterval = null;
             let lastPrescriptionCheck = null;
             let activeControlledPrescriptionId = null;
+            let insuranceProviders = []; // Store insurance providers
             // Resize debounce and focus-guard to avoid rebuilding cart while typing on mobile
             let resizeTimer = null;
             let ignoreResizeUpdate = false;
+
+            // Load insurance providers
+            function loadInsuranceProviders() {
+                $.ajax({
+                    url: '/pharmacist/api/insurance-providers',
+                    method: 'GET',
+                    success: function(response) {
+                        if (response.success) {
+                            insuranceProviders = response.providers;
+                            const select = $('#insurance-provider-select');
+                            select.empty();
+                            select.append('<option value="">-- Select Provider --</option>');
+                            insuranceProviders.forEach(provider => {
+                                select.append(`<option value="${provider.id}" data-name="${provider.name}">${provider.name}</option>`);
+                            });
+                        }
+                    },
+                    error: function() {
+                        console.error('Failed to load insurance providers');
+                    }
+                });
+            }
 
             // Initialize toasts now that DOM is ready
             initializeToasts();
@@ -2483,23 +2562,60 @@
                 $('#refund-results').empty();
             }
             
-            // Confirm sale - REAL BACKEND
+            // Confirm sale - REAL BACKEND with payment method selection
             function confirmSale() {
                 if (cart.length === 0) {
                     alert('Cart is empty');
                     return;
                 }
                 
-                // Ask for payment method
-                const paymentMethod = prompt('Enter payment method (cash, card, mobile, insurance):', 'cash');
+                // Get selected payment method from radio buttons
+                const paymentMethod = $('input[name="payment-method"]:checked').val() || 'cash';
                 
-                if (!paymentMethod) {
-                    return;
+                // Calculate total
+                const totalAmount = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
+                
+                // Handle different payment methods
+                if (paymentMethod === 'cash') {
+                    // Cash payment - ask for amount given
+                    const amountGiven = prompt(`Total: Ksh ${totalAmount.toFixed(2)}\n\nEnter amount given by customer:`, totalAmount.toFixed(2));
+                    
+                    if (amountGiven === null) {
+                        return; // User cancelled
+                    }
+                    
+                    const amountGivenFloat = parseFloat(amountGiven);
+                    if (isNaN(amountGivenFloat) || amountGivenFloat < totalAmount) {
+                        alert('Invalid amount. Amount given must be at least the total amount.');
+                        return;
+                    }
+                    
+                    processCashSale(totalAmount, amountGivenFloat);
+                    
+                } else if (paymentMethod === 'mpesa') {
+                    // M-Pesa payment - initiate Lipa Na M-Pesa flow
+                    initiateMpesaPayment(totalAmount);
+                    
+                } else if (paymentMethod === 'insurance') {
+                    // Insurance payment - initiate insurance flow
+                    initiateInsurancePayment(totalAmount);
+                    
+                } else if (paymentMethod === 'card') {
+                    // Card payment - initiate card payment flow
+                    initiateCardPayment(totalAmount);
+                    
+                } else {
+                    // Default to cash
+                    processCashSale(totalAmount, totalAmount);
                 }
-                
+            }
+            
+            // Process cash sale
+            function processCashSale(totalAmount, amountGiven) {
                 const saleData = {
                     items: cart,
-                    payment_method: paymentMethod,
+                    payment_method: 'cash',
+                    amount_given: amountGiven,
                     csrf_token: csrfToken
                 };
                 
@@ -2511,13 +2627,161 @@
                     success: function(response) {
                         if (response.success) {
                             currentSale = response;
-                            showReceipt(response.sale_id); // This will open your receipt template
+                            showReceipt(response.sale_id);
+                            clearCart();
                         } else {
                             showErrorToast(response.error || 'Failed to process sale');
                         }
                     },
                     error: function(xhr) {
                         const error = xhr.responseJSON?.error || 'Failed to process sale';
+                        showErrorToast(error);
+                    }
+                });
+            }
+            
+            // Initiate M-Pesa payment
+            function initiateMpesaPayment(totalAmount) {
+                const phoneNumber = prompt(`Total: Ksh ${totalAmount.toFixed(2)}\n\nEnter M-Pesa phone number (e.g., 254712345678):`);
+                
+                if (!phoneNumber) {
+                    return; // User cancelled
+                }
+                
+                // Show loading
+                showSuccessToast('Initiating M-Pesa payment... Please check your phone.');
+                
+                const saleData = {
+                    items: cart,
+                    payment_method: 'mpesa',
+                    phone_number: phoneNumber,
+                    amount: totalAmount,
+                    csrf_token: csrfToken
+                };
+                
+                $.ajax({
+                    url: '/pharmacist/cart_sale',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(saleData),
+                    success: function(response) {
+                        if (response.success) {
+                            currentSale = response;
+                            showSuccessToast('M-Pesa payment initiated successfully!');
+                            showReceipt(response.sale_id);
+                            clearCart();
+                        } else {
+                            showErrorToast(response.error || 'Failed to initiate M-Pesa payment');
+                        }
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON?.error || 'Failed to initiate M-Pesa payment';
+                        showErrorToast(error);
+                    }
+                });
+            }
+            
+            // Initiate insurance payment
+            function initiateInsurancePayment(totalAmount) {
+                // Set the total amount in the modal
+                $('#insurance-total-amount').text(totalAmount.toFixed(2));
+                
+                // Clear previous selections
+                $('#insurance-provider-select').val('');
+                $('#policy-number-input').val('');
+                
+                // Show the modal
+                const insuranceModal = new bootstrap.Modal(document.getElementById('insuranceProviderModal'));
+                insuranceModal.show();
+                
+                // Handle confirm button
+                $('#confirm-insurance-payment-btn').off('click').on('click', function() {
+                    const providerId = $('#insurance-provider-select').val();
+                    const providerName = $('#insurance-provider-select option:selected').data('name');
+                    const policyNumber = $('#policy-number-input').val().trim();
+                    
+                    if (!providerId) {
+                        alert('Please select an insurance provider');
+                        return;
+                    }
+                    
+                    if (!policyNumber) {
+                        alert('Please enter policy/member number');
+                        return;
+                    }
+                    
+                    // Close modal
+                    insuranceModal.hide();
+                    
+                    const saleData = {
+                        items: cart,
+                        payment_method: 'insurance',
+                        insurance_provider_id: providerId,
+                        insurance_provider: providerName,
+                        policy_number: policyNumber,
+                        amount: totalAmount,
+                        csrf_token: csrfToken
+                    };
+                    
+                    $.ajax({
+                        url: '/pharmacist/cart_sale',
+                        method: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify(saleData),
+                        success: function(response) {
+                            if (response.success) {
+                                currentSale = response;
+                                showSuccessToast('Insurance payment recorded successfully!');
+                                showReceipt(response.sale_id);
+                                clearCart();
+                            } else {
+                                showErrorToast(response.error || 'Failed to process insurance payment');
+                            }
+                        },
+                        error: function(xhr) {
+                            const error = xhr.responseJSON?.error || 'Failed to process insurance payment';
+                            showErrorToast(error);
+                        }
+                    });
+                });
+            }
+            
+            // Initiate card payment
+            function initiateCardPayment(totalAmount) {
+                const cardType = prompt(`Total: Ksh ${totalAmount.toFixed(2)}\n\nEnter card type (Visa/Mastercard/etc):`);
+                
+                if (!cardType) {
+                    return; // User cancelled
+                }
+                
+                const lastFourDigits = prompt('Enter last 4 digits of card (optional):', '****');
+                
+                const saleData = {
+                    items: cart,
+                    payment_method: 'card',
+                    card_type: cardType,
+                    card_last_four: lastFourDigits,
+                    amount: totalAmount,
+                    csrf_token: csrfToken
+                };
+                
+                $.ajax({
+                    url: '/pharmacist/cart_sale',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(saleData),
+                    success: function(response) {
+                        if (response.success) {
+                            currentSale = response;
+                            showSuccessToast('Card payment recorded successfully!');
+                            showReceipt(response.sale_id);
+                            clearCart();
+                        } else {
+                            showErrorToast(response.error || 'Failed to process card payment');
+                        }
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON?.error || 'Failed to process card payment';
                         showErrorToast(error);
                     }
                 });
@@ -3163,6 +3427,7 @@
                 loadDrugs();
                 loadPrescriptions();
                 loadControlledPrescriptions();
+                loadInsuranceProviders(); // Load insurance providers
                 loadCartFromStorage(); // Load cart from localStorage
                 loadControlledCartFromStorage(); // Load controlled cart from localStorage
                 updateControlledCartDisplay(); // Update display if cart has items
