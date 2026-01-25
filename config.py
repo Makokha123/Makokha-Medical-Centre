@@ -26,7 +26,12 @@ def _parse_bool(val: Optional[str], default: bool = False) -> bool:
 
 def _parse_int(val: Optional[str], default: int) -> int:
     try:
-        return int(str(val).strip())
+        s = str(val).strip()
+        # Tolerate float-like env values such as "30.0".
+        try:
+            return int(s)
+        except Exception:
+            return int(float(s))
     except Exception:
         return default
 
@@ -91,11 +96,10 @@ class Config:
     MAX_CONTENT_LENGTH = _parse_int(_get_env("MAX_CONTENT_LENGTH", str(16 * 1024 * 1024)), 16 * 1024 * 1024)  # 16MB
 
     # Email (Resend)
-    # Use Gmail ONLY as recipient or reply-to (do not use Gmail as the sender domain).
     RESEND_API_KEY = _get_env("RESEND_API_KEY")
-    RESEND_FROM = _get_env("RESEND_FROM", "Makokha Medical Centre <onboarding@resend.dev>")
-    RESEND_REPLY_TO = _get_env("RESEND_REPLY_TO", "makokhamedicalcentre2025@gmail.com")
-    RESEND_TIMEOUT_SECONDS = float(_get_env("RESEND_TIMEOUT_SECONDS", "30"))
+    RESEND_FROM = _get_env("RESEND_FROM")
+    RESEND_REPLY_TO = _get_env("RESEND_REPLY_TO")
+    RESEND_TIMEOUT_SECONDS = _parse_int(_get_env("RESEND_TIMEOUT_SECONDS", "30"), 30)
     RESEND_MAX_RETRIES = _parse_int(_get_env("RESEND_MAX_RETRIES", "3"), 3)
 
     # AI / LLMs

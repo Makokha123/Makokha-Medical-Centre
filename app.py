@@ -372,17 +372,48 @@ login_manager.login_view = 'auth.login'
 # Initialize production-ready email system (Resend-only)
 from utils.email_production import EmailAuditLogger, ResendConfig, ResendEmailSender
 
+
+def _coerce_int(value, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    s = str(value).strip()
+    if not s:
+        return default
+    try:
+        return int(s)
+    except Exception:
+        try:
+            return int(float(s))
+        except Exception:
+            return default
+
 _resend_api_key = (os.getenv('RESEND_API_KEY') or app.config.get('RESEND_API_KEY') or '').strip()
 _resend_from = (os.getenv('RESEND_FROM') or app.config.get('RESEND_FROM') or 'Makokha Medical Centre <onboarding@resend.dev>').strip()
 _resend_reply_to = (os.getenv('RESEND_REPLY_TO') or app.config.get('RESEND_REPLY_TO') or 'makokhamedicalcentre2025@gmail.com').strip()
+
+_resend_timeout_seconds = _coerce_int(
+    os.getenv('RESEND_TIMEOUT_SECONDS') or app.config.get('RESEND_TIMEOUT_SECONDS', 30),
+    30,
+)
+_resend_max_retries = _coerce_int(
+    os.getenv('RESEND_MAX_RETRIES') or app.config.get('RESEND_MAX_RETRIES', 3),
+    3,
+)
 
 _resend_config = ResendConfig(
     api_key=_resend_api_key,
     from_address=_resend_from,
     reply_to=_resend_reply_to,
-    timeout_seconds=int(os.getenv('RESEND_TIMEOUT_SECONDS', str(app.config.get('RESEND_TIMEOUT_SECONDS', 30) or 30))),
-    max_retries=int(os.getenv('RESEND_MAX_RETRIES', str(app.config.get('RESEND_MAX_RETRIES', 3) or 3))),
+    timeout_seconds=_resend_timeout_seconds,
+    max_retries=_resend_max_retries,
 )
+
 is_valid, error_msg = _resend_config.validate()
 if is_valid:
     app.logger.info("Email config: Using Resend API")
@@ -9060,7 +9091,21 @@ def api_financial_dashboard_monthly():
         previous_metrics = DictToObj(previous_metrics)
         
         weekly_breakdown = _get_weekly_breakdown(start_date, end_date)
-        budget_data = _get_budget_variance(year, month)
+
+        budget_variance = _get_budget_variance(year, month)
+        budget_data = []
+        if isinstance(budget_variance, dict):
+            for row in (budget_variance.get('budgets') or []):
+                if isinstance(row, dict):
+                    budget_data.append({
+                        'category': row.get('department', '') or '',
+                        'budget': float(row.get('budgeted', 0) or 0),
+                        'actual': float(row.get('actual', 0) or 0),
+                        # Template renders this as a percentage.
+                        'variance': float(row.get('variance_pct', 0) or 0),
+                    })
+        elif isinstance(budget_variance, list):
+            budget_data = budget_variance
         
         # Convert weekly_breakdown items to DictToObj for template access
         weekly_breakdown = [DictToObj(week) for week in weekly_breakdown]
