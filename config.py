@@ -90,13 +90,13 @@ class Config:
     BACKUP_FOLDER = _get_env("BACKUP_FOLDER", "backups")
     MAX_CONTENT_LENGTH = _parse_int(_get_env("MAX_CONTENT_LENGTH", str(16 * 1024 * 1024)), 16 * 1024 * 1024)  # 16MB
 
-    # Email (Brevo/Gmail)
-    MAIL_SERVER = _get_env("MAIL_SERVER", "smtp-relay.brevo.com")
-    MAIL_PORT = _parse_int(_get_env("MAIL_PORT", "587"), 587)
-    MAIL_USE_TLS = _parse_bool(_get_env("MAIL_USE_TLS", "true"), True)
-    MAIL_USERNAME = _get_env("MAIL_USERNAME") or _get_env("BREVO_EMAIL")
-    MAIL_PASSWORD = _get_env("MAIL_PASSWORD") or _get_env("BREVO_SMTP_KEY")
-    MAIL_DEFAULT_SENDER = _get_env("MAIL_DEFAULT_SENDER") or (MAIL_USERNAME or "no-reply@yourdomain.com")
+    # Email (Resend)
+    # Use Gmail ONLY as recipient or reply-to (do not use Gmail as the sender domain).
+    RESEND_API_KEY = _get_env("RESEND_API_KEY")
+    RESEND_FROM = _get_env("RESEND_FROM", "Makokha Medical Centre <onboarding@resend.dev>")
+    RESEND_REPLY_TO = _get_env("RESEND_REPLY_TO", "makokhamedicalcentre2025@gmail.com")
+    RESEND_TIMEOUT_SECONDS = float(_get_env("RESEND_TIMEOUT_SECONDS", "30"))
+    RESEND_MAX_RETRIES = _parse_int(_get_env("RESEND_MAX_RETRIES", "3"), 3)
 
     # AI / LLMs
     DEEPSEEK_CONFIG = {

@@ -1,11 +1,32 @@
-{% if not is_embed %}
 {% extends "base.html" %}
 
 {% block title %}Controlled Drug Inventory{% endblock %}
 
 {% block content %}
-{% endif %}
 <style>
+  /* Match pharmacist dashboard compact font sizing */
+  .controlled-inventory-root {
+    font-size: 9px !important;
+  }
+  .controlled-inventory-root .card,
+  .controlled-inventory-root .card-body,
+  .controlled-inventory-root .card-header,
+  .controlled-inventory-root .table,
+  .controlled-inventory-root .form-label,
+  .controlled-inventory-root .form-control,
+  .controlled-inventory-root .form-select,
+  .controlled-inventory-root .btn,
+  .controlled-inventory-root .badge,
+  .controlled-inventory-root p,
+  .controlled-inventory-root span,
+  .controlled-inventory-root div,
+  .controlled-inventory-root label,
+  .controlled-inventory-root input,
+  .controlled-inventory-root select,
+  .controlled-inventory-root textarea {
+    font-size: 9px !important;
+  }
+
   /* Match normal Drug Inventory card styling (from pharmacist dashboard) */
   .drug-card {
     transition: all 0.3s ease;
@@ -124,7 +145,7 @@
   }
 </style>
 
-<div class="container-fluid py-3">
+<div class="container-fluid py-3 controlled-inventory-root">
   {# Flash Messages (embed only; base.html already renders flashes) #}
   {% if is_embed %}
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -1182,6 +1203,4 @@
   renderCart();
 })();
 </script>
-{% if not is_embed %}
 {% endblock %}
-{% endif %}

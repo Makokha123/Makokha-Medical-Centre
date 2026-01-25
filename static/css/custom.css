@@ -340,3 +340,14 @@
 .form-control, .form-select {
     padding: 0.375rem 0.75rem;
 }
+
+/* ===== GLOBAL FONT SIZE (SYSTEM-WIDE) ===== */
+/* Force the entire system to use 9px text size. */
+html, body {
+    font-size: 9px !important;
+}
+
+/* Apply to all elements for consistent UI sizing across templates. */
+body, body * {
+    font-size: 9px !important;
+}

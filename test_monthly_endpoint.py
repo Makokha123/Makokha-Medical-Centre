@@ -1,79 +1,60 @@
-#!/usr/bin/env python
-"""Test script to verify monthly financial dashboard endpoint"""
+"""Pytest: verify monthly financial dashboard endpoint.
 
-import requests
-from datetime import datetime, date
+This test uses Flask's test client instead of hitting localhost, so it can run
+in CI and locally without requiring a separately running server.
+"""
 
-# Base URL
-BASE_URL = 'http://localhost:5000'
+from __future__ import annotations
 
-# Test credentials
-TEST_USER = 'admin@clinic.local'
-TEST_PASSWORD = 'admin123'
+import pytest
+
+
+def _find_active_admin_user(User):
+    for candidate in User.query.all():
+        role = str(getattr(candidate, "role", "") or "").lower().strip()
+        if role == "admin" and getattr(candidate, "is_active", False):
+            return candidate
+    return None
+
+
+def _force_login(client, user_id: int):
+    # Flask-Login stores the user id in the session under '_user_id'.
+    with client.session_transaction() as sess:
+        sess["_user_id"] = str(user_id)
+        sess["_fresh"] = True
+
 
 def test_monthly_endpoint():
-    """Test the monthly financial dashboard endpoint"""
-    
-    session = requests.Session()
-    
-    # First, login
-    print("1. Logging in...")
-    login_data = {
-        'username': TEST_USER,
-        'password': TEST_PASSWORD
-    }
-    
-    response = session.post(f'{BASE_URL}/auth/login', data=login_data)
-    if response.status_code != 200:
-        print(f"   ❌ Login failed: {response.status_code}")
-        print(f"   Response: {response.text[:200]}")
-        return False
-    
-    print("   ✅ Login successful")
-    
-    # Test 1: Single month request
-    print("\n2. Testing single month endpoint...")
-    try:
-        response = session.get(
-            f'{BASE_URL}/api/financial/dashboard/monthly',
-            params={'year': 2026, 'month': 1}
-        )
-        
-        if response.status_code == 200:
-            print(f"   ✅ Single month request successful")
-            print(f"   Response length: {len(response.text)} chars")
-        else:
-            print(f"   ❌ Request failed with status {response.status_code}")
-            print(f"   Response: {response.text[:500]}")
-            return False
-    except Exception as e:
-        print(f"   ❌ Error: {str(e)}")
-        return False
-    
-    # Test 2: Date range request
-    print("\n3. Testing date range endpoint...")
-    try:
-        response = session.get(
-            f'{BASE_URL}/api/financial/dashboard/monthly',
-            params={
-                'startDate': '2025-11-01',
-                'endDate': '2026-01-31'
-            }
-        )
-        
-        if response.status_code == 200:
-            print(f"   ✅ Date range request successful")
-            print(f"   Response length: {len(response.text)} chars")
-        else:
-            print(f"   ❌ Request failed with status {response.status_code}")
-            print(f"   Response: {response.text[:500]}")
-            return False
-    except Exception as e:
-        print(f"   ❌ Error: {str(e)}")
-        return False
-    
-    print("\n✅ All tests passed!")
-    return True
+    from app import app, User
 
-if __name__ == '__main__':
-    test_monthly_endpoint()
+    app.config["TESTING"] = True
+
+    with app.app_context():
+        try:
+            admin_user = _find_active_admin_user(User)
+        except Exception as e:
+            pytest.skip(f"Database not available for monthly endpoint test: {e}")
+
+        if not admin_user:
+            pytest.skip("No active admin user found in database")
+
+        admin_user_id = int(admin_user.id)
+
+    with app.test_client() as client:
+        _force_login(client, admin_user_id)
+
+        # Test 1: Single month request
+        resp = client.get(
+            "/api/financial/dashboard/monthly",
+            query_string={"year": 2026, "month": 1},
+        )
+        assert resp.status_code == 200
+        assert resp.data
+
+        # Test 2: Date range request
+        resp = client.get(
+            "/api/financial/dashboard/monthly",
+            query_string={"startDate": "2025-11-01", "endDate": "2026-01-31"},
+        )
+        assert resp.status_code == 200
+        assert resp.data

@@ -1868,6 +1868,10 @@
 
             // When the Controlled Inventory subtab is selected, automatically show the embedded page.
             document.getElementById('controlled-inventory-subtab')?.addEventListener('shown.bs.tab', function() {
+                const frame = document.getElementById('controlledInventoryFrame');
+                if (frame) {
+                    frame.setAttribute('src', getControlledInventoryEmbedSrc());
+                }
                 showControlledInventoryEmbed();
             });
 

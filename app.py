@@ -18,8 +18,20 @@ import openai
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, date, timezone
 
-# EAT (East African Time) / Africa-Nairobi
-EAT = timezone(timedelta(hours=3))
+# Global timezone used across the app and scheduler.
+# Prefer stdlib ZoneInfo; fall back gracefully.
+try:
+    from zoneinfo import ZoneInfo
+
+    EAT = ZoneInfo("Africa/Nairobi")
+except Exception:
+    try:
+        from pytz import timezone as pytz_timezone
+
+        EAT = pytz_timezone("Africa/Nairobi")
+    except Exception:
+        # Last-resort fixed-offset EAT (UTC+3)
+        EAT = timezone(timedelta(hours=3))
 
 def get_eat_now():
     """Get current time in EAT (Africa/Nairobi)."""
@@ -43,9 +55,6 @@ import tempfile
 import secrets
 import imaplib
 import email
-import smtplib
-import ssl
-from email.message import EmailMessage
 from botocore.exceptions import ClientError
 from cryptography.fernet import Fernet
 import boto3 
@@ -62,7 +71,6 @@ import logging
 from sqlalchemy.exc import OperationalError, DBAPIError
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -256,12 +264,6 @@ app.config['BACKUP_FOLDER'] = os.getenv('BACKUP_FOLDER', 'backups')
 app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 16 * 1024 * 1024))  # 16MB max upload size
 app.config['FERNET_KEY'] = os.getenv('FERNET_KEY')
 app.config['DEEPSEEK_API_KEY'] = os.getenv('DEEPSEEK_API_KEY')
-app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
-app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
-app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'true').lower() == 'true'
-app.config['MAIL_USERNAME'] = (os.getenv('MAIL_USERNAME') or '').strip()
-app.config['MAIL_PASSWORD'] = (os.getenv('MAIL_PASSWORD') or '').strip()
-app.config['MAIL_DEFAULT_SENDER'] = (os.getenv('MAIL_DEFAULT_SENDER') or app.config['MAIL_USERNAME'] or '').strip()
 app.config['RESET_TOKEN_EXPIRATION'] = int(os.getenv('RESET_TOKEN_EXPIRATION', 3600))
 
 # --- Safaricom Daraja (M-Pesa) configuration (env-driven) ---
@@ -361,81 +363,34 @@ migrate = Migrate(app, db)
 
 
 
-mail = Mail(app)
 ts = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'auth.login'
 
-# Initialize production-ready email system
-from utils.email_production import EmailConfig, EmailSender, EmailAuditLogger
+# Initialize production-ready email system (Resend-only)
+from utils.email_production import EmailAuditLogger, ResendConfig, ResendEmailSender
 
-# Set default sender with proper fallback - use MAIL_USERNAME which is a valid email
-# If MAIL_DEFAULT_SENDER is set but not a valid email, fall back to MAIL_USERNAME
-_mail_username = app.config.get('MAIL_USERNAME', '').strip()
-_mail_default_sender = app.config.get('MAIL_DEFAULT_SENDER', '').strip()
+_resend_api_key = (os.getenv('RESEND_API_KEY') or app.config.get('RESEND_API_KEY') or '').strip()
+_resend_from = (os.getenv('RESEND_FROM') or app.config.get('RESEND_FROM') or 'Makokha Medical Centre <onboarding@resend.dev>').strip()
+_resend_reply_to = (os.getenv('RESEND_REPLY_TO') or app.config.get('RESEND_REPLY_TO') or 'makokhamedicalcentre2025@gmail.com').strip()
 
-# Check if MAIL_DEFAULT_SENDER is actually an email address (contains @)
-if _mail_default_sender and '@' in _mail_default_sender:
-    _default_sender = _mail_default_sender
+_resend_config = ResendConfig(
+    api_key=_resend_api_key,
+    from_address=_resend_from,
+    reply_to=_resend_reply_to,
+    timeout_seconds=int(os.getenv('RESEND_TIMEOUT_SECONDS', str(app.config.get('RESEND_TIMEOUT_SECONDS', 30) or 30))),
+    max_retries=int(os.getenv('RESEND_MAX_RETRIES', str(app.config.get('RESEND_MAX_RETRIES', 3) or 3))),
+)
+is_valid, error_msg = _resend_config.validate()
+if is_valid:
+    app.logger.info("Email config: Using Resend API")
 else:
-    # Fall back to MAIL_USERNAME since it's a valid email
-    _default_sender = _mail_username or 'noreply@makokha.local'
+    app.logger.warning(f"⚠ Email config: Resend not configured: {error_msg}. Emails will not send.")
 
-# Try to use SendGrid if SENDGRID_API_KEY is available (recommended for Render)
-_use_sendgrid = False
-_sendgrid_api_key = os.getenv('SENDGRID_API_KEY', '').strip()
-if _sendgrid_api_key:
-    try:
-        import sendgrid
-        _use_sendgrid = True
-        app.logger.info("SendGrid API key detected - will use SendGrid for email sending")
-    except ImportError:
-        app.logger.warning("SENDGRID_API_KEY set but sendgrid library not installed. Install with: pip install sendgrid")
+_email_sender = ResendEmailSender(_resend_config)
 
-# Configure email based on available service
-if _use_sendgrid:
-    # SendGrid configuration - works on Render without network restrictions
-    _email_config = EmailConfig(
-        smtp_server='smtp.sendgrid.net',
-        smtp_port=587,
-        use_tls=True,
-        username='apikey',  # SendGrid requires username='apikey'
-        password=_sendgrid_api_key,
-        from_address=_default_sender,
-        timeout_seconds=int(os.getenv('MAIL_TIMEOUT_SECONDS', '30')),
-        max_retries=int(os.getenv('MAIL_MAX_RETRIES', '3')),
-    )
-    app.logger.info("Email config: Using SendGrid SMTP (port 587)")
-else:
-    # Fall back to configured SMTP server (Gmail, Brevo, etc)
-    _email_config = EmailConfig(
-        smtp_server=app.config.get('MAIL_SERVER', 'smtp-relay.brevo.com'),
-        smtp_port=int(app.config.get('MAIL_PORT', 587)),
-        use_tls=app.config.get('MAIL_USE_TLS', True),
-        username=_mail_username,
-        password=app.config.get('MAIL_PASSWORD', ''),
-        from_address=_default_sender,
-        timeout_seconds=int(os.getenv('MAIL_TIMEOUT_SECONDS', '30')),
-        max_retries=int(os.getenv('MAIL_MAX_RETRIES', '3')),
-    )
-    _smtp_server = app.config.get('MAIL_SERVER', 'smtp-relay.brevo.com')
-    app.logger.info(f"Email config: Using {_smtp_server}:{app.config.get('MAIL_PORT', 587)} (SMTP)")
-
-
-# Validate email configuration on startup
-if _email_config.is_configured():
-    is_valid, error_msg = _email_config.validate()
-    if is_valid:
-        app.logger.info("✓ Email configuration is valid and ready for production")
-    else:
-        app.logger.error(f"✗ Email configuration error: {error_msg}")
-else:
-    app.logger.warning("⚠ Email is not fully configured. Some features may not send emails.")
-
-# Initialize email sender and audit logger
-_email_sender = EmailSender(_email_config)
 _email_audit_logger = EmailAuditLogger(
     log_file=os.getenv('EMAIL_AUDIT_LOG', 'instance/email_audit.log')
 )
@@ -5968,46 +5923,15 @@ def logout():
     return redirect(url_for('auth.login'))
 
 
-def send_async_email(app, msg):
-    """Send email asynchronously in a background thread."""
-    with app.app_context():
-        mail.send(msg)
-
-
-def _strip_env_value(val: str | None) -> str:
-    s = str(val or '').strip()
-    if len(s) >= 2 and (s[0] == s[-1]) and s[0] in ("'", '"'):
-        s = s[1:-1].strip()
-    return s
-
-
-def _normalize_smtp_password(pw: str | None) -> str:
-    """Normalize SMTP passwords copied from UIs.
-
-    Gmail App Passwords are often displayed in 4-char groups with spaces.
-    Those spaces must not be sent to SMTP AUTH.
-    """
-    s = _strip_env_value(pw)
-    s = s.replace('\t', '').strip()
-
-    if ' ' in s:
-        compact = s.replace(' ', '')
-        # Gmail App Passwords are 16 chars; allow common compact lengths.
-        if compact.isalnum() and len(compact) in (16, 20, 24, 32):
-            s = compact
-
-    return s
-
-
-def _send_system_email(*, recipient: str, subject: str, html: str, text_body: str | None = None) -> None:
-    """Send system emails (user OTP, password reset) using production-ready email sender.
-
-    Features:
-    - Automatic retry with exponential backoff on transient failures
-    - Comprehensive error logging and audit trail
-    - Graceful fallback to Flask-Mail if direct SMTP unavailable
-    - Timeout handling and connection validation
-    """
+def _send_system_email(
+    *,
+    recipient: str,
+    subject: str,
+    html: str,
+    text_body: str | None = None,
+    attachments: list[tuple[str, str, bytes]] | None = None,
+) -> None:
+    """Send system emails (user OTP, password reset) via Resend."""
     if app.config.get('FAST_DEV'):
         app.logger.info("FAST_DEV enabled: system email sending skipped.")
         return
@@ -6028,52 +5952,25 @@ def _send_system_email(*, recipient: str, subject: str, html: str, text_body: st
     text_content = text_body or 'Your email client does not support HTML.'
     
     def _send_with_audit():
-        """Send and audit the result."""
         try:
-            # Try production email sender first
-            if _email_sender.is_healthy():
-                result = _email_sender.send(
-                    recipient=recipient,
-                    subject=subject,
-                    html_body=html,
-                    text_body=text_content,
-                )
-                _email_audit_logger.log_send(result)
-                
-                if not result.success:
-                    # Log failure but don't raise - graceful degradation
-                    app.logger.warning(
-                        f"Email send failed after {result.attempt_count} attempts: {result.error}",
-                        extra={'recipient': recipient, 'subject': subject}
-                    )
-                    # Try Flask-Mail fallback
-                    _fallback_flask_mail(recipient, subject, html, text_content)
+            if not _email_sender.is_healthy():
+                app.logger.warning("Resend not configured; system email not sent.")
                 return
-        except Exception as e:
-            app.logger.exception(f"Production email sender error: {e}")
-            # Fall through to Flask-Mail
-        
-        # Flask-Mail fallback
-        _fallback_flask_mail(recipient, subject, html, text_content)
-    
-    def _fallback_flask_mail(recipient: str, subject: str, html: str, text_body: str):
-        """Fallback to Flask-Mail if production sender unavailable."""
-        try:
-            # Use the validated _default_sender from initialization
-            msg = Message(
-                subject,
-                recipients=[recipient],
-                html=html,
-                sender=_default_sender,
+            result = _email_sender.send(
+                recipient=recipient,
+                subject=subject,
+                html_body=html,
+                text_body=text_content,
+                attachments=attachments,
             )
-            if text_body:
-                msg.body = text_body
-            # Send within app context - crucial for threads
-            with app.app_context():
-                mail.send(msg)
-            app.logger.info(f"Sent email via Flask-Mail fallback: {subject}")
+            _email_audit_logger.log_send(result)
+            if not result.success:
+                app.logger.warning(
+                    f"Email send failed after {result.attempt_count} attempts: {result.error}",
+                    extra={'recipient': recipient, 'subject': subject},
+                )
         except Exception as e:
-            app.logger.error(f"Flask-Mail fallback also failed: {e}")
+            app.logger.exception(f"Email send failed: {e}")
     
     # Send async to avoid blocking HTTP response
     try:
@@ -6179,7 +6076,7 @@ def _send_email_best_effort_async(*, recipient: str, subject: str, html: str, te
                     if result.success:
                         return
                 
-                # Fallback to system email (which has Flask-Mail fallback)
+                # Fallback to system email
                 _send_system_email(recipient=recipient, subject=subject, html=html, text_body=text_body)
         except Exception as e:
             try:
@@ -6440,7 +6337,7 @@ def reset_password():
                 send_password_reset_email(str(user.email), reset_url)
             except Exception as e:
                 current_app.logger.error(f'Password reset email send failed: {e}', exc_info=True)
-                flash('Failed to send reset email. Check email settings and try again.', 'danger')
+                flash('Failed to send reset email. Check email configuration and try again.', 'danger')
                 return redirect(url_for('auth.reset_password'))
 
         flash('If this email exists in our system, a reset link has been sent.', 'info')
@@ -6534,7 +6431,7 @@ def resend_verify_email():
         _send_user_verification_otp(user)
     except Exception as e:
         current_app.logger.error(f'User OTP send failed: {e}', exc_info=True)
-        flash('Failed to send OTP email. Check email settings and try again.', 'danger')
+        flash('Failed to send OTP email. Check email configuration and try again.', 'danger')
         return _redirect_back(email)
     flash('A new OTP has been sent to your email.', 'success')
     return _redirect_back(email)
@@ -7898,7 +7795,7 @@ def manage_users():
                     flash('OTP sent to the entered email. Enter it to continue.', 'success')
                 except Exception as mail_exc:
                     app.logger.error(f'Failed to send admin add-user OTP: {mail_exc}', exc_info=True)
-                    flash('Failed to send OTP email. Check email settings and try again.', 'danger')
+                    flash('Failed to send OTP email. Check email configuration and try again.', 'danger')
                     return _render_users_with_add_modal(add_user_state)
 
                 add_user_state['stage'] = 'otp_sent'
@@ -12905,8 +12802,8 @@ def backup_login_register_email():
         
         if not _send_backup_login_otp(email, otp_code):
             if _wants_json_response():
-                return jsonify({'success': False, 'message': 'Failed to send OTP email. Check mail settings and try again'}), 500
-            flash('Failed to send OTP email. Check mail settings and try again', 'danger')
+                return jsonify({'success': False, 'message': 'Failed to send OTP email. Check email configuration and try again'}), 500
+            flash('Failed to send OTP email. Check email configuration and try again', 'danger')
             return redirect(url_for('backup_login_register_email'))
         
         session['backup_register_email'] = email
@@ -13958,178 +13855,36 @@ def _ensure_backup_access_credential(user_id: int, password: str, created_by_use
     return cred
 
 
-def _smtp_settings_for_email(email_addr: str) -> tuple[str, int, bool]:
-    """Best-effort SMTP defaults by provider.
-
-    Returns: (host, port, use_ssl)
-    """
-    domain = (email_addr.split('@', 1)[1] if '@' in email_addr else '').lower().strip()
-
-    if domain in {'gmail.com', 'googlemail.com'}:
-        return 'smtp.gmail.com', 587, False
-    if domain in {'outlook.com', 'hotmail.com', 'live.com'}:
-        return 'smtp.office365.com', 587, False
-    if domain in {'yahoo.com', 'yahoo.co.uk'}:
-        return 'smtp.mail.yahoo.com', 587, False
-    if domain in {'zoho.com'}:
-        return 'smtp.zoho.com', 587, False
-
-    # Default guess for custom domains.
-    if domain:
-        return f'smtp.{domain}', 587, False
-    return 'localhost', 25, False
-
-
-def _smtp_send_email(
-    *,
-    smtp_user: str,
-    smtp_password: str,
-    recipient: str,
-    subject: str,
-    html: str,
-    text_body: str | None = None,
-    attachments: list[tuple[str, str, bytes]] | None = None,
-    smtp_host: str | None = None,
-    smtp_port: int | None = None,
-    use_ssl: bool | None = None,
-    timeout_seconds: int = 25,
-) -> None:
-    original_password = smtp_password
-    smtp_user = _strip_env_value(smtp_user)
-    smtp_password = _normalize_smtp_password(smtp_password)
-    if original_password != smtp_password:
-        try:
-            app.logger.info('Normalized SMTP password format (removed spaces/quotes).')
-        except Exception:
-            pass
-
-    host, port, ssl_default = _smtp_settings_for_email(smtp_user)
-    host = smtp_host or host
-    port = int(smtp_port or port)
-    use_ssl = ssl_default if use_ssl is None else bool(use_ssl)
-
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = smtp_user
-    msg['To'] = recipient
-
-    safe_text = text_body or 'Your email client does not support HTML.'
-    msg.set_content(safe_text)
-    msg.add_alternative(html or '', subtype='html')
-
-    for filename, content_type, data in (attachments or []):
-        maintype, subtype = ('application', 'octet-stream')
-        try:
-            if content_type and '/' in content_type:
-                maintype, subtype = content_type.split('/', 1)
-        except Exception:
-            maintype, subtype = ('application', 'octet-stream')
-        msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
-
-    context = ssl.create_default_context()
-    if use_ssl:
-        server = smtplib.SMTP_SSL(host, port, timeout=timeout_seconds, context=context)
-    else:
-        server = smtplib.SMTP(host, port, timeout=timeout_seconds)
-
-    try:
-        server.ehlo()
-        if not use_ssl:
-            # Most providers use STARTTLS on 587.
-            server.starttls(context=context)
-            server.ehlo()
-        server.login(smtp_user, smtp_password)
-        server.send_message(msg)
-    finally:
-        try:
-            server.quit()
-        except Exception:
-            try:
-                server.close()
-            except Exception:
-                pass
-
-
 def _send_backup_email(
     recipient: str,
     subject: str,
     html: str,
     attachments: list[tuple[str, str, bytes]] | None = None,
-    *,
-    smtp_user: str | None = None,
-    smtp_password: str | None = None,
-    smtp_host: str | None = None,
-    smtp_port: int | None = None,
-    use_ssl: bool | None = None,
 ) -> None:
-    """Send backup-related emails using production-ready email sender.
-    
-    Features:
-    - Uses production email sender with retry logic
-    - Falls back to Flask-Mail if needed
-    - Comprehensive error logging
-    - Handles attachments safely
-    """
+    """Send backup-related emails via Resend."""
     
     if not recipient or '@' not in recipient:
         app.logger.error(f"Invalid backup email recipient: {recipient}")
         return
     
-    # For backward compatibility, support explicit SMTP credentials
-    if smtp_user and smtp_password:
-        try:
-            _smtp_send_email(
-                smtp_user=smtp_user,
-                smtp_password=smtp_password,
-                recipient=recipient,
-                subject=subject,
-                html=html,
-                text_body='Your verification code is included in the HTML message.',
-                attachments=attachments,
-                smtp_host=smtp_host,
-                smtp_port=smtp_port,
-                use_ssl=use_ssl,
-            )
-            app.logger.info(f"Backup email sent with explicit SMTP: {subject}")
-            return
-        except Exception as e:
-            app.logger.error(f"Explicit SMTP send failed, trying production sender: {e}")
-    
     # Use production email sender
     def _send():
         try:
-            if _email_sender.is_healthy():
-                result = _email_sender.send(
-                    recipient=recipient,
-                    subject=subject,
-                    html_body=html,
-                    text_body='Your email client does not support HTML.',
-                )
-                _email_audit_logger.log_send(result)
-                
-                if not result.success:
-                    app.logger.warning(f"Backup email send failed: {result.error}")
-                    # Try Flask-Mail fallback
-                    _backup_flask_mail_fallback(recipient, subject, html, attachments)
+            if not _email_sender.is_healthy():
+                app.logger.warning("Resend not configured; backup email not sent.")
                 return
+            result = _email_sender.send(
+                recipient=recipient,
+                subject=subject,
+                html_body=html,
+                text_body='Your email client does not support HTML.',
+                attachments=attachments,
+            )
+            _email_audit_logger.log_send(result)
+            if not result.success:
+                app.logger.warning(f"Backup email send failed: {result.error}")
         except Exception as e:
             app.logger.exception(f"Production email sender failed: {e}")
-        
-        # Fallback
-        _backup_flask_mail_fallback(recipient, subject, html, attachments)
-    
-    def _backup_flask_mail_fallback(recipient, subject, html, attachments):
-        """Flask-Mail fallback for backup emails."""
-        try:
-            msg = Message(subject, recipients=[recipient], html=html)
-            for filename, content_type, data in (attachments or []):
-                msg.attach(filename=filename, content_type=content_type, data=data)
-            # Send within app context - crucial for threads
-            with app.app_context():
-                mail.send(msg)
-            app.logger.info(f"Sent backup email via Flask-Mail fallback: {subject}")
-        except Exception as e:
-            app.logger.error(f"Backup email fallback failed: {e}")
     
     try:
         Thread(target=_send, daemon=True, name="backup-email").start()
@@ -15053,19 +14808,33 @@ def _send_admin_sales_report(period: str) -> None:
             if not recipients:
                 return
 
-            start_d, end_d, period_id = _period_window_dates(period)
-            key = f"admin_sales_report:{period.lower()}"
-            if not _should_send_once(key, period_id):
-                return
+            now_eat = get_eat_now()
+            p = (period or '').lower()
 
-            start_dt, end_dt = _dt_range_for_dates(start_d, end_d)
+            if p == 'daily':
+                # Daily sales report cutoff is 22:00 EAT of the current day.
+                start_d = now_eat.date()
+                end_d = start_d
+                period_id = start_d.isoformat()
+                key = f"admin_sales_report:{p}"
+                if not _should_send_once(key, period_id):
+                    return
+                start_dt = datetime.combine(start_d, datetime.min.time())
+                end_dt = now_eat.replace(hour=22, minute=0, second=0, microsecond=0)
+                range_label = f"{start_d.isoformat()} (00:00 to 22:00 EAT)"
+            else:
+                start_d, end_d, period_id = _period_window_dates(period, now_eat=now_eat)
+                key = f"admin_sales_report:{p}"
+                if not _should_send_once(key, period_id):
+                    return
+                start_dt, end_dt = _dt_range_for_dates(start_d, end_d)
+                range_label = f"{start_d.isoformat()} to {end_d.isoformat()}"
 
             drug = _report_drug_sales_summary(start_dt, end_dt)
             controlled = _report_controlled_drug_sales_summary(start_dt, end_dt)
             lab = _report_lab_summary(start_dt, end_dt)
             general = _report_general_summary(start_dt, end_dt)
 
-            range_label = f"{start_d.isoformat()} to {end_d.isoformat()}"
             subject = f"Sales Report ({period.title()}) - {period_id}"
 
             parts = [
@@ -15132,53 +14901,55 @@ def _scheduler_apply_reporting_jobs(scheduler: BackgroundScheduler):
 
     Times are in EAT (Africa/Nairobi).
     """
+    def _nightly_reports():
+        _send_admin_sales_report('daily')
+
+        now_eat = get_eat_now()
+        today = now_eat.date()
+        # Weekly rollup on Monday night (previous ISO week completed).
+        if today.weekday() == 0:
+            _send_admin_sales_report('weekly')
+        # Monthly rollup on 1st night (previous month completed).
+        if today.day == 1:
+            _send_admin_sales_report('monthly')
+        # Yearly rollup on Jan 1st night (previous year completed).
+        if today.month == 1 and today.day == 1:
+            _send_admin_sales_report('yearly')
+
     scheduler.add_job(
-        lambda: _send_admin_sales_report('daily'),
+        _nightly_reports,
         'cron',
-        hour=20,
+        hour=22,
         minute=0,
         timezone=EAT,
-        id='email_report_daily',
+        id='email_reports_nightly',
         replace_existing=True,
         max_instances=1,
         coalesce=True,
+        misfire_grace_time=60 * 60 * 48,
     )
+
+    def _monthly_financial_report_job() -> None:
+        # Runs on the 1st night of the month, sending the *previous* month report.
+        now_eat = get_eat_now()
+        if now_eat.month == 1:
+            year, month = now_eat.year - 1, 12
+        else:
+            year, month = now_eat.year, now_eat.month - 1
+        _send_admin_monthly_financial_report(year=year, month=month)
+
     scheduler.add_job(
-        lambda: _send_admin_sales_report('weekly'),
-        'cron',
-        day_of_week='mon',
-        hour=8,
-        minute=5,
-        timezone=EAT,
-        id='email_report_weekly',
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
-        lambda: _send_admin_sales_report('monthly'),
+        _monthly_financial_report_job,
         'cron',
         day=1,
-        hour=8,
-        minute=10,
+        hour=22,
+        minute=20,
         timezone=EAT,
-        id='email_report_monthly',
+        id='email_financial_monthly_report',
         replace_existing=True,
         max_instances=1,
         coalesce=True,
-    )
-    scheduler.add_job(
-        lambda: _send_admin_sales_report('yearly'),
-        'cron',
-        month=1,
-        day=1,
-        hour=8,
-        minute=15,
-        timezone=EAT,
-        id='email_report_yearly',
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
+        misfire_grace_time=60 * 60 * 48,
     )
 
 
@@ -15290,7 +15061,7 @@ def _send_admin_stock_alerts() -> None:
                 pass
 
             counts = snap.get('counts') or {}
-            subject = f"Stock Alerts - {snap.get('date')}"
+            subject = f"Drugs Report (Low/Out/Expiry) - {snap.get('date')}"
 
             # Limit rows in email body to avoid huge emails
             alerts = snap.get('alerts') or []
@@ -15310,7 +15081,7 @@ def _send_admin_stock_alerts() -> None:
 
             html = "".join([
                 "<div style='font-family:Arial,sans-serif;max-width:900px;margin:0 auto;'>",
-                "<h2 style='margin:0 0 6px 0;'>Stock Alerts</h2>",
+                "<h2 style='margin:0 0 6px 0;'>Drugs Report (Low stock / Out of stock / Expiring)</h2>",
                 f"<div style='color:#555;margin-bottom:10px;'>Date: <strong>{escape(str(snap.get('date') or ''))}</strong></div>",
                 "<ul>",
                 f"<li>Out of stock: <strong>{escape(str(counts.get('out-of-stock', 0)))}</strong></li>",
@@ -15324,7 +15095,7 @@ def _send_admin_stock_alerts() -> None:
             ])
 
             text_body = (
-                f"Stock Alerts ({snap.get('date')})\n"
+                f"Drugs Report ({snap.get('date')})\n"
                 f"Out of stock: {counts.get('out-of-stock', 0)}\n"
                 f"Low stock: {counts.get('low-stock', 0)}\n"
                 f"Expiring soon: {counts.get('expiring-soon', 0)}\n"
@@ -15344,18 +15115,191 @@ def _send_admin_stock_alerts() -> None:
 
 
 def _scheduler_apply_stock_jobs(scheduler: BackgroundScheduler):
-    # Daily scan in EAT morning
+    # Daily scan at 22:10 EAT
     scheduler.add_job(
         _send_admin_stock_alerts,
         'cron',
-        hour=7,
-        minute=30,
+        hour=22,
+        minute=10,
         timezone=EAT,
         id='email_stock_alerts_daily',
         replace_existing=True,
         max_instances=1,
         coalesce=True,
+        misfire_grace_time=60 * 60 * 48,
     )
+
+
+def _send_admin_monthly_financial_report(*, year: int, month: int) -> None:
+    """Generate and email a monthly financial report document to all admins."""
+    try:
+        with app.app_context():
+            recipients = _get_admin_recipient_emails()
+            if not recipients:
+                return
+
+            year = int(year)
+            month = int(month)
+            if month < 1 or month > 12:
+                return
+
+            period_id = f"{year:04d}-{month:02d}"
+            key = "admin_financial_report:monthly"
+            if not _should_send_once(key, period_id):
+                return
+
+            metrics = get_monthly_financial_summary(year, month) or {}
+
+            start_date = metrics.get('start_date')
+            end_date = metrics.get('end_date')
+            date_range = metrics.get('date_range') or (
+                f"{start_date} to {end_date}" if start_date and end_date else period_id
+            )
+
+            def _get_num(name: str) -> float:
+                try:
+                    return float(metrics.get(name) or 0)
+                except Exception:
+                    return 0.0
+
+            total_revenue = _get_num('total_revenue')
+            total_expense = _get_num('total_expense')
+            net_profit = _get_num('net_profit')
+            profit_margin = _get_num('profit_margin')
+
+            subject = f"Monthly Financial Report - {period_id}"
+
+            # Build CSV attachment (Excel-friendly)
+            import csv
+            import io
+
+            csv_buf = io.StringIO()
+            w = csv.writer(csv_buf)
+            w.writerow([f"Monthly Financial Report - {period_id}"])
+            w.writerow(["Date Range", str(date_range)])
+            w.writerow([])
+            w.writerow(["Summary", "Value"])
+            w.writerow(["Total Revenue", total_revenue])
+            w.writerow(["Total Expenses", total_expense])
+            w.writerow(["Net Profit", net_profit])
+            w.writerow(["Profit Margin (%)", profit_margin])
+            w.writerow(["Refunds", _get_num('refunds')])
+            w.writerow([])
+
+            w.writerow(["Revenue Breakdown", "Value"])
+            w.writerow(["Pharmacy", _get_num('pharmacy_revenue')])
+            w.writerow(["Lab", _get_num('lab_revenue')])
+            w.writerow(["Imaging", _get_num('imaging_revenue')])
+            w.writerow(["Consultation/Services", _get_num('consultation_revenue')])
+            w.writerow(["Insurance", _get_num('insurance_revenue')])
+            w.writerow(["Other", _get_num('other_revenue')])
+            w.writerow([])
+
+            w.writerow(["Expense Breakdown", "Value"])
+            w.writerow(["Payroll", _get_num('payroll_expense')])
+            w.writerow(["Pharmacy/Procurement", _get_num('pharmacy_expense')])
+            w.writerow(["Equipment", _get_num('equipment_expense')])
+            w.writerow(["Utilities", _get_num('utilities_expense')])
+            w.writerow(["Debt Payment", _get_num('debt_payment')])
+            w.writerow(["Other", _get_num('other_expense')])
+            w.writerow([])
+
+            w.writerow(["Cashflow (In)", "Value"])
+            w.writerow(["Cash", _get_num('cash_in')])
+            w.writerow(["MPESA", _get_num('mpesa_in')])
+            w.writerow(["Card", _get_num('card_in')])
+            w.writerow(["Bank", _get_num('bank_in')])
+            w.writerow(["Total In", _get_num('total_cash_in')])
+            w.writerow([])
+
+            w.writerow(["Cashflow (Out)", "Value"])
+            w.writerow(["Cash", _get_num('cash_out')])
+            w.writerow(["MPESA", _get_num('mpesa_out')])
+            w.writerow(["Card", _get_num('card_out')])
+            w.writerow(["Bank", _get_num('bank_out')])
+            w.writerow(["Total Out", _get_num('total_cash_out')])
+            w.writerow([])
+
+            w.writerow(["Outstanding", "Value"])
+            w.writerow(["Outstanding Invoices", _get_num('outstanding_invoices')])
+            w.writerow(["Overdue Amount", _get_num('overdue_amount')])
+            w.writerow(["Outstanding Debtor", _get_num('outstanding_debtor')])
+            w.writerow(["Outstanding Debtor Count", int(metrics.get('outstanding_debtor_count') or 0)])
+            w.writerow(["Outstanding Insurance", _get_num('outstanding_insurance')])
+            w.writerow(["Outstanding Insurance Count", int(metrics.get('outstanding_insurance_count') or 0)])
+            w.writerow([])
+
+            w.writerow(["Patients", "Value"])
+            w.writerow(["Total Patients Served", int(metrics.get('total_patients_served') or 0)])
+            w.writerow(["New Patients", int(metrics.get('new_patients') or 0)])
+            w.writerow(["Returning Patients", int(metrics.get('returning_patients') or 0)])
+
+            csv_bytes = csv_buf.getvalue().encode('utf-8-sig')
+
+            # Build simple HTML attachment + email body
+            html_doc = "".join([
+                "<html><head><meta charset='utf-8'></head><body style='font-family:Arial,sans-serif;'>",
+                f"<h2>Monthly Financial Report - {escape(period_id)}</h2>",
+                f"<p><strong>Date Range:</strong> {escape(str(date_range))}</p>",
+                "<h3>Summary</h3>",
+                "<ul>",
+                f"<li>Total revenue: <strong>{escape(_money(total_revenue))}</strong></li>",
+                f"<li>Total expenses: <strong>{escape(_money(total_expense))}</strong></li>",
+                f"<li>Net profit: <strong>{escape(_money(net_profit))}</strong></li>",
+                f"<li>Profit margin: <strong>{escape(f'{profit_margin:.2f}%')}</strong></li>",
+                "</ul>",
+                "<p>This email includes attached documents (CSV + HTML) for archiving and sharing.</p>",
+                "</body></html>",
+            ])
+            html_bytes = html_doc.encode('utf-8')
+
+            # Email body
+            html_body = "".join([
+                "<div style='font-family:Arial,sans-serif;max-width:900px;margin:0 auto;'>",
+                f"<h2 style='margin:0 0 6px 0;'>Monthly Financial Report - {escape(period_id)}</h2>",
+                f"<div style='color:#555;margin-bottom:10px;'>Date Range: <strong>{escape(str(date_range))}</strong></div>",
+                "<ul>",
+                f"<li>Total revenue: <strong>{escape(_money(total_revenue))}</strong></li>",
+                f"<li>Total expenses: <strong>{escape(_money(total_expense))}</strong></li>",
+                f"<li>Net profit: <strong>{escape(_money(net_profit))}</strong></li>",
+                f"<li>Profit margin: <strong>{escape(f'{profit_margin:.2f}%')}</strong></li>",
+                "</ul>",
+                "<p style='color:#444;'>Attached: <strong>financial-report.csv</strong> (for Excel) and <strong>financial-report.html</strong>.</p>",
+                "<div style='color:#777;font-size:12px;'>Automated email generated by Makokha Medical Centre system.</div>",
+                "</div>",
+            ])
+
+            attachments = [
+                (f"financial-report-{period_id}.csv", "text/csv", csv_bytes),
+                (f"financial-report-{period_id}.html", "text/html", html_bytes),
+            ]
+
+            text_body = (
+                f"Monthly Financial Report - {period_id}\n"
+                f"Date Range: {date_range}\n\n"
+                f"Total revenue: {total_revenue}\n"
+                f"Total expenses: {total_expense}\n"
+                f"Net profit: {net_profit}\n"
+                f"Profit margin: {profit_margin:.2f}%\n\n"
+                f"Attachments: financial-report-{period_id}.csv, financial-report-{period_id}.html\n"
+            )
+
+            for r in recipients:
+                try:
+                    _send_system_email(
+                        recipient=r,
+                        subject=subject,
+                        html=html_body,
+                        text_body=text_body,
+                        attachments=attachments,
+                    )
+                except Exception as e:
+                    app.logger.error(f"Monthly financial report email failed to {r}: {e}")
+    except Exception as e:
+        try:
+            app.logger.error(f"Monthly financial report job failed: {e}", exc_info=True)
+        except Exception:
+            pass
 
 # Initialize scheduler (skip in fast dev mode)
 if not app.config.get('FAST_DEV'):
@@ -20270,7 +20214,6 @@ def pharmacist_controlled_inventory():
                 ControlledDrug.name.ilike(like),
                 ControlledDrug.controlled_drug_number.ilike(like),
                 ControlledDrug.specification.ilike(like),
-                created_at=get_eat_now()
             ))
 
         controlled_drugs = query.order_by(ControlledDrug.name).all()

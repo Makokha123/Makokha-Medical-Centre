@@ -1,87 +1,38 @@
-"""
-Production-ready email utilities with enhanced error handling, retry logic, and logging.
+"""Resend-only email utilities.
 
-Features:
-- Exponential backoff retry logic for transient SMTP failures
-- Comprehensive logging for audit trails
-- Timeout handling and graceful degradation
-- Email validation
-- Template management
-- Connection pooling and health checks
+This project uses Resend for outbound mail delivery.
+
+Exports used by the app:
+- EmailSendResult
+- EmailAuditLogger
+- ResendConfig
+- ResendEmailSender
 """
 
-import logging
-import smtplib
-import ssl
-import time
-from datetime import datetime, timedelta
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.message import EmailMessage
-from threading import Thread, Lock
-from typing import Optional, Callable, Any
+from __future__ import annotations
+
+import base64
 import json
+import logging
 import re
+import time
+from datetime import datetime
+from threading import Lock, Thread
+from typing import Any, Callable, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
 
-class EmailConfig:
-    """Email configuration holder."""
-    
-    def __init__(
-        self,
-        smtp_server: str,
-        smtp_port: int,
-        use_tls: bool,
-        username: str,
-        password: str,
-        from_address: str,
-        timeout_seconds: int = 30,
-        max_retries: int = 3,
-        retry_backoff_base: float = 2.0,
-    ):
-        self.smtp_server = smtp_server.strip() if smtp_server else None
-        self.smtp_port = int(smtp_port) if smtp_port else 587
-        self.use_tls = bool(use_tls)
-        self.username = username.strip() if username else None
-        self.password = password if password else None
-        self.from_address = from_address.strip() if from_address else None
-        self.timeout_seconds = max(5, min(timeout_seconds, 120))  # Clamp 5-120s
-        self.max_retries = max(1, min(max_retries, 5))  # Clamp 1-5
-        self.retry_backoff_base = max(1.5, min(retry_backoff_base, 3.0))  # Clamp 1.5-3.0
-    
-    def is_configured(self) -> bool:
-        """Check if email is properly configured."""
-        return bool(
-            self.smtp_server
-            and self.username
-            and self.password
-            and self.from_address
-            and self._is_valid_email(self.from_address)
-        )
-    
-    @staticmethod
-    def _is_valid_email(email: str) -> bool:
-        """Basic email validation."""
-        if not email or len(email) > 254:
-            return False
-        pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
-        return bool(re.match(pattern, email.strip()))
-    
-    def validate(self) -> tuple[bool, str]:
-        """Validate configuration and return (is_valid, error_message)."""
-        if not self.smtp_server:
-            return False, "SMTP server not configured"
-        if not self.username:
-            return False, "SMTP username not configured"
-        if not self.password:
-            return False, "SMTP password not configured"
-        if not self.from_address:
-            return False, "From address not configured"
-        if not self._is_valid_email(self.from_address):
-            return False, "Invalid from address format"
-        return True, ""
+_EMAIL_PATTERN = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+
+
+def _is_valid_email(email: str) -> bool:
+    """Basic email validation."""
+    if not email or len(email) > 254:
+        return False
+    return bool(_EMAIL_PATTERN.match(email.strip()))
 
 
 class EmailSendResult:
@@ -118,83 +69,53 @@ class EmailSendResult:
         }
 
 
-class SMTPConnectionError(Exception):
-    """SMTP connection related error."""
-    pass
+class ResendConfig:
+    """Resend email configuration holder."""
+
+    def __init__(
+        self,
+        api_key: str,
+        from_address: str,
+        reply_to: str | None = None,
+        timeout_seconds: int = 30,
+        max_retries: int = 3,
+        retry_backoff_base: float = 2.0,
+        base_url: str = "https://api.resend.com",
+    ):
+        self.api_key = (api_key or "").strip()
+        self.from_address = (from_address or "").strip()
+        self.reply_to = (reply_to or "").strip() or None
+        self.timeout_seconds = max(5, min(int(timeout_seconds or 30), 120))
+        self.max_retries = max(1, min(int(max_retries or 3), 5))
+        self.retry_backoff_base = max(1.5, min(float(retry_backoff_base or 2.0), 3.0))
+        self.base_url = (base_url or "https://api.resend.com").strip().rstrip("/")
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key and self.from_address)
+
+    def validate(self) -> tuple[bool, str]:
+        if not self.api_key:
+            return False, "RESEND_API_KEY not configured"
+        if not self.from_address:
+            return False, "Resend from_address not configured"
+        return True, ""
 
 
-class EmailValidationError(Exception):
-    """Email validation error."""
-    pass
+class ResendEmailSender:
+    """Resend email sender with retry logic and audit-friendly results."""
 
-
-class EmailSender:
-    """Production-ready email sender with retry logic and comprehensive logging."""
-    
-    def __init__(self, config: EmailConfig):
+    def __init__(self, config: ResendConfig):
         self.config = config
         self._lock = Lock()
-        self._last_connection_test: Optional[datetime] = None
-        self._connection_test_interval = timedelta(minutes=5)
         self._is_healthy = True
-        
-        # Validate on init
         is_valid, error = config.validate()
         if not is_valid:
-            logger.warning(f"Email configuration invalid: {error}")
+            logger.warning(f"Resend configuration invalid: {error}")
             self._is_healthy = False
-    
+
     def is_healthy(self) -> bool:
-        """Check if email service is healthy."""
-        if not self._is_healthy:
-            return False
-        if not self.config.is_configured():
-            return False
-        
-        # Periodically test connection
-        now = datetime.utcnow()
-        if self._last_connection_test is None or (now - self._last_connection_test) > self._connection_test_interval:
-            try:
-                self._test_connection()
-                self._last_connection_test = now
-                self._is_healthy = True
-            except Exception as e:
-                logger.error(f"Email health check failed: {e}")
-                self._is_healthy = False
-        
-        return self._is_healthy
-    
-    def _test_connection(self) -> None:
-        """Test SMTP connection."""
-        context = ssl.create_default_context()
-        timeout = self.config.timeout_seconds
-        
-        try:
-            if self.config.use_tls:
-                server = smtplib.SMTP(
-                    self.config.smtp_server,
-                    self.config.smtp_port,
-                    timeout=timeout,
-                )
-                server.starttls(context=context)
-            else:
-                server = smtplib.SMTP_SSL(
-                    self.config.smtp_server,
-                    self.config.smtp_port,
-                    timeout=timeout,
-                    context=context,
-                )
-            
-            server.ehlo()
-            server.login(self.config.username, self.config.password)
-            server.quit()
-        except smtplib.SMTPAuthenticationError as e:
-            raise SMTPConnectionError(f"SMTP authentication failed: {e}")
-        except smtplib.SMTPException as e:
-            raise SMTPConnectionError(f"SMTP error: {e}")
-        except Exception as e:
-            raise SMTPConnectionError(f"Connection failed: {e}")
-    
+        return bool(self._is_healthy and self.config.is_configured())
+
     def send(
         self,
         recipient: str,
@@ -202,22 +123,9 @@ class EmailSender:
         html_body: str,
         text_body: Optional[str] = None,
         reply_to: Optional[str] = None,
+        attachments: list[tuple[str, str, bytes]] | None = None,
     ) -> EmailSendResult:
-        """
-        Send email with automatic retry on transient failures.
-        
-        Args:
-            recipient: Email address to send to
-            subject: Email subject
-            html_body: HTML email body
-            text_body: Plain text fallback
-            reply_to: Reply-to address
-        
-        Returns:
-            EmailSendResult with status and details
-        """
-        # Validate inputs
-        if not self._validate_email(recipient):
+        if not _is_valid_email(recipient):
             error_msg = f"Invalid recipient email: {recipient}"
             logger.error(error_msg)
             return EmailSendResult(
@@ -227,7 +135,6 @@ class EmailSender:
                 error=error_msg,
                 last_error_code="INVALID_EMAIL",
             )
-        
         if not subject or not subject.strip():
             error_msg = "Subject cannot be empty"
             logger.error(error_msg)
@@ -238,7 +145,6 @@ class EmailSender:
                 error=error_msg,
                 last_error_code="INVALID_SUBJECT",
             )
-        
         if not html_body or not html_body.strip():
             error_msg = "Email body cannot be empty"
             logger.error(error_msg)
@@ -249,87 +155,73 @@ class EmailSender:
                 error=error_msg,
                 last_error_code="INVALID_BODY",
             )
-        
-        # Attempt send with retries
+
+        if not self.is_healthy():
+            error_msg = "Resend is not configured"
+            logger.error(error_msg)
+            return EmailSendResult(
+                success=False,
+                recipient=recipient,
+                subject=subject,
+                error=error_msg,
+                last_error_code="RESEND_NOT_CONFIGURED",
+            )
+
         last_error = None
         last_error_code = None
-        
+
         for attempt in range(1, self.config.max_retries + 1):
             try:
                 self._send_attempt(
                     recipient=recipient,
                     subject=subject,
                     html_body=html_body,
-                    text_body=text_body or "Email sent in HTML format.",
+                    text_body=text_body,
                     reply_to=reply_to,
+                    attachments=attachments,
                 )
-                
                 logger.info(
-                    f"Email sent successfully",
+                    "Email sent successfully (Resend)",
                     extra={
                         'recipient': recipient,
                         'subject': subject,
                         'attempt': attempt,
                     },
                 )
-                
                 return EmailSendResult(
                     success=True,
                     recipient=recipient,
                     subject=subject,
                     attempt_count=attempt,
                 )
-            
-            except smtplib.SMTPServerDisconnected as e:
+            except requests.Timeout as e:
                 last_error = str(e)
-                last_error_code = "SMTP_DISCONNECTED"
+                last_error_code = "RESEND_TIMEOUT"
                 logger.warning(
-                    f"SMTP disconnected (attempt {attempt}/{self.config.max_retries}): {e}",
+                    f"Resend timeout (attempt {attempt}/{self.config.max_retries}): {e}",
                     extra={'recipient': recipient, 'subject': subject},
                 )
-            
-            except smtplib.SMTPAuthenticationError as e:
+            except requests.RequestException as e:
                 last_error = str(e)
-                last_error_code = "SMTP_AUTH_FAILED"
-                logger.error(
-                    f"SMTP authentication failed: {e}",
-                    extra={'recipient': recipient},
-                )
-                # Don't retry auth failures
-                break
-            
-            except smtplib.SMTPException as e:
-                last_error = str(e)
-                last_error_code = "SMTP_ERROR"
+                last_error_code = "RESEND_REQUEST_ERROR"
                 logger.warning(
-                    f"SMTP error (attempt {attempt}/{self.config.max_retries}): {e}",
+                    f"Resend request error (attempt {attempt}/{self.config.max_retries}): {e}",
                     extra={'recipient': recipient, 'subject': subject},
                 )
-            
-            except (TimeoutError, OSError) as e:
-                last_error = str(e)
-                last_error_code = "CONNECTION_ERROR"
-                logger.warning(
-                    f"Connection error (attempt {attempt}/{self.config.max_retries}): {e}",
-                    extra={'recipient': recipient},
-                )
-            
             except Exception as e:
                 last_error = str(e)
-                last_error_code = "UNKNOWN_ERROR"
+                last_error_code = "RESEND_UNKNOWN_ERROR"
                 logger.exception(
-                    f"Unexpected error sending email (attempt {attempt}): {e}",
-                    extra={'recipient': recipient},
+                    f"Unexpected error sending email via Resend (attempt {attempt}): {e}",
+                    extra={'recipient': recipient, 'subject': subject},
                 )
                 break
-            
-            # Exponential backoff before retry
+
             if attempt < self.config.max_retries:
                 delay = self.config.retry_backoff_base ** (attempt - 1)
                 logger.info(f"Waiting {delay:.1f}s before retry...")
                 time.sleep(delay)
-        
-        # All retries exhausted
+
         error_msg = f"Failed to send email after {self.config.max_retries} attempts: {last_error}"
         logger.error(
             error_msg,
@@ -339,7 +231,6 @@ class EmailSender:
                 'error_code': last_error_code,
             },
         )
-        
         return EmailSendResult(
             success=False,
             recipient=recipient,
@@ -348,7 +239,7 @@ class EmailSender:
             attempt_count=self.config.max_retries,
             last_error_code=last_error_code,
         )
-    
+
     def send_async(
         self,
         recipient: str,
@@ -357,18 +248,8 @@ class EmailSender:
         text_body: Optional[str] = None,
         reply_to: Optional[str] = None,
         on_complete: Optional[Callable[[EmailSendResult], None]] = None,
+        attachments: list[tuple[str, str, bytes]] | None = None,
     ) -> None:
-        """
-        Send email asynchronously in background thread.
-        
-        Args:
-            recipient: Email address
-            subject: Subject line
-            html_body: HTML content
-            text_body: Plain text fallback
-            reply_to: Reply-to address
-            on_complete: Optional callback when send completes
-        """
         def worker():
             result = self.send(
                 recipient=recipient,
@@ -376,78 +257,72 @@ class EmailSender:
                 html_body=html_body,
                 text_body=text_body,
                 reply_to=reply_to,
+                attachments=attachments,
             )
             if on_complete:
                 try:
                     on_complete(result)
                 except Exception as e:
                     logger.exception(f"Error in email completion callback: {e}")
-        
+
         try:
-            thread = Thread(target=worker, daemon=True, name=f"email-{recipient}")
+            thread = Thread(target=worker, daemon=True, name=f"resend-email-{recipient}")
             thread.start()
         except Exception as e:
             logger.error(f"Failed to start email thread: {e}")
-    
+
     def _send_attempt(
         self,
+        *,
         recipient: str,
         subject: str,
         html_body: str,
-        text_body: str,
-        reply_to: Optional[str] = None,
+        text_body: Optional[str],
+        reply_to: Optional[str],
+        attachments: list[tuple[str, str, bytes]] | None,
     ) -> None:
-        """Attempt to send email (raises on failure)."""
-        context = ssl.create_default_context()
-        timeout = self.config.timeout_seconds
-        
-        # Create message
-        msg = EmailMessage()
-        msg['Subject'] = subject
-        msg['From'] = self.config.from_address
-        msg['To'] = recipient
-        if reply_to and self._validate_email(reply_to):
-            msg['Reply-To'] = reply_to
-        
-        msg.set_content(text_body)
-        msg.add_alternative(html_body, subtype='html')
-        
-        # Connect and send
-        try:
-            if self.config.use_tls:
-                server = smtplib.SMTP(
-                    self.config.smtp_server,
-                    self.config.smtp_port,
-                    timeout=timeout,
-                )
-                server.starttls(context=context)
-            else:
-                server = smtplib.SMTP_SSL(
-                    self.config.smtp_server,
-                    self.config.smtp_port,
-                    timeout=timeout,
-                    context=context,
-                )
-            
-            server.ehlo()
-            server.login(self.config.username, self.config.password)
-            server.send_message(msg)
-        finally:
+        url = f"{self.config.base_url}/emails"
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        final_reply_to = (reply_to or self.config.reply_to or "").strip() or None
+        if final_reply_to and not _is_valid_email(final_reply_to):
+            final_reply_to = None
+
+        payload: dict[str, Any] = {
+            "from": self.config.from_address,
+            "to": [recipient],
+            "subject": subject,
+            "html": html_body,
+        }
+        if text_body:
+            payload["text"] = text_body
+        if final_reply_to:
+            payload["reply_to"] = final_reply_to
+
+        if attachments:
+            resend_attachments: list[dict[str, str]] = []
+            for filename, content_type, data in attachments:
+                if not filename or data is None:
+                    continue
+                resend_attachments.append({
+                    "filename": str(filename),
+                    "content": base64.b64encode(data).decode("ascii"),
+                    **({"content_type": str(content_type)} if content_type else {}),
+                })
+            if resend_attachments:
+                payload["attachments"] = resend_attachments
+
+        resp = requests.post(url, headers=headers, json=payload, timeout=self.config.timeout_seconds)
+        if resp.status_code >= 400:
             try:
-                server.quit()
+                detail = resp.json()
             except Exception:
-                try:
-                    server.close()
-                except Exception:
-                    pass
-    
-    @staticmethod
-    def _validate_email(email: str) -> bool:
-        """Validate email address format."""
-        if not email or len(email) > 254:
-            return False
-        pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
-        return bool(re.match(pattern, email.strip()))
+                detail = resp.text
+            raise requests.RequestException(f"Resend error {resp.status_code}: {detail}")
+
 
 
 class EmailAuditLogger:
