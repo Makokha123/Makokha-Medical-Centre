@@ -321,8 +321,8 @@
         }
         
         .drugs-container .col-md-6 {
-            flex: 0 0 100%;
-            max-width: 100%;
+            flex: 0 0 50%;
+            max-width: 50%;
         }
         
         .mobile-cart {
@@ -677,7 +677,7 @@
             
             <!-- Mobile Cart (Bottom of screen on portrait phones) -->
             <div class="mobile-cart">
-                <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex justify-content-between align-items-center mb-2">
                     <div>
                         <h6 class="mb-0">Cart: <span id="mobile-cart-count">0</span> items</h6>
                         <small>Total: Ksh <span id="mobile-cart-total">0.00</span></small>
@@ -689,6 +689,35 @@
                         <button class="btn btn-sm btn-success" id="mobile-confirm-sale-btn" disabled>
                             <i class="bi bi-check-circle"></i> Checkout
                         </button>
+                    </div>
+                </div>
+                <!-- Payment Method Selection for Mobile -->
+                <div class="payment-methods mt-2">
+                    <div class="d-flex gap-2 flex-wrap justify-content-center">
+                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-cash" value="cash" checked>
+                        <label class="btn btn-sm p-2" for="mobile-payment-cash" title="Cash Payment" style="background: transparent; border: none;">
+                            <img src="{{ url_for('static', filename='images/cash-logo.png') }}" alt="Cash" style="height: 28px; width: auto;">
+                        </label>
+                        
+                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-mpesa" value="mpesa">
+                        <label class="btn btn-sm p-2" for="mobile-payment-mpesa" title="M-Pesa Payment" style="background: transparent; border: none;">
+                            <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height: 28px; width: auto;">
+                        </label>
+                        
+                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-insurance" value="insurance">
+                        <label class="btn btn-sm p-2" for="mobile-payment-insurance" title="Insurance Payment" style="background: transparent; border: none;">
+                            <img src="{{ url_for('static', filename='images/insurance-logo.png') }}" alt="Insurance" style="height: 28px; width: auto;">
+                        </label>
+                        
+                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-card" value="card">
+                        <label class="btn btn-sm p-2" for="mobile-payment-card" title="Card Payment" style="background: transparent; border: none;">
+                            <img src="{{ url_for('static', filename='images/visa-logo.png') }}" alt="Card" style="height: 28px; width: auto;">
+                        </label>
+                        
+                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-paypal" value="paypal">
+                        <label class="btn btn-sm p-2" for="mobile-payment-paypal" title="PayPal Payment" style="background: transparent; border: none;">
+                            <img src="{{ url_for('static', filename='images/paypal-logo.png') }}" alt="PayPal" style="height: 28px; width: auto;">
+                        </label>
                     </div>
                 </div>
             </div>
@@ -2613,8 +2642,9 @@
                     return;
                 }
                 
-                // Get selected payment method from radio buttons
-                const paymentMethod = $('input[name="payment-method"]:checked').val() || 'cash';
+                // Get selected payment method from radio buttons (desktop or mobile)
+                const paymentMethod = $('input[name="payment-method"]:checked').val() || 
+                                     $('input[name="mobile-payment-method"]:checked').val() || 'cash';
                 
                 // Calculate total
                 const totalAmount = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);

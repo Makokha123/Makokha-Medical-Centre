@@ -57,11 +57,50 @@
     justify-content: flex-start;
   }
 
+  /* Payment method selection styles */
+  .btn-check:checked + .controlled-payment-label {
+    border: 2px solid #28a745 !important;
+    border-radius: 8px;
+    box-shadow: 0 0 8px rgba(40, 167, 69, 0.4);
+  }
+  
+  .controlled-payment-label {
+    border: 2px solid transparent;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    cursor: pointer;
+  }
+  
+  .controlled-payment-label:hover {
+    border-color: #d4edda;
+    box-shadow: 0 0 5px rgba(40, 167, 69, 0.2);
+  }
+
   @media (min-width: 320px) and (max-width: 480px) {
     /* On smaller screens allow natural height */
     .controlled-drugs-grid { max-height: none; }
     .controlled-drug-card { height: auto; }
     .controlled-drug-actions { flex-wrap: wrap; }
+    
+    /* Arrange payment icons in 2x2 grid for mobile */
+    #controlled-payment-methods {
+      display: grid !important;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      max-width: 200px;
+    }
+    
+    /* Reduce icon size for mobile */
+    #controlled-payment-methods img {
+      height: 22px !important;
+    }
+    
+    /* Make cart buttons smaller on mobile */
+    #clearControlledCartBtnInline,
+    #openControlledCartBtnInline {
+      font-size: 0.7rem !important;
+      padding: 0.25rem 0.4rem !important;
+    }
   }
 </style>
 
@@ -288,12 +327,27 @@
         <div class="row g-2">
           <div class="col-md-4">
             <label class="form-label">Payment Method</label>
-            <select class="form-select" id="controlledCheckoutPaymentMethod">
-              <option value="cash">Cash</option>
-              <option value="mpesa">M-Pesa</option>
-              <option value="card">Card</option>
-              <option value="insurance">Insurance</option>
-            </select>
+            <div class="d-flex gap-2 flex-wrap" id="controlled-payment-methods">
+              <input type="radio" class="btn-check" name="controlled-payment-method" id="controlled-payment-cash" value="cash" checked>
+              <label class="btn btn-sm p-2 controlled-payment-label" for="controlled-payment-cash" title="Cash Payment" style="background: transparent; border: none;">
+                <img src="{{ url_for('static', filename='images/cash-logo.png') }}" alt="Cash" style="height: 28px; width: auto;">
+              </label>
+              
+              <input type="radio" class="btn-check" name="controlled-payment-method" id="controlled-payment-mpesa" value="mpesa">
+              <label class="btn btn-sm p-2 controlled-payment-label" for="controlled-payment-mpesa" title="M-Pesa Payment" style="background: transparent; border: none;">
+                <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height: 28px; width: auto;">
+              </label>
+              
+              <input type="radio" class="btn-check" name="controlled-payment-method" id="controlled-payment-insurance" value="insurance">
+              <label class="btn btn-sm p-2 controlled-payment-label" for="controlled-payment-insurance" title="Insurance Payment" style="background: transparent; border: none;">
+                <img src="{{ url_for('static', filename='images/insurance-logo.png') }}" alt="Insurance" style="height: 28px; width: auto;">
+              </label>
+              
+              <input type="radio" class="btn-check" name="controlled-payment-method" id="controlled-payment-card" value="card">
+              <label class="btn btn-sm p-2 controlled-payment-label" for="controlled-payment-card" title="Card Payment" style="background: transparent; border: none;">
+                <img src="{{ url_for('static', filename='images/visa-logo.png') }}" alt="Card" style="height: 28px; width: auto;">
+              </label>
+            </div>
           </div>
           <div class="col-md-4">
             <label class="form-label">Patient (optional)</label>
@@ -960,7 +1014,7 @@
     const customer_phone = (document.getElementById('controlledCustomerPhone').value || '').trim();
     const diagnosis = (document.getElementById('controlledDiagnosis').value || '').trim();
     const destination = (document.getElementById('controlledDestination').value || '').trim();
-    const payment_method = document.getElementById('controlledCheckoutPaymentMethod').value;
+    const payment_method = document.querySelector('input[name="controlled-payment-method"]:checked')?.value || 'cash';
     const patient_id = controlledPatientSelect.val() || '';
 
     if (!customer_name || !customer_gender || !customer_phone || !diagnosis || !destination) {
