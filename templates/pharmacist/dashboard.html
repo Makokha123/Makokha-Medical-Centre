@@ -316,8 +316,18 @@
         }
         
         .drugs-scroll-container {
-            max-height: 300px;
+            max-height: calc(100vh - 350px);
             overflow-y: auto;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        
+        .card-body {
+            padding-bottom: 10px !important;
+        }
+        
+        #drugs-container {
+            margin-bottom: 0 !important;
         }
         
         .drugs-container .col-md-6 {
@@ -3516,6 +3526,9 @@
             // Handle tab changes to load appropriate data
             $('#drugs-tab').on('shown.bs.tab', function() {
                 loadDrugs();
+                // Show both desktop and mobile cart only on drugs tab
+                $('.desktop-cart').show();
+                $('.mobile-cart').show();
             });
 
             $('#refunds-tab').on('shown.bs.tab', function() {
@@ -3523,6 +3536,27 @@
                 $('#refund-search').val('');
                 $('#sale-details').addClass('d-none');
                 $('#refund-results').empty();
+                // Hide both carts on refunds tab
+                $('.desktop-cart').hide();
+                $('.mobile-cart').hide();
+            });
+            
+            // Hide both carts on prescriptions tab
+            $('#prescriptions-tab').on('shown.bs.tab', function() {
+                $('.desktop-cart').hide();
+                $('.mobile-cart').hide();
+            });
+            
+            // Hide both carts on controlled tab (it has its own cart)
+            $('#controlled-tab').on('shown.bs.tab', function() {
+                $('.desktop-cart').hide();
+                $('.mobile-cart').hide();
+            });
+            
+            // Hide both carts on sales history tab if it exists
+            $('#sales-history-tab').on('shown.bs.tab', function() {
+                $('.desktop-cart').hide();
+                $('.mobile-cart').hide();
             });
 
             // Handle window resize for responsive behavior

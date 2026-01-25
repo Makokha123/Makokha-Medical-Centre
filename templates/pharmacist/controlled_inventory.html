@@ -78,9 +78,19 @@
 
   @media (min-width: 320px) and (max-width: 480px) {
     /* On smaller screens allow natural height */
-    .controlled-drugs-grid { max-height: none; }
+    .controlled-drugs-grid { 
+      max-height: calc(100vh - 350px);
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
     .controlled-drug-card { height: auto; }
     .controlled-drug-actions { flex-wrap: wrap; }
+    
+    /* Make controlled drugs 2 columns on mobile like regular drugs */
+    [data-controlled-drug-card] {
+      flex: 0 0 50% !important;
+      max-width: 50% !important;
+    }
     
     /* Arrange payment icons in 2x2 grid for mobile */
     #controlled-payment-methods {
@@ -100,6 +110,16 @@
     #openControlledCartBtnInline {
       font-size: 0.7rem !important;
       padding: 0.25rem 0.4rem !important;
+    }
+    
+    /* Reduce padding for controlled inventory cards */
+    .card-body {
+      padding-bottom: 10px !important;
+    }
+    
+    /* Make controlled drugs cart column full width and stick to bottom on mobile */
+    .col-lg-4 {
+      margin-top: 10px;
     }
   }
 </style>
