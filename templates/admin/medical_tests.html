@@ -104,8 +104,7 @@
             </button>
         </div>
         <div class="table-container">
-            <div class="table-scroll">
-            <table id="services-table" class="modern-table">
+            <table id="services-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>Name</th>
@@ -141,7 +140,6 @@
                     {% endfor %}
                 </tbody>
             </table>
-            </div>
             {% if not services %}
             <div class="empty-state" id="services-empty">
                 <i class="fas fa-stethoscope"></i>
@@ -167,8 +165,7 @@
             </button>
         </div>
         <div class="table-container">
-            <div class="table-scroll">
-            <table id="lab-tests-table" class="modern-table">
+            <table id="lab-tests-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>Name</th>
@@ -204,7 +201,6 @@
                     {% endfor %}
                 </tbody>
             </table>
-            </div>
             {% if not lab_tests %}
             <div class="empty-state" id="lab-tests-empty">
                 <i class="fas fa-microscope"></i>
@@ -230,8 +226,7 @@
             </button>
         </div>
         <div class="table-container">
-            <div class="table-scroll">
-            <table id="imaging-tests-table" class="modern-table">
+            <table id="imaging-tests-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>Name</th>
@@ -274,7 +269,6 @@
                     {% endfor %}
                 </tbody>
             </table>
-            </div>
             {% if not imaging_tests %}
             <div class="empty-state" id="imaging-tests-empty">
                 <i class="fas fa-x-ray"></i>
@@ -750,49 +744,74 @@
     gap: 8px;
 }
 
-.table-scroll {
-    border: 2px solid #1f2937;
-    border-radius: 12px;
-    overflow: auto;
-    max-height: 70vh;
-    background: var(--white);
-    margin-bottom: 24px;
-}
-
-.modern-table {
-    width: max-content;
-    min-width: 100%;
-    border-collapse: collapse;
+.table-container {
     background: var(--white);
     border-radius: var(--border-radius);
     box-shadow: var(--box-shadow);
-    margin-bottom: 0;
-    white-space: nowrap;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 70vh;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 24px;
+    border: 2px solid #1f2937;
 }
 
-.modern-table th {
-    background-color: #f8f9fa;
-    padding: 16px;
-    text-align: left;
-    font-weight: 600;
-    color: var(--gray-700);
-    border-bottom: 1px solid var(--gray-300);
+.simple-table {
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
+    border-collapse: collapse;
+    background: var(--white);
+    margin: 0;
+    font-size: 14px;
+    border: none;
+}
+
+.simple-table thead {
+    background: #0d6efd;
+    color: white;
+}
+
+.simple-table thead th {
     position: sticky;
     top: 0;
     z-index: 5;
+    background: #0d6efd;
 }
 
-.modern-table td {
-    padding: 16px;
-    border-bottom: 1px solid var(--gray-200);
+.simple-table th {
+    padding: 14px 16px;
+    text-align: left;
+    font-weight: 600;
+    border: 2px solid #0d6efd;
+    white-space: nowrap;
+    color: white;
 }
 
-.modern-table tr:last-child td {
-    border-bottom: none;
+.simple-table td {
+    padding: 12px 16px;
+    border: 1px solid #dee2e6;
+    white-space: nowrap;
+    background: #fff;
 }
 
-.modern-table tr:hover {
-    background-color: #f8f9fa;
+/* Compact row height */
+.simple-table th,
+.simple-table td {
+    padding: 8px 12px;
+    line-height: 1.3;
+}
+
+.simple-table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.simple-table tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+.simple-table tbody tr:last-child td {
+    border-bottom: 2px solid #dee2e6;
 }
 
 .amount-cell {
@@ -818,28 +837,59 @@
 }
 
 .action-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: center;
     white-space: nowrap;
 }
 
 .btn-group {
     display: flex;
-    gap: 8px;
+    gap: 6px;
+    align-items: center;
+    white-space: nowrap;
+    flex-wrap: nowrap;
+    flex-direction: row;
 }
 
 .action-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    padding: 6px 10px;
+    border-radius: 4px;
     border: none;
     cursor: pointer;
-    transition: var(--transition);
+    font-size: 12px;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    color: white;
+}
+
+.action-btn i {
+    font-size: 12px;
 }
 
 .action-btn:hover {
-    transform: scale(1.1);
+    transform: scale(1.05);
+}
+
+.action-btn.btn-primary {
+    background: #4361ee;
+}
+
+.action-btn.btn-primary:hover {
+    background: #3651d3;
+}
+
+.action-btn.btn-danger {
+    background: #dc3545;
+}
+
+.action-btn.btn-danger:hover {
+    background: #c82333;
 }
 
 .text-center {
@@ -971,9 +1021,37 @@
 }
 
 /* Responsive Design */
+@media (min-width: 481px) and (max-width: 767px) {
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .simple-table {
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+    
+    .action-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
+    }
+}
+
 @media (min-width: 320px) and (max-width: 480px) {
     .medical-tests-container {
         padding: 16px;
+        margin: 0;
     }
     
     .header-content {
@@ -1033,15 +1111,29 @@
     
     .action-btns .btn-group {
         flex-direction: row;
+        flex-wrap: nowrap;
+    }
+    
+    .simple-table {
+        min-width: 800px;
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 8px 10px;
+        font-size: 11px;
     }
 
     .action-btn {
-        width: 32px;
-        height: 32px;
+        padding: 4px 8px;
+        min-width: 28px;
+        height: 28px;
+        font-size: 11px;
     }
-
-    .table-scroll {
-        max-height: 60vh;
+    
+    .action-btn i {
+        font-size: 11px;
     }
 }
 </style>
