@@ -21,8 +21,8 @@
 
     <div id="alert-container"></div>
 
-    <div class="table-container users-table-container">
-        <table id="usersTable" class="modern-table">
+    <div class="table-container">
+        <table id="usersTable" class="simple-table">
             <thead>
                 <tr>
                     <th>Username</th>
@@ -430,91 +430,149 @@
 
 .btn-add-user {
     background: #28a745;
+    padding: 6px 12px;
+    font-size: 13px;
+    border-radius: 6px;
 }
 
 .btn-add-user:hover {
     background: #218838;
 }
 
-.users-table-container {
+.table-container {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
     overflow-x: auto;
     overflow-y: auto;
     max-height: 70vh;
     -webkit-overflow-scrolling: touch;
     margin-bottom: 24px;
-    border: 2px solid #0d6efd;
-    border-radius: var(--border-radius);
-    background: var(--white);
+    margin: 20px;
+    border: 2px solid #1f2937;
 }
 
-/* Expand columns to fit content; allow horizontal scroll instead of truncation */
-#usersTable.modern-table {
+.simple-table {
     width: max-content;
     min-width: 100%;
     table-layout: auto;
-    border-collapse: separate;
-    border-spacing: 0;
-    margin-bottom: 0;
-    box-shadow: none;
-    border-radius: 0;
-    overflow: visible;
+    border-collapse: collapse;
+    background: var(--white);
+    margin: 0;
+    font-size: 14px;
+    border: none;
 }
 
-/* Sticky header like Drugs table */
-#usersTable.modern-table thead th {
+.simple-table thead {
+    background: #0d6efd;
+    color: white;
+}
+
+/* Keep the full header row visible while scrolling */
+#usersTable.simple-table thead th {
     position: sticky;
     top: 0;
-    z-index: 3;
+    z-index: 5;
     background: #0d6efd;
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.25);
 }
 
-/* Inner borders visible */
-#usersTable.modern-table th,
-#usersTable.modern-table td {
-    border: 1px solid var(--gray-300);
+.simple-table th {
+    padding: 14px 16px;
+    text-align: left;
+    font-weight: 600;
+    border: 2px solid #0d6efd;
     white-space: nowrap;
+    color: white;
+}
+
+.simple-table td {
+    padding: 12px 16px;
+    border: 1px solid #dee2e6;
+    white-space: nowrap;
+    background: #fff;
+}
+
+/* Compact row height */
+#usersTable.simple-table th,
+#usersTable.simple-table td {
+    padding: 8px 12px;
+    line-height: 1.3;
+}
+
+/* Allow wrapping for username and email columns if very long */
+#usersTable.simple-table td:nth-child(1),
+#usersTable.simple-table td:nth-child(2) {
+    white-space: normal;
+    word-break: break-word;
+    max-width: 250px;
+}
+
+.simple-table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.simple-table tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+.simple-table tbody tr:last-child td {
+    border-bottom: 2px solid #dee2e6;
 }
 
 .action-btns {
-    min-width: 100px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: center;
+    min-width: 120px;
 }
 
 .btn-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    white-space: nowrap;
     flex-wrap: nowrap;
+    flex-direction: row;
 }
 
-.modern-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: var(--white);
-    border-radius: var(--border-radius);
-    box-shadow: var(--box-shadow);
-    margin-bottom: 24px;
-    overflow: hidden;
+.action-btn {
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    color: white;
 }
 
-.modern-table th {
-    background-color: #f8f9fa;
-    padding: 16px;
-    text-align: left;
-    font-weight: 600;
-    color: var(--gray-700);
-    border-bottom: 1px solid var(--gray-300);
+.action-btn i {
+    font-size: 12px;
 }
 
-.modern-table td {
-    padding: 16px;
-    border-bottom: 1px solid var(--gray-200);
+.action-btn:hover {
+    transform: scale(1.05);
 }
 
-.modern-table tr:last-child td {
-    border-bottom: none;
+.action-btn.btn-primary {
+    background: #4361ee;
 }
 
-.modern-table tr:hover {
-    background-color: #f8f9fa;
+.action-btn.btn-primary:hover {
+    background: #3651d3;
+}
+
+.action-btn.btn-danger {
+    background: #dc3545;
+}
+
+.action-btn.btn-danger:hover {
+    background: #c82333;
 }
 
 .status-badge {
@@ -539,36 +597,12 @@
     border-radius: 4px;
     font-size: 12px;
     font-weight: 500;
+    white-space: nowrap;
 }
 
 .badge-role {
     background: #e8f0fe;
     color: #1a73e8;
-}
-
-.action-btns {
-    white-space: nowrap;
-}
-
-.btn-group {
-    display: flex;
-    gap: 8px;
-}
-
-.action-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    cursor: pointer;
-    transition: var(--transition);
-}
-
-.action-btn:hover {
-    transform: scale(1.1);
 }
 
 .text-center {
@@ -810,9 +844,37 @@
 }
 
 /* Responsive Design */
+@media (min-width: 481px) and (max-width: 767px) {
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .simple-table {
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+    
+    .action-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
+    }
+}
+
 @media (min-width: 320px) and (max-width: 480px) {
     .user-management-container {
         padding: 16px;
+        margin: 0;
     }
     
     .header-content {
@@ -822,24 +884,41 @@
     }
 
     .btn-add-user {
-        padding: 8px 12px;
-        font-size: 12px;
-    }
-    
-    .modal-content {
-        width: 95%;
-        margin: 20px auto;
-    }
-    
-    /* Keep action buttons in a single row on mobile */
-    .action-btns .btn-group {
-        flex-direction: row;
-        gap: 6px;
+        padding: 6px 8px;
+        font-size: 11px;
+        white-space: nowrap;
     }
     
     .form-row {
         flex-direction: column;
         gap: 0;
+    }
+    
+    .simple-table {
+        min-width: 800px;
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+    
+    .action-btn {
+        padding: 4px 8px;
+        min-width: 28px;
+        height: 28px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
+    }
+    
+    .modal-content {
+        width: 95%;
+        margin: 20px auto;
     }
 }
 </style>

@@ -104,6 +104,7 @@
             </button>
         </div>
         <div class="table-container">
+            <div class="table-scroll">
             <table id="services-table" class="modern-table">
                 <thead>
                     <tr>
@@ -140,6 +141,7 @@
                     {% endfor %}
                 </tbody>
             </table>
+            </div>
             {% if not services %}
             <div class="empty-state" id="services-empty">
                 <i class="fas fa-stethoscope"></i>
@@ -165,6 +167,7 @@
             </button>
         </div>
         <div class="table-container">
+            <div class="table-scroll">
             <table id="lab-tests-table" class="modern-table">
                 <thead>
                     <tr>
@@ -201,6 +204,7 @@
                     {% endfor %}
                 </tbody>
             </table>
+            </div>
             {% if not lab_tests %}
             <div class="empty-state" id="lab-tests-empty">
                 <i class="fas fa-microscope"></i>
@@ -226,6 +230,7 @@
             </button>
         </div>
         <div class="table-container">
+            <div class="table-scroll">
             <table id="imaging-tests-table" class="modern-table">
                 <thead>
                     <tr>
@@ -269,6 +274,7 @@
                     {% endfor %}
                 </tbody>
             </table>
+            </div>
             {% if not imaging_tests %}
             <div class="empty-state" id="imaging-tests-empty">
                 <i class="fas fa-x-ray"></i>
@@ -744,14 +750,24 @@
     gap: 8px;
 }
 
+.table-scroll {
+    border: 2px solid #1f2937;
+    border-radius: 12px;
+    overflow: auto;
+    max-height: 70vh;
+    background: var(--white);
+    margin-bottom: 24px;
+}
+
 .modern-table {
-    width: 100%;
+    width: max-content;
+    min-width: 100%;
     border-collapse: collapse;
     background: var(--white);
     border-radius: var(--border-radius);
     box-shadow: var(--box-shadow);
-    margin-bottom: 24px;
-    overflow: hidden;
+    margin-bottom: 0;
+    white-space: nowrap;
 }
 
 .modern-table th {
@@ -761,6 +777,9 @@
     font-weight: 600;
     color: var(--gray-700);
     border-bottom: 1px solid var(--gray-300);
+    position: sticky;
+    top: 0;
+    z-index: 5;
 }
 
 .modern-table td {
@@ -964,16 +983,40 @@
     }
     
     .summary-cards-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .summary-card {
+        padding: 10px;
+    }
+
+    .card-icon {
+        display: none;
+    }
+
+    .card-content h3 {
+        font-size: 10px;
+    }
+
+    .amount {
+        font-size: 14px;
+    }
+
+    .card-content p {
+        display: none;
     }
     
     .navigation-tabs {
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
     }
     
     .tab {
-        flex: 1;
-        min-width: 120px;
+        flex: 0 0 auto;
+        min-width: unset;
         justify-content: center;
     }
     
@@ -989,12 +1032,16 @@
     }
     
     .action-btns .btn-group {
-        flex-direction: column;
+        flex-direction: row;
     }
-    
-    .modern-table {
-        display: block;
-        overflow-x: auto;
+
+    .action-btn {
+        width: 32px;
+        height: 32px;
+    }
+
+    .table-scroll {
+        max-height: 60vh;
     }
 }
 </style>
@@ -1133,7 +1180,6 @@ window.medicalTests = {
                     responsive: true,
                     pageLength: 10,
                     lengthMenu: [5, 10, 25, 50, 100],
-                    scrollX: true,
                     language: {
                         search: "_INPUT_",
                         searchPlaceholder: "Search...",

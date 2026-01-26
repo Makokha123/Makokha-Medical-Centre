@@ -112,8 +112,8 @@
                 </button>
             </div>
         </div>
-        <div class="table-container table-scroll">
-            <table id="drawings-table" class="modern-table">
+        <div class="table-container">
+            <table id="drawings-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>Date</th>
@@ -174,8 +174,8 @@
                 </button>
             </div>
         </div>
-        <div class="table-container table-scroll">
-            <table id="bills-table" class="modern-table">
+        <div class="table-container">
+            <table id="bills-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>Bill Type</th>
@@ -259,9 +259,9 @@
             </div>
         </div>
         
-        <div class="table-container table-scroll" style="margin-bottom:16px;">
+        <div class="table-container" style="margin-bottom:16px;">
             <h3 style="margin:0 0 10px 0;">Local Purchase Orders (recent)</h3>
-            <table id="purchase-orders-table" class="modern-table">
+            <table id="purchase-orders-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>LPO #</th>
@@ -337,9 +337,9 @@
             {% endif %}
         </div>
 
-        <div class="table-container table-scroll">
+        <div class="table-container">
             <h3 style="margin:0 0 10px 0;">Direct Purchases</h3>
-            <table id="purchases-table" class="modern-table">
+            <table id="purchases-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>Purchase Type</th>
@@ -407,8 +407,8 @@
                 </button>
             </div>
         </div>
-        <div class="table-container table-scroll">
-            <table id="payroll-table" class="modern-table">
+        <div class="table-container">
+            <table id="payroll-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>#</th>
@@ -512,8 +512,8 @@
                 </button>
             </div>
         </div>
-        <div class="table-container table-scroll">
-            <table id="debts-table" class="modern-table">
+        <div class="table-container">
+            <table id="debts-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>Debt No</th>
@@ -610,8 +610,8 @@
                 </button>
             </div>
         </div>
-        <div class="table-container table-scroll">
-            <table id="debtors-table" class="modern-table">
+        <div class="table-container">
+            <table id="debtors-table" class="simple-table">
                 <thead>
                     <tr>
                         <th>Name</th>
@@ -726,9 +726,9 @@
             </div>
         </div>
 
-        <div class="table-container table-scroll" style="margin-bottom:16px;">
+        <div class="table-container" style="margin-bottom:16px;">
             <h3 style="margin:0 0 10px 0;">Providers</h3>
-            <table class="modern-table" id="insurance-providers-table">
+            <table class="simple-table" id="insurance-providers-table">
                 <thead>
                     <tr>
                         <th>Name</th>
@@ -787,9 +787,9 @@
             {% endif %}
         </div>
 
-        <div class="table-container table-scroll" style="margin-bottom:16px;">
+        <div class="table-container" style="margin-bottom:16px;">
             <h3 style="margin:0 0 10px 0;">Policies (recent)</h3>
-            <table class="modern-table" id="insurance-policies-table">
+            <table class="simple-table" id="insurance-policies-table">
                 <thead>
                     <tr>
                         <th>Patient</th>
@@ -852,9 +852,9 @@
             {% endif %}
         </div>
 
-        <div class="table-container table-scroll">
+        <div class="table-container">
             <h3 style="margin:0 0 10px 0;">Claims (recent)</h3>
-            <table class="modern-table" id="insurance-claims-table">
+            <table class="simple-table" id="insurance-claims-table">
                 <thead>
                     <tr>
                         <th>Claim #</th>
@@ -1058,9 +1058,9 @@
             </div>
         </div>
 
-        <div class="table-container table-scroll" style="margin-bottom:16px;">
+        <div class="table-container" style="margin-bottom:16px;">
             <h3 style="margin:0 0 10px 0;">Recent Verification Queries</h3>
-            <table class="modern-table">
+            <table class="simple-table">
                 <thead>
                     <tr>
                         <th>Date</th>
@@ -1108,9 +1108,9 @@
             {% endif %}
         </div>
 
-        <div class="table-container table-scroll">
+        <div class="table-container">
             <h3 style="margin:0 0 10px 0;">Recent Payouts</h3>
-            <table class="modern-table">
+            <table class="simple-table">
                 <thead>
                     <tr>
                         <th>Date</th>
@@ -1862,7 +1862,7 @@
             
             <h3 style="margin: 20px 0 10px 0; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px;">Items</h3>
             
-            <table class="modern-table" id="lpo-items-table" style="margin-bottom: 10px;">
+            <table class="simple-table" id="lpo-items-table" style="margin-bottom: 10px;">
                 <thead>
                     <tr>
                         <th style="width: 40%;">Description</th>
@@ -1982,7 +1982,7 @@
             
             <h3 style="margin: 20px 0 10px 0; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px;">Items</h3>
             
-            <table class="modern-table" id="edit-lpo-items-table" style="margin-bottom: 10px;">
+            <table class="simple-table" id="edit-lpo-items-table" style="margin-bottom: 10px;">
                 <thead>
                     <tr>
                         <th style="width: 40%;">Description</th>
@@ -2886,14 +2886,10 @@
     box-shadow: var(--box-shadow);
     margin-bottom: 24px;
     overflow-x: auto;
-    overflow-y: visible;
-    position: relative;
-}
-
-.table-container.table-scroll {
-    border: 2px solid #1f2937;
     overflow-y: auto;
     max-height: 70vh;
+    -webkit-overflow-scrolling: touch;
+    border: 2px solid #1f2937;
 }
 
 .table-container::after {
@@ -2913,70 +2909,62 @@
     opacity: 1;
 }
 
-.modern-table {
+.simple-table {
     width: max-content;
     min-width: 100%;
+    table-layout: auto;
     border-collapse: collapse;
     background: var(--white);
-    font-size: 13px;
-    table-layout: auto;
+    margin: 0;
+    font-size: 14px;
+    border: none;
 }
 
-.table-container.table-scroll .modern-table thead th {
+.simple-table thead {
+    background: #0d6efd;
+    color: white;
+}
+
+.simple-table thead th {
     position: sticky;
     top: 0;
     z-index: 5;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #0d6efd;
 }
 
-.table-container.table-scroll .modern-table td {
-    border: 1px solid #e8eef7;
-}
-
-.table-container.table-scroll .modern-table th {
-    border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.modern-table thead tr {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-bottom: 3px solid #667eea;
-}
-
-.modern-table th {
-    padding: 12px 14px;
+.simple-table th {
+    padding: 14px 16px;
     text-align: left;
     font-weight: 600;
-    color: var(--white);
-    letter-spacing: 0.3px;
+    border: 2px solid #0d6efd;
+    white-space: nowrap;
+    color: white;
     text-transform: uppercase;
     font-size: 11px;
-    white-space: nowrap;
+    letter-spacing: 0.3px;
 }
 
-.modern-table tbody tr {
+.simple-table td {
+    padding: 12px 16px;
+    border: 1px solid #dee2e6;
+    white-space: nowrap;
+    background: #fff;
+    color: #333;
+    vertical-align: middle;
+}
+
+.simple-table tbody tr {
     border-bottom: 1px solid #e8eef7;
     transition: all 0.2s ease;
     background: var(--white);
 }
 
-.modern-table tbody tr:hover {
-    background-color: #f7f9fc;
-    box-shadow: inset 0 0 8px rgba(102, 126, 234, 0.08);
+.simple-table tbody tr:hover {
+    background-color: #f9f9f9;
 }
 
-.modern-table tbody tr:hover td {
-    color: #667eea;
-}
-
-.modern-table td {
-    padding: 12px 14px;
-    color: #333;
-    vertical-align: middle;
-    white-space: nowrap;
-}
-
-.modern-table tr:last-child td {
-    border-bottom: none;
+.simple-table tbody tr:last-child td {
+    border-bottom: 2px solid #dee2e6;
 }
 
 .amount-cell {
@@ -3068,6 +3056,10 @@
 }
 
 .action-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: center;
     white-space: nowrap;
 }
 
@@ -3075,64 +3067,72 @@
     display: flex;
     gap: 6px;
     align-items: center;
+    white-space: nowrap;
+    flex-wrap: nowrap;
+    flex-direction: row;
 }
 
 .action-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    padding: 6px 10px;
+    border-radius: 4px;
     border: none;
     cursor: pointer;
+    font-size: 12px;
     transition: all 0.2s ease;
-    font-size: 13px;
-    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    color: white;
 }
 
+.action-btn i {
+    font-size: 12px;
+}
+
+.action-btn:hover {
+    transform: scale(1.05);
+}
+
+.action-btn.btn-primary,
 .action-btn-edit {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: var(--white);
-    box-shadow: 0 1px 4px rgba(102, 126, 234, 0.25);
+    background: #4361ee;
 }
 
+.action-btn.btn-primary:hover,
 .action-btn-edit:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+    background: #3651d3;
 }
 
-.action-btn-delete {
-    background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
-    color: var(--white);
-    box-shadow: 0 1px 4px rgba(245, 87, 108, 0.25);
-}
-
-.action-btn-delete:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(245, 87, 108, 0.4);
-}
-
-.action-btn-view {
-    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-    color: var(--white);
-    box-shadow: 0 1px 4px rgba(79, 172, 254, 0.25);
-}
-
-.action-btn-view:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(79, 172, 254, 0.4);
-}
-
+.action-btn.btn-success,
 .action-btn-pay {
-    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-    color: var(--white);
-    box-shadow: 0 1px 4px rgba(67, 233, 123, 0.25);
+    background: #28a745;
 }
 
+.action-btn.btn-success:hover,
 .action-btn-pay:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(67, 233, 123, 0.4);
+    background: #218838;
+}
+
+.action-btn.btn-danger,
+.action-btn-delete {
+    background: #dc3545;
+}
+
+.action-btn.btn-danger:hover,
+.action-btn-delete:hover {
+    background: #c82333;
+}
+
+.action-btn.btn-info,
+.action-btn-view {
+    background: #17a2b8;
+}
+
+.action-btn.btn-info:hover,
+.action-btn-view:hover {
+    background: #138496;
 }
 
 .employee-cell, .debtor-cell {
@@ -3384,6 +3384,33 @@
 }
 
 /* Responsive Design */
+@media (min-width: 481px) and (max-width: 767px) {
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .simple-table {
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+    
+    .action-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
+    }
+}
+
 @media (min-width: 320px) and (max-width: 480px) {
     .money-management-container {
         padding: 16px;
@@ -3479,9 +3506,15 @@
         flex-wrap: nowrap;
     }
     
-    .modern-table th,
-    .modern-table td {
+    .simple-table {
+        min-width: 800px;
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
         padding: 8px 10px;
+        font-size: 11px;
     }
 
     .btn-group {
@@ -3489,8 +3522,14 @@
     }
 
     .action-btn {
-        width: 28px;
+        padding: 4px 8px;
+        min-width: 28px;
         height: 28px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
     }
 }
 </style>
@@ -3740,7 +3779,7 @@ window.moneyManagement = {
                 // Pending Bills
                 if (data.pending_bills && data.pending_bills.length > 0) {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-file-invoice-dollar"></i> Pending Bills (' + data.pending_bills.length + ')</h3>';
-                    html += '<div class="table-container table-scroll"><table class="modern-table"><thead><tr><th>Bill #</th><th>Type</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
+                    html += '<div class="table-container"><table class="simple-table"><thead><tr><th>Bill #</th><th>Type</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_bills.forEach(bill => {
                         html += `<tr>
                             <td>${bill.expense_number}</td>
@@ -3756,7 +3795,7 @@ window.moneyManagement = {
                 // Pending Payroll
                 if (data.pending_payroll && data.pending_payroll.length > 0) {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-user-tie"></i> Pending Payroll (' + data.pending_payroll.length + ')</h3>';
-                    html += '<div class="table-container table-scroll"><table class="modern-table"><thead><tr><th>Payroll #</th><th>Employee</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
+                    html += '<div class="table-container"><table class="simple-table"><thead><tr><th>Payroll #</th><th>Employee</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_payroll.forEach(payroll => {
                         html += `<tr>
                             <td>${payroll.payroll_number}</td>
@@ -3772,7 +3811,7 @@ window.moneyManagement = {
                 // Pending Debtor Payments
                 if (data.pending_debtor_payments && data.pending_debtor_payments.length > 0) {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-hand-holding-usd"></i> Pending Debtor Payments (' + data.pending_debtor_payments.length + ')</h3>';
-                    html += '<div class="table-container table-scroll"><table class="modern-table"><thead><tr><th>Debtor</th><th>Amount Owed</th><th>Next Payment</th><th>Actions</th></tr></thead><tbody>';
+                    html += '<div class="table-container"><table class="simple-table"><thead><tr><th>Debtor</th><th>Amount Owed</th><th>Next Payment</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_debtor_payments.forEach(debtor => {
                         html += `<tr>
                             <td>${debtor.name}</td>
@@ -4223,7 +4262,7 @@ window.moneyManagement = {
                 // Parse the response to extract items - for now show simple message
                 // In production, you'd want a proper API endpoint
                 $('#view-lpo-items').html(`
-                    <table class="modern-table" style="margin-top: 10px;">
+                    <table class="simple-table" style="margin-top: 10px;">
                         <thead>
                             <tr>
                                 <th>Description</th>
@@ -4406,7 +4445,7 @@ window.moneyManagement = {
 
 // Initialize table scrolling synchronization
 function initializeTableScrolling() {
-    const tables = document.querySelectorAll('.modern-table');
+    const tables = document.querySelectorAll('.simple-table');
     
     tables.forEach(table => {
         const container = table.closest('.table-container');
