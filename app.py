@@ -5984,24 +5984,29 @@ def _send_system_email(
     
     def _send_with_audit():
         try:
-            if not _email_sender.is_healthy():
-                app.logger.warning("Resend not configured; system email not sent.")
-                return
-            result = _email_sender.send(
-                recipient=recipient,
-                subject=subject,
-                html_body=html,
-                text_body=text_content,
-                attachments=attachments,
-            )
-            _email_audit_logger.log_send(result)
-            if not result.success:
-                app.logger.warning(
-                    f"Email send failed after {result.attempt_count} attempts: {result.error}",
-                    extra={'recipient': recipient, 'subject': subject},
+            with app.app_context():
+                if not _email_sender.is_healthy():
+                    app.logger.warning("Resend not configured; system email not sent.")
+                    return
+                result = _email_sender.send(
+                    recipient=recipient,
+                    subject=subject,
+                    html_body=html,
+                    text_body=text_content,
+                    attachments=attachments,
                 )
+                _email_audit_logger.log_send(result)
+                if not result.success:
+                    app.logger.warning(
+                        f"Email send failed after {result.attempt_count} attempts: {result.error}",
+                        extra={'recipient': recipient, 'subject': subject},
+                    )
         except Exception as e:
-            app.logger.exception(f"Email send failed: {e}")
+            try:
+                with app.app_context():
+                    app.logger.exception(f"Email send failed: {e}")
+            except:
+                pass
     
     # Send async to avoid blocking HTTP response
     try:
@@ -13950,21 +13955,26 @@ def _send_backup_email(
     # Use production email sender
     def _send():
         try:
-            if not _email_sender.is_healthy():
-                app.logger.warning("Resend not configured; backup email not sent.")
-                return
-            result = _email_sender.send(
-                recipient=recipient,
-                subject=subject,
-                html_body=html,
-                text_body='Your email client does not support HTML.',
-                attachments=attachments,
-            )
-            _email_audit_logger.log_send(result)
-            if not result.success:
-                app.logger.warning(f"Backup email send failed: {result.error}")
+            with app.app_context():
+                if not _email_sender.is_healthy():
+                    app.logger.warning("Resend not configured; backup email not sent.")
+                    return
+                result = _email_sender.send(
+                    recipient=recipient,
+                    subject=subject,
+                    html_body=html,
+                    text_body='Your email client does not support HTML.',
+                    attachments=attachments,
+                )
+                _email_audit_logger.log_send(result)
+                if not result.success:
+                    app.logger.warning(f"Backup email send failed: {result.error}")
         except Exception as e:
-            app.logger.exception(f"Production email sender failed: {e}")
+            try:
+                with app.app_context():
+                    app.logger.exception(f"Production email sender failed: {e}")
+            except:
+                pass
     
     try:
         Thread(target=_send, daemon=True, name="backup-email").start()

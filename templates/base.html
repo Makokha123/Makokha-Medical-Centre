@@ -935,6 +935,9 @@
                                     Verify OTP
                                 </button>
                             </form>
+                            <button class="btn btn-outline-secondary w-100 mt-2" type="button" id="backupRegisterResendOtpBtn">
+                                <i class="fas fa-redo"></i> Resend OTP
+                            </button>
                         </div>
 
                         <div id="backupRegisterStepPassword" class="d-none">
@@ -1222,6 +1225,32 @@
                         if (passInput) passInput.focus();
                     } catch (err) {
                         showAlert(err.message || 'OTP verification failed');
+                    }
+                });
+            }
+
+            // Resend OTP handler
+            const resendOtpBtn = document.getElementById('backupRegisterResendOtpBtn');
+            if (resendOtpBtn) {
+                resendOtpBtn.addEventListener('click', async function () {
+                    showAlert('');
+                    const email = (document.getElementById('backup_register_email') || {}).value || '';
+                    if (!email) {
+                        showAlert('Email not found. Please start over.', 'warning');
+                        showRegisterView();
+                        return;
+                    }
+                    try {
+                        resendOtpBtn.disabled = true;
+                        resendOtpBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+                        await postForm("{{ url_for('backup_login_register_email') }}", { backup_email: email });
+                        showAlert('OTP resent successfully!', 'success');
+                        resendOtpBtn.innerHTML = '<i class="fas fa-redo"></i> Resend OTP';
+                        resendOtpBtn.disabled = false;
+                    } catch (err) {
+                        showAlert(err.message || 'Failed to resend OTP');
+                        resendOtpBtn.innerHTML = '<i class="fas fa-redo"></i> Resend OTP';
+                        resendOtpBtn.disabled = false;
                     }
                 });
             }
