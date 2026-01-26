@@ -2274,6 +2274,32 @@ document.addEventListener('DOMContentLoaded', function() {
     border-radius: 10px !important;
 }
 
+/* Report type buttons (distinct colors) */
+#drugReportBtn { --report-btn: #198754; }
+#controlledDrugReportBtn { --report-btn: #6f42c1; }
+#labReportBtn { --report-btn: #0d6efd; }
+#generalReportBtn { --report-btn: #f77f00; }
+
+#generationPanel .btn-group .btn {
+    border: 1px solid rgba(255, 255, 255, 0.75);
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--report-btn, #495057);
+    font-weight: 700;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+#generationPanel .btn-group .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+#generationPanel .btn-group .btn.active {
+    background: var(--report-btn, #667eea);
+    border-color: var(--report-btn, #667eea);
+    color: #fff;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
 #generateBtn {
     border-radius: 10px;
 }
@@ -2284,10 +2310,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 /* Button Styles */
 .btn-group .btn.active {
-    background-color: #e9ecef;
-    border-color: #dee2e6;
-    color: #495057;
-    font-weight: 600;
+    font-weight: 700;
 }
 
 /* Summary Box Styles */
@@ -2526,6 +2549,33 @@ document.addEventListener('DOMContentLoaded', function() {
 
 /* Responsive */
 @media (min-width: 320px) and (max-width: 480px) {
+    #generationPanel .card-header .d-flex {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 10px;
+    }
+
+    #generationPanel .btn-group {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+        padding: 4px;
+    }
+
+    #generationPanel .btn-group .btn {
+        padding: 6px 6px;
+        font-size: 10px;
+        line-height: 1.1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    #generationPanel .btn-group .btn i {
+        display: none;
+    }
+
     .chart-wrapper {
         height: 280px;
     }

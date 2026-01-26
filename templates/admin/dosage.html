@@ -219,6 +219,83 @@
             transform: translateY(-20px);
         }
     }
+
+    @media (min-width: 320px) and (max-width: 480px) {
+        .dosage-header {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+        }
+
+        .dosage-header h2 {
+            min-width: auto;
+            font-size: 1.1rem;
+        }
+
+        .header-actions-left,
+        .header-actions-right {
+            width: 100%;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            padding-bottom: 2px;
+        }
+
+        .header-actions-left .btn,
+        .header-actions-right .btn {
+            flex: 0 0 auto;
+        }
+
+        .header-actions-left .btn i,
+        .header-actions-right .ai-control-btn i {
+            display: none;
+        }
+
+        .stats-container {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .stat-card {
+            padding: 10px 8px;
+            border-radius: 10px;
+        }
+
+        .stat-card .stat-value {
+            font-size: 1.05rem;
+            margin-bottom: 2px;
+            line-height: 1.1;
+        }
+
+        .stat-card .stat-label {
+            font-size: 10px;
+        }
+
+        #aiProgressCard {
+            grid-column: 1 / -1;
+        }
+
+        .table-scrollable {
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+
+        .action-buttons {
+            flex-wrap: nowrap;
+        }
+
+        .btn-view, .btn-edit, .btn-delete {
+            padding: 0.3rem 0.45rem;
+            font-size: 0.8rem;
+        }
+
+        .btn-add-dosage {
+            padding: 0.3rem 0.55rem;
+            font-size: 0.8rem;
+        }
+    }
 </style>
 
 <div class="content">
@@ -1052,20 +1129,31 @@ $(document).ready(function() {
     }
     /* Table styling */
     .data-table {
-        width: 100%;
+        width: max-content;
+        min-width: 100%;
         margin-bottom: 1rem;
         background-color: transparent;
+        white-space: nowrap;
     }
     
     .data-table th {
         background-color: #116cc2;
         color: white;
         padding: 0.75rem;
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
     
     .data-table td {
         padding: 0.5rem;
         vertical-align: middle;
+    }
+
+    .table-scrollable {
+        overflow-x: auto;
+        border: 2px solid #1f2937;
+        border-radius: 0.5rem;
     }
     
     .data-table tbody tr:nth-child(odd) {

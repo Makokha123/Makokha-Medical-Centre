@@ -5,6 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
+    .patient-filter-form {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .patient-table-scroll {
+        border: 2px solid #1f2937;
+        border-radius: 12px;
+        max-height: 70vh;
+        overflow: auto;
+        background: #fff;
+    }
+
     .summary-box {
         border-radius: 8px;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
@@ -19,10 +34,12 @@
     }
 
     .data-table {
-        width: 100%;
+        width: max-content;
+        min-width: 100%;
         border-collapse: separate;
         border-spacing: 0;
         margin-bottom: 1rem;
+        white-space: nowrap;
     }
 
     .data-table th {
@@ -31,6 +48,9 @@
         font-weight: 600;
         text-align: left;
         border-bottom: 2px solid #dee2e6;
+        position: sticky;
+        top: 0;
+        z-index: 5;
     }
 
     .data-table td {
@@ -102,6 +122,63 @@
         background-color: #d1ecf1;
         color: #0c5460;
     }
+
+    @media (min-width: 320px) and (max-width: 480px) {
+        .patient-filter-form {
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            padding-bottom: 2px;
+        }
+
+        .patient-filter-form .form-group,
+        .patient-filter-form button {
+            flex: 0 0 auto;
+        }
+
+        .patient-filter-form .form-group {
+            min-width: 160px;
+        }
+
+        .financial-summary-row {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            margin: 0;
+        }
+
+        .financial-summary-row > [class^="col-"] {
+            max-width: none;
+            padding: 0;
+        }
+
+        .summary-box {
+            padding: 10px !important;
+            margin-bottom: 0;
+        }
+
+        .summary-box h6 {
+            font-size: 10px;
+            margin-bottom: 4px;
+        }
+
+        .summary-box p {
+            font-size: 12px;
+            margin: 0;
+            font-weight: 700;
+        }
+
+        .view-details {
+            padding: 6px 8px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .view-details i {
+            display: none;
+        }
+    }
 </style>
 
 <div class="container-fluid">
@@ -112,7 +189,7 @@
             <!-- Date Filter Form -->
             <div class="card mb-4">
                 <div class="card-body">
-                    <form id="dateFilterForm" class="form-inline">
+                    <form id="dateFilterForm" class="form-inline patient-filter-form">
                         <div class="form-group mr-3">
                             <label for="startDate" class="mr-2">From:</label>
                             <input type="date" class="form-control" id="startDate" name="start_date" value="{{ request.args.get('start_date', '') }}">
@@ -133,7 +210,7 @@
                     <h5>Financial Summary</h5>
                 </div>
                 <div class="card-body">
-                    <div class="row">
+                    <div class="row financial-summary-row">
                         <div class="col-md-3">
                             <div class="summary-box bg-light p-3">
                                 <h6>Total Lab Amount</h6>
@@ -162,7 +239,7 @@
                 </div>
             </div>
             
-            <div class="table-responsive">
+            <div class="table-responsive patient-table-scroll">
                 <table class="data-table" id="patientsTable">
                     <thead>
                         <tr>

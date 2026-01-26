@@ -106,11 +106,13 @@
                 <h2><i class="fas fa-hand-holding-usd"></i> Owner's Drawings</h2>
                 <p>Track owner withdrawals from the business</p>
             </div>
-            <button class="btn btn-primary btn-with-icon" data-modal-target="add-drawing">
-                <i class="fas fa-plus"></i> Add Drawing
-            </button>
+            <div class="section-actions">
+                <button class="btn btn-primary btn-with-icon" data-modal-target="add-drawing">
+                    <i class="fas fa-plus"></i> Add Drawing
+                </button>
+            </div>
         </div>
-        <div class="table-container">
+        <div class="table-container table-scroll">
             <table id="drawings-table" class="modern-table">
                 <thead>
                     <tr>
@@ -166,11 +168,13 @@
                 <h2><i class="fas fa-file-invoice-dollar"></i> Bills & Expenses</h2>
                 <p>Manage your business expenses</p>
             </div>
-            <button class="btn btn-primary btn-with-icon" data-modal-target="add-bill">
-                <i class="fas fa-plus"></i> Add Bill
-            </button>
+            <div class="section-actions">
+                <button class="btn btn-primary btn-with-icon" data-modal-target="add-bill">
+                    <i class="fas fa-plus"></i> Add Bill
+                </button>
+            </div>
         </div>
-        <div class="table-container">
+        <div class="table-container table-scroll">
             <table id="bills-table" class="modern-table">
                 <thead>
                     <tr>
@@ -245,7 +249,7 @@
                 <h2><i class="fas fa-shopping-cart"></i> Purchases & LPOs</h2>
                 <p>Track business purchases, inventory, and local purchase orders</p>
             </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <div class="section-actions">
                 <button class="btn btn-primary btn-with-icon" data-modal-target="add-purchase">
                     <i class="fas fa-plus"></i> Add Purchase
                 </button>
@@ -255,7 +259,7 @@
             </div>
         </div>
         
-        <div class="table-container" style="margin-bottom:16px;">
+        <div class="table-container table-scroll" style="margin-bottom:16px;">
             <h3 style="margin:0 0 10px 0;">Local Purchase Orders (recent)</h3>
             <table id="purchase-orders-table" class="modern-table">
                 <thead>
@@ -333,7 +337,7 @@
             {% endif %}
         </div>
 
-        <div class="table-container">
+        <div class="table-container table-scroll">
             <h3 style="margin:0 0 10px 0;">Direct Purchases</h3>
             <table id="purchases-table" class="modern-table">
                 <thead>
@@ -397,11 +401,13 @@
                 <h2><i class="fas fa-user-tie"></i> Payroll</h2>
                 <p>Manage employee payments and records</p>
             </div>
-            <button class="btn btn-primary btn-with-icon" data-modal-target="add-payroll">
-                <i class="fas fa-plus"></i> Add Payroll
-            </button>
+            <div class="section-actions">
+                <button class="btn btn-primary btn-with-icon" data-modal-target="add-payroll">
+                    <i class="fas fa-plus"></i> Add Payroll
+                </button>
+            </div>
         </div>
-        <div class="table-container">
+        <div class="table-container table-scroll">
             <table id="payroll-table" class="modern-table">
                 <thead>
                     <tr>
@@ -500,11 +506,13 @@
                 <h2><i class="fas fa-file-invoice-dollar"></i> Creditor Debts</h2>
                 <p>Track money your business owes to suppliers/creditors</p>
             </div>
-            <button class="btn btn-primary btn-with-icon" data-modal-target="add-debt">
-                <i class="fas fa-plus"></i> Add Debt
-            </button>
+            <div class="section-actions">
+                <button class="btn btn-primary btn-with-icon" data-modal-target="add-debt">
+                    <i class="fas fa-plus"></i> Add Debt
+                </button>
+            </div>
         </div>
-        <div class="table-container">
+        <div class="table-container table-scroll">
             <table id="debts-table" class="modern-table">
                 <thead>
                     <tr>
@@ -596,11 +604,13 @@
                 <h2><i class="fas fa-hand-holding-usd"></i> Debtors</h2>
                 <p>Manage money owed to your business</p>
             </div>
-            <button class="btn btn-primary btn-with-icon" data-modal-target="add-debtor">
-                <i class="fas fa-plus"></i> Add Debtor
-            </button>
+            <div class="section-actions">
+                <button class="btn btn-primary btn-with-icon" data-modal-target="add-debtor">
+                    <i class="fas fa-plus"></i> Add Debtor
+                </button>
+            </div>
         </div>
-        <div class="table-container">
+        <div class="table-container table-scroll">
             <table id="debtors-table" class="modern-table">
                 <thead>
                     <tr>
@@ -703,7 +713,7 @@
                 <h2><i class="fas fa-shield-alt"></i> Insurance Claims</h2>
                 <p>Track insurer providers, patient policies, claims, and claim payments</p>
             </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <div class="section-actions">
                 <button class="btn btn-primary btn-with-icon" data-modal-target="add-insurance-provider">
                     <i class="fas fa-plus"></i> Add Provider
                 </button>
@@ -716,7 +726,7 @@
             </div>
         </div>
 
-        <div class="table-container" style="margin-bottom:16px;">
+        <div class="table-container table-scroll" style="margin-bottom:16px;">
             <h3 style="margin:0 0 10px 0;">Providers</h3>
             <table class="modern-table" id="insurance-providers-table">
                 <thead>
@@ -777,7 +787,7 @@
             {% endif %}
         </div>
 
-        <div class="table-container" style="margin-bottom:16px;">
+        <div class="table-container table-scroll" style="margin-bottom:16px;">
             <h3 style="margin:0 0 10px 0;">Policies (recent)</h3>
             <table class="modern-table" id="insurance-policies-table">
                 <thead>
@@ -842,7 +852,7 @@
             {% endif %}
         </div>
 
-        <div class="table-container">
+        <div class="table-container table-scroll">
             <h3 style="margin:0 0 10px 0;">Claims (recent)</h3>
             <table class="modern-table" id="insurance-claims-table">
                 <thead>
@@ -1048,7 +1058,7 @@
             </div>
         </div>
 
-        <div class="table-container" style="margin-bottom:16px;">
+        <div class="table-container table-scroll" style="margin-bottom:16px;">
             <h3 style="margin:0 0 10px 0;">Recent Verification Queries</h3>
             <table class="modern-table">
                 <thead>
@@ -1098,7 +1108,7 @@
             {% endif %}
         </div>
 
-        <div class="table-container">
+        <div class="table-container table-scroll">
             <h3 style="margin:0 0 10px 0;">Recent Payouts</h3>
             <table class="modern-table">
                 <thead>
@@ -2756,7 +2766,6 @@
     white-space: nowrap;
     font-size: 13px;
 }
-}
 
 .tab:hover {
     background-color: #f5f7f9;
@@ -2864,6 +2873,13 @@
     gap: 8px;
 }
 
+.section-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
 .table-container {
     background: var(--white);
     border-radius: var(--border-radius);
@@ -2872,6 +2888,12 @@
     overflow-x: auto;
     overflow-y: visible;
     position: relative;
+}
+
+.table-container.table-scroll {
+    border: 2px solid #1f2937;
+    overflow-y: auto;
+    max-height: 70vh;
 }
 
 .table-container::after {
@@ -2892,12 +2914,27 @@
 }
 
 .modern-table {
-    width: 100%;
-    min-width: 800px;
+    width: max-content;
+    min-width: 100%;
     border-collapse: collapse;
     background: var(--white);
     font-size: 13px;
     table-layout: auto;
+}
+
+.table-container.table-scroll .modern-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.table-container.table-scroll .modern-table td {
+    border: 1px solid #e8eef7;
+}
+
+.table-container.table-scroll .modern-table th {
+    border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .modern-table thead tr {
@@ -3359,23 +3396,77 @@
     }
     
     .summary-cards-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 14px;
+    }
+
+    .summary-card {
+        padding: 8px 6px;
+        border-radius: 10px;
+    }
+
+    .card-icon {
+        display: none;
+    }
+
+    .card-content h3 {
+        font-size: 10px;
+        margin-bottom: 2px;
+        letter-spacing: 0.3px;
+    }
+
+    .amount {
+        font-size: 12px;
+        margin: 2px 0;
+        line-height: 1.15;
+    }
+
+    .card-content p {
+        display: none;
     }
     
     .navigation-tabs {
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        gap: 6px;
+        padding: 4px;
     }
     
     .tab {
-        flex: 1;
-        min-width: 120px;
+        flex: 0 0 auto;
+        min-width: unset;
         justify-content: center;
+        padding: 8px 10px;
+        font-size: 12px;
+    }
+
+    .tab i {
+        display: none;
     }
     
     .section-header {
         flex-direction: column;
         align-items: flex-start;
-        gap: 16px;
+        gap: 10px;
+    }
+
+    .section-actions {
+        width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 2px;
+    }
+
+    .section-actions .btn {
+        flex: 0 0 auto;
+        padding: 8px 10px;
+        font-size: 12px;
+    }
+
+    .btn-with-icon i {
+        display: none;
     }
     
     .modal-content {
@@ -3384,12 +3475,22 @@
     }
     
     .action-btns .btn-group {
-        flex-direction: column;
+        flex-direction: row;
+        flex-wrap: nowrap;
     }
     
-    .modern-table {
-        display: block;
-        overflow-x: auto;
+    .modern-table th,
+    .modern-table td {
+        padding: 8px 10px;
+    }
+
+    .btn-group {
+        gap: 4px;
+    }
+
+    .action-btn {
+        width: 28px;
+        height: 28px;
     }
 }
 </style>
@@ -3639,7 +3740,7 @@ window.moneyManagement = {
                 // Pending Bills
                 if (data.pending_bills && data.pending_bills.length > 0) {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-file-invoice-dollar"></i> Pending Bills (' + data.pending_bills.length + ')</h3>';
-                    html += '<div class="table-container"><table class="modern-table"><thead><tr><th>Bill #</th><th>Type</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
+                    html += '<div class="table-container table-scroll"><table class="modern-table"><thead><tr><th>Bill #</th><th>Type</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_bills.forEach(bill => {
                         html += `<tr>
                             <td>${bill.expense_number}</td>
@@ -3655,7 +3756,7 @@ window.moneyManagement = {
                 // Pending Payroll
                 if (data.pending_payroll && data.pending_payroll.length > 0) {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-user-tie"></i> Pending Payroll (' + data.pending_payroll.length + ')</h3>';
-                    html += '<div class="table-container"><table class="modern-table"><thead><tr><th>Payroll #</th><th>Employee</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
+                    html += '<div class="table-container table-scroll"><table class="modern-table"><thead><tr><th>Payroll #</th><th>Employee</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_payroll.forEach(payroll => {
                         html += `<tr>
                             <td>${payroll.payroll_number}</td>
@@ -3671,7 +3772,7 @@ window.moneyManagement = {
                 // Pending Debtor Payments
                 if (data.pending_debtor_payments && data.pending_debtor_payments.length > 0) {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-hand-holding-usd"></i> Pending Debtor Payments (' + data.pending_debtor_payments.length + ')</h3>';
-                    html += '<div class="table-container"><table class="modern-table"><thead><tr><th>Debtor</th><th>Amount Owed</th><th>Next Payment</th><th>Actions</th></tr></thead><tbody>';
+                    html += '<div class="table-container table-scroll"><table class="modern-table"><thead><tr><th>Debtor</th><th>Amount Owed</th><th>Next Payment</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_debtor_payments.forEach(debtor => {
                         html += `<tr>
                             <td>${debtor.name}</td>

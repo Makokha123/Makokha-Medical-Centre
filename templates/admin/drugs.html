@@ -13,11 +13,11 @@
                 <h1><i class="fas fa-pills"></i> Drug Management</h1>
                 <p>Manage your pharmacy inventory and drug information</p>
             </div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+            <div class="header-actions">
                 <a class="btn btn-outline btn-with-icon" href="{{ url_for('manage_controlled_drugs') }}">
                     <i class="fas fa-shield-alt"></i> Manage Controlled Drugs
                 </a>
-                <button class="btn btn-primary btn-with-icon" data-toggle="modal" data-target="#addDrugModal">
+                <button class="btn btn-primary btn-with-icon btn-add-drug" data-toggle="modal" data-target="#addDrugModal">
                     <i class="fas fa-plus"></i> Add New Drug
                 </button>
             </div>
@@ -328,6 +328,12 @@
     --transition: all 0.3s ease;
 }
 
+/* Page-scoped: make Admin Drugs content span full screen width */
+main.container-fluid {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
 
 
 .drug-management-container {
@@ -407,6 +413,21 @@
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.btn-add-drug {
+    background: #28a745;
+}
+
+.btn-add-drug:hover {
+    background: #218838;
 }
 
 .status-badge.expired {
@@ -878,6 +899,23 @@
         flex-direction: column;
         align-items: flex-start;
         gap: 16px;
+    }
+
+    /* Header buttons: keep on single row and compact */
+    .header-actions {
+        width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 8px;
+        justify-content: flex-start;
+    }
+
+    .header-actions .btn {
+        padding: 6px 8px;
+        font-size: 11px;
+        white-space: nowrap;
+        flex: 0 0 auto;
     }
     
     /* Summary cards: single row, 4 columns (Admin Drugs) */

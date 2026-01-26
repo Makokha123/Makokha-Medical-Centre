@@ -13,7 +13,7 @@
                 <h1><i class="fas fa-users"></i> User Management</h1>
                 <p>Manage system users and their permissions</p>
             </div>
-            <button class="btn btn-primary btn-with-icon" data-toggle="modal" data-target="#addUserModal">
+            <button class="btn btn-primary btn-with-icon btn-add-user" data-toggle="modal" data-target="#addUserModal">
                 <i class="fas fa-plus"></i> Add New User
             </button>
         </div>
@@ -21,65 +21,67 @@
 
     <div id="alert-container"></div>
 
-    <table id="usersTable" class="modern-table">
-        <thead>
-            <tr>
-                <th>Username</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Last Login</th>
-                <th class="text-center">Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for user in users %}
-            <tr>
-                <td>
-                    <div class="user-cell">
-                        <div class="user-avatar">
-                            <i class="fas fa-user"></i>
+    <div class="table-container users-table-container">
+        <table id="usersTable" class="modern-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Last Login</th>
+                    <th class="text-center">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>
+                        <div class="user-cell">
+                            <div class="user-avatar">
+                                <i class="fas fa-user"></i>
+                            </div>
+                            <div class="user-info">
+                                <div class="user-name">{{ user.username }}</div>
+                            </div>
                         </div>
-                        <div class="user-info">
-                            <div class="user-name">{{ user.username }}</div>
-                        </div>
-                    </div>
-                </td>
-                <td>{{ user.email }}</td>
-                <td><span class="badge badge-role">{{ user.role }}</span></td>
-                <td>
-                    <span class="status-badge {% if user.is_active %}status-active{% else %}status-inactive{% endif %}">
-                        {% if user.is_active %}Active{% else %}Inactive{% endif %}
-                    </span>
-                </td>
-                <td>
-                    {% set ll = user.last_login_dt or user.last_login %}
-                    {% if ll %}
-                        {% if ll is string %}
-                            {{ ll }}
+                    </td>
+                    <td>{{ user.email }}</td>
+                    <td><span class="badge badge-role">{{ user.role }}</span></td>
+                    <td>
+                        <span class="status-badge {% if user.is_active %}status-active{% else %}status-inactive{% endif %}">
+                            {% if user.is_active %}Active{% else %}Inactive{% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        {% set ll = user.last_login_dt or user.last_login %}
+                        {% if ll %}
+                            {% if ll is string %}
+                                {{ ll }}
+                            {% else %}
+                                {{ ll.strftime('%Y-%m-%d %H:%M') }}
+                            {% endif %}
                         {% else %}
-                            {{ ll.strftime('%Y-%m-%d %H:%M') }}
+                            Never
                         {% endif %}
-                    {% else %}
-                        Never
-                    {% endif %}
-                </td>
-                <td class="action-btns">
-                    <div class="btn-group">
-                        <button class="action-btn btn-primary btn-edit" data-id="{{ user.id }}" data-toggle="modal" data-target="#editUserModal">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        {% if user.id != current_user.id %}
-                        <button class="action-btn btn-danger btn-delete" data-id="{{ user.id }}" data-toggle="modal" data-target="#deleteUserModal">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                        {% endif %}
-                    </div>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                    </td>
+                    <td class="action-btns">
+                        <div class="btn-group">
+                            <button class="action-btn btn-primary btn-edit" data-id="{{ user.id }}" data-toggle="modal" data-target="#editUserModal">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            {% if user.id != current_user.id %}
+                            <button class="action-btn btn-danger btn-delete" data-id="{{ user.id }}" data-toggle="modal" data-target="#deleteUserModal">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <!-- Add User Modal -->
@@ -426,6 +428,63 @@
     gap: 8px;
 }
 
+.btn-add-user {
+    background: #28a745;
+}
+
+.btn-add-user:hover {
+    background: #218838;
+}
+
+.users-table-container {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 70vh;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 24px;
+    border: 2px solid #0d6efd;
+    border-radius: var(--border-radius);
+    background: var(--white);
+}
+
+/* Expand columns to fit content; allow horizontal scroll instead of truncation */
+#usersTable.modern-table {
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-bottom: 0;
+    box-shadow: none;
+    border-radius: 0;
+    overflow: visible;
+}
+
+/* Sticky header like Drugs table */
+#usersTable.modern-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: #0d6efd;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+/* Inner borders visible */
+#usersTable.modern-table th,
+#usersTable.modern-table td {
+    border: 1px solid var(--gray-300);
+    white-space: nowrap;
+}
+
+.action-btns {
+    min-width: 100px;
+}
+
+.btn-group {
+    flex-wrap: nowrap;
+}
+
 .modern-table {
     width: 100%;
     border-collapse: collapse;
@@ -761,10 +820,10 @@
         align-items: flex-start;
         gap: 16px;
     }
-    
-    .modern-table {
-        display: block;
-        overflow-x: auto;
+
+    .btn-add-user {
+        padding: 8px 12px;
+        font-size: 12px;
     }
     
     .modal-content {
@@ -772,8 +831,10 @@
         margin: 20px auto;
     }
     
+    /* Keep action buttons in a single row on mobile */
     .action-btns .btn-group {
-        flex-direction: column;
+        flex-direction: row;
+        gap: 6px;
     }
     
     .form-row {

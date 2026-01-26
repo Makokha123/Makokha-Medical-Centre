@@ -6,10 +6,30 @@
 
 <style>
 /* Transactions table enhancements */
+#transactionsTable {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+.transactions-table-container {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 70vh;
+  border: 3px solid #333;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 #transactionsTable thead th {
   background: #0d6efd;
   color: #fff;
   border: none;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  white-space: nowrap;
 }
 #transactionsTable tbody tr:nth-child(odd) {
   background-color: #f8fbff;
@@ -24,6 +44,37 @@
   font-weight: 600;
   color: #0b5ed7;
   white-space: nowrap;
+}
+
+#transactionsTable th,
+#transactionsTable td {
+  white-space: nowrap;
+  border-right: 1px solid #e9ecef;
+  border-bottom: 1px solid #e9ecef;
+}
+
+#transactionsTable th:last-child,
+#transactionsTable td:last-child {
+  border-right: none;
+}
+
+.transaction-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+@media (min-width: 320px) and (max-width: 480px) {
+  .transactions-table-container {
+    max-height: 72vh;
+  }
+
+  .transaction-actions .btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    line-height: 1;
+  }
 }
 .page-actions .form-control { min-width: 160px; }
 </style>
@@ -57,7 +108,7 @@
     </div>
   </div>
 
-  <div class="table-responsive">
+  <div class="table-container transactions-table-container">
     <table class="data-table" id="transactionsTable">
       <thead>
         <tr>
@@ -99,17 +150,19 @@
           </td>
           <td>{{ transaction.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td>
-            <button class="btn btn-sm btn-view" data-id="{{ transaction.id }}" aria-label="View transaction {{ transaction.transaction_number }}">
-              <i class="fas fa-eye"></i>
-            </button>
-            <a class="btn btn-sm btn-info" href="{{ url_for('admin_transaction_receipt', transaction_id=transaction.id, reprint=1) }}" target="_blank" aria-label="View receipt for {{ transaction.transaction_number }}">
-              <i class="fas fa-receipt"></i>
-            </a>
-            {% if transaction.transaction_type in ['expense', 'refund'] %}
-            <button class="btn btn-sm btn-edit" data-id="{{ transaction.id }}" aria-label="Edit transaction {{ transaction.transaction_number }}">
-              <i class="fas fa-edit"></i>
-            </button>
-            {% endif %}
+            <div class="transaction-actions">
+              <button class="btn btn-sm btn-view" data-id="{{ transaction.id }}" aria-label="View transaction {{ transaction.transaction_number }}">
+                <i class="fas fa-eye"></i>
+              </button>
+              <a class="btn btn-sm btn-info" href="{{ url_for('admin_transaction_receipt', transaction_id=transaction.id, reprint=1) }}" target="_blank" aria-label="View receipt for {{ transaction.transaction_number }}">
+                <i class="fas fa-receipt"></i>
+              </a>
+              {% if transaction.transaction_type in ['expense', 'refund'] %}
+              <button class="btn btn-sm btn-edit" data-id="{{ transaction.id }}" aria-label="Edit transaction {{ transaction.transaction_number }}">
+                <i class="fas fa-edit"></i>
+              </button>
+              {% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}

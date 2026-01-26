@@ -2,11 +2,154 @@
 
 {% block content %}
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+    .employees-page .page-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .employees-page .btn-add-employee {
+        padding: 6px 10px;
+        font-size: 12px;
+        line-height: 1.1;
+        white-space: nowrap;
+    }
+
+    .employees-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+    }
+
+    .employee-card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 12px;
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    }
+
+    .employee-avatar {
+        width: 52px;
+        height: 52px;
+        border-radius: 12px;
+        overflow: hidden;
+        background: linear-gradient(135deg, #4f46e5, #22c55e);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 18px;
+        flex: 0 0 auto;
+    }
+
+    .employee-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .employee-main {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .employee-name {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 700;
+        color: #111827;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .employee-subtitle {
+        margin: 2px 0 10px 0;
+        font-size: 12px;
+        color: #6b7280;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .employee-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 10px;
+    }
+
+    .employee-meta .meta-item {
+        min-width: 0;
+    }
+
+    .employee-meta .meta-label {
+        display: block;
+        font-size: 10px;
+        color: #9ca3af;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 2px;
+    }
+
+    .employee-meta .meta-value {
+        font-size: 12px;
+        color: #111827;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .employee-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex: 0 0 auto;
+    }
+
+    .employee-actions .btn {
+        padding: 6px 8px;
+        font-size: 12px;
+        line-height: 1;
+    }
+
+    @media (min-width: 320px) and (max-width: 480px) {
+        .employees-grid {
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+
+        .employee-card {
+            padding: 10px;
+            gap: 10px;
+        }
+
+        .employee-avatar {
+            width: 46px;
+            height: 46px;
+        }
+
+        .employee-meta {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
 <div class="content">
+    <div class="employees-page">
     <div class="page-header">
         <h2><i class="fas fa-id-badge"></i> Employee Management</h2>
         <div class="page-actions">
-            <button class="btn btn-primary" data-toggle="modal" data-target="#addEmployeeModal">
+            <button class="btn btn-primary btn-add-employee" data-toggle="modal" data-target="#addEmployeeModal">
                 <i class="fas fa-plus"></i> Add New Employee
             </button>
         </div>
@@ -23,49 +166,60 @@
     {% endwith %}
     {% endif %}
     
-    <div class="table-responsive">
-        <table class="data-table" id="employeesTable">
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Position</th>
-                    <th>Salary</th>
-                    <th>Hire Date</th>
-                    <th>Contact</th>
-                    <th>Associated User</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for employee in employees %}
-                <tr>
-                    <td>{{ employee.name }}</td>
-                    <td>{{ employee.position }}</td>
-                    <td>{{ "Ksh {:,.2f}".format(employee.salary) if employee.salary else 'N/A' }}</td>
-                    <td>{{ employee.hire_date.strftime('%Y-%m-%d') if employee.hire_date else 'N/A' }}</td>
-                    <td>{{ employee.contact if employee.contact else 'N/A' }}</td>
-                    <td>
-                        {% if employee.user_id %}
-                            {% set user = User.query.get(employee.user_id) %}
-                            {{ user.username if user else 'N/A' }}
-                        {% else %}
-                            N/A
-                        {% endif %}
-                    </td>
-                    <td>
-                        <button class="btn btn-sm btn-edit" data-id="{{ employee.id }}" data-toggle="modal" data-target="#editEmployeeModal">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="btn btn-sm btn-delete" data-id="{{ employee.id }}">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="employees-grid">
+        {% for employee in employees %}
+        <div class="employee-card">
+            <div class="employee-avatar" aria-hidden="true">
+                {% if employee.user and employee.user.profile_picture %}
+                    <img src="{{ url_for('static', filename=employee.user.profile_picture) }}" alt="{{ employee.name }}">
+                {% else %}
+                    {{ (employee.name[:1] if employee.name else 'E')|upper }}
+                {% endif %}
+            </div>
+
+            <div class="employee-main">
+                <h3 class="employee-name">{{ employee.name }}</h3>
+                <div class="employee-subtitle">{{ employee.position if employee.position else 'No position set' }}</div>
+
+                <div class="employee-meta">
+                    <div class="meta-item">
+                        <span class="meta-label">Salary</span>
+                        <div class="meta-value">{{ "Ksh {:,.2f}".format(employee.salary) if employee.salary else 'N/A' }}</div>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Hire Date</span>
+                        <div class="meta-value">{{ employee.hire_date.strftime('%Y-%m-%d') if employee.hire_date else 'N/A' }}</div>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Contact</span>
+                        <div class="meta-value">{{ employee.contact if employee.contact else 'N/A' }}</div>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">User</span>
+                        <div class="meta-value">
+                            {% if employee.user %}
+                                {{ employee.user.username }} ({{ employee.user.role }})
+                            {% else %}
+                                Not linked
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="employee-actions">
+                <button class="btn btn-sm btn-edit" data-id="{{ employee.id }}" title="Edit">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn btn-sm btn-delete" data-id="{{ employee.id }}" title="Delete">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+        {% endfor %}
     </div>
 </div>
+
 
 <!-- Add Employee Modal -->
 <div class="modal fade" id="addEmployeeModal" tabindex="-1" role="dialog" aria-labelledby="addEmployeeModalLabel" aria-hidden="true">
@@ -107,7 +261,7 @@
                         <label for="user_id">Associated User (optional)</label>
                         <select class="form-control" id="user_id" name="user_id">
                             <option value="">-- Select User --</option>
-                            {% for user in users %}
+                            {% for user in users|default([]) %}
                                 <option value="{{ user.id }}">{{ user.username }} ({{ user.role }})</option>
                             {% endfor %}
                         </select>
@@ -163,7 +317,7 @@
                         <label for="edit_user_id">Associated User (optional)</label>
                         <select class="form-control" id="edit_user_id" name="user_id">
                             <option value="">-- Select User --</option>
-                            {% for user in users %}
+                            {% for user in users|default([]) %}
                                 <option value="{{ user.id }}">{{ user.username }} ({{ user.role }})</option>
                             {% endfor %}
                         </select>
@@ -218,38 +372,26 @@ $(document).ready(function() {
     // Edit employee modal handler with row data extraction
     $('.btn-edit').click(function() {
         const employeeId = $(this).data('id');
-        // Find the table row and extract data
-        const row = $(this).closest('tr');
-        const employee = {
-            id: employeeId,
-            name: row.find('td:eq(0)').text(),
-            position: row.find('td:eq(1)').text(),
-            salary: row.find('td:eq(2)').text().replace('Ksh ', '').replace(/,/g, '') || '',
-            hire_date: row.find('td:eq(3)').text(),
-            contact: row.find('td:eq(4)').text(),
-            user_id: '' // Will be set via AJAX call
-        };
-        
-        // Populate the edit form
-        $('#edit_employee_id').val(employee.id);
-        $('#edit_name').val(employee.name);
-        $('#edit_position').val(employee.position);
-        $('#edit_salary').val(employee.salary);
-        $('#edit_hire_date').val(employee.hire_date !== 'N/A' ? employee.hire_date : '');
-        $('#edit_contact').val(employee.contact !== 'N/A' ? employee.contact : '');
-        
-        // Get additional employee data via AJAX
+
+        // Load full employee data via AJAX (works for both table and card layouts)
         $.get(`/admin/employees/${employeeId}`, function(employeeData) {
             if (employeeData.error) {
                 alert('Error: ' + employeeData.error);
                 return;
             }
+
+            $('#edit_employee_id').val(employeeData.id);
+            $('#edit_name').val(employeeData.name || '');
+            $('#edit_position').val(employeeData.position || '');
+            $('#edit_salary').val(employeeData.salary ?? '');
+            $('#edit_hire_date').val(employeeData.hire_date || '');
+            $('#edit_contact').val(employeeData.contact || '');
             $('#edit_user_id').val(employeeData.user_id || '');
+
             $('#editEmployeeModal').modal('show');
         }).fail(function(xhr, status, error) {
             console.error('AJAX Error:', error);
             alert('Error loading employee details. Please try again.');
-            $('#editEmployeeModal').modal('show');
         });
     });
     

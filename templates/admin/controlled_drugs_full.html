@@ -13,7 +13,7 @@
                 <h1><i class="fas fa-shield-lock"></i> Controlled Drugs Management</h1>
                 <p>Manage controlled drug inventory with enhanced security and tracking</p>
             </div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
+            <div class="header-actions">
                 <a class="btn btn-outline btn-with-icon" href="{{ url_for('manage_drugs') }}">
                     <i class="fas fa-arrow-left"></i> Back to Regular Drugs
                 </a>
@@ -855,18 +855,31 @@ $(document).ready(function() {
     border-radius: var(--border-radius);
     box-shadow: var(--box-shadow);
     overflow-x: auto;
+    overflow-y: auto;
+    max-height: 70vh;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     border: 3px solid #333;
 }
 
 .simple-table {
-    width: 100%;
+    width: max-content;
+    min-width: 100%;
     border-collapse: collapse;
     border: 1px solid #ddd;
+    table-layout: auto;
 }
 
 .simple-table thead {
     background: #f5f5f5;
     border-bottom: 1px solid #ddd;
+}
+
+#controlledDrugsTable thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: #f5f5f5;
 }
 
 .simple-table th {
@@ -878,6 +891,7 @@ $(document).ready(function() {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     border-right: 1px solid #ddd;
+    white-space: nowrap;
 }
 
 .simple-table th:last-child {
@@ -897,6 +911,7 @@ $(document).ready(function() {
     padding: 12px 15px;
     color: #555;
     border-right: 1px solid #eee;
+    white-space: nowrap;
 }
 
 .simple-table td:last-child {
@@ -907,6 +922,7 @@ $(document).ready(function() {
     display: flex;
     gap: 5px;
     justify-content: flex-start;
+    flex-wrap: nowrap;
 }
 
 .action-btn {
@@ -988,6 +1004,13 @@ $(document).ready(function() {
     gap: 8px;
 }
 
+.header-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
 .form-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -1048,6 +1071,25 @@ $(document).ready(function() {
         align-items: flex-start;
     }
 
+    /* Header buttons: keep on a single row and compact */
+    .header-actions {
+        width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 8px;
+        justify-content: flex-start;
+    }
+
+    .header-actions .btn {
+        padding: 6px 8px;
+        font-size: 11px;
+        white-space: nowrap;
+        flex: 0 0 auto;
+    }
+}
+
+@media (min-width: 481px) and (max-width: 768px) {
     .summary-cards-grid {
         grid-template-columns: 1fr;
     }
@@ -1059,9 +1101,73 @@ $(document).ready(function() {
     .filter-btn {
         width: 100%;
     }
+}
 
-    .action-btns {
-        flex-wrap: wrap;
+@media (min-width: 320px) and (max-width: 480px) {
+    .drug-management-container {
+        padding: 12px;
+    }
+
+    .summary-cards-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .summary-card {
+        padding: 8px 6px;
+        gap: 8px;
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .card-icon {
+        display: none;
+    }
+
+    .card-content h3 {
+        font-size: 10px;
+        line-height: 1.1;
+    }
+
+    .card-content .amount {
+        font-size: 12px;
+        margin-top: 2px;
+    }
+
+    .filter-actions {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 6px;
+        margin-bottom: 12px;
+    }
+
+    .filter-btn {
+        width: auto;
+        padding: 6px 6px;
+        font-size: 10px;
+        line-height: 1.1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .filter-btn i {
+        display: none;
+    }
+
+    .table-container {
+        max-height: 72vh;
+    }
+
+    .simple-table th,
+    .simple-table td {
+        padding: 8px 10px;
+        font-size: 12px;
+    }
+
+    .action-btn {
+        padding: 3px 8px;
+        font-size: 11px;
     }
 }
 </style>
