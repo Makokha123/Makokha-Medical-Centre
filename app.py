@@ -7782,7 +7782,7 @@ def manage_users():
     if request.method == 'POST':
         action = request.form.get('action')
 
-        if action in {'add_request_otp', 'add_verify_otp'}:
+        if action in {'add_request_otp', 'add_verify_otp', 'add_resend_otp'}:
             email_in = (request.form.get('email') or '').strip()
             email_norm = email_in.lower()
 
@@ -7802,7 +7802,7 @@ def manage_users():
                 flash('Email already exists', 'danger')
                 return _render_users_with_add_modal(add_user_state)
 
-            if action == 'add_request_otp':
+            if action in {'add_request_otp', 'add_resend_otp'}:
                 code = _generate_user_otp_code()
                 now = get_eat_now()
                 expires_at = now + timedelta(minutes=10)
@@ -7823,7 +7823,10 @@ def manage_users():
                         ),
                         text_body=f"Your OTP code is {code}. It expires in 10 minutes.",
                     )
-                    flash('OTP sent to the entered email. Enter it to continue.', 'success')
+                    if action == 'add_resend_otp':
+                        flash('OTP resent to the email. Enter it to continue.', 'success')
+                    else:
+                        flash('OTP sent to the entered email. Enter it to continue.', 'success')
                 except Exception as mail_exc:
                     app.logger.error(f'Failed to send admin add-user OTP: {mail_exc}', exc_info=True)
                     flash('Failed to send OTP email. Check email configuration and try again.', 'danger')
@@ -13149,27 +13152,49 @@ def backup_add_user():
     action = (request.form.get('action') or 'request_otp').strip()
 
     # Step 1: Request OTP
-    if action == 'request_otp':
-        admin_user_id = request.form.get('admin_user_id')
-        if not admin_user_id:
-            flash('Please select an admin to add.', 'danger')
-            return redirect(url_for('backup_manage_users'))
+    if action in {'request_otp', 'resend_otp'}:
+        if action == 'resend_otp':
+            # For resend, use the pending email from session
+            email = (session.get('backup_add_email') or '').strip().lower()
+            bu_id = session.get('backup_add_user_id')
 
-        admin_user = User.query.get(int(admin_user_id))
-        if not admin_user or str(getattr(admin_user, 'role', '') or '') != 'admin':
-            flash('Selected user is not a valid admin.', 'danger')
-            return redirect(url_for('backup_manage_users'))
+            if not email or not bu_id:
+                flash('No pending backup-user invitation found. Start again.', 'warning')
+                session.pop('backup_add_stage', None)
+                session.pop('backup_add_email', None)
+                session.pop('backup_add_user_id', None)
+                return redirect(url_for('backup_manage_users'))
 
-        email = (str(getattr(admin_user, 'email', '') or '')).strip().lower()
-        if not email or '@' not in email:
-            flash('Selected admin does not have a valid email address.', 'danger')
-            return redirect(url_for('backup_manage_users'))
+            backup_user = BackupLoginUser.query.get(int(bu_id))
+            if not backup_user or (backup_user.email or '').strip().lower() != email:
+                flash('Pending user not found. Start again.', 'danger')
+                session.pop('backup_add_stage', None)
+                session.pop('backup_add_email', None)
+                session.pop('backup_add_user_id', None)
+                return redirect(url_for('backup_manage_users'))
+        else:
+            # For initial request
+            admin_user_id = request.form.get('admin_user_id')
+            if not admin_user_id:
+                flash('Please select an admin to add.', 'danger')
+                return redirect(url_for('backup_manage_users'))
 
-        backup_user = _get_or_create_backup_login_user(email, int(admin_user.id))
-        if backup_user.is_verified and backup_user.is_active and backup_user.password_hash:
-            flash('This admin already has active backup access.', 'warning')
-            return redirect(url_for('backup_manage_users'))
+            admin_user = User.query.get(int(admin_user_id))
+            if not admin_user or str(getattr(admin_user, 'role', '') or '') != 'admin':
+                flash('Selected user is not a valid admin.', 'danger')
+                return redirect(url_for('backup_manage_users'))
 
+            email = (str(getattr(admin_user, 'email', '') or '')).strip().lower()
+            if not email or '@' not in email:
+                flash('Selected admin does not have a valid email address.', 'danger')
+                return redirect(url_for('backup_manage_users'))
+
+            backup_user = _get_or_create_backup_login_user(email, int(admin_user.id))
+            if backup_user.is_verified and backup_user.is_active and backup_user.password_hash:
+                flash('This admin already has active backup access.', 'warning')
+                return redirect(url_for('backup_manage_users'))
+
+        # Generate and send OTP (common for both request and resend)
         otp_code = _generate_backup_otp_code()
         backup_user.otp_hash = _backup_code_hash(otp_code)
         backup_user.otp_expires_at = get_eat_now() + timedelta(minutes=10)
@@ -13185,15 +13210,25 @@ def backup_add_user():
         session['backup_add_email'] = email
         session['backup_add_user_id'] = backup_user.id
 
-        log_audit(
-            action='backup_user_invite_otp_sent',
-            table='BackupLoginUser',
-            record_id=int(backup_user.id),
-            user_id=int(current_user.id),
-            changes={'email': email, 'linked_admin_id': int(admin_user.id)},
-        )
+        if action == 'resend_otp':
+            log_audit(
+                action='backup_user_invite_otp_resent',
+                table='BackupLoginUser',
+                record_id=int(backup_user.id),
+                user_id=int(current_user.id),
+                changes={'email': email},
+            )
+            flash(f'OTP resent to {email}. Enter the OTP to verify.', 'success')
+        else:
+            log_audit(
+                action='backup_user_invite_otp_sent',
+                table='BackupLoginUser',
+                record_id=int(backup_user.id),
+                user_id=int(current_user.id),
+                changes={'email': email, 'linked_admin_id': int(backup_user.created_by_admin_id)},
+            )
+            flash(f'OTP sent to {email}. Enter the OTP to verify, then set a password.', 'success')
 
-        flash(f'OTP sent to {email}. Enter the OTP to verify, then set a password.', 'success')
         return redirect(url_for('backup_manage_users'))
 
     # Step 2: Verify OTP

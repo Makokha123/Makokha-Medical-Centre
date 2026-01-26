@@ -126,6 +126,7 @@
                             <button type="submit" class="btn btn-primary" name="action" value="add_request_otp">Request OTP</button>
                         {% elif add_stage == 'otp_sent' %}
                             <button type="submit" class="btn btn-primary" name="action" value="add_verify_otp">Confirm OTP</button>
+                            <button type="submit" class="btn btn-secondary ml-2" name="action" value="add_resend_otp">Resend OTP</button>
                         {% elif add_stage == 'verified' %}
                             <button type="button" class="btn btn-outline" disabled>Email verified</button>
                         {% endif %}
