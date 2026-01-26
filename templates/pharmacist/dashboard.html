@@ -335,19 +335,21 @@
             max-width: 50%;
         }
         
+        /* Mobile: use the main cart with desktop-style payment methods.
+           Removes the fixed bottom payment/cart bar. */
         .mobile-cart {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: white;
-            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-            padding: 10px;
-            z-index: 1000;
+            display: none !important;
         }
-        
+
         .desktop-cart {
-            display: none;
+            display: block;
+        }
+
+        .cart-column {
+            position: static;
+            top: auto;
+            width: 100%;
+            margin-top: 12px;
         }
         
         .prescription-notification {
@@ -427,17 +429,7 @@
     
     @media (min-width: 320px) and (max-width: 480px) {
         .cart-toggle {
-            display: block;
-            position: fixed;
-            bottom: 80px;
-            right: 20px;
-            z-index: 1000;
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            background: var(--primary-color);
-            color: white;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            display: none !important;
         }
         
         .cart-badge {
@@ -486,13 +478,13 @@
         .inventory-container {
             flex-direction: column;
         }
-        
+
         .desktop-cart {
-            display: none;
-        }
-        
-        .mobile-cart {
             display: block;
+        }
+
+        .mobile-cart {
+            display: none !important;
         }
     }
 
@@ -685,52 +677,7 @@
                 </div>
             </div>
             
-            <!-- Mobile Cart (Bottom of screen on portrait phones) -->
-            <div class="mobile-cart">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <div>
-                        <h6 class="mb-0">Cart: <span id="mobile-cart-count">0</span> items</h6>
-                        <small>Total: Ksh <span id="mobile-cart-total">0.00</span></small>
-                    </div>
-                    <div>
-                        <button class="btn btn-sm btn-outline-danger me-2" id="mobile-clear-cart-btn">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                        <button class="btn btn-sm btn-success" id="mobile-confirm-sale-btn" disabled>
-                            <i class="bi bi-check-circle"></i> Checkout
-                        </button>
-                    </div>
-                </div>
-                <!-- Payment Method Selection for Mobile -->
-                <div class="payment-methods mt-2">
-                    <div class="d-flex gap-2 flex-wrap justify-content-center">
-                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-cash" value="cash" checked>
-                        <label class="btn btn-sm p-2" for="mobile-payment-cash" title="Cash Payment" style="background: transparent; border: none;">
-                            <img src="{{ url_for('static', filename='images/cash-logo.png') }}" alt="Cash" style="height: 28px; width: auto;">
-                        </label>
-                        
-                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-mpesa" value="mpesa">
-                        <label class="btn btn-sm p-2" for="mobile-payment-mpesa" title="M-Pesa Payment" style="background: transparent; border: none;">
-                            <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height: 28px; width: auto;">
-                        </label>
-                        
-                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-insurance" value="insurance">
-                        <label class="btn btn-sm p-2" for="mobile-payment-insurance" title="Insurance Payment" style="background: transparent; border: none;">
-                            <img src="{{ url_for('static', filename='images/insurance-logo.png') }}" alt="Insurance" style="height: 28px; width: auto;">
-                        </label>
-                        
-                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-card" value="card">
-                        <label class="btn btn-sm p-2" for="mobile-payment-card" title="Card Payment" style="background: transparent; border: none;">
-                            <img src="{{ url_for('static', filename='images/visa-logo.png') }}" alt="Card" style="height: 28px; width: auto;">
-                        </label>
-                        
-                        <input type="radio" class="btn-check" name="mobile-payment-method" id="mobile-payment-paypal" value="paypal">
-                        <label class="btn btn-sm p-2" for="mobile-payment-paypal" title="PayPal Payment" style="background: transparent; border: none;">
-                            <img src="{{ url_for('static', filename='images/paypal-logo.png') }}" alt="PayPal" style="height: 28px; width: auto;">
-                        </label>
-                    </div>
-                </div>
-            </div>
+            <!-- Mobile bottom cart/payment bar removed: use main cart column instead -->
         </div>
         
         <!-- Prescriptions Tab -->
@@ -889,33 +836,6 @@
         </div>
     </div>
 
-    <!-- Cart Container for Phone Display -->
-    <div class="d-block d-md-none mt-3">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Shopping Cart</h5>
-            </div>
-            <div class="card-body">
-                <div id="phone-cart-items">
-                    <div class="text-center py-4 text-muted">
-                        <i class="bi bi-cart-x" style="font-size: 3rem;"></i>
-                        <p>Your cart is empty</p>
-                    </div>
-                </div>
-                <div class="cart-total mt-3">
-                    Total: Ksh <span id="phone-cart-total">0.00</span>
-                </div>
-                <div class="d-flex justify-content-between mt-3">
-                    <button class="btn btn-outline-danger" id="phone-clear-cart-btn">
-                        <i class="bi bi-trash"></i> Clear Cart
-                    </button>
-                    <button class="btn btn-success" id="phone-confirm-sale-btn" disabled>
-                        <i class="bi bi-check-circle"></i> Confirm Sale
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- Footer -->
     <footer class="bg-light py-3 mt-auto">
@@ -931,11 +851,7 @@
         </div>
     </footer>
 
-    <!-- Floating Cart Button (Mobile) -->
-    <button class="btn btn-primary cart-toggle" id="cartToggleBtn">
-        <i class="bi bi-cart3"></i>
-        <span class="cart-badge" id="cart-badge">0</span>
-    </button>
+    <!-- Floating mobile cart button removed (cart is shown within Drug Inventory only) -->
 
     <!-- Prescription Notification Alert -->
     <div class="prescription-notification d-none" id="prescription-notification">
