@@ -54,7 +54,7 @@ class EmailSendResult:
         self.error = error
         self.attempt_count = attempt_count
         self.last_error_code = last_error_code
-        self.timestamp = timestamp or datetime.utcnow()
+        self.timestamp = timestamp or datetime.now()
     
     def to_dict(self) -> dict:
         """Convert to dictionary for logging."""
@@ -315,13 +315,36 @@ class ResendEmailSender:
             if resend_attachments:
                 payload["attachments"] = resend_attachments
 
+        logger.info(f"Sending email to {recipient} via Resend API...")
+        logger.debug(f"Resend payload: from={self.config.from_address}, to={recipient}, subject={subject}")
+        
         resp = requests.post(url, headers=headers, json=payload, timeout=self.config.timeout_seconds)
+        
+        # Log response details
+        logger.info(f"Resend API response: status={resp.status_code}")
+        
         if resp.status_code >= 400:
             try:
                 detail = resp.json()
             except Exception:
                 detail = resp.text
-            raise requests.RequestException(f"Resend error {resp.status_code}: {detail}")
+            
+            # Provide helpful error messages for common issues
+            error_msg = f"Resend error {resp.status_code}: {detail}"
+            logger.error(f"Resend API error: {error_msg}")
+            
+            # Check if using test domain
+            if 'onboarding@resend.dev' in self.config.from_address.lower():
+                logger.error(
+                    f"\u26a0 IMPORTANT: You are using Resend's test domain (onboarding@resend.dev). "
+                    f"This domain can ONLY send emails to verified addresses in your Resend dashboard. "
+                    f"To send to ANY email address, you must add and verify your own domain. "
+                    f"Visit https://resend.com/domains to set up your domain."
+                )
+            
+            raise requests.RequestException(error_msg)
+        else:
+            logger.info(f"\u2713 Email successfully queued with Resend for {recipient}")
 
 
 

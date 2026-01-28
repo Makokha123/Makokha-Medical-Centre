@@ -417,6 +417,14 @@ _resend_config = ResendConfig(
 is_valid, error_msg = _resend_config.validate()
 if is_valid:
     app.logger.info("Email config: Using Resend API")
+    # Warn about test domain limitations
+    if 'onboarding@resend.dev' in _resend_from.lower() or 'resend.dev' in _resend_from.lower():
+        app.logger.warning(
+            "⚠ IMPORTANT: Using Resend test domain (onboarding@resend.dev). "
+            "Emails will ONLY be sent to verified email addresses in your Resend dashboard. "
+            "To send to ANY email address, add and verify your own domain in Resend: "
+            "https://resend.com/domains"
+        )
 else:
     app.logger.warning(f"⚠ Email config: Resend not configured: {error_msg}. Emails will not send.")
 
@@ -5979,6 +5987,9 @@ def _send_system_email(
         app.logger.error("Cannot send system email with empty body")
         return
     
+    # Log email send attempt
+    app.logger.info(f"Attempting to send email to: {recipient}, Subject: {subject}")
+    
     # Prepare text body
     text_content = text_body or 'Your email client does not support HTML.'
     
@@ -5988,6 +5999,8 @@ def _send_system_email(
                 if not _email_sender.is_healthy():
                     app.logger.warning("Resend not configured; system email not sent.")
                     return
+                
+                app.logger.info(f"Sending email via Resend to {recipient}")
                 result = _email_sender.send(
                     recipient=recipient,
                     subject=subject,
@@ -5996,15 +6009,25 @@ def _send_system_email(
                     attachments=attachments,
                 )
                 _email_audit_logger.log_send(result)
-                if not result.success:
-                    app.logger.warning(
-                        f"Email send failed after {result.attempt_count} attempts: {result.error}",
-                        extra={'recipient': recipient, 'subject': subject},
+                
+                if result.success:
+                    app.logger.info(f"✓ Email sent successfully to {recipient}")
+                else:
+                    app.logger.error(
+                        f"✗ Email send failed to {recipient} after {result.attempt_count} attempts: {result.error}"
                     )
+                    # Check if using test domain
+                    if 'onboarding@resend.dev' in _resend_config.from_address.lower():
+                        app.logger.error(
+                            f"⚠ You are using Resend's test domain. "
+                            f"If {recipient} is not verified in your Resend dashboard, "
+                            f"the email will be silently rejected. "
+                            f"Solution: Add and verify your own domain at https://resend.com/domains"
+                        )
         except Exception as e:
             try:
                 with app.app_context():
-                    app.logger.exception(f"Email send failed: {e}")
+                    app.logger.exception(f"Email send failed with exception: {e}")
             except:
                 pass
     
@@ -6194,19 +6217,20 @@ def _parse_dt_any(val) -> datetime | None:
 
 
 def _utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """Get current time in EAT timezone without timezone info (naive)."""
+    return datetime.now(EAT).replace(tzinfo=None)
 
 
-def _as_utc_naive(dt) -> datetime | None:
-    """Coerce datetime-like values to UTC-naive for safe comparisons."""
+def _as_eat_naive(dt) -> datetime | None:
+    """Coerce datetime-like values to EAT-naive for safe comparisons."""
     parsed = _parse_dt_any(dt)
     if parsed is None:
         return None
     try:
         if parsed.tzinfo is None:
-            # Treat naive as already UTC.
+            # Treat naive as already EAT.
             return parsed
-        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed.astimezone(EAT).replace(tzinfo=None)
     except Exception:
         return None
 
@@ -6262,7 +6286,7 @@ def _send_user_verification_otp(user: User) -> None:
         code = _generate_user_otp_code()
         user.is_email_verified = False
         user.email_otp_hash = _user_otp_hash(user_id=int(user.id), code=code)
-        # Store as UTC-naive to avoid timezone conversion issues across DB backends.
+        # Store as EAT-naive to avoid timezone conversion issues across DB backends.
         user.email_otp_expires_at = _utcnow_naive() + timedelta(minutes=10)
         db.session.commit()
         
@@ -6426,7 +6450,7 @@ def verify_email():
             return redirect(url_for('auth.login'))
 
         now = _utcnow_naive()
-        expires_at = _as_utc_naive(user.email_otp_expires_at)
+        expires_at = _as_eat_naive(user.email_otp_expires_at)
         if not user.email_otp_hash or not expires_at or expires_at < now:
             flash('OTP expired. Please request a new code.', 'danger')
             return _redirect_back(email)
@@ -13952,6 +13976,9 @@ def _send_backup_email(
         app.logger.error(f"Invalid backup email recipient: {recipient}")
         return
     
+    # Log email send attempt
+    app.logger.info(f"Attempting to send backup email to: {recipient}, Subject: {subject}")
+    
     # Use production email sender
     def _send():
         try:
@@ -13959,6 +13986,8 @@ def _send_backup_email(
                 if not _email_sender.is_healthy():
                     app.logger.warning("Resend not configured; backup email not sent.")
                     return
+                
+                app.logger.info(f"Sending backup email via Resend to {recipient}")
                 result = _email_sender.send(
                     recipient=recipient,
                     subject=subject,
@@ -13967,12 +13996,20 @@ def _send_backup_email(
                     attachments=attachments,
                 )
                 _email_audit_logger.log_send(result)
-                if not result.success:
-                    app.logger.warning(f"Backup email send failed: {result.error}")
+                
+                if result.success:
+                    app.logger.info(f"✓ Backup email sent successfully to {recipient}")
+                else:
+                    app.logger.error(f"✗ Backup email send failed to {recipient}: {result.error}")
+                    if 'onboarding@resend.dev' in _resend_config.from_address.lower():
+                        app.logger.error(
+                            f"⚠ Using Resend test domain. {recipient} must be verified in Resend dashboard. "
+                            f"Verify your own domain at https://resend.com/domains"
+                        )
         except Exception as e:
             try:
                 with app.app_context():
-                    app.logger.exception(f"Production email sender failed: {e}")
+                    app.logger.exception(f"Backup email sender failed: {e}")
             except:
                 pass
     
@@ -25007,22 +25044,30 @@ def doctor_patient_details(patient_id):
         biodata_entry=biodata_entry,
         biodata_nav=biodata_nav,
         biodata_view=biodata_view,
+        biodata_versions=biodata_versions,
         chief_complaint_entry=chief_complaint_entry,
         chief_complaint_nav=chief_complaint_nav,
         chief_complaint_text=chief_complaint_text,
+        complaint_versions=complaint_versions,
         hpi_entry=hpi_entry,
         hpi_nav=hpi_nav,
         hpi_text=hpi_text,
+        hpi_versions=hpi_versions,
         review_systems=review_systems,
         review_nav=review_nav,
+        review_versions=review_versions,
         history=history,
         history_nav=history_nav,
+        history_versions=history_versions,
         examination=examination,
         examination_nav=examination_nav,
+        exam_versions=exam_versions,
         diagnosis=diagnosis,
         diagnosis_nav=diagnosis_nav,
+        diagnosis_versions=diagnosis_versions,
         management=management,
         management_nav=management_nav,
+        management_versions=management_versions,
         lab_tests=lab_tests,
         imaging_tests=imaging_tests,
         lab_requests=lab_requests,
@@ -26828,7 +26873,7 @@ def create_claim():
     total_amount = request.form.get('total_amount')
     notes = request.form.get('notes')
 
-    date_filed = datetime.strptime(date_filed_str, '%Y-%m-%d') if date_filed_str else datetime.utcnow()
+    date_filed = datetime.strptime(date_filed_str, '%Y-%m-%d') if date_filed_str else get_eat_now()
 
     new_claim = Claim(
         patient_insurance_id=patient_insurance_id,

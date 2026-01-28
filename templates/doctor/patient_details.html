@@ -71,11 +71,11 @@
 
     <!-- Navigation Tabs -->
     <div class="navigation-tabs">
-        <div class="tab" data-tab="biodata">
+        <div class="tab active" data-tab="biodata">
             <i class="fas fa-id-card"></i>
             <span>Biodata</span>
         </div>
-        <div class="tab active" data-tab="chief-complaint">
+        <div class="tab" data-tab="chief-complaint">
             <i class="fas fa-stethoscope"></i>
             <span>Chief Complaint</span>
         </div>
@@ -114,7 +114,7 @@
     </div>
 
     <!-- Biodata Tab -->
-    <div class="tab-content" id="biodata-tab">
+    <div class="tab-content active" id="biodata-tab">
         <div class="section-header">
             <h2><i class="fas fa-id-card"></i> Biodata</h2>
             {% if biodata_nav and biodata_nav.total %}
@@ -221,10 +221,50 @@
                 <i class="fas fa-save"></i> Save Biodata
             </button>
         </form>
+
+        {% if biodata_versions %}
+        <div class="biodata-history" style="margin-top: 30px;">
+            <h3>Biodata Update History</h3>
+            <div class="history-timeline">
+                {% for entry in biodata_versions|reverse %}
+                <div class="history-entry {% if loop.first %}current{% endif %}">
+                    <div class="history-header">
+                        <span class="history-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                        <span class="history-author">
+                            {% if entry.creator %}
+                                Dr. {{ entry.creator.username }}
+                            {% else %}
+                                Unknown Doctor
+                            {% endif %}
+                            {% if loop.first %} - Latest Update{% endif %}
+                        </span>
+                    </div>
+                    <div class="history-details">
+                        <div class="detail-row">
+                            <strong>Phone:</strong> {{ patient._safe_decrypt(entry.phone) if entry.phone else 'N/A' }}
+                        </div>
+                        <div class="detail-row">
+                            <strong>Religion:</strong> {{ entry.religion or 'N/A' }}
+                        </div>
+                        <div class="detail-row">
+                            <strong>TCA:</strong> {{ entry.tca.strftime('%Y-%m-%d') if entry.tca else 'N/A' }}
+                        </div>
+                        <div class="detail-row">
+                            <strong>Next of Kin:</strong> {{ patient._safe_decrypt(entry.nok_name) if entry.nok_name else 'N/A' }}
+                        </div>
+                        <div class="detail-row">
+                            <strong>NOK Contact:</strong> {{ patient._safe_decrypt(entry.nok_contact) if entry.nok_contact else 'N/A' }}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Chief Complaint Tab -->
-    <div class="tab-content active" id="chief-complaint-tab">
+    <div class="tab-content" id="chief-complaint-tab">
         <div class="section-header">
             <h2><i class="fas fa-stethoscope"></i> Chief Complaint</h2>
             {% if chief_complaint_nav and chief_complaint_nav.total %}
@@ -245,20 +285,36 @@
         
         <div class="complaint-history">
             <h3>Complaint History</h3>
-            {% if chief_complaint_text %}
+            {% if complaint_versions %}
+                {% for entry in complaint_versions|reverse %}
+                <div class="complaint-entry {% if loop.first %}current{% endif %}">
+                    <div class="complaint-header">
+                        <span class="complaint-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                        <span class="complaint-author">
+                            {% if entry.creator %}
+                                Dr. {{ entry.creator.username }}
+                            {% else %}
+                                Unknown Doctor
+                            {% endif %}
+                            {% if loop.first %} - Latest Entry{% endif %}
+                        </span>
+                    </div>
+                    <div class="complaint-content">
+                        {{ entry.complaint_text }}
+                    </div>
+                </div>
+                {% endfor %}
+            {% elif chief_complaint_text %}
                 <div class="complaint-entry current">
                     <div class="complaint-header">
-                        <span class="complaint-date">{{ chief_complaint_entry.created_at.strftime('%Y-%m-%d %H:%M') if chief_complaint_entry and chief_complaint_entry.created_at else 'Current' }}</span>
-                        <span class="complaint-author">Latest Entry</span>
+                        <span class="complaint-date">Current Entry</span>
+                        <span class="complaint-author">Original Entry</span>
                     </div>
                     <div class="complaint-content">
                         {{ chief_complaint_text }}
                     </div>
                 </div>
-            {% endif %}
-            
-            <!-- Historical entries would be displayed here -->
-            {% if not chief_complaint_text %}
+            {% else %}
                 <div class="empty-state">
                     <i class="fas fa-stethoscope"></i>
                     <p>No chief complaint entries recorded yet</p>
@@ -289,19 +345,36 @@
         
         <div class="hpi-history">
             <h3>HPI History</h3>
-            {% if hpi_text %}
+            {% if hpi_versions %}
+                {% for entry in hpi_versions|reverse %}
+                <div class="hpi-entry {% if loop.first %}current{% endif %}">
+                    <div class="hpi-header">
+                        <span class="hpi-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                        <span class="hpi-author">
+                            {% if entry.creator %}
+                                Dr. {{ entry.creator.username }}
+                            {% else %}
+                                Unknown Doctor
+                            {% endif %}
+                            {% if loop.first %} - Latest Entry{% endif %}
+                        </span>
+                    </div>
+                    <div class="hpi-content">
+                        {{ entry.hpi_text }}
+                    </div>
+                </div>
+                {% endfor %}
+            {% elif hpi_text %}
                 <div class="hpi-entry current">
                     <div class="hpi-header">
-                        <span class="hpi-date">{{ hpi_entry.created_at.strftime('%Y-%m-%d %H:%M') if hpi_entry and hpi_entry.created_at else 'Current' }}</span>
-                        <span class="hpi-author">Latest Entry</span>
+                        <span class="hpi-date">Current Entry</span>
+                        <span class="hpi-author">Original Entry</span>
                     </div>
                     <div class="hpi-content">
                         {{ hpi_text }}
                     </div>
                 </div>
-            {% endif %}
-            
-            {% if not hpi_text %}
+            {% else %}
                 <div class="empty-state">
                     <i class="fas fa-history"></i>
                     <p>No HPI entries recorded yet</p>
@@ -326,7 +399,7 @@
             </div>
             {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openReviewSystemsModal()">
-                <i class="fas fa-edit"></i> Update Review
+                <i class="fas fa-plus"></i> Add New Entry
             </button>
         </div>
         
@@ -386,7 +459,7 @@
             </div>
             {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openHistoryModal()">
-                <i class="fas fa-edit"></i> Update History
+                <i class="fas fa-plus"></i> Add New Entry
             </button>
         </div>
         
@@ -434,7 +507,7 @@
             </div>
             {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openExaminationModal()">
-                <i class="fas fa-edit"></i> Update Examination
+                <i class="fas fa-plus"></i> Add New Entry
             </button>
         </div>
         
@@ -525,7 +598,7 @@
             </div>
             {% endif %}
             <button class="btn btn-primary" onclick="doctorPatient.openDiagnosisModal()">
-                <i class="fas fa-edit"></i> Update Diagnosis
+                <i class="fas fa-plus"></i> Add New Entry
             </button>
         </div>
         
@@ -562,7 +635,7 @@
             {% endif %}
             <div class="management-actions">
                 <button class="btn btn-primary" onclick="doctorPatient.openManagementModal()">
-                    <i class="fas fa-edit"></i> Update Management
+                    <i class="fas fa-plus"></i> Add New Entry
                 </button>
                 <button class="btn btn-success" onclick="doctorPatient.openPrescriptionModal()">
                     <i class="fas fa-prescription"></i> New Prescription
@@ -853,13 +926,13 @@
             <input type="hidden" name="section" value="chief_complaint">
             <div class="form-group">
                 <label for="chief-complaint">Chief Complaint *</label>
-                <textarea id="chief-complaint" name="chief_complaint" rows="4" required 
-                          placeholder="Enter the patient's current chief complaint...">{{ chief_complaint_text or '' }}</textarea>
-                <small class="form-help">Current complaint is pre-loaded. Add new information to update.</small>
+                <textarea id="chief-complaint" name="chief_complaint" rows="6" required 
+                          placeholder="Enter the patient's new chief complaint entry..."></textarea>
+                <small class="form-help">Enter a new entry. This will be added to the history without overwriting previous entries.</small>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('chief-complaint')">Cancel</button>
-                <button type="submit" class="btn btn-primary">Update Complaint</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
             </div>
         </form>
     </div>
@@ -877,13 +950,13 @@
             <input type="hidden" name="section" value="hpi">
             <div class="form-group">
                 <label for="history-present-illness">History of Present Illness *</label>
-                <textarea id="history-present-illness" name="history_present_illness" rows="6" required
-                          placeholder="Document the history of present illness...">{{ hpi_text or '' }}</textarea>
-                <small class="form-help">Current HPI is pre-loaded. Add new information to update.</small>
+                <textarea id="history-present-illness" name="history_present_illness" rows="8" required
+                          placeholder="Document the new history of present illness entry..."></textarea>
+                <small class="form-help">Enter a new entry. This will be added to the history without overwriting previous entries.</small>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('hpi')">Cancel</button>
-                <button type="submit" class="btn btn-primary">Update HPI</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
             </div>
         </form>
     </div>
@@ -901,31 +974,31 @@
             <input type="hidden" name="section" value="review_systems">
             <div class="form-group">
                 <label for="cns">Central Nervous System</label>
-                <textarea id="cns" name="cns" rows="3" placeholder="Headache, dizziness, seizures, etc...">{{ review_systems.cns if review_systems else '' }}</textarea>
+                <textarea id="cns" name="cns" rows="3" placeholder="Headache, dizziness, seizures, etc..."></textarea>
             </div>
             <div class="form-group">
                 <label for="cvs">Cardiovascular System</label>
-                <textarea id="cvs" name="cvs" rows="3" placeholder="Chest pain, palpitations, edema, etc...">{{ review_systems.cvs if review_systems else '' }}</textarea>
+                <textarea id="cvs" name="cvs" rows="3" placeholder="Chest pain, palpitations, edema, etc..."></textarea>
             </div>
             <div class="form-group">
                 <label for="rs">Respiratory System</label>
-                <textarea id="rs" name="rs" rows="3" placeholder="Cough, shortness of breath, wheezing, etc...">{{ review_systems.rs if review_systems else '' }}</textarea>
+                <textarea id="rs" name="rs" rows="3" placeholder="Cough, shortness of breath, wheezing, etc..."></textarea>
             </div>
             <div class="form-group">
                 <label for="git">Gastrointestinal System</label>
-                <textarea id="git" name="git" rows="3" placeholder="Nausea, vomiting, diarrhea, abdominal pain, etc...">{{ review_systems.git if review_systems else '' }}</textarea>
+                <textarea id="git" name="git" rows="3" placeholder="Nausea, vomiting, diarrhea, abdominal pain, etc..."></textarea>
             </div>
             <div class="form-group">
                 <label for="gut">Genitourinary System</label>
-                <textarea id="gut" name="gut" rows="3" placeholder="Dysuria, frequency, hematuria, etc...">{{ review_systems.gut if review_systems else '' }}</textarea>
+                <textarea id="gut" name="gut" rows="3" placeholder="Dysuria, frequency, hematuria, etc..."></textarea>
             </div>
             <div class="form-group">
                 <label for="msk">Musculoskeletal System</label>
-                <textarea id="msk" name="msk" rows="3" placeholder="Joint pain, swelling, limited movement, etc...">{{ review_systems.msk if review_systems else '' }}</textarea>
+                <textarea id="msk" name="msk" rows="3" placeholder="Joint pain, swelling, limited movement, etc..."></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('review-systems')">Cancel</button>
-                <button type="submit" class="btn btn-primary">Update Review</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
             </div>
         </form>
     </div>
@@ -943,23 +1016,23 @@
             <input type="hidden" name="section" value="history">
             <div class="form-group">
                 <label for="medical-history">Medical History</label>
-                <textarea id="medical-history" name="medical_history" rows="3" placeholder="Chronic conditions, previous illnesses...">{{ history.medical_history if history else '' }}</textarea>
+                <textarea id="medical-history" name="medical_history" rows="3" placeholder="Chronic conditions, previous illnesses..."></textarea>
             </div>
             <div class="form-group">
                 <label for="surgical-history">Surgical History</label>
-                <textarea id="surgical-history" name="surgical_history" rows="3" placeholder="Previous surgeries, procedures...">{{ history.surgical_history if history else '' }}</textarea>
+                <textarea id="surgical-history" name="surgical_history" rows="3" placeholder="Previous surgeries, procedures..."></textarea>
             </div>
             <div class="form-group">
                 <label for="family-history">Family History</label>
-                <textarea id="family-history" name="family_history" rows="3" placeholder="Family medical history...">{{ history.family_history if history else '' }}</textarea>
+                <textarea id="family-history" name="family_history" rows="3" placeholder="Family medical history..."></textarea>
             </div>
             <div class="form-group">
                 <label for="allergies">Allergies</label>
-                <textarea id="allergies" name="allergies" rows="2" placeholder="Drug allergies, food allergies...">{{ history.allergies if history else '' }}</textarea>
+                <textarea id="allergies" name="allergies" rows="2" placeholder="Drug allergies, food allergies..."></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('history')">Cancel</button>
-                <button type="submit" class="btn btn-primary">Update History</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
             </div>
         </form>
     </div>
@@ -981,29 +1054,29 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label for="temperature">Temperature (°C)</label>
-                        <input type="number" step="0.1" id="temperature" name="temperature" value="{{ examination.temperature if examination else '' }}">
+                        <input type="number" step="0.1" id="temperature" name="temperature">
                     </div>
                     <div class="form-group">
                         <label for="pulse">Pulse (bpm)</label>
-                        <input type="number" id="pulse" name="pulse" value="{{ examination.pulse if examination else '' }}">
+                        <input type="number" id="pulse" name="pulse">
                     </div>
                     <div class="form-group">
                         <label for="resp-rate">Respiratory Rate (/min)</label>
-                        <input type="number" id="resp-rate" name="resp_rate" value="{{ examination.resp_rate if examination else '' }}">
+                        <input type="number" id="resp-rate" name="resp_rate">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="bp-systolic">BP Systolic (mmHg)</label>
-                        <input type="number" id="bp-systolic" name="bp_systolic" value="{{ examination.bp_systolic if examination else '' }}">
+                        <input type="number" id="bp-systolic" name="bp_systolic">
                     </div>
                     <div class="form-group">
                         <label for="bp-diastolic">BP Diastolic (mmHg)</label>
-                        <input type="number" id="bp-diastolic" name="bp_diastolic" value="{{ examination.bp_diastolic if examination else '' }}">
+                        <input type="number" id="bp-diastolic" name="bp_diastolic">
                     </div>
                     <div class="form-group">
                         <label for="spo2">SpO₂ (%)</label>
-                        <input type="number" id="spo2" name="spo2" value="{{ examination.spo2 if examination else '' }}">
+                        <input type="number" id="spo2" name="spo2">
                     </div>
                 </div>
             </div>
@@ -1012,29 +1085,29 @@
                 <h3>System Examinations</h3>
                 <div class="form-group">
                     <label for="general-appearance">General Appearance</label>
-                    <textarea id="general-appearance" name="general_appearance" rows="2">{{ examination.general_appearance if examination else '' }}</textarea>
+                    <textarea id="general-appearance" name="general_appearance" rows="2"></textarea>
                 </div>
                 <div class="form-group">
                     <label for="cvs-exam">Cardiovascular System</label>
-                    <textarea id="cvs-exam" name="cvs_exam" rows="2">{{ examination.cvs_exam if examination else '' }}</textarea>
+                    <textarea id="cvs-exam" name="cvs_exam" rows="2"></textarea>
                 </div>
                 <div class="form-group">
                     <label for="resp-exam">Respiratory System</label>
-                    <textarea id="resp-exam" name="resp_exam" rows="2">{{ examination.resp_exam if examination else '' }}</textarea>
+                    <textarea id="resp-exam" name="resp_exam" rows="2"></textarea>
                 </div>
                 <div class="form-group">
                     <label for="abdo-exam">Abdominal Examination</label>
-                    <textarea id="abdo-exam" name="abdo_exam" rows="2">{{ examination.abdo_exam if examination else '' }}</textarea>
+                    <textarea id="abdo-exam" name="abdo_exam" rows="2"></textarea>
                 </div>
                 <div class="form-group">
                     <label for="cns-exam">Central Nervous System</label>
-                    <textarea id="cns-exam" name="cns_exam" rows="2">{{ examination.cns_exam if examination else '' }}</textarea>
+                    <textarea id="cns-exam" name="cns_exam" rows="2"></textarea>
                 </div>
             </div>
 
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('examination')">Cancel</button>
-                <button type="submit" class="btn btn-primary">Update Examination</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
             </div>
         </form>
     </div>
@@ -1052,15 +1125,15 @@
             <input type="hidden" name="section" value="diagnosis">
             <div class="form-group">
                 <label for="working-diagnosis">Working Diagnosis</label>
-                <textarea id="working-diagnosis" name="working_diagnosis" rows="4" placeholder="Primary diagnosis based on current findings...">{{ diagnosis.working_diagnosis if diagnosis else '' }}</textarea>
+                <textarea id="working-diagnosis" name="working_diagnosis" rows="4" placeholder="Primary diagnosis based on current findings..."></textarea>
             </div>
             <div class="form-group">
                 <label for="differential-diagnosis">Differential Diagnosis</label>
-                <textarea id="differential-diagnosis" name="differential_diagnosis" rows="4" placeholder="Alternative diagnoses to consider...">{{ diagnosis.differential_diagnosis if diagnosis else '' }}</textarea>
+                <textarea id="differential-diagnosis" name="differential_diagnosis" rows="4" placeholder="Alternative diagnoses to consider..."></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('diagnosis')">Cancel</button>
-                <button type="submit" class="btn btn-primary">Update Diagnosis</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
             </div>
         </form>
     </div>
@@ -1080,14 +1153,14 @@
             <div class="form-section">
                 <h3>Treatment Plan</h3>
                 <div class="form-group">
-                    <textarea id="treatment-plan" name="treatment_plan" rows="4" placeholder="Detailed treatment plan...">{{ management.treatment_plan if management else '' }}</textarea>
+                    <textarea id="treatment-plan" name="treatment_plan" rows="4" placeholder="Detailed treatment plan..."></textarea>
                 </div>
             </div>
 
             <div class="form-section">
                 <h3>Follow-up Plan</h3>
                 <div class="form-group">
-                    <textarea id="follow-up" name="follow_up" rows="3" placeholder="Follow-up schedule and instructions...">{{ management.follow_up if management else '' }}</textarea>
+                    <textarea id="follow-up" name="follow_up" rows="3" placeholder="Follow-up schedule and instructions..."></textarea>
                 </div>
             </div>
 
@@ -1098,8 +1171,7 @@
                     <div class="services-checkbox">
                         {% for service in services %}
                         <label class="checkbox-label">
-                            <input type="checkbox" name="service_id" value="{{ service.id }}" 
-                                   {% if patient_services and service.id in patient_services|map(attribute='service_id') %}checked{% endif %}>
+                            <input type="checkbox" name="service_id" value="{{ service.id }}">
                             <span class="checkmark"></span>
                             {{ service.name }}
                         </label>
@@ -1108,18 +1180,18 @@
                 </div>
                 <div class="form-group">
                     <label>Service Notes</label>
-                    <textarea name="service_notes" rows="2" placeholder="Special instructions for services...">{{ management.notes if management else '' }}</textarea>
+                    <textarea name="service_notes" rows="2" placeholder="Special instructions for services..."></textarea>
                 </div>
             </div>
 
             <div class="form-group">
                 <label for="management-notes">Additional Notes</label>
-                <textarea id="management-notes" name="management_notes" rows="3" placeholder="Any additional management notes...">{{ management.notes if management else '' }}</textarea>
+                <textarea id="management-notes" name="management_notes" rows="3" placeholder="Any additional management notes..."></textarea>
             </div>
 
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('management')">Cancel</button>
-                <button type="submit" class="btn btn-primary">Update Management</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
             </div>
         </form>
     </div>
@@ -1574,8 +1646,9 @@
 }
 
 .tab.active {
-    border-bottom: 3px solid var(--primary);
-    color: var(--primary);
+    background-color: #007bff;
+    color: white;
+    border-bottom: 3px solid #28a745;
     font-weight: 500;
 }
 
@@ -1641,11 +1714,11 @@
 }
 
 /* Chief Complaint & HPI Styles */
-.complaint-history, .hpi-history {
+.complaint-history, .hpi-history, .biodata-history {
     margin-bottom: 30px;
 }
 
-.complaint-entry, .hpi-entry {
+.complaint-entry, .hpi-entry, .history-entry {
     background: var(--gray-50);
     border-left: 4px solid var(--primary);
     padding: 16px;
@@ -1653,12 +1726,12 @@
     border-radius: 4px;
 }
 
-.complaint-entry.current, .hpi-entry.current {
+.complaint-entry.current, .hpi-entry.current, .history-entry.current {
     border-left-color: var(--success);
     background: #e8f5e8;
 }
 
-.complaint-header, .hpi-header {
+.complaint-header, .hpi-header, .history-header {
     display: flex;
     justify-content: space-between;
     margin-bottom: 8px;
@@ -1666,10 +1739,23 @@
     color: var(--gray-600);
 }
 
-.complaint-content, .hpi-content {
+.complaint-content, .hpi-content, .history-details {
     font-size: 14px;
     line-height: 1.5;
     color: var(--gray-700);
+}
+
+.history-details {
+    margin-top: 10px;
+}
+
+.detail-row {
+    padding: 5px 0;
+    border-bottom: 1px dotted var(--gray-300);
+}
+
+.detail-row:last-child {
+    border-bottom: none;
 }
 
 /* Review Systems Grid */
@@ -2077,7 +2163,7 @@
     background: var(--white);
     border-radius: var(--border-radius);
     width: 100%;
-    max-width: 700px;
+    max-width: 900px;
     max-height: 90vh;
     overflow-y: auto;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);

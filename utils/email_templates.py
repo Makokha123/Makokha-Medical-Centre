@@ -58,7 +58,7 @@ class EmailTemplate:
         footer_parts.extend([
             "<p style='margin: 0;'>This is an automated email from Makokha Medical Centre system. "
             "Please do not reply directly to this email.</p>",
-            f"<p style='margin: 10px 0 0 0; color: #cbd5e0;'>{datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC</p>",
+            f"<p style='margin: 10px 0 0 0; color: #cbd5e0;'>{datetime.now().strftime('%Y-%m-%d %H:%M')} EAT</p>",
             "</div>",
             "</div>",
             "</div>",
