@@ -22292,9 +22292,12 @@ def doctor_dashboard():
     
     # Get counts for the stats cards
     active_patients_count = Patient.query.filter_by(status='active').count()
-    today_patients = Patient.query.filter(
-        func.date(Sale.created_at) == date.today()
-    ).count()
+    # Count distinct patients who have a sale today (avoid cartesian product with Sales).
+    today_patients = (
+        db.session.query(func.count(func.distinct(Sale.patient_id)))
+        .filter(func.date(Sale.created_at) == date.today())
+        .scalar()
+    ) or 0
     completed_patients_count = Patient.query.filter_by(status='completed').count()
     
     # Get actual patient lists for the tables
