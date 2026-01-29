@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set active_tab = request.args.get('tab', 'biodata') %}
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
@@ -71,59 +72,63 @@
 
     <!-- Navigation Tabs -->
     <div class="navigation-tabs">
-        <div class="tab active" data-tab="biodata">
+        <div class="tab {% if active_tab == 'biodata' %}active{% endif %}" data-tab="biodata">
             <span class="tab-number">1</span>
             <span class="tab-label">Biodata</span>
         </div>
-        <div class="tab" data-tab="chief-complaint">
+        <div class="tab {% if active_tab == 'chief-complaint' %}active{% endif %}" data-tab="chief-complaint">
             <span class="tab-number">2</span>
             <span class="tab-label">Chief Complaint</span>
         </div>
-        <div class="tab" data-tab="review-systems">
+        <div class="tab {% if active_tab == 'review-systems' %}active{% endif %}" data-tab="review-systems">
             <span class="tab-number">3</span>
             <span class="tab-label">Review of Systems</span>
         </div>
-        <div class="tab" data-tab="hpi">
+        <div class="tab {% if active_tab == 'hpi' %}active{% endif %}" data-tab="hpi">
             <span class="tab-number">4</span>
             <span class="tab-label">HPI</span>
         </div>
-        <div class="tab" data-tab="history">
+        <div class="tab {% if active_tab == 'history' %}active{% endif %}" data-tab="history">
             <span class="tab-number">5</span>
             <span class="tab-label">SMHx</span>
         </div>
-        <div class="tab" data-tab="examination">
+        <div class="tab {% if active_tab == 'examination' %}active{% endif %}" data-tab="examination">
             <span class="tab-number">6</span>
             <span class="tab-label">Examination</span>
         </div>
-        <div class="tab" data-tab="summary">
+        <div class="tab {% if active_tab == 'summary' %}active{% endif %}" data-tab="summary">
             <span class="tab-number">7</span>
-            <span class="tab-label">Summary</span>
+                <span class="tab-label">Summary</span>
         </div>
-        <div class="tab" data-tab="diagnosis">
+        <div class="tab {% if active_tab == 'diagnosis' %}active{% endif %}" data-tab="diagnosis">
             <span class="tab-number">8</span>
             <span class="tab-label">Diagnosis</span>
         </div>
-        <div class="tab" data-tab="investigations">
+        <div class="tab {% if active_tab == 'investigations' %}active{% endif %}" data-tab="investigations">
             <span class="tab-number">9</span>
-            <span class="tab-label">Investigations</span>
+                <span class="tab-label">Investigations</span>
         </div>
-        <div class="tab" data-tab="management">
+        <div class="tab {% if active_tab == 'management' %}active{% endif %}" data-tab="management">
             <span class="tab-number">10</span>
             <span class="tab-label">Management</span>
         </div>
     </div>
 
     <!-- Biodata Tab -->
-    <div class="tab-content active" id="biodata-tab">
+    <div class="tab-content {% if active_tab == 'biodata' %}active{% endif %}" id="biodata-tab">
         <div class="section-header">
             <h2><i class="fas fa-id-card"></i> Biodata</h2>
             {% if biodata_nav and biodata_nav.total %}
             <div class="section-version-nav">
-                <span class="text-muted">Updated: {{ biodata_entry.created_at.strftime('%Y-%m-%d %H:%M') if biodata_entry and biodata_entry.created_at else 'N/A' }} ({{ biodata_nav.index }}/{{ biodata_nav.total }})</span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, biodata_id=biodata_nav.prev_id) if biodata_nav.prev_id else '#' }}" {% if not biodata_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <span class="text-muted">
+                    Updated: {{ biodata_entry.created_at.strftime('%Y-%m-%d %H:%M') if biodata_entry and biodata_entry.created_at else 'N/A' }}
+                    {% if biodata_entry and biodata_entry.creator %}by Dr. {{ biodata_entry.creator.username }}{% endif %}
+                    ({{ biodata_nav.index }}/{{ biodata_nav.total }})
+                </span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='biodata', biodata_id=biodata_nav.prev_id) if biodata_nav.prev_id else '#' }}" {% if not biodata_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     <i class="fas fa-chevron-left"></i> Prev
                 </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, biodata_id=biodata_nav.next_id) if biodata_nav.next_id else '#' }}" {% if not biodata_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='biodata', biodata_id=biodata_nav.next_id) if biodata_nav.next_id else '#' }}" {% if not biodata_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     Next <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
@@ -133,6 +138,7 @@
         <form method="POST" class="biodata-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="biodata">
+            <input type="hidden" name="active_tab" value="biodata">
 
             <div class="row">
                 <div class="col-md-6">
@@ -236,7 +242,7 @@
                             {% else %}
                                 Unknown Doctor
                             {% endif %}
-                            {% if loop.first %} - Latest Update{% endif %}
+                                {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
                         </span>
                     </div>
                     <div class="history-details">
@@ -264,16 +270,20 @@
     </div>
 
     <!-- Chief Complaint Tab -->
-    <div class="tab-content" id="chief-complaint-tab">
+    <div class="tab-content {% if active_tab == 'chief-complaint' %}active{% endif %}" id="chief-complaint-tab">
         <div class="section-header">
             <h2><i class="fas fa-stethoscope"></i> Chief Complaint</h2>
             {% if chief_complaint_nav and chief_complaint_nav.total %}
             <div class="section-version-nav">
-                <span class="text-muted">Updated: {{ chief_complaint_entry.created_at.strftime('%Y-%m-%d %H:%M') if chief_complaint_entry and chief_complaint_entry.created_at else 'N/A' }} ({{ chief_complaint_nav.index }}/{{ chief_complaint_nav.total }})</span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, complaint_id=chief_complaint_nav.prev_id) if chief_complaint_nav.prev_id else '#' }}" {% if not chief_complaint_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <span class="text-muted">
+                    Updated: {{ chief_complaint_entry.created_at.strftime('%Y-%m-%d %H:%M') if chief_complaint_entry and chief_complaint_entry.created_at else 'N/A' }}
+                    {% if chief_complaint_entry and chief_complaint_entry.creator %}by Dr. {{ chief_complaint_entry.creator.username }}{% endif %}
+                    ({{ chief_complaint_nav.index }}/{{ chief_complaint_nav.total }})
+                </span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='chief-complaint', complaint_id=chief_complaint_nav.prev_id) if chief_complaint_nav.prev_id else '#' }}" {% if not chief_complaint_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     <i class="fas fa-chevron-left"></i> Prev
                 </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, complaint_id=chief_complaint_nav.next_id) if chief_complaint_nav.next_id else '#' }}" {% if not chief_complaint_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='chief-complaint', complaint_id=chief_complaint_nav.next_id) if chief_complaint_nav.next_id else '#' }}" {% if not chief_complaint_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     Next <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
@@ -296,7 +306,7 @@
                             {% else %}
                                 Unknown Doctor
                             {% endif %}
-                            {% if loop.first %} - Latest Entry{% endif %}
+                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
                         </span>
                     </div>
                     <div class="complaint-content">
@@ -324,16 +334,20 @@
     </div>
 
     <!-- History of Present Illness Tab -->
-    <div class="tab-content" id="hpi-tab">
+    <div class="tab-content {% if active_tab == 'hpi' %}active{% endif %}" id="hpi-tab">
         <div class="section-header">
             <h2><i class="fas fa-history"></i> History of Present Illness</h2>
             {% if hpi_nav and hpi_nav.total %}
             <div class="section-version-nav">
-                <span class="text-muted">Updated: {{ hpi_entry.created_at.strftime('%Y-%m-%d %H:%M') if hpi_entry and hpi_entry.created_at else 'N/A' }} ({{ hpi_nav.index }}/{{ hpi_nav.total }})</span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, hpi_id=hpi_nav.prev_id) if hpi_nav.prev_id else '#' }}" {% if not hpi_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <span class="text-muted">
+                    Updated: {{ hpi_entry.created_at.strftime('%Y-%m-%d %H:%M') if hpi_entry and hpi_entry.created_at else 'N/A' }}
+                    {% if hpi_entry and hpi_entry.creator %}by Dr. {{ hpi_entry.creator.username }}{% endif %}
+                    ({{ hpi_nav.index }}/{{ hpi_nav.total }})
+                </span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='hpi', hpi_id=hpi_nav.prev_id) if hpi_nav.prev_id else '#' }}" {% if not hpi_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     <i class="fas fa-chevron-left"></i> Prev
                 </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, hpi_id=hpi_nav.next_id) if hpi_nav.next_id else '#' }}" {% if not hpi_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='hpi', hpi_id=hpi_nav.next_id) if hpi_nav.next_id else '#' }}" {% if not hpi_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     Next <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
@@ -356,7 +370,7 @@
                             {% else %}
                                 Unknown Doctor
                             {% endif %}
-                            {% if loop.first %} - Latest Entry{% endif %}
+                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
                         </span>
                     </div>
                     <div class="hpi-content">
@@ -384,16 +398,20 @@
     </div>
 
     <!-- Review of Systems Tab -->
-    <div class="tab-content" id="review-systems-tab">
+    <div class="tab-content {% if active_tab == 'review-systems' %}active{% endif %}" id="review-systems-tab">
         <div class="section-header">
             <h2><i class="fas fa-clipboard-list"></i> Review of Systems</h2>
             {% if review_nav and review_nav.total %}
             <div class="section-version-nav">
-                <span class="text-muted">Updated: {{ review_systems.created_at.strftime('%Y-%m-%d %H:%M') if review_systems and review_systems.created_at else 'N/A' }} ({{ review_nav.index }}/{{ review_nav.total }})</span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, review_id=review_nav.prev_id) if review_nav.prev_id else '#' }}" {% if not review_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <span class="text-muted">
+                    Updated: {{ review_systems.created_at.strftime('%Y-%m-%d %H:%M') if review_systems and review_systems.created_at else 'N/A' }}
+                    {% if review_systems and review_systems.creator %}by Dr. {{ review_systems.creator.username }}{% endif %}
+                    ({{ review_nav.index }}/{{ review_nav.total }})
+                </span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='review-systems', review_id=review_nav.prev_id) if review_nav.prev_id else '#' }}" {% if not review_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     <i class="fas fa-chevron-left"></i> Prev
                 </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, review_id=review_nav.next_id) if review_nav.next_id else '#' }}" {% if not review_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='review-systems', review_id=review_nav.next_id) if review_nav.next_id else '#' }}" {% if not review_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     Next <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
@@ -408,6 +426,12 @@
                 <h4><i class="fas fa-brain"></i> Central Nervous System</h4>
                 <div class="system-content">
                     {{ review_systems.cns if review_systems and review_systems.cns else 'Not documented' }}
+                </div>
+            </div>
+            <div class="system-card">
+                <h4><i class="fas fa-hand-sparkles"></i> Skin</h4>
+                <div class="system-content">
+                    {{ review_systems.skin if review_systems and review_systems.skin else 'Not documented' }}
                 </div>
             </div>
             <div class="system-card">
@@ -441,19 +465,55 @@
                 </div>
             </div>
         </div>
+
+        {% if review_versions %}
+        <div class="section-history" style="margin-top: 30px;">
+            <h3>Review of Systems Update History</h3>
+            <div class="history-timeline">
+                {% for entry in review_versions|reverse %}
+                <div class="history-entry {% if loop.first %}current{% endif %}">
+                    <div class="history-header">
+                        <span class="history-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                        <span class="history-author">
+                            {% if entry.creator %}
+                                Dr. {{ entry.creator.username }}
+                            {% else %}
+                                Unknown Doctor
+                            {% endif %}
+                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
+                        </span>
+                    </div>
+                    <div class="history-details">
+                        <div class="detail-row"><strong>CNS:</strong> {{ entry.cns or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Skin:</strong> {{ entry.skin or 'N/A' }}</div>
+                        <div class="detail-row"><strong>CVS:</strong> {{ entry.cvs or 'N/A' }}</div>
+                        <div class="detail-row"><strong>RS:</strong> {{ entry.rs or 'N/A' }}</div>
+                        <div class="detail-row"><strong>GIT:</strong> {{ entry.git or 'N/A' }}</div>
+                        <div class="detail-row"><strong>GUT:</strong> {{ entry.gut or 'N/A' }}</div>
+                        <div class="detail-row"><strong>MSK:</strong> {{ entry.msk or 'N/A' }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Medical History Tab -->
-    <div class="tab-content" id="history-tab">
+    <div class="tab-content {% if active_tab == 'history' %}active{% endif %}" id="history-tab">
         <div class="section-header">
             <h2><i class="fas fa-book-medical"></i> Medical History</h2>
             {% if history_nav and history_nav.total %}
             <div class="section-version-nav">
-                <span class="text-muted">Updated: {{ history.created_at.strftime('%Y-%m-%d %H:%M') if history and history.created_at else 'N/A' }} ({{ history_nav.index }}/{{ history_nav.total }})</span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, history_id=history_nav.prev_id) if history_nav.prev_id else '#' }}" {% if not history_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <span class="text-muted">
+                    Updated: {{ history.created_at.strftime('%Y-%m-%d %H:%M') if history and history.created_at else 'N/A' }}
+                    {% if history and history.creator %}by Dr. {{ history.creator.username }}{% endif %}
+                    ({{ history_nav.index }}/{{ history_nav.total }})
+                </span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='history', history_id=history_nav.prev_id) if history_nav.prev_id else '#' }}" {% if not history_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     <i class="fas fa-chevron-left"></i> Prev
                 </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, history_id=history_nav.next_id) if history_nav.next_id else '#' }}" {% if not history_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='history', history_id=history_nav.next_id) if history_nav.next_id else '#' }}" {% if not history_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     Next <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
@@ -468,6 +528,18 @@
                 <h4><i class="fas fa-pills"></i> Medical History</h4>
                 <div class="history-content">
                     {{ history.medical_history if history and history.medical_history else 'Not documented' }}
+                </div>
+            </div>
+            <div class="history-card">
+                <h4><i class="fas fa-user-friends"></i> Social History</h4>
+                <div class="history-content">
+                    {{ history.social_history if history and history.social_history else 'Not documented' }}
+                </div>
+            </div>
+            <div class="history-card">
+                <h4><i class="fas fa-capsules"></i> Medications</h4>
+                <div class="history-content">
+                    {{ history.medications if history and history.medications else 'Not documented' }}
                 </div>
             </div>
             <div class="history-card">
@@ -489,19 +561,54 @@
                 </div>
             </div>
         </div>
+
+        {% if history_versions %}
+        <div class="section-history" style="margin-top: 30px;">
+            <h3>Medical History Update History</h3>
+            <div class="history-timeline">
+                {% for entry in history_versions|reverse %}
+                <div class="history-entry {% if loop.first %}current{% endif %}">
+                    <div class="history-header">
+                        <span class="history-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                        <span class="history-author">
+                            {% if entry.creator %}
+                                Dr. {{ entry.creator.username }}
+                            {% else %}
+                                Unknown Doctor
+                            {% endif %}
+                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
+                        </span>
+                    </div>
+                    <div class="history-details">
+                        <div class="detail-row"><strong>Medical:</strong> {{ entry.medical_history or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Social:</strong> {{ entry.social_history or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Medications:</strong> {{ entry.medications or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Surgical:</strong> {{ entry.surgical_history or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Family:</strong> {{ entry.family_history or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Allergies:</strong> {{ entry.allergies or 'N/A' }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Examination Tab -->
-    <div class="tab-content" id="examination-tab">
+    <div class="tab-content {% if active_tab == 'examination' %}active{% endif %}" id="examination-tab">
         <div class="section-header">
             <h2><i class="fas fa-heartbeat"></i> Physical Examination</h2>
             {% if examination_nav and examination_nav.total %}
             <div class="section-version-nav">
-                <span class="text-muted">Updated: {{ examination.created_at.strftime('%Y-%m-%d %H:%M') if examination and examination.created_at else 'N/A' }} ({{ examination_nav.index }}/{{ examination_nav.total }})</span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, exam_id=examination_nav.prev_id) if examination_nav.prev_id else '#' }}" {% if not examination_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <span class="text-muted">
+                    Updated: {{ examination.created_at.strftime('%Y-%m-%d %H:%M') if examination and examination.created_at else 'N/A' }}
+                    {% if examination and examination.creator %}by Dr. {{ examination.creator.username }}{% endif %}
+                    ({{ examination_nav.index }}/{{ examination_nav.total }})
+                </span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='examination', exam_id=examination_nav.prev_id) if examination_nav.prev_id else '#' }}" {% if not examination_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     <i class="fas fa-chevron-left"></i> Prev
                 </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, exam_id=examination_nav.next_id) if examination_nav.next_id else '#' }}" {% if not examination_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='examination', exam_id=examination_nav.next_id) if examination_nav.next_id else '#' }}" {% if not examination_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     Next <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
@@ -580,19 +687,58 @@
                 </div>
             </div>
         </div>
+
+        {% if exam_versions %}
+        <div class="section-history" style="margin-top: 30px;">
+            <h3>Examination Update History</h3>
+            <div class="history-timeline">
+                {% for entry in exam_versions|reverse %}
+                <div class="history-entry {% if loop.first %}current{% endif %}">
+                    <div class="history-header">
+                        <span class="history-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                        <span class="history-author">
+                            {% if entry.creator %}
+                                Dr. {{ entry.creator.username }}
+                            {% else %}
+                                Unknown Doctor
+                            {% endif %}
+                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
+                        </span>
+                    </div>
+                    <div class="history-details">
+                        <div class="detail-row"><strong>General:</strong> {{ entry.general_appearance or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Temp:</strong> {{ entry.temperature or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Pulse:</strong> {{ entry.pulse or 'N/A' }}</div>
+                        <div class="detail-row"><strong>RR:</strong> {{ entry.resp_rate or 'N/A' }}</div>
+                        <div class="detail-row"><strong>BP:</strong> {% if entry.bp_systolic and entry.bp_diastolic %}{{ entry.bp_systolic }}/{{ entry.bp_diastolic }}{% else %}N/A{% endif %}</div>
+                        <div class="detail-row"><strong>SpO₂:</strong> {{ entry.spo2 or 'N/A' }}</div>
+                        <div class="detail-row"><strong>CVS:</strong> {{ entry.cvs_exam or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Resp:</strong> {{ entry.resp_exam or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Abdo:</strong> {{ entry.abdo_exam or 'N/A' }}</div>
+                        <div class="detail-row"><strong>CNS:</strong> {{ entry.cns_exam or 'N/A' }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Diagnosis Tab -->
-    <div class="tab-content" id="diagnosis-tab">
+    <div class="tab-content {% if active_tab == 'diagnosis' %}active{% endif %}" id="diagnosis-tab">
         <div class="section-header">
             <h2><i class="fas fa-diagnoses"></i> Diagnosis</h2>
             {% if diagnosis_nav and diagnosis_nav.total %}
             <div class="section-version-nav">
-                <span class="text-muted">Updated: {{ diagnosis.created_at.strftime('%Y-%m-%d %H:%M') if diagnosis and diagnosis.created_at else 'N/A' }} ({{ diagnosis_nav.index }}/{{ diagnosis_nav.total }})</span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, diagnosis_id=diagnosis_nav.prev_id) if diagnosis_nav.prev_id else '#' }}" {% if not diagnosis_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <span class="text-muted">
+                    Updated: {{ diagnosis.created_at.strftime('%Y-%m-%d %H:%M') if diagnosis and diagnosis.created_at else 'N/A' }}
+                    {% if diagnosis and diagnosis.creator %}by Dr. {{ diagnosis.creator.username }}{% endif %}
+                    ({{ diagnosis_nav.index }}/{{ diagnosis_nav.total }})
+                </span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='diagnosis', diagnosis_id=diagnosis_nav.prev_id) if diagnosis_nav.prev_id else '#' }}" {% if not diagnosis_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     <i class="fas fa-chevron-left"></i> Prev
                 </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, diagnosis_id=diagnosis_nav.next_id) if diagnosis_nav.next_id else '#' }}" {% if not diagnosis_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='diagnosis', diagnosis_id=diagnosis_nav.next_id) if diagnosis_nav.next_id else '#' }}" {% if not diagnosis_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     Next <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
@@ -616,19 +762,50 @@
                 </div>
             </div>
         </div>
+
+        {% if diagnosis_versions %}
+        <div class="section-history" style="margin-top: 30px;">
+            <h3>Diagnosis Update History</h3>
+            <div class="history-timeline">
+                {% for entry in diagnosis_versions|reverse %}
+                <div class="history-entry {% if loop.first %}current{% endif %}">
+                    <div class="history-header">
+                        <span class="history-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                        <span class="history-author">
+                            {% if entry.creator %}
+                                Dr. {{ entry.creator.username }}
+                            {% else %}
+                                Unknown Doctor
+                            {% endif %}
+                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
+                        </span>
+                    </div>
+                    <div class="history-details">
+                        <div class="detail-row"><strong>Working:</strong> {{ entry.working_diagnosis or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Differential:</strong> {{ entry.differential_diagnosis or 'N/A' }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Management Tab -->
-    <div class="tab-content" id="management-tab">
+    <div class="tab-content {% if active_tab == 'management' %}active{% endif %}" id="management-tab">
         <div class="section-header">
             <h2><i class="fas fa-tasks"></i> Management Plan</h2>
             {% if management_nav and management_nav.total %}
             <div class="section-version-nav">
-                <span class="text-muted">Updated: {{ management.created_at.strftime('%Y-%m-%d %H:%M') if management and management.created_at else 'N/A' }} ({{ management_nav.index }}/{{ management_nav.total }})</span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, management_id=management_nav.prev_id) if management_nav.prev_id else '#' }}" {% if not management_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <span class="text-muted">
+                    Updated: {{ management.created_at.strftime('%Y-%m-%d %H:%M') if management and management.created_at else 'N/A' }}
+                    {% if management and management.creator %}by Dr. {{ management.creator.username }}{% endif %}
+                    ({{ management_nav.index }}/{{ management_nav.total }})
+                </span>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='management', management_id=management_nav.prev_id) if management_nav.prev_id else '#' }}" {% if not management_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     <i class="fas fa-chevron-left"></i> Prev
                 </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, management_id=management_nav.next_id) if management_nav.next_id else '#' }}" {% if not management_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
+                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='management', management_id=management_nav.next_id) if management_nav.next_id else '#' }}" {% if not management_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
                     Next <i class="fas fa-chevron-right"></i>
                 </a>
             </div>
@@ -646,7 +823,12 @@
         <div class="management-content">
             <!-- Treatment Plan -->
             <div class="management-section">
-                <h4>Treatment Plan</h4>
+                <div class="section-header-inline">
+                    <h4>Treatment Plan</h4>
+                    <button class="btn btn-outline btn-sm" onclick="doctorPatient.openModal('treatment-plan')">
+                        <i class="fas fa-plus"></i> Add Entry
+                    </button>
+                </div>
                 <div class="management-text">
                     {{ management.treatment_plan if management and management.treatment_plan else 'Not documented' }}
                 </div>
@@ -654,7 +836,12 @@
 
             <!-- Follow-up -->
             <div class="management-section">
-                <h4>Follow-up Plan</h4>
+                <div class="section-header-inline">
+                    <h4>Follow-up Plan</h4>
+                    <button class="btn btn-outline btn-sm" onclick="doctorPatient.openModal('follow-up-plan')">
+                        <i class="fas fa-plus"></i> Add Entry
+                    </button>
+                </div>
                 <div class="management-text">
                     {{ management.follow_up if management and management.follow_up else 'Not documented' }}
                 </div>
@@ -675,6 +862,18 @@
                         <div class="prescription-header">
                             <span class="prescription-date">{{ prescription.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
                             <span class="prescription-status status-{{ prescription.status }}">{{ prescription.status|title }}</span>
+                        </div>
+                        <div class="prescription-meta">
+                            <div><small><strong>Prescribed by:</strong> {% if prescription.doctor %}Dr. {{ prescription.doctor.username }}{% else %}Unknown Doctor{% endif %}</small></div>
+                            {% if prescription.dispensed_at or prescription.dispenser %}
+                                <div>
+                                    <small>
+                                        <strong>Dispensed:</strong>
+                                        {% if prescription.dispensed_at %}{{ prescription.dispensed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
+                                        {% if prescription.dispenser %} by {{ prescription.dispenser.username }}{% endif %}
+                                    </small>
+                                </div>
+                            {% endif %}
                         </div>
                         <div class="prescription-items">
                             {% for item in prescription.items %}
@@ -719,6 +918,18 @@
                             <span class="prescription-date">{{ prescription.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
                             <span class="prescription-status status-{{ prescription.status }}">{{ prescription.status|title }}</span>
                         </div>
+                        <div class="prescription-meta">
+                            <div><small><strong>Prescribed by:</strong> {% if prescription.doctor %}Dr. {{ prescription.doctor.username }}{% else %}Unknown Doctor{% endif %}</small></div>
+                            {% if prescription.dispensed_at or prescription.dispenser %}
+                                <div>
+                                    <small>
+                                        <strong>Dispensed:</strong>
+                                        {% if prescription.dispensed_at %}{{ prescription.dispensed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
+                                        {% if prescription.dispenser %} by {{ prescription.dispenser.username }}{% endif %}
+                                    </small>
+                                </div>
+                            {% endif %}
+                        </div>
                         <div class="prescription-items">
                             {% for item in prescription.items %}
                             <div class="prescription-item">
@@ -735,6 +946,9 @@
                 <div class="empty-state">
                     <i class="fas fa-prescription"></i>
                     <p>No controlled prescriptions yet</p>
+                    <button class="btn btn-primary" onclick="doctorPatient.openControlledPrescriptionModal()">
+                        <i class="fas fa-plus"></i> Create Controlled Prescription
+                    </button>
                 </div>
                 {% endif %}
             </div>
@@ -746,9 +960,42 @@
                 <div class="services-list">
                     {% for service in patient_services %}
                     <div class="service-card">
-                        <strong>{{ service.service.name }}</strong>
-                        {% if service.notes %}<br><small>{{ service.notes }}</small>{% endif %}
-                        <span class="service-status status-{{ service.status }}">{{ service.status|title }}</span>
+                        <div class="service-header">
+                            <strong>{{ service.service.name }}</strong>
+                            <span class="service-status status-{{ service.status }}">{{ service.status|title }}</span>
+                        </div>
+                        {% if service.notes %}<div><small>{{ service.notes }}</small></div>{% endif %}
+                        <div class="service-meta">
+                            <div>
+                                <small>
+                                    <strong>Requested:</strong>
+                                    {% if service.created_at %}{{ service.created_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
+                                    {% if service.requester %} by {{ service.requester.username }}{% endif %}
+                                </small>
+                            </div>
+                            {% if service.billed_at or service.biller or service.billed_sale %}
+                                <div>
+                                    <small>
+                                        <strong>Billed:</strong>
+                                        {% if service.billed_at %}{{ service.billed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
+                                        {% if service.biller %} by {{ service.biller.username }}{% endif %}
+                                        {% if service.billed_sale and service.billed_sale.sale_number %} (Sale: {{ service.billed_sale.sale_number }}){% endif %}
+                                    </small>
+                                </div>
+                            {% endif %}
+                            {% if service.completed_at or service.completer %}
+                                <div>
+                                    <small>
+                                        <strong>Completed:</strong>
+                                        {% if service.completed_at %}{{ service.completed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
+                                        {% if service.completer %} by {{ service.completer.username }}{% endif %}
+                                    </small>
+                                </div>
+                            {% endif %}
+                            {% if service.performer %}
+                                <div><small><strong>Performed by:</strong> {{ service.performer.username }}</small></div>
+                            {% endif %}
+                        </div>
                     </div>
                     {% endfor %}
                 </div>
@@ -760,10 +1007,38 @@
                 {% endif %}
             </div>
         </div>
+
+        {% if management_versions %}
+        <div class="section-history" style="margin-top: 30px;">
+            <h3>Management Plan Update History</h3>
+            <div class="history-timeline">
+                {% for entry in management_versions|reverse %}
+                <div class="history-entry {% if loop.first %}current{% endif %}">
+                    <div class="history-header">
+                        <span class="history-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                        <span class="history-author">
+                            {% if entry.creator %}
+                                Dr. {{ entry.creator.username }}
+                            {% else %}
+                                Unknown Doctor
+                            {% endif %}
+                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
+                        </span>
+                    </div>
+                    <div class="history-details">
+                        <div class="detail-row"><strong>Treatment:</strong> {{ entry.treatment_plan or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Follow-up:</strong> {{ entry.follow_up or 'N/A' }}</div>
+                        <div class="detail-row"><strong>Notes:</strong> {{ entry.notes or 'N/A' }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- In the summary tab section -->
-    <div class="tab-content" id="summary-tab">
+    <div class="tab-content {% if active_tab == 'summary' %}active{% endif %}" id="summary-tab">
         <div class="section-header">
             <h2><i class="fas fa-file-medical"></i> Patient Summary</h2>
             <button class="btn btn-primary" onclick="doctorPatient.openSummaryModal()">
@@ -825,7 +1100,7 @@
     </div>
     
     <!-- Investigations Tab -->
-    <div class="tab-content" id="investigations-tab">
+    <div class="tab-content {% if active_tab == 'investigations' %}active{% endif %}" id="investigations-tab">
         <div class="section-header">
             <h2><i class="fas fa-microscope"></i> Investigations</h2>
             <div class="investigation-actions">
@@ -851,10 +1126,16 @@
                             <span class="request-status status-{{ request.status }}">{{ request.status|title }}</span>
                         </div>
                         <div class="request-details">
-                            <span class="request-date">Requested: {{ request.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                            <span class="request-date">
+                                Requested: {{ request.created_at.strftime('%Y-%m-%d %H:%M') }}
+                                {% if request.requester %}by {{ request.requester.username }}{% endif %}
+                            </span>
                             {% if request.notes %}<div class="request-notes">{{ request.notes }}</div>{% endif %}
                             {% if request.status == 'completed' and request.result %}
                                 <div class="request-notes"><strong>Result:</strong> {{ request.result }}</div>
+                                {% if request.performer and request.performed_at %}
+                                    <div class="request-notes"><strong>Recorded:</strong> {{ request.performed_at.strftime('%Y-%m-%d %H:%M') }} by {{ request.performer.username }}</div>
+                                {% endif %}
                             {% endif %}
                             {% if request.status != 'completed' %}
                                 <div style="margin-top: 8px;">
@@ -887,10 +1168,16 @@
                             <span class="request-status status-{{ request.status }}">{{ request.status|title }}</span>
                         </div>
                         <div class="request-details">
-                            <span class="request-date">Requested: {{ request.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                            <span class="request-date">
+                                Requested: {{ request.created_at.strftime('%Y-%m-%d %H:%M') }}
+                                {% if request.requester %}by {{ request.requester.username }}{% endif %}
+                            </span>
                             {% if request.notes %}<div class="request-notes">{{ request.notes }}</div>{% endif %}
                             {% if request.status == 'completed' and request.result %}
                                 <div class="request-notes"><strong>Result:</strong> {{ request.result }}</div>
+                                {% if request.performer and request.performed_at %}
+                                    <div class="request-notes"><strong>Recorded:</strong> {{ request.performed_at.strftime('%Y-%m-%d %H:%M') }} by {{ request.performer.username }}</div>
+                                {% endif %}
                             {% endif %}
                             {% if request.status != 'completed' %}
                                 <div style="margin-top: 8px;">
@@ -924,6 +1211,7 @@
         <form method="POST" id="chief-complaint-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="chief_complaint">
+            <input type="hidden" name="active_tab" value="chief-complaint">
             <div class="form-group">
                 <label for="chief-complaint">Chief Complaint *</label>
                 <textarea id="chief-complaint" name="chief_complaint" rows="6" required 
@@ -948,6 +1236,7 @@
         <form method="POST" id="hpi-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="hpi">
+            <input type="hidden" name="active_tab" value="hpi">
             <div class="form-group">
                 <label for="history-present-illness">History of Present Illness *</label>
                 <textarea id="history-present-illness" name="history_present_illness" rows="8" required
@@ -972,9 +1261,14 @@
         <form method="POST" id="review-systems-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="review_systems">
+            <input type="hidden" name="active_tab" value="review-systems">
             <div class="form-group">
                 <label for="cns">Central Nervous System</label>
                 <textarea id="cns" name="cns" rows="3" placeholder="Headache, dizziness, seizures, etc..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="skin">Skin</label>
+                <textarea id="skin" name="skin" rows="3" placeholder="Rashes, itching, lesions, dryness, etc..."></textarea>
             </div>
             <div class="form-group">
                 <label for="cvs">Cardiovascular System</label>
@@ -1014,9 +1308,18 @@
         <form method="POST" id="history-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="history">
+            <input type="hidden" name="active_tab" value="history">
             <div class="form-group">
                 <label for="medical-history">Medical History</label>
                 <textarea id="medical-history" name="medical_history" rows="3" placeholder="Chronic conditions, previous illnesses..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="social-history">Social History</label>
+                <textarea id="social-history" name="social_history" rows="3" placeholder="Smoking, alcohol, occupation, living situation..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="medications">Medications</label>
+                <textarea id="medications" name="medications" rows="3" placeholder="Current medications, supplements, OTC drugs..."></textarea>
             </div>
             <div class="form-group">
                 <label for="surgical-history">Surgical History</label>
@@ -1048,6 +1351,7 @@
         <form method="POST" id="examination-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="examination">
+            <input type="hidden" name="active_tab" value="examination">
             
             <div class="form-section">
                 <h3>Vital Signs</h3>
@@ -1123,6 +1427,7 @@
         <form method="POST" id="diagnosis-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="diagnosis">
+            <input type="hidden" name="active_tab" value="diagnosis">
             <div class="form-group">
                 <label for="working-diagnosis">Working Diagnosis</label>
                 <textarea id="working-diagnosis" name="working_diagnosis" rows="4" placeholder="Primary diagnosis based on current findings..."></textarea>
@@ -1149,6 +1454,7 @@
         <form method="POST" id="management-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="management">
+            <input type="hidden" name="active_tab" value="management">
             
             <div class="form-section">
                 <h3>Treatment Plan</h3>
@@ -1191,6 +1497,72 @@
 
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('management')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Treatment Plan Modal -->
+<div class="modal" id="treatment-plan-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Update Treatment Plan</h2>
+            <button class="close-btn" onclick="doctorPatient.closeModal('treatment-plan')">&times;</button>
+        </div>
+        <form method="POST" id="treatment-plan-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="section" value="management">
+            <input type="hidden" name="active_tab" value="management">
+
+            <div class="form-section">
+                <h3>Treatment Plan</h3>
+                <div class="form-group">
+                    <textarea id="treatment-plan-only" name="treatment_plan" rows="6" placeholder="Detailed treatment plan..."></textarea>
+                    <small class="form-help">This creates a new entry and preserves previous versions.</small>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="treatment-plan-notes">Additional Notes (optional)</label>
+                <textarea id="treatment-plan-notes" name="management_notes" rows="3" placeholder="Any additional management notes..."></textarea>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="doctorPatient.closeModal('treatment-plan')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Entry</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Follow-up Plan Modal -->
+<div class="modal" id="follow-up-plan-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Update Follow-up Plan</h2>
+            <button class="close-btn" onclick="doctorPatient.closeModal('follow-up-plan')">&times;</button>
+        </div>
+        <form method="POST" id="follow-up-plan-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="section" value="management">
+            <input type="hidden" name="active_tab" value="management">
+
+            <div class="form-section">
+                <h3>Follow-up Plan</h3>
+                <div class="form-group">
+                    <textarea id="follow-up-only" name="follow_up" rows="5" placeholder="Follow-up schedule and instructions..."></textarea>
+                    <small class="form-help">This creates a new entry and preserves previous versions.</small>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="follow-up-notes">Additional Notes (optional)</label>
+                <textarea id="follow-up-notes" name="management_notes" rows="3" placeholder="Any additional management notes..."></textarea>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="doctorPatient.closeModal('follow-up-plan')">Cancel</button>
                 <button type="submit" class="btn btn-primary">Add Entry</button>
             </div>
         </form>
@@ -1276,6 +1648,16 @@
                     <div class="prescription-item-form">
                         <div class="form-row">
                             <div class="form-group">
+                                <label>Prescription Type</label>
+                                <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;">
+                                    <input type="checkbox" class="controlled-toggle" onchange="doctorPatient.toggleControlledItem(this)">
+                                    <span class="checkmark"></span>
+                                    Controlled Drug
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
                                 <label>Drug *</label>
                                 <select name="drug_id" class="drug-select" required onchange="doctorPatient.validateDrugStock(this)">
                                     <option value="">Select Drug</option>
@@ -1285,8 +1667,16 @@
                                     </option>
                                     {% endfor %}
                                 </select>
+                                <select name="controlled_drug_id" class="drug-select" style="display:none;" onchange="doctorPatient.validateDrugStock(this)">
+                                    <option value="">Select Controlled Drug</option>
+                                    {% for cdrug in controlled_drugs %}
+                                    <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">
+                                        {{ cdrug.name }} ({{ cdrug.remaining_quantity }} left)
+                                    </option>
+                                    {% endfor %}
+                                </select>
                                 <div class="stock-warning" id="stock-warning-0"></div>
-                                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.openDosageLookup(this)">
+                                <button type="button" class="btn btn-outline btn-sm dosage-btn" onclick="doctorPatient.openDosageLookup(this)">
                                     <i class="fas fa-info-circle"></i> View Dosage
                                 </button>
                             </div>
@@ -1360,6 +1750,7 @@
         <form method="POST" id="lab-request-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="lab_request">
+            <input type="hidden" name="active_tab" value="investigations">
             <div class="form-group">
                 <label for="lab-test-id">Select Test *</label>
                 <select id="lab-test-id" name="test_id" required>
@@ -1391,6 +1782,7 @@
         <form method="POST" id="imaging-request-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="section" value="imaging_request">
+            <input type="hidden" name="active_tab" value="investigations">
             <div class="form-group">
                 <label for="imaging-test-id">Select Test *</label>
                 <select id="imaging-test-id" name="test_id" required>
@@ -1630,15 +2022,15 @@
     flex-wrap: nowrap;
     background: var(--white);
     border-radius: var(--border-radius);
-    margin-bottom: 24px;
+    margin-bottom: 16px;
     box-shadow: var(--box-shadow);
     overflow-x: auto;
-    gap: 10px;
-    padding: 15px;
+    gap: 8px;
+    padding: 8px;
 }
 
 .tab {
-    padding: 10px 18px;
+    padding: 8px 12px;
     cursor: pointer;
     display: flex;
     flex-direction: column;
@@ -1654,7 +2046,7 @@
     color: white;
     font-weight: 500;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    min-width: 85px;
+    min-width: 72px;
     position: relative;
 }
 
@@ -1672,16 +2064,16 @@
 }
 
 .tab-number {
-    width: 28px;
-    height: 28px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.3);
     display: flex;
     justify-content: center;
     align-items: center;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
     font-weight: bold;
-    font-size: 14px;
+    font-size: 12px;
 }
 
 .tab.active .tab-number {
@@ -1689,7 +2081,7 @@
 }
 
 .tab-label {
-    font-size: 12px;
+    font-size: 11px;
     text-align: center;
     line-height: 1.2;
 }
@@ -1750,8 +2142,8 @@
     gap: 10px;
 }
 
-/* Chief Complaint & HPI Styles */
-.complaint-history, .hpi-history, .biodata-history {
+/* History timeline styles */
+.complaint-history, .hpi-history, .biodata-history, .section-history {
     margin-bottom: 30px;
 }
 
@@ -2102,6 +2494,14 @@
     margin-bottom: 8px;
 }
 
+.service-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
 .prescription-date, .request-date {
     font-size: 12px;
     color: var(--gray-600);
@@ -2112,6 +2512,12 @@
     border-radius: 12px;
     font-size: 11px;
     font-weight: 500;
+}
+
+.prescription-meta, .service-meta {
+    color: var(--gray-600);
+    line-height: 1.35;
+    margin-bottom: 8px;
 }
 
 .prescription-items {
@@ -2361,8 +2767,8 @@
     }
     
     .tab {
-        padding: 12px 16px;
-        font-size: 14px;
+        padding: 8px 10px;
+        min-width: 68px;
     }
     
     .section-header {
@@ -2553,6 +2959,18 @@ class DoctorPatientManagement {
     openPrescriptionModal() {
         this.openModal('prescription');
         this.resetPrescriptionForm();
+    }
+
+    openControlledPrescriptionModal() {
+        this.openPrescriptionModal();
+        setTimeout(() => {
+            const firstRow = document.querySelector('#prescription-items-container .prescription-item-form');
+            const toggle = firstRow ? firstRow.querySelector('.controlled-toggle') : null;
+            if (toggle) {
+                toggle.checked = true;
+                this.toggleControlledItem(toggle);
+            }
+        }, 0);
     }
 
     openLabRequestModal() {
@@ -2799,6 +3217,17 @@ class DoctorPatientManagement {
             
             // Add animation
             activeContent.classList.add('animate__animated', 'animate__fadeIn');
+
+            // Persist selected tab in the URL (preserves other query params like *_id)
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                params.set('tab', tabId);
+                const qs = params.toString();
+                const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+                window.history.replaceState({}, '', newUrl);
+            } catch (e) {
+                // Non-blocking
+            }
         }
     }
 
@@ -2812,6 +3241,16 @@ class DoctorPatientManagement {
         newItem.innerHTML = `
             <div class="form-row">
                 <div class="form-group">
+                    <label>Prescription Type</label>
+                    <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;">
+                        <input type="checkbox" class="controlled-toggle" onchange="doctorPatient.toggleControlledItem(this)">
+                        <span class="checkmark"></span>
+                        Controlled Drug
+                    </label>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
                     <label>Drug *</label>
                     <select name="drug_id" class="drug-select" required onchange="doctorPatient.validateDrugStock(this)">
                         <option value="">Select Drug</option>
@@ -2821,8 +3260,16 @@ class DoctorPatientManagement {
                         </option>
                         {% endfor %}
                     </select>
+                    <select name="controlled_drug_id" class="drug-select" style="display:none;" onchange="doctorPatient.validateDrugStock(this)">
+                        <option value="">Select Controlled Drug</option>
+                        {% for cdrug in controlled_drugs %}
+                        <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">
+                            {{ cdrug.name }} ({{ cdrug.remaining_quantity }} left)
+                        </option>
+                        {% endfor %}
+                    </select>
                     <div class="stock-warning" id="stock-warning-${this.prescriptionItemCount}"></div>
-                    <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.openDosageLookup(this)">
+                    <button type="button" class="btn btn-outline btn-sm dosage-btn" onclick="doctorPatient.openDosageLookup(this)">
                         <i class="fas fa-info-circle"></i> View Dosage
                     </button>
                 </div>
@@ -2886,6 +3333,16 @@ class DoctorPatientManagement {
             <div class="prescription-item-form">
                 <div class="form-row">
                     <div class="form-group">
+                        <label>Prescription Type</label>
+                        <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;">
+                            <input type="checkbox" class="controlled-toggle" onchange="doctorPatient.toggleControlledItem(this)">
+                            <span class="checkmark"></span>
+                            Controlled Drug
+                        </label>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
                         <label>Drug *</label>
                         <select name="drug_id" class="drug-select" required onchange="doctorPatient.validateDrugStock(this)">
                             <option value="">Select Drug</option>
@@ -2895,8 +3352,16 @@ class DoctorPatientManagement {
                             </option>
                             {% endfor %}
                         </select>
+                        <select name="controlled_drug_id" class="drug-select" style="display:none;" onchange="doctorPatient.validateDrugStock(this)">
+                            <option value="">Select Controlled Drug</option>
+                            {% for cdrug in controlled_drugs %}
+                            <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">
+                                {{ cdrug.name }} ({{ cdrug.remaining_quantity }} left)
+                            </option>
+                            {% endfor %}
+                        </select>
                         <div class="stock-warning" id="stock-warning-1"></div>
-                        <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.openDosageLookup(this)">
+                        <button type="button" class="btn btn-outline btn-sm dosage-btn" onclick="doctorPatient.openDosageLookup(this)">
                             <i class="fas fa-info-circle"></i> View Dosage
                         </button>
                     </div>
@@ -3024,11 +3489,12 @@ class DoctorPatientManagement {
         }
     }
 
-     validateDrugStock(selectElement) {
-        const selectedOption = selectElement.options[selectElement.selectedIndex];
-        const stock = parseInt(selectedOption.getAttribute('data-stock')) || 0;
-        const quantityInput = selectElement.closest('.form-row').querySelector('input[name="quantity"]');
-        const warningElement = selectElement.nextElementSibling;
+      validateDrugStock(selectElement) {
+          const selectedOption = selectElement.options[selectElement.selectedIndex];
+          const stock = parseInt(selectedOption.getAttribute('data-stock')) || 0;
+          const row = selectElement.closest('.prescription-item-form') || selectElement.closest('.form-row');
+          const quantityInput = row ? row.querySelector('input[name="quantity"]') : null;
+          const warningElement = (selectElement.closest('.form-group') || row)?.querySelector('.stock-warning');
         
         if (quantityInput) {
             quantityInput.setAttribute('max', stock);
@@ -3044,6 +3510,40 @@ class DoctorPatientManagement {
                 quantityInput.value = stock;
                 this.showAlert(`Quantity adjusted to available stock (${stock})`, 'warning');
             }
+        }
+    }
+
+    toggleControlledItem(checkboxEl) {
+        const row = checkboxEl.closest('.prescription-item-form');
+        if (!row) return;
+
+        const isControlled = checkboxEl.checked;
+        const normalSelect = row.querySelector('select[name="drug_id"]');
+        const controlledSelect = row.querySelector('select[name="controlled_drug_id"]');
+        const dosageBtn = row.querySelector('.dosage-btn');
+        const warningElement = row.querySelector('.stock-warning');
+        const quantityInput = row.querySelector('input[name="quantity"]');
+
+        if (warningElement) {
+            warningElement.textContent = '';
+            warningElement.style.display = 'none';
+        }
+        if (quantityInput) {
+            quantityInput.removeAttribute('max');
+        }
+
+        if (normalSelect) {
+            normalSelect.style.display = isControlled ? 'none' : '';
+            normalSelect.required = !isControlled;
+            if (isControlled) normalSelect.value = '';
+        }
+        if (controlledSelect) {
+            controlledSelect.style.display = isControlled ? '' : 'none';
+            controlledSelect.required = isControlled;
+            if (!isControlled) controlledSelect.value = '';
+        }
+        if (dosageBtn) {
+            dosageBtn.style.display = isControlled ? 'none' : '';
         }
     }
 
@@ -3078,18 +3578,29 @@ class DoctorPatientManagement {
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
+            const isControlled = !!(row.querySelector('.controlled-toggle') || {}).checked;
             const drugId = (row.querySelector('select[name="drug_id"]') || {}).value;
+            const controlledDrugId = (row.querySelector('select[name="controlled_drug_id"]') || {}).value;
             const quantityRaw = (row.querySelector('input[name="quantity"]') || {}).value;
             const dosage = (row.querySelector('input[name="dosage"]') || {}).value;
             const frequency = (row.querySelector('input[name="frequency"]') || {}).value;
             const duration = (row.querySelector('input[name="duration"]') || {}).value;
             const notes = (row.querySelector('input[name="notes"]') || {}).value;
 
-            if (!drugId) {
-                this.showAlert(`Please select a drug for item ${i + 1}`, 'error');
-                const select = row.querySelector('select[name="drug_id"]');
-                if (select) select.focus();
-                return;
+            if (isControlled) {
+                if (!controlledDrugId) {
+                    this.showAlert(`Please select a controlled drug for item ${i + 1}`, 'error');
+                    const select = row.querySelector('select[name="controlled_drug_id"]');
+                    if (select) select.focus();
+                    return;
+                }
+            } else {
+                if (!drugId) {
+                    this.showAlert(`Please select a drug for item ${i + 1}`, 'error');
+                    const select = row.querySelector('select[name="drug_id"]');
+                    if (select) select.focus();
+                    return;
+                }
             }
 
             const quantity = Number(quantityRaw);
@@ -3105,14 +3616,26 @@ class DoctorPatientManagement {
                 return;
             }
 
-            prescriptions.push({
-                drug_id: Number(drugId),
-                quantity,
-                dosage,
-                frequency,
-                duration,
-                notes,
-            });
+            if (isControlled) {
+                prescriptions.push({
+                    is_controlled: true,
+                    controlled_drug_id: Number(controlledDrugId),
+                    quantity,
+                    dosage,
+                    frequency,
+                    duration,
+                    notes,
+                });
+            } else {
+                prescriptions.push({
+                    drug_id: Number(drugId),
+                    quantity,
+                    dosage,
+                    frequency,
+                    duration,
+                    notes,
+                });
+            }
         }
 
         if (!prescriptions.length) {
@@ -3330,32 +3853,4 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
-
-<!-- Print Button (added to the patient header) -->
-<div class="patient-actions">
-    {% if patient.status == 'active' %}
-    <form method="POST" class="inline-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="action" value="complete_treatment">
-        <button type="submit" class="btn btn-success">
-            <i class="fas fa-check-circle"></i> Complete Treatment
-        </button>
-    </form>
-    {% else %}
-    <form method="POST" class="inline-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="action" value="readmit_patient">
-        <button type="submit" class="btn btn-warning">
-            <i class="fas fa-redo"></i> Readmit Patient
-        </button>
-    </form>
-    {% endif %}
-    <a href="{{ url_for('patient_ward_bill', patient_id=patient.id) }}" class="btn btn-secondary">
-        <i class="fas fa-bed"></i> Ward Bill
-    </a>
-    <button class="btn btn-info" onclick="printPatientSummary()">
-        <i class="fas fa-print"></i> Print Summary
-    </button>
-</div>
-
 {% endblock %}

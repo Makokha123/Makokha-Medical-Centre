@@ -468,6 +468,7 @@ document.getElementById('patient-search').addEventListener('input', function(e) 
                             document.getElementById('patient-id').value = this.getAttribute('data-id');
                             loadPatientPrescriptions(this.getAttribute('data-id'));
                             loadPatientWardStay(this.getAttribute('data-id'));
+                            loadRequestedServices(this.getAttribute('data-id'));
                             resultsContainer.innerHTML = '';
                         });
                     });
@@ -483,6 +484,7 @@ document.getElementById('patient-id').addEventListener('change', function() {
     if (!patientId) return;
     loadPatientPrescriptions(patientId);
     loadPatientWardStay(patientId);
+    loadRequestedServices(patientId);
 });
 
 // Load prescriptions when patient is selected
@@ -518,6 +520,43 @@ function loadPatientPrescriptions(patientId) {
             } else {
                 container.innerHTML = '<div class="alert alert-info">No prescriptions found for this patient</div>';
             }
+        });
+}
+
+// Load doctor-requested services (unbilled) and auto-check them in the Services list
+function loadRequestedServices(patientId) {
+    // Reset service selections when changing patient to avoid cross-patient carry-over.
+    document.querySelectorAll('input[name="services"]').forEach(cb => {
+        cb.checked = false;
+        cb.removeAttribute('data-requested');
+    });
+
+    fetch(`/api/patient/${patientId}/requested-services`)
+        .then(response => {
+            if (!response.ok) return [];
+            return response.json();
+        })
+        .then(data => {
+            if (!Array.isArray(data) || data.length === 0) {
+                document.getElementById('billing-form').dispatchEvent(new Event('change'));
+                return;
+            }
+
+            data.forEach(row => {
+                const sid = row && row.service_id;
+                if (!sid) return;
+                const checkbox = document.querySelector(`input[name="services"][value="${sid}"]`);
+                if (checkbox) {
+                    checkbox.checked = true;
+                    checkbox.setAttribute('data-requested', '1');
+                }
+            });
+
+            // Recompute totals after auto-checking
+            document.getElementById('billing-form').dispatchEvent(new Event('change'));
+        })
+        .catch(() => {
+            // Ignore; requested services are optional
         });
 }
 

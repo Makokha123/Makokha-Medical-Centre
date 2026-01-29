@@ -1149,6 +1149,8 @@ class ControlledPrescription(db.Model):
     doctor_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     notes = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending')  # pending, dispensed, cancelled
+    dispensed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    dispensed_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(
         db.DateTime,
@@ -1158,7 +1160,8 @@ class ControlledPrescription(db.Model):
 
     items = db.relationship('ControlledPrescriptionItem', backref='controlled_prescription', lazy=True, cascade='all, delete-orphan')
     patient = db.relationship('Patient', backref='controlled_prescriptions')
-    doctor = db.relationship('User', backref='controlled_prescriptions')
+    doctor = db.relationship('User', foreign_keys=[doctor_id], backref='controlled_prescriptions')
+    dispenser = db.relationship('User', foreign_keys=[dispensed_by], backref='dispensed_controlled_prescriptions')
 
 
 class ControlledPrescriptionItem(db.Model):
@@ -2554,6 +2557,13 @@ class Patient(db.Model):
     tca = db.Column(db.Date, nullable=True)
     date_of_admission = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(250), default='active', nullable=True)
+    # Discharge workflow (mainly for inpatients). Kept additive to avoid breaking existing features.
+    # discharge_state: none | pending | discharged
+    discharge_state = db.Column(db.String(20), default='none')
+    discharge_requested_at = db.Column(db.DateTime)
+    discharge_requested_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    discharged_at = db.Column(db.DateTime)
+    discharged_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     chief_complaint = db.Column(db.Text, nullable=True)
     history_present_illness = db.Column(db.Text, nullable=True)
     
@@ -2576,6 +2586,9 @@ class Patient(db.Model):
     lab_requests = db.relationship('LabRequest', backref='patient', lazy=True)
     imaging_requests = db.relationship('ImagingRequest', backref='patient', lazy=True)
     summaries = db.relationship('PatientSummary', back_populates='patient', lazy=True)
+
+    discharge_requester = db.relationship('User', foreign_keys=[discharge_requested_by])
+    discharger = db.relationship('User', foreign_keys=[discharged_by])
 
     @staticmethod
     def _safe_decrypt(value) -> str:
@@ -2694,8 +2707,12 @@ class PatientReviewSystem(db.Model):
     ai_suggested_questions = db.Column(db.Text)  # Stores AI-generated questions for review of systems
     ai_last_updated = db.Column(db.DateTime)
 
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    creator = db.relationship('User', foreign_keys=[created_by])
 
 
 class PatientHistory(db.Model):
@@ -2710,9 +2727,13 @@ class PatientHistory(db.Model):
     
     # AI fields
     ai_identified_risk_factors = db.Column(db.Text)
+
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    creator = db.relationship('User', foreign_keys=[created_by])
 
 class PatientExamination(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -2744,8 +2765,12 @@ class PatientExamination(db.Model):
     # AI fields
     ai_identified_red_flags = db.Column(db.Text)
 
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    creator = db.relationship('User', foreign_keys=[created_by])
 
 class PatientSummary(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -2769,9 +2794,13 @@ class PatientDiagnosis(db.Model):
         # AI fields
     ai_supported_diagnosis = db.Column(db.Boolean, default=False)
     ai_alternative_diagnoses = db.Column(db.Text)
+
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    creator = db.relationship('User', foreign_keys=[created_by])
 
 class PatientManagement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -2783,9 +2812,13 @@ class PatientManagement(db.Model):
     # AI fields
     ai_generated_plan = db.Column(db.Boolean, default=False)
     ai_alternative_treatments = db.Column(db.Text)
+
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    creator = db.relationship('User', foreign_keys=[created_by])
 
 
 class PatientBiodataEntry(db.Model):
@@ -3500,12 +3533,15 @@ class Prescription(db.Model):
     doctor_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     notes = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending')  # pending, dispensed, cancelled
+    dispensed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    dispensed_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
   
     items = db.relationship('PrescriptionItem', backref='prescription', lazy=True)  
     patient = db.relationship('Patient', backref='prescriptions')
-    doctor = db.relationship('User', backref='prescriptions')
+    doctor = db.relationship('User', foreign_keys=[doctor_id], backref='prescriptions')
+    dispenser = db.relationship('User', foreign_keys=[dispensed_by], backref='dispensed_prescriptions')
 
 class PrescriptionItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -4682,6 +4718,15 @@ class PatientService(db.Model):
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
     service_id = db.Column(db.Integer, db.ForeignKey('service.id'), nullable=False)
     notes = db.Column(db.Text)
+    # Lifecycle
+    # requested -> billed -> in_progress -> done (or cancelled)
+    status = db.Column(db.String(20), default='requested')
+    requested_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    billed_sale_id = db.Column(db.Integer, db.ForeignKey('sales.id'))
+    billed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    billed_at = db.Column(db.DateTime)
+    completed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    completed_at = db.Column(db.DateTime)
     performed_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
@@ -4689,6 +4734,10 @@ class PatientService(db.Model):
     patient = db.relationship('Patient', backref='services')
     service = db.relationship('Service', backref='patient_services')
     performer = db.relationship('User', foreign_keys=[performed_by])
+    requester = db.relationship('User', foreign_keys=[requested_by])
+    biller = db.relationship('User', foreign_keys=[billed_by])
+    completer = db.relationship('User', foreign_keys=[completed_by])
+    billed_sale = db.relationship('Sale', foreign_keys=[billed_sale_id])
 
 
 class AuditLog(db.Model):
@@ -5433,6 +5482,34 @@ def _ensure_known_backward_compat_columns(engine) -> None:
         {
             'payment_intent_id': 'INTEGER',
             'provider_txn_id': 'INTEGER',
+        },
+    )
+
+    # Keep PatientService compatible (requested services lifecycle).
+    _ensure_table_columns(
+        engine,
+        'patient_service',
+        {
+            'status': 'VARCHAR(20)',
+            'requested_by': 'INTEGER',
+            'billed_sale_id': 'INTEGER',
+            'billed_by': 'INTEGER',
+            'billed_at': 'DATETIME',
+            'completed_by': 'INTEGER',
+            'completed_at': 'DATETIME',
+        },
+    )
+
+    # Keep Patient compatible (discharge workflow for inpatients).
+    _ensure_table_columns(
+        engine,
+        'patient',
+        {
+            'discharge_state': 'VARCHAR(20)',
+            'discharge_requested_at': 'DATETIME',
+            'discharge_requested_by': 'INTEGER',
+            'discharged_at': 'DATETIME',
+            'discharged_by': 'INTEGER',
         },
     )
 
@@ -20541,6 +20618,8 @@ def pharmacist_controlled_dispense():
             item.status = 'dispensed'
 
         p.status = 'dispensed'
+        p.dispensed_by = current_user.id
+        p.dispensed_at = get_eat_now()
 
         # Store a copy of the receipt HTML for audit/reprints and post to ledger before committing
         receipt_html = None
@@ -22185,6 +22264,8 @@ def pharmacist_dispense():
         
         # Update prescription status
         prescription.status = 'dispensed'
+        prescription.dispensed_by = current_user.id
+        prescription.dispensed_at = get_eat_now()
         
         # Create transaction record
         transaction = Transaction(
@@ -22303,6 +22384,255 @@ def doctor_dashboard():
     # Get actual patient lists for the tables
     active_patients = Patient.query.filter_by(status='active').order_by(Patient.updated_at.desc()).limit(50).all()
     completed_patients = Patient.query.filter_by(status='completed').order_by(Patient.updated_at.desc()).limit(50).all()
+
+    # Diagnosis analytics (safe, additive; never blocks dashboard rendering).
+    diagnosis_stats = None
+    try:
+        import re
+        from collections import Counter
+
+        def _norm_gender(val: str | None) -> str:
+            s = (val or '').strip().lower()
+            if s.startswith('m'):
+                return 'Male'
+            if s.startswith('f'):
+                return 'Female'
+            return 'Other/Unknown'
+
+        def _age_bucket(age_val) -> str:
+            try:
+                age_int = int(age_val)
+            except Exception:
+                return 'Unknown'
+            if age_int < 18:
+                return 'Children'
+            if age_int >= 60:
+                return 'Geriatrics'
+            return 'Adults'
+
+        def _split_dx(text: str | None) -> list[str]:
+            if not text:
+                return []
+            s = str(text).replace('\r', '\n')
+            parts: list[str] = []
+            for raw in re.split(r"[\n,;|/]+", s):
+                t = raw.strip()
+                if not t:
+                    continue
+                # Strip common bullet prefixes
+                t = re.sub(r"^[-•\*\u2022\s]+", "", t).strip()
+                if not t:
+                    continue
+                if t.lower() in {'n/a', 'na', 'none', 'nil'}:
+                    continue
+                parts.append(t)
+            return parts
+
+        def _canon(label: str) -> str:
+            s = (label or '').strip().lower()
+            s = re.sub(r"\s+", " ", s)
+            s = re.sub(r"\s*\([^\)]*\)\s*", " ", s)  # drop parenthetical notes
+            s = re.sub(r"\s+", " ", s).strip()
+            return s
+
+        # Minimal endemic keyword list (Western Kenya) - configurable later if needed.
+        endemic_keywords = {
+            'malaria': 'Malaria',
+            'typhoid': 'Typhoid',
+            'cholera': 'Cholera',
+            'tuberculosis': 'Tuberculosis',
+            'tb': 'Tuberculosis',
+            'hiv': 'HIV',
+            'aids': 'HIV/AIDS',
+            'pneumonia': 'Pneumonia',
+            'diarrh': 'Diarrhoeal disease',
+            'dysentery': 'Dysentery',
+            'meningitis': 'Meningitis',
+            'measles': 'Measles',
+        }
+
+        def _endemic_label(canonical: str) -> str | None:
+            if not canonical:
+                return None
+            for key, label in endemic_keywords.items():
+                if key in canonical:
+                    return label
+            return None
+
+        stats_window_days = 90
+        cutoff = get_eat_now() - timedelta(days=stats_window_days)
+
+        rows = (
+            db.session.query(
+                PatientDiagnosis.working_diagnosis,
+                PatientDiagnosis.differential_diagnosis,
+                PatientDiagnosis.created_at,
+                Patient.gender,
+                Patient.age,
+            )
+            .join(Patient, Patient.id == PatientDiagnosis.patient_id)
+            .filter(PatientDiagnosis.created_at >= cutoff)
+            .order_by(PatientDiagnosis.created_at.desc())
+            .limit(5000)
+            .all()
+        )
+
+        display_name: dict[str, str] = {}
+        overall = Counter()
+        by_gender: dict[str, Counter] = {
+            'Male': Counter(),
+            'Female': Counter(),
+            'Other/Unknown': Counter(),
+        }
+        by_age: dict[str, Counter] = {
+            'Children': Counter(),
+            'Adults': Counter(),
+            'Geriatrics': Counter(),
+            'Unknown': Counter(),
+        }
+
+        # Outbreak heuristic: compare last 7 days vs baseline (days 8-35 ago).
+        now_dt = get_eat_now()
+        last7_cutoff = now_dt - timedelta(days=7)
+        base_start = now_dt - timedelta(days=35)
+        base_end = now_dt - timedelta(days=7)
+        endemic_last7 = Counter()
+        endemic_baseline = Counter()
+
+        for working_dx, differential_dx, dx_created_at, gender, age in rows:
+            g = _norm_gender(gender)
+            a = _age_bucket(age)
+
+            tokens: list[str] = []
+            tokens.extend(_split_dx(working_dx))
+            tokens.extend(_split_dx(differential_dx))
+            if not tokens:
+                continue
+
+            for t in tokens:
+                c = _canon(t)
+                if not c:
+                    continue
+                if c not in display_name:
+                    display_name[c] = t.strip()
+                overall[c] += 1
+                by_gender.setdefault(g, Counter())[c] += 1
+                by_age.setdefault(a, Counter())[c] += 1
+
+                endemic_tag = _endemic_label(c)
+                if endemic_tag and dx_created_at:
+                    if dx_created_at >= last7_cutoff:
+                        endemic_last7[endemic_tag] += 1
+                    elif base_start <= dx_created_at < base_end:
+                        endemic_baseline[endemic_tag] += 1
+
+        def _top(counter: Counter, n: int = 10):
+            out = []
+            for key, count in counter.most_common(n):
+                out.append({
+                    'key': key,
+                    'name': display_name.get(key, key.title()),
+                    'count': int(count),
+                    'endemic': _endemic_label(key),
+                })
+            return out
+
+        def _dates_last_n(n_days: int) -> list[str]:
+            labels = []
+            for i in range(n_days - 1, -1, -1):
+                d = (now_dt - timedelta(days=i)).date()
+                labels.append(d.strftime('%Y-%m-%d'))
+            return labels
+
+        outbreak_alerts = []
+        for disease_label, cnt7 in endemic_last7.items():
+            base_cnt = float(endemic_baseline.get(disease_label, 0))
+            expected_7d = (base_cnt / 28.0) * 7.0 if base_cnt > 0 else 0.0
+            # Alert if >= 5 cases in last 7d and either baseline is zero or spike >3x expected.
+            if cnt7 >= 5 and (expected_7d == 0.0 or cnt7 >= (expected_7d * 3.0)):
+                outbreak_alerts.append({
+                    'disease': disease_label,
+                    'count_7d': int(cnt7),
+                    'expected_7d': round(expected_7d, 1),
+                })
+
+        # Sort alerts by severity (count)
+        outbreak_alerts.sort(key=lambda x: x.get('count_7d', 0), reverse=True)
+
+        # Build chart-friendly datasets (safe defaults; keeps tables intact).
+        overall_top10 = _top(overall, 10)
+        overall_top5_keys = [row['key'] for row in _top(overall, 5)]
+
+        gender_bar = {
+            'labels': [display_name.get(k, k.title()) for k in overall_top5_keys],
+            'male': [int(by_gender.get('Male', Counter()).get(k, 0)) for k in overall_top5_keys],
+            'female': [int(by_gender.get('Female', Counter()).get(k, 0)) for k in overall_top5_keys],
+        }
+
+        trend_days = 30
+        trend_labels = _dates_last_n(trend_days)
+        trend_index = {label: idx for idx, label in enumerate(trend_labels)}
+        top_trend_keys = [k for k, _ in overall.most_common(3)]
+        trend_series = {
+            k: [0 for _ in range(trend_days)]
+            for k in top_trend_keys
+        }
+
+        # Re-scan rows to populate per-day series for the top diseases.
+        for working_dx, differential_dx, dx_created_at, _gender, _age in rows:
+            if not dx_created_at:
+                continue
+            day_label = dx_created_at.date().strftime('%Y-%m-%d')
+            idx = trend_index.get(day_label)
+            if idx is None:
+                continue
+            tokens: list[str] = []
+            tokens.extend(_split_dx(working_dx))
+            tokens.extend(_split_dx(differential_dx))
+            if not tokens:
+                continue
+            for t in tokens:
+                c = _canon(t)
+                if c in trend_series:
+                    trend_series[c][idx] += 1
+
+        diagnosis_stats = {
+            'window_days': stats_window_days,
+            'generated_at': now_dt.strftime('%Y-%m-%d %H:%M'),
+            'gender_top': {
+                'Male': _top(by_gender.get('Male', Counter())),
+                'Female': _top(by_gender.get('Female', Counter())),
+            },
+            'age_top': {
+                'Children': _top(by_age.get('Children', Counter())),
+                'Adults': _top(by_age.get('Adults', Counter())),
+                'Geriatrics': _top(by_age.get('Geriatrics', Counter())),
+            },
+            'overall_top': overall_top10,
+            'outbreak_alerts': outbreak_alerts[:10],
+            'charts': {
+                'pie': {
+                    'labels': [r['name'] for r in overall_top10],
+                    'values': [r['count'] for r in overall_top10],
+                },
+                'bar_gender': gender_bar,
+                'line_trend': {
+                    'labels': trend_labels,
+                    'series': [
+                        {
+                            'name': display_name.get(k, k.title()),
+                            'values': trend_series.get(k, []),
+                        }
+                        for k in top_trend_keys
+                    ],
+                },
+            },
+        }
+    except Exception as e:
+        current_app.logger.error(f"Doctor dashboard diagnosis stats error: {str(e)}", exc_info=True)
+        diagnosis_stats = {
+            'error': 'Failed to load diagnosis analytics',
+        }
     
     return render_template('doctor/dashboard.html',
         active_patients_count=active_patients_count,
@@ -22310,6 +22640,7 @@ def doctor_dashboard():
         completed_patients_count=completed_patients_count,
         active_patients=active_patients,
         completed_patients=completed_patients,
+        diagnosis_stats=diagnosis_stats,
         recent_activities=[]  # Empty list until audit is properly set up
     )
 
@@ -22424,7 +22755,13 @@ def doctor_patients():
         flash('Unauthorized', 'danger')
         return redirect(url_for('home'))
 
-    active_patients = Patient.query.filter_by(status='active').order_by(Patient.created_at.desc()).all()
+    active_patients = (
+        Patient.query
+        .filter(Patient.status == 'active')
+        .filter(or_(Patient.discharge_state.is_(None), Patient.discharge_state != 'pending'))
+        .order_by(Patient.created_at.desc())
+        .all()
+    )
     completed_patients = Patient.query.filter_by(status='completed').order_by(Patient.updated_at.desc()).all()
 
     return render_template(
@@ -22432,6 +22769,222 @@ def doctor_patients():
         active_patients=active_patients,
         completed_patients=completed_patients
     )
+
+
+def _doctor_patient_category_query(category: str):
+    """Shared filtering for doctor patient categories."""
+    q = Patient.query
+    category = (category or '').strip().lower()
+
+    if category == 'outpatients':
+        return q.filter(
+            Patient.status == 'active',
+            Patient.op_number.isnot(None),
+        ).order_by(Patient.updated_at.desc(), Patient.id.desc())
+
+    if category == 'inpatients':
+        return q.filter(
+            Patient.status == 'active',
+            Patient.ip_number.isnot(None),
+        ).order_by(Patient.updated_at.desc(), Patient.id.desc())
+
+    if category == 'discharged':
+        # Pending discharge requests (inpatients).
+        return q.filter(
+            Patient.status == 'active',
+            Patient.ip_number.isnot(None),
+            Patient.discharge_state == 'pending',
+        ).order_by(Patient.discharge_requested_at.desc().nullslast(), Patient.updated_at.desc())
+
+    if category == 'old_inpatients':
+        return q.filter(
+            Patient.status == 'completed',
+            Patient.ip_number.isnot(None),
+        ).order_by(Patient.updated_at.desc(), Patient.id.desc())
+
+    if category == 'old_outpatients':
+        return q.filter(
+            Patient.status == 'completed',
+            Patient.op_number.isnot(None),
+            Patient.ip_number.is_(None),
+        ).order_by(Patient.updated_at.desc(), Patient.id.desc())
+
+    return q.order_by(Patient.updated_at.desc(), Patient.id.desc())
+
+
+@app.route('/doctor/outpatients', methods=['GET'])
+@login_required
+def doctor_outpatients():
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patients = _doctor_patient_category_query('outpatients').all()
+    return render_template('doctor/patient_category.html',
+        title='Outpatients',
+        category='outpatients',
+        patients=patients,
+    )
+
+
+@app.route('/doctor/inpatients', methods=['GET'])
+@login_required
+def doctor_inpatients():
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patients = _doctor_patient_category_query('inpatients').all()
+    return render_template('doctor/patient_category.html',
+        title='Inpatients',
+        category='inpatients',
+        patients=patients,
+    )
+
+
+@app.route('/doctor/discharged', methods=['GET'])
+@login_required
+def doctor_discharged_queue():
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patients = _doctor_patient_category_query('discharged').all()
+    return render_template('doctor/patient_category.html',
+        title='Discharged (Pending Confirmation)',
+        category='discharged',
+        patients=patients,
+    )
+
+
+@app.route('/doctor/old-inpatients', methods=['GET'])
+@login_required
+def doctor_old_inpatients():
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patients = _doctor_patient_category_query('old_inpatients').all()
+    return render_template('doctor/patient_category.html',
+        title='Old Inpatients',
+        category='old_inpatients',
+        patients=patients,
+    )
+
+
+@app.route('/doctor/old-outpatients', methods=['GET'])
+@login_required
+def doctor_old_outpatients():
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patients = _doctor_patient_category_query('old_outpatients').all()
+    return render_template('doctor/patient_category.html',
+        title='Old Outpatients',
+        category='old_outpatients',
+        patients=patients,
+    )
+
+
+@app.route('/doctor/patient/<int:patient_id>/request-discharge', methods=['POST'])
+@login_required
+def doctor_request_discharge(patient_id: int):
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        flash('Patient not found', 'danger')
+        return redirect(url_for('doctor_inpatients'))
+
+    if not patient.ip_number or patient.status != 'active':
+        flash('Only active inpatients can be marked for discharge.', 'warning')
+        return redirect(url_for('doctor_inpatients'))
+
+    try:
+        patient.discharge_state = 'pending'
+        patient.discharge_requested_at = get_eat_now()
+        patient.discharge_requested_by = current_user.id
+        patient.updated_at = get_eat_now()
+        db.session.commit()
+        flash('Patient added to discharge queue.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Failed to request discharge: {str(e)}', 'danger')
+
+    return redirect(url_for('doctor_discharged_queue'))
+
+
+@app.route('/doctor/patient/<int:patient_id>/confirm-discharge', methods=['POST'])
+@login_required
+def doctor_confirm_discharge(patient_id: int):
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        flash('Patient not found', 'danger')
+        return redirect(url_for('doctor_discharged_queue'))
+
+    if not patient.ip_number or patient.status != 'active':
+        flash('Only active inpatients can be discharged.', 'warning')
+        return redirect(url_for('doctor_discharged_queue'))
+
+    # Enforce pay-before-discharge for ward stays (same logic as /complete).
+    try:
+        ctx = _get_patient_bed_stay_context(patient.id)
+        if ctx:
+            daily_rate = float(ctx.get('daily_rate') or 0)
+            if daily_rate > 0:
+                bed_id = int(ctx['bed_id'])
+                start_date = ctx['start_date']
+                end_date = ctx['end_date']
+
+                last = (
+                    BedStayCharge.query
+                    .filter_by(bed_id=bed_id, patient_id=patient.id)
+                    .order_by(BedStayCharge.charge_end_date.desc())
+                    .first()
+                )
+                last_end = last.charge_end_date if last else None
+                bill_start = start_date
+                if last_end:
+                    bill_start = max(bill_start, last_end + timedelta(days=1))
+
+                if bill_start <= end_date:
+                    days_due = (end_date - bill_start).days + 1
+                else:
+                    days_due = 0
+
+                if days_due > 0 and not _ward_stay_is_paid_through(patient.id, bed_id, end_date):
+                    amount_due = float(days_due) * daily_rate
+                    flash(
+                        'Cannot discharge: ward stay charges are unpaid. '
+                        f"Ward: {ctx.get('ward_name') or '-'}, Bed: {ctx.get('bed_number') or '-'}, "
+                        f"Days due: {int(days_due)}, Amount: {amount_due:.2f}. "
+                        'Please bill/pay ward stay then retry.',
+                        'warning'
+                    )
+                    return redirect(url_for('patient_ward_bill', patient_id=patient.id))
+    except Exception:
+        pass
+
+    try:
+        patient.status = 'completed'
+        patient.discharge_state = 'discharged'
+        patient.discharged_at = get_eat_now()
+        patient.discharged_by = current_user.id
+        patient.updated_at = get_eat_now()
+        db.session.commit()
+        flash('Patient discharged successfully.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Failed to discharge patient: {str(e)}', 'danger')
+
+    return redirect(url_for('doctor_old_inpatients'))
 
 
 @app.route('/doctor/notifications/tca_today', methods=['GET'])
@@ -22656,8 +23209,10 @@ def patient_summary(patient_id):
                 ).scalar()
                 
                 if not diagnosis_record:
-                    diagnosis_record = PatientDiagnosis(patient_id=patient.id)
+                    diagnosis_record = PatientDiagnosis(patient_id=patient.id, created_by=current_user.id)
                     db.session.add(diagnosis_record)
+                elif not getattr(diagnosis_record, 'created_by', None):
+                    diagnosis_record.created_by = current_user.id
                 
                 diagnosis_record.ai_supported_diagnosis = True
                 diagnosis_record.ai_alternative_diagnoses = diagnosis_text
@@ -22937,8 +23492,25 @@ def doctor_new_patient():
                 if not patient:
                     return jsonify({'success': False, 'error': 'Patient not found'})
                 
-                patient.chief_complaint = request.form.get('chief_complaint')
-                patient.history_present_illness = request.form.get('history_present_illness')
+                chief_complaint = (request.form.get('chief_complaint') or '').strip()
+                hpi_text = (request.form.get('history_present_illness') or '').strip()
+
+                patient.chief_complaint = chief_complaint or None
+                patient.history_present_illness = hpi_text or None
+
+                # Capture attribution for the initial wizard-entered values.
+                if chief_complaint:
+                    db.session.add(PatientChiefComplaintEntry(
+                        patient_id=patient.id,
+                        complaint_text=chief_complaint,
+                        created_by=current_user.id,
+                    ))
+                if hpi_text:
+                    db.session.add(PatientHPIEntry(
+                        patient_id=patient.id,
+                        hpi_text=hpi_text,
+                        created_by=current_user.id,
+                    ))
                 db.session.commit()
                 
                 return jsonify({
@@ -22953,8 +23525,11 @@ def doctor_new_patient():
                 
                 review = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
                 if not review:
-                    review = PatientReviewSystem(patient_id=patient.id)
+                    review = PatientReviewSystem(patient_id=patient.id, created_by=current_user.id)
                     db.session.add(review)
+
+                if not getattr(review, 'created_by', None):
+                    review.created_by = current_user.id
                 
                 review.cns = request.form.get('cns')
                 review.cvs = request.form.get('cvs')
@@ -22990,8 +23565,11 @@ def doctor_new_patient():
                 
                 smhx = PatientHistory.query.filter_by(patient_id=patient.id).first()
                 if not smhx:
-                    smhx = PatientHistory(patient_id=patient.id)
+                    smhx = PatientHistory(patient_id=patient.id, created_by=current_user.id)
                     db.session.add(smhx)
+
+                if not getattr(smhx, 'created_by', None):
+                    smhx.created_by = current_user.id
                 
                 smhx.social_history = request.form.get('social_history')
                 smhx.medical_history = request.form.get('medical_history')
@@ -23013,8 +23591,11 @@ def doctor_new_patient():
                 
                 exam = PatientExamination.query.filter_by(patient_id=patient.id).first()
                 if not exam:
-                    exam = PatientExamination(patient_id=patient.id)
+                    exam = PatientExamination(patient_id=patient.id, created_by=current_user.id)
                     db.session.add(exam)
+
+                if not getattr(exam, 'created_by', None):
+                    exam.created_by = current_user.id
                 
                 exam.general_appearance = request.form.get('general_appearance')
                 exam.jaundice = request.form.get('jaundice') == 'yes'
@@ -23044,6 +23625,51 @@ def doctor_new_patient():
                 return jsonify({
                     'success': True,
                     'next_section': 'summary'  # Now goes to summary after examination
+                })
+
+            elif section == 'diagnosis':
+                patient = db.session.get(Patient, patient_id)
+                if not patient:
+                    return jsonify({'success': False, 'error': 'Patient not found'})
+
+                diagnosis = PatientDiagnosis.query.filter_by(patient_id=patient.id).first()
+                if not diagnosis:
+                    diagnosis = PatientDiagnosis(patient_id=patient.id, created_by=current_user.id)
+                    db.session.add(diagnosis)
+
+                if not getattr(diagnosis, 'created_by', None):
+                    diagnosis.created_by = current_user.id
+
+                diagnosis.working_diagnosis = request.form.get('working_diagnosis')
+                diagnosis.differential_diagnosis = request.form.get('differential_diagnosis')
+                db.session.commit()
+
+                return jsonify({
+                    'success': True,
+                    'next_section': 'management'
+                })
+
+            elif section == 'management':
+                patient = db.session.get(Patient, patient_id)
+                if not patient:
+                    return jsonify({'success': False, 'error': 'Patient not found'})
+
+                management = PatientManagement.query.filter_by(patient_id=patient.id).first()
+                if not management:
+                    management = PatientManagement(patient_id=patient.id, created_by=current_user.id)
+                    db.session.add(management)
+
+                if not getattr(management, 'created_by', None):
+                    management.created_by = current_user.id
+
+                management.treatment_plan = request.form.get('treatment_plan')
+                management.follow_up = request.form.get('follow_up')
+                management.notes = request.form.get('management_notes')
+                db.session.commit()
+
+                return jsonify({
+                    'success': True,
+                    'redirect': url_for('doctor_patient_details', patient_id=patient.id)
                 })
 
             elif section == 'summary':  # MOVED TO AFTER EXAMINATION
@@ -23187,6 +23813,8 @@ def doctor_new_patient():
                         service_record = PatientService(
                             patient_id=patient.id,
                             service_id=service_id,
+                            status='requested',
+                            requested_by=current_user.id,
                             performed_by=current_user.id,
                             notes=request.form.get('service_notes')
                         )
@@ -23532,8 +24160,10 @@ def ai_review_systems():
         # Save to review systems record
         review = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
         if not review:
-            review = PatientReviewSystem(patient_id=patient.id)
+            review = PatientReviewSystem(patient_id=patient.id, created_by=current_user.id)
             db.session.add(review)
+        elif not getattr(review, 'created_by', None):
+            review.created_by = current_user.id
         
         review.ai_suggested_questions = questions
         review.ai_last_updated = get_eat_now()
@@ -23815,8 +24445,10 @@ def ai_treatment():
         # Save to management record
         management = PatientManagement.query.filter_by(patient_id=patient.id).first()
         if not management:
-            management = PatientManagement(patient_id=patient.id)
+            management = PatientManagement(patient_id=patient.id, created_by=current_user.id)
             db.session.add(management)
+        elif not getattr(management, 'created_by', None):
+            management.created_by = current_user.id
         
         management.ai_generated_plan = True
         management.ai_alternative_treatments = treatment_plan
@@ -24150,57 +24782,22 @@ def complete_patient_treatment(patient_id):
     if not patient:
         return jsonify({'success': False, 'error': 'Patient not found'}), 404
 
-    # Enforce pay-before-discharge for ward stays
     try:
-        ctx = _get_patient_bed_stay_context(patient.id)
-        if ctx:
-            daily_rate = float(ctx.get('daily_rate') or 0)
-            if daily_rate > 0:
-                bed_id = int(ctx['bed_id'])
-                start_date = ctx['start_date']
-                end_date = ctx['end_date']
+        # Inpatients: move to discharge queue (pending). Billing enforcement is applied
+        # when confirming discharge, not when requesting it.
+        if patient.ip_number:
+            patient.discharge_state = 'pending'
+            patient.discharge_requested_at = get_eat_now()
+            patient.discharge_requested_by = current_user.id
+            patient.updated_at = get_eat_now()
+            db.session.commit()
+            return jsonify({'success': True, 'mode': 'discharge_requested'})
 
-                last = (
-                    BedStayCharge.query
-                    .filter_by(bed_id=bed_id, patient_id=patient.id)
-                    .order_by(BedStayCharge.charge_end_date.desc())
-                    .first()
-                )
-                last_end = last.charge_end_date if last else None
-                bill_start = start_date
-                if last_end:
-                    bill_start = max(bill_start, last_end + timedelta(days=1))
-
-                if bill_start <= end_date:
-                    days_due = (end_date - bill_start).days + 1
-                else:
-                    days_due = 0
-
-                if days_due > 0 and not _ward_stay_is_paid_through(patient.id, bed_id, end_date):
-                    amount_due = float(days_due) * daily_rate
-                    return jsonify({
-                        'success': False,
-                        'error': 'Ward stay charges must be paid before discharge.',
-                        'ward_stay_due': {
-                            'ward_name': ctx.get('ward_name'),
-                            'bed_number': ctx.get('bed_number'),
-                            'start_date': bill_start.isoformat(),
-                            'end_date': end_date.isoformat(),
-                            'days': int(days_due),
-                            'daily_rate': float(daily_rate),
-                            'amount': float(amount_due),
-                            'source': ctx.get('source'),
-                        }
-                    }), 400
-    except Exception:
-        # Do not block discharge if ward stay check fails unexpectedly.
-        pass
-        
-    try:
+        # Outpatients: complete treatment immediately.
         patient.status = 'completed'
         patient.updated_at = get_eat_now()
         db.session.commit()
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'mode': 'completed'})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -24237,6 +24834,12 @@ def readmit_patient():
     
     try:
         patient.status = 'active'
+        # Reset discharge workflow fields on readmit.
+        patient.discharge_state = 'none'
+        patient.discharge_requested_at = None
+        patient.discharge_requested_by = None
+        patient.discharged_at = None
+        patient.discharged_by = None
         db.session.commit()
         return jsonify({'success': True})
     except Exception as e:
@@ -24287,9 +24890,26 @@ def handle_patient_sections():
             patient = db.session.get(Patient, patient_id)
             if not patient:
                 return jsonify({'success': False, 'error': 'Patient not found'}), 404
-            
-            patient.chief_complaint = request.form.get('chief_complaint')
-            patient.history_present_illness = request.form.get('history_present_illness')
+
+            chief_complaint = (request.form.get('chief_complaint') or '').strip()
+            hpi_text = (request.form.get('history_present_illness') or '').strip()
+
+            patient.chief_complaint = chief_complaint or None
+            patient.history_present_illness = hpi_text or None
+
+            # Capture attribution for wizard-entered values.
+            if chief_complaint:
+                db.session.add(PatientChiefComplaintEntry(
+                    patient_id=patient.id,
+                    complaint_text=chief_complaint,
+                    created_by=current_user.id,
+                ))
+            if hpi_text:
+                db.session.add(PatientHPIEntry(
+                    patient_id=patient.id,
+                    hpi_text=hpi_text,
+                    created_by=current_user.id,
+                ))
             db.session.commit()
             
             return jsonify({
@@ -24304,8 +24924,10 @@ def handle_patient_sections():
             
             review = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
             if not review:
-                review = PatientReviewSystem(patient_id=patient.id)
+                review = PatientReviewSystem(patient_id=patient.id, created_by=current_user.id)
                 db.session.add(review)
+            elif not review.created_by:
+                review.created_by = current_user.id
             
             review.cns = request.form.get('cns')
             review.cvs = request.form.get('cvs')
@@ -24341,8 +24963,10 @@ def handle_patient_sections():
             
             smhx = PatientHistory.query.filter_by(patient_id=patient.id).first()
             if not smhx:
-                smhx = PatientHistory(patient_id=patient.id)
+                smhx = PatientHistory(patient_id=patient.id, created_by=current_user.id)
                 db.session.add(smhx)
+            elif not smhx.created_by:
+                smhx.created_by = current_user.id
             
             smhx.social_history = request.form.get('social_history')
             smhx.medical_history = request.form.get('medical_history')
@@ -24364,8 +24988,10 @@ def handle_patient_sections():
             
             exam = PatientExamination.query.filter_by(patient_id=patient.id).first()
             if not exam:
-                exam = PatientExamination(patient_id=patient.id)
+                exam = PatientExamination(patient_id=patient.id, created_by=current_user.id)
                 db.session.add(exam)
+            elif not exam.created_by:
+                exam.created_by = current_user.id
             
             exam.general_appearance = request.form.get('general_appearance')
             exam.jaundice = request.form.get('jaundice') == 'yes'
@@ -24404,8 +25030,10 @@ def handle_patient_sections():
             
             diagnosis = PatientDiagnosis.query.filter_by(patient_id=patient.id).first()
             if not diagnosis:
-                diagnosis = PatientDiagnosis(patient_id=patient.id)
+                diagnosis = PatientDiagnosis(patient_id=patient.id, created_by=current_user.id)
                 db.session.add(diagnosis)
+            elif not diagnosis.created_by:
+                diagnosis.created_by = current_user.id
             
             diagnosis.working_diagnosis = request.form.get('working_diagnosis')
             diagnosis.differential_diagnosis = request.form.get('differential_diagnosis')
@@ -24480,8 +25108,10 @@ def handle_patient_sections():
             
             management = PatientManagement.query.filter_by(patient_id=patient.id).first()
             if not management:
-                management = PatientManagement(patient_id=patient.id)
+                management = PatientManagement(patient_id=patient.id, created_by=current_user.id)
                 db.session.add(management)
+            elif not management.created_by:
+                management.created_by = current_user.id
             
             management.treatment_plan = request.form.get('treatment_plan')
             management.follow_up = request.form.get('follow_up')
@@ -24505,9 +25135,15 @@ def handle_patient_sections():
             # Services
             if request.form.getlist('service_id'):
                 for service_id in request.form.getlist('service_id'):
+                    try:
+                        service_id_int = int(service_id)
+                    except Exception:
+                        continue
                     service_record = PatientService(
                         patient_id=patient.id,
-                        service_id=service_id,
+                        service_id=service_id_int,
+                        status='requested',
+                        requested_by=current_user.id,
                         performed_by=current_user.id,
                         notes=request.form.get('service_notes')
                     )
@@ -24542,17 +25178,26 @@ def doctor_patient_details(patient_id):
         return redirect(url_for('doctor_patients'))
     
     drugs = Drug.query.filter(Drug.remaining_quantity > 0).all()
+    controlled_drugs = ControlledDrug.query.filter(ControlledDrug.remaining_quantity > 0).all()
     services = Service.query.all()
     
     if request.method == 'POST':
         section = request.form.get('section')
+        active_tab = (request.form.get('active_tab') or '').strip() or None
+
+        def _redirect_back(default_tab: str = 'biodata'):
+            return redirect(url_for(
+                'doctor_patient_details',
+                patient_id=patient_id,
+                tab=(active_tab or default_tab),
+            ))
 
         if section == 'biodata':
             try:
                 name = (request.form.get('name') or '').strip()
                 if not name:
                     flash('Patient name cannot be empty', 'warning')
-                    return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+                    return _redirect_back('biodata')
 
                 # Track only these fields for append-only history.
                 old_phone = (patient.get_decrypted_phone or '').strip()
@@ -24635,7 +25280,7 @@ def doctor_patient_details(patient_id):
                 db.session.rollback()
                 flash(f'Error updating biodata: {str(e)}', 'danger')
 
-            return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+            return _redirect_back('biodata')
         
         # Add these new sections for chief complaint and HPI
         if section == 'chief_complaint':
@@ -24699,7 +25344,9 @@ def doctor_patient_details(patient_id):
                     rs=request.form.get('rs'),
                     git=request.form.get('git'),
                     gut=request.form.get('gut'),
+                    skin=request.form.get('skin'),
                     msk=request.form.get('msk'),
+                    created_by=current_user.id,
                 )
                 db.session.add(review_systems)
                 
@@ -24713,10 +25360,13 @@ def doctor_patient_details(patient_id):
             try:
                 history = PatientHistory(
                     patient_id=patient.id,
+                    social_history=request.form.get('social_history'),
                     medical_history=request.form.get('medical_history'),
                     surgical_history=request.form.get('surgical_history'),
                     family_history=request.form.get('family_history'),
                     allergies=request.form.get('allergies'),
+                    medications=request.form.get('medications'),
+                    created_by=current_user.id,
                 )
                 db.session.add(history)
                 
@@ -24741,6 +25391,7 @@ def doctor_patient_details(patient_id):
                     resp_exam=request.form.get('resp_exam'),
                     abdo_exam=request.form.get('abdo_exam'),
                     cns_exam=request.form.get('cns_exam'),
+                    created_by=current_user.id,
                 )
                 db.session.add(examination)
                 
@@ -24756,6 +25407,7 @@ def doctor_patient_details(patient_id):
                     patient_id=patient.id,
                     working_diagnosis=request.form.get('working_diagnosis'),
                     differential_diagnosis=request.form.get('differential_diagnosis'),
+                    created_by=current_user.id,
                 )
                 db.session.add(diagnosis)
                 
@@ -24768,11 +25420,31 @@ def doctor_patient_details(patient_id):
         elif section == 'management':
             try:
                 # Append-only management plan entries (preserve previous updates)
+                prev_management = (
+                    PatientManagement.query
+                    .filter_by(patient_id=patient.id)
+                    .order_by(PatientManagement.created_at.desc(), PatientManagement.id.desc())
+                    .first()
+                )
+
+                treatment_plan = (request.form.get('treatment_plan') or '').strip()
+                follow_up = (request.form.get('follow_up') or '').strip()
+                notes = (request.form.get('management_notes') or '').strip()
+
+                # Allow partial updates (e.g., dedicated modals for treatment vs follow-up)
+                if not treatment_plan and prev_management:
+                    treatment_plan = prev_management.treatment_plan or ''
+                if not follow_up and prev_management:
+                    follow_up = prev_management.follow_up or ''
+                if not notes and prev_management:
+                    notes = prev_management.notes or ''
+
                 management = PatientManagement(
                     patient_id=patient.id,
-                    treatment_plan=request.form.get('treatment_plan', ''),
-                    follow_up=request.form.get('follow_up', ''),
-                    notes=request.form.get('management_notes', ''),
+                    treatment_plan=treatment_plan,
+                    follow_up=follow_up,
+                    notes=notes,
+                    created_by=current_user.id,
                 )
                 db.session.add(management)
                 
@@ -24810,8 +25482,7 @@ def doctor_patient_details(patient_id):
                                     status='pending'
                                 )
                                 db.session.add(prescription_item)
-                                # Update drug stock
-                                drug.remaining_quantity -= int(quantities[i])
+                                # Stock is decremented when dispensing/sale happens in pharmacy.
                 
                 # Handle services
                 service_ids = request.form.getlist('service_id')
@@ -24824,8 +25495,10 @@ def doctor_patient_details(patient_id):
                             patient_service = PatientService(
                                 patient_id=patient.id,
                                 service_id=service.id,
+                                status='requested',
+                                requested_by=current_user.id,
                                 notes=service_notes,
-                                requested_by=current_user.id
+                                performed_by=current_user.id
                             )
                             db.session.add(patient_service)
                 
@@ -24840,12 +25513,12 @@ def doctor_patient_details(patient_id):
                 test_id = request.form.get('test_id')
                 if not test_id:
                     flash('Please select a test', 'danger')
-                    return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+                    return _redirect_back('investigations')
                 
                 lab_test = db.session.get(LabTest, test_id)
                 if not lab_test:
                     flash('Lab test not found', 'danger')
-                    return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+                    return _redirect_back('investigations')
                 
                 lab_request = LabRequest(
                     patient_id=patient.id,
@@ -24877,12 +25550,12 @@ def doctor_patient_details(patient_id):
                 test_id = request.form.get('test_id')
                 if not test_id:
                     flash('Please select a test', 'danger')
-                    return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+                    return _redirect_back('investigations')
                 
                 imaging_test = db.session.get(ImagingTest, test_id)
                 if not imaging_test:
                     flash('Imaging test not found', 'danger')
-                    return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+                    return _redirect_back('investigations')
                 
                 imaging_request = ImagingRequest(
                     patient_id=patient.id,
@@ -24949,7 +25622,7 @@ def doctor_patient_details(patient_id):
                                     ),
                                     'warning'
                                 )
-                                return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+                                return _redirect_back('biodata')
                 except Exception:
                     # Do not block discharge if ward stay check fails unexpectedly.
                     pass
@@ -24973,7 +25646,7 @@ def doctor_patient_details(patient_id):
                 db.session.rollback()
                 flash(f'Error readmitting patient: {str(e)}', 'danger')
         
-        return redirect(url_for('doctor_patient_details', patient_id=patient_id))
+        return _redirect_back('biodata')
     
     def _resolve_version(versions, selected_id):
         if not versions:
@@ -25036,11 +25709,26 @@ def doctor_patient_details(patient_id):
     imaging_requests = ImagingRequest.query.filter_by(patient_id=patient.id).all()
     prescriptions = Prescription.query.filter_by(patient_id=patient.id) \
         .order_by(Prescription.created_at.desc(), Prescription.id.desc()) \
-        .options(db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)).all()
+        .options(
+            db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug),
+            db.joinedload(Prescription.doctor),
+            db.joinedload(Prescription.dispenser),
+        ).all()
     controlled_prescriptions = ControlledPrescription.query.filter_by(patient_id=patient.id) \
         .order_by(ControlledPrescription.created_at.desc(), ControlledPrescription.id.desc()) \
-        .options(db.joinedload(ControlledPrescription.items).joinedload(ControlledPrescriptionItem.controlled_drug)).all()
-    patient_services = PatientService.query.filter_by(patient_id=patient.id).all()
+        .options(
+            db.joinedload(ControlledPrescription.items).joinedload(ControlledPrescriptionItem.controlled_drug),
+            db.joinedload(ControlledPrescription.doctor),
+            db.joinedload(ControlledPrescription.dispenser),
+        ).all()
+    patient_services = PatientService.query.filter_by(patient_id=patient.id).options(
+        db.joinedload(PatientService.service),
+        db.joinedload(PatientService.requester),
+        db.joinedload(PatientService.biller),
+        db.joinedload(PatientService.completer),
+        db.joinedload(PatientService.performer),
+        db.joinedload(PatientService.billed_sale),
+    ).all()
     
     return render_template('doctor/patient_details.html',
         patient=patient,
@@ -25079,6 +25767,7 @@ def doctor_patient_details(patient_id):
         controlled_prescriptions=controlled_prescriptions,
         patient_services=patient_services,
         drugs=drugs,
+        controlled_drugs=controlled_drugs,
         services=services
     )
 
@@ -25599,6 +26288,8 @@ def create_bill():
         db.session.flush()  # To get the sale ID
         
         total_amount = 0
+
+        billed_service_ids: list[int] = []
         
         # Add services
         for service_id in service_ids:
@@ -25614,6 +26305,28 @@ def create_bill():
                 )
                 db.session.add(sale_item)
                 total_amount += service.price
+                billed_service_ids.append(int(service.id))
+
+        # Best-effort: link billed service items back to requested PatientService rows.
+        # Never break billing if this fails.
+        try:
+            if billed_service_ids:
+                now = get_eat_now()
+                pending_requests = (
+                    PatientService.query
+                    .filter(PatientService.patient_id == patient.id)
+                    .filter(PatientService.service_id.in_(billed_service_ids))
+                    .filter(or_(PatientService.status.is_(None), PatientService.status == 'requested'))
+                    .filter(PatientService.billed_sale_id.is_(None))
+                    .all()
+                )
+                for req in pending_requests:
+                    req.status = 'billed'
+                    req.billed_sale_id = sale.id
+                    req.billed_by = current_user.id
+                    req.billed_at = now
+        except Exception:
+            pass
         
         # Add lab tests
         for lab_id in lab_ids:
@@ -25982,64 +26695,29 @@ def _create_service_sale_and_transaction(service_item, service_type, patient):
     """
     if not service_item or not hasattr(service_item, 'price') or service_item.price is None:
         current_app.logger.error(f"Service item for sale has no price: {service_item}")
-        return
+        raise ValueError('Service item has no price')
 
-    try:
-        patient_id = patient.id if patient else None
-        # 1. Create Sale
-        sale = Sale(
-            sale_number=generate_sale_number(),
-            patient_id=patient_id,
-            user_id=current_user.id if current_user and current_user.is_authenticated else None,
-            total_amount=service_item.price,
-            payment_method='unpaid', # Services are billed, not paid for immediately
-            status='completed',
-            notes=f"{service_type.capitalize()} Test: {service_item.name}"
-        )
-        db.session.add(sale)
-        db.session.flush()
+    if not patient or not getattr(patient, 'id', None):
+        raise ValueError('Patient is required')
 
-        # 2. Create SaleItem
-        sale_item = SaleItem(
-            sale_id=sale.id,
-            # No drug_id for services
-            drug_name=service_item.name,
-            drug_specification=service_type,
-            description=f"{service_type.capitalize()} Test",
-            quantity=1,
-            unit_price=service_item.price,
-            total_price=service_item.price
-        )
-        db.session.add(sale_item)
-        db.session.flush()
+    # Reuse the newer unified helper.
+    mapped = (service_type or '').strip().lower()
+    if mapped == 'lab':
+        mapped = 'lab_test'
+    elif mapped == 'imaging':
+        mapped = 'imaging_test'
+    else:
+        mapped = 'service'
 
-        # 3. Create Transaction
-        transaction = Transaction(
-            transaction_number=generate_transaction_number(),
-            transaction_type='sale',
-            amount=service_item.price,
-            user_id=current_user.id if current_user and current_user.is_authenticated else None,
-            reference_id=sale.id,
-            notes=f"Charge for {service_type} '{service_item.name}' for patient ID {patient_id}",
-        )
-        _maybe_set_transaction_meta(
-            transaction,
-            reference_table='sales',
-            direction='IN',
-            status='unpaid',
-            department='laboratory' if service_type == 'lab' else 'imaging',
-            category=f'{service_type}_test',
-            payment_method='internal_charge',
-        )
-        db.session.add(transaction)
-        db.session.flush()
+    create_service_sale_and_transaction(
+        patient_id=int(patient.id),
+        service_item=service_item,
+        service_type=mapped,
+        requested_by_id=current_user.id if current_user and current_user.is_authenticated else None,
+        notes=f"Internal charge for {mapped} '{getattr(service_item, 'name', '')}'",
+    )
 
-    except Exception as e:
-        current_app.logger.error(f"Failed to create sale/transaction for {service_type} request: {str(e)}", exc_info=True)
-        # We must rollback to avoid partial records
-        db.session.rollback()
-        # Re-raise the exception to notify the caller
-        raise
+    return True
 
 
 
@@ -26403,6 +27081,7 @@ def get_controlled_drug_status(drug):
         return 'In Stock'
 
 
+@app.route('/api/patients')
 @login_required
 def api_patients():
     search = request.args.get('search', '')
@@ -26494,6 +27173,84 @@ def receptionist_billing():
         lab_tests=lab_tests,
         imaging_tests=imaging_tests,
     )
+
+
+@app.route('/api/patient/<int:patient_id>/requested-services')
+@login_required
+def api_patient_requested_services(patient_id: int):
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    try:
+        rows = (
+            PatientService.query
+            .filter(PatientService.patient_id == patient.id)
+            .filter(or_(PatientService.status.is_(None), PatientService.status == 'requested'))
+            .filter(PatientService.billed_sale_id.is_(None))
+            .order_by(PatientService.created_at.desc())
+            .all()
+        )
+        return jsonify([
+            {
+                'patient_service_id': r.id,
+                'service_id': r.service_id,
+                'service_name': (r.service.name if getattr(r, 'service', None) else None),
+                'status': r.status or 'requested',
+                'created_at': r.created_at.isoformat() if getattr(r, 'created_at', None) else None,
+            }
+            for r in rows
+        ])
+    except Exception:
+        # Never break UI; return empty.
+        return jsonify([])
+
+
+@app.route('/api/patient/<int:patient_id>/prescriptions')
+@login_required
+def api_patient_prescriptions(patient_id: int):
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    prescriptions = (
+        Prescription.query
+        .filter_by(patient_id=patient.id)
+        .order_by(Prescription.created_at.desc())
+        .all()
+    )
+
+    payload = []
+    for prescription in prescriptions:
+        items_payload = []
+        for item in (prescription.items or []):
+            if getattr(item, 'status', None) != 'dispensed':
+                continue
+            drug = getattr(item, 'drug', None)
+            if not drug:
+                continue
+            unit_price = float(getattr(drug, 'selling_price', 0) or 0)
+            items_payload.append({
+                'id': item.id,
+                'drug_name': getattr(drug, 'name', None),
+                'drug_number': getattr(drug, 'drug_number', None),
+                'quantity': int(getattr(item, 'quantity', 0) or 0),
+                'unit_price': unit_price,
+            })
+        if items_payload:
+            payload.append({'id': prescription.id, 'items': items_payload})
+
+    return jsonify(payload)
 
 
 @app.route('/api/patient/<int:patient_id>/ward-stay-preview')

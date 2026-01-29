@@ -724,9 +724,39 @@
                             </a>
                         </div>
                         <div class="nav-item">
-                            <a href="{{ url_for('doctor_patients') }}" class="nav-link">
+                            <a href="{{ url_for('doctor_inpatients') }}" class="nav-link">
+                                <i class="bi bi-hospital"></i>
+                                <span class="nav-text">Inpatient</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('doctor_outpatients') }}" class="nav-link">
                                 <i class="bi bi-person-lines-fill"></i>
-                                <span class="nav-text">Patients</span>
+                                <span class="nav-text">Outpatient</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('doctor_discharged_queue') }}" class="nav-link">
+                                <i class="bi bi-box-arrow-right"></i>
+                                <span class="nav-text">Discharged</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('doctor_old_inpatients') }}" class="nav-link">
+                                <i class="bi bi-archive"></i>
+                                <span class="nav-text">Old Inpatient</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('doctor_old_outpatients') }}" class="nav-link">
+                                <i class="bi bi-archive-fill"></i>
+                                <span class="nav-text">Old Outpatient</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('doctor_patients') }}" class="nav-link">
+                                <i class="bi bi-people"></i>
+                                <span class="nav-text">All Patients</span>
                             </a>
                         </div>
                     {% elif current_user.role == 'pharmacist' %}

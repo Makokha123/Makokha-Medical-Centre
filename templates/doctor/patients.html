@@ -40,7 +40,16 @@
                 <tbody>
                     {% for patient in active_patients %}
                     <tr>
-                        <td>{{ patient.op_number or patient.ip_number }}</td>
+                        <td>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <span>{{ patient.op_number or patient.ip_number }}</span>
+                                {% if patient.discharge_state == 'pending' %}
+                                    <span class="badge bg-warning text-dark">Pending discharge</span>
+                                {% elif patient.discharge_state == 'discharged' %}
+                                    <span class="badge bg-success">Discharged</span>
+                                {% endif %}
+                            </div>
+                        </td>
                         <td>{{ patient.decrypted_name }}</td>
                         <td>{{ patient.age or 'N/A' }}</td>
                         <td>{{ patient.gender or 'N/A' }}</td>
@@ -48,7 +57,13 @@
                         <td>
                             <div class="btn-group">
                                 <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
-                                <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ patient.id }}')">Complete</button>
+                                {% if patient.discharge_state == 'pending' %}
+                                    <button class="btn btn-sm btn-secondary" disabled>Pending discharge</button>
+                                {% elif patient.ip_number %}
+                                    <button class="btn btn-sm btn-warning" onclick="completeTreatment('{{ patient.id }}')">Request Discharge</button>
+                                {% else %}
+                                    <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ patient.id }}')">Complete</button>
+                                {% endif %}
                                 <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
                                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
                             </div>
@@ -83,7 +98,16 @@
                 <tbody>
                     {% for patient in completed_patients %}
                     <tr>
-                        <td>{{ patient.op_number or patient.ip_number }}</td>
+                        <td>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <span>{{ patient.op_number or patient.ip_number }}</span>
+                                {% if patient.discharge_state == 'pending' %}
+                                    <span class="badge bg-warning text-dark">Pending discharge</span>
+                                {% elif patient.discharge_state == 'discharged' %}
+                                    <span class="badge bg-success">Discharged</span>
+                                {% endif %}
+                            </div>
+                        </td>
                         <td>{{ patient.decrypted_name }}</td>
                         <td>{{ patient.age or 'N/A' }}</td>
                         <td>{{ patient.gender or 'N/A' }}</td>
