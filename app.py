@@ -3145,6 +3145,9 @@ Output requirements:
         """Robust HPI generation with model verification"""
         prompt = AIService._build_hpi_prompt(patient_data)
         
+        # Use configured timeout to prevent Gunicorn worker timeout
+        ai_timeout = current_app.config.get('AI_SUMMARY_TIMEOUT_SECONDS', 20)
+        
         for model_name in AIService.MODELS.values():
             try:
                 response = AIService.get_client().chat.completions.create(
@@ -3152,7 +3155,7 @@ Output requirements:
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                     max_tokens=800,
-                    timeout=60  # Reduced timeout for individual requests
+                    timeout=ai_timeout  # Use configured timeout
                 )
                 return response.choices[0].message.content
             except Exception as e:
@@ -3511,12 +3514,14 @@ Output requirements:
 
             # Explicit timeout + retries to reduce intermittent 503s.
             # Diagnosis generation can be slower than ROS/HPI due to longer output.
+            # Use configured timeout to prevent Gunicorn worker timeout (default 30s)
+            ai_timeout = current_app.config.get('AI_SUMMARY_TIMEOUT_SECONDS', 20)
             response = AIService._chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=900,
                 temperature=0.4,
-                timeout=60,
+                timeout=ai_timeout,
             )
 
             return response.choices[0].message.content
@@ -3665,6 +3670,8 @@ Output requirements:
             models_to_try.append(m)
 
         last_error = None
+        # Use configured timeout to prevent Gunicorn worker timeout (default 30s)
+        ai_timeout = current_app.config.get('AI_SUMMARY_TIMEOUT_SECONDS', 20)
         for model_name in models_to_try:
             try:
                 response = AIService._chat_completion(
@@ -3672,7 +3679,7 @@ Output requirements:
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                     max_tokens=900,
-                    timeout=60,
+                    timeout=ai_timeout,
                 )
                 return response.choices[0].message.content
             except APIError as e:
