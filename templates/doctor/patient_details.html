@@ -2977,7 +2977,8 @@ class DoctorPatientManagement {
         const patientIdRaw = root ? root.getAttribute('data-patient-id') : null;
         this.patientId = patientIdRaw ? Number(patientIdRaw) : null;
         this.prescriptionItemCount = 1;
-        this.init();
+        // Don't call init() here - will be called after DOM loads
+        // This allows the object to exist for onclick handlers
     }
 
     getCsrfToken() {
@@ -4282,9 +4283,17 @@ class DoctorPatientManagement {
     }
 }
 
-// Initialize the application when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
+// Initialize immediately - the constructor handles DOM not ready gracefully
+// This ensures onclick handlers in HTML can call methods immediately
+if (typeof window !== 'undefined') {
     window.doctorPatient = new DoctorPatientManagement();
+}
+
+// Re-run initialization after DOM loads to set up event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    if (window.doctorPatient && typeof window.doctorPatient.init === 'function') {
+        window.doctorPatient.init();
+    }
     
     // Add keyboard shortcuts
     document.addEventListener('keydown', function(e) {
