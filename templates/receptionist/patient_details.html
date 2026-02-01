@@ -40,7 +40,24 @@
                 <h2 class="mb-0">Patient Details</h2>
                 <div>
                     <a class="btn btn-secondary" href="{{ url_for('receptionist_patients') }}"><i class="fas fa-arrow-left"></i> Back</a>
-                    <a class="btn btn-success" href="{{ url_for('receptionist_billing') }}?patient_id={{ patient.id }}"><i class="fas fa-file-invoice"></i> Create Bill</a>
+                    {% if patient.status == 'active' %}
+                    <form method="POST" action="{{ url_for('receptionist_patient_details', patient_id=patient.id) }}" style="display: inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="complete_treatment">
+                        <button type="submit" class="btn btn-success" onclick="return confirm('Mark patient treatment as completed?');">
+                            <i class="fas fa-check-circle"></i> Complete Treatment
+                        </button>
+                    </form>
+                    {% else %}
+                    <form method="POST" action="{{ url_for('receptionist_patient_details', patient_id=patient.id) }}" style="display: inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="readmit_patient">
+                        <button type="submit" class="btn btn-warning" onclick="return confirm('Readmit this patient?');">
+                            <i class="fas fa-redo"></i> Readmit Patient
+                        </button>
+                    </form>
+                    {% endif %}
+                    <a class="btn btn-primary" href="{{ url_for('receptionist_billing') }}?patient_id={{ patient.id }}"><i class="fas fa-file-invoice"></i> Create Bill</a>
                 </div>
             </div>
 
@@ -48,7 +65,7 @@
                 <div class="card-body">
                     <div class="row">
                         <div class="col-md-6">
-                            <p><strong>Name:</strong> {{ decrypt_data(patient.name) }}</p>
+                            <p><strong>Name:</strong> {{ patient.decrypted_name }}</p>
                             <p><strong>OP/IP:</strong> {{ patient.op_number or patient.ip_number or '-' }}</p>
                             <p><strong>Gender:</strong> {{ patient.gender or '-' }}</p>
                         </div>

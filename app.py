@@ -22910,7 +22910,7 @@ def patient_ward_bill(patient_id):
 
     if not ctx:
         flash('Patient has no ward stay assignment on record.', 'info')
-        return redirect(url_for('patient_details', patient_id=patient_id))
+        return redirect(url_for('doctor_patient_details', patient_id=patient_id))
 
     try:
         ctx['patient_name'] = Config.decrypt_data_static(patient.name)
@@ -22940,7 +22940,7 @@ def update_patient_ward_bill(patient_id):
 
     if not ctx:
         flash('No ward stay assignment found for this patient.', 'warning')
-        return redirect(url_for('patient_details', patient_id=patient_id))
+        return redirect(url_for('doctor_patient_details', patient_id=patient_id))
 
     charge, unbilled_days = update_ward_stay_bill_for_patient(patient_id, ctx)
 
@@ -23551,6 +23551,69 @@ def delete_patient_summary(patient_id, summary_id):
         db.session.delete(summary)
         db.session.commit()
         return jsonify({'success': True, 'message': 'Summary deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/doctor/patient/<int:patient_id>/summary/generate-diagnosis', methods=['POST'])
+@login_required
+def doctor_generate_diagnosis_from_specific_summary(patient_id):
+    """Generate diagnosis from a specific summary (called from frontend)"""
+    if current_user.role not in ['doctor', 'admin']:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+    
+    try:
+        # Get summary_id from request
+        data = request.get_json(silent=True) or {}
+        summary_id = data.get('summary_id')
+        
+        if not summary_id:
+            # Use latest summary if no specific ID provided
+            summary = PatientSummary.query.filter_by(patient_id=patient_id).order_by(PatientSummary.created_at.desc()).first()
+        else:
+            summary = db.session.get(PatientSummary, summary_id)
+            if not summary or summary.patient_id != patient_id:
+                return jsonify({'success': False, 'error': 'Summary not found'}), 404
+        
+        if not summary:
+            return jsonify({'success': False, 'error': 'No summary found for this patient'}), 404
+        
+        # Get basic patient info for context
+        patient_basic_info = {
+            'age': patient.age,
+            'gender': patient.gender,
+            'name': patient.get_decrypted_name
+        }
+        
+        # Use AI to generate diagnosis from summary
+        try:
+            diagnosis_text = AIService.generate_diagnosis_from_summary(
+                summary.summary_text or '',
+                patient_basic_info
+            )
+            if not diagnosis_text:
+                return jsonify({'success': False, 'error': 'AI service unavailable. Please try again later.'}), 503
+        except Exception as ai_error:
+            return jsonify({'success': False, 'error': f'AI generation failed: {str(ai_error)}'}), 500
+        
+        # Create new diagnosis entry
+        diagnosis = PatientDiagnosis(
+            patient_id=patient_id,
+            working_diagnosis=diagnosis_text,
+            created_by=current_user.id,
+        )
+        db.session.add(diagnosis)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Diagnosis generated from summary successfully',
+            'diagnosis': diagnosis_text
+        })
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -26650,16 +26713,24 @@ def receptionist_patient_details(patient_id):
     services = Service.query.all()
     lab_tests = LabTest.query.all()
     patient_labs = patient.labs
-    prescriptions = patient.prescriptions
+    # Optimize prescriptions query with eager loading to prevent N+1 queries
+    prescriptions = Prescription.query.filter_by(patient_id=patient.id) \
+        .options(
+            db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug)
+        ).all()
     
-    # Calculate totals
-    lab_total = sum(lab.test.price for lab in patient_labs)
+    # Calculate totals with defensive checks to prevent crashes on missing relationships
+    lab_total = sum(
+        lab.test.price 
+        for lab in patient_labs 
+        if lab.test and lab.test.price is not None
+    )
     service_total = 0  # Will be calculated from selected services
     prescription_total = sum(
         item.drug.selling_price * item.quantity 
         for prescription in prescriptions 
         for item in prescription.items 
-        if item.status == 'dispensed'
+        if item.status == 'dispensed' and item.drug and item.drug.selling_price is not None
     )
     
     return render_template('receptionist/patient_details.html',
@@ -26672,6 +26743,44 @@ def receptionist_patient_details(patient_id):
         service_total=service_total,
         prescription_total=prescription_total
     )
+
+@app.route('/receptionist/patient/<int:patient_id>', methods=['POST'])
+@login_required
+def receptionist_patient_actions(patient_id):
+    """Handle patient actions (complete treatment, readmit) from receptionist view"""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        flash('Patient not found', 'danger')
+        return redirect(url_for('receptionist_patients'))
+    
+    action = request.form.get('action')
+    
+    if action == 'complete_treatment':
+        try:
+            patient.status = 'completed'
+            patient.updated_at = get_eat_now()
+            db.session.commit()
+            flash('Patient treatment marked as completed!', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error completing treatment: {str(e)}', 'danger')
+    
+    elif action == 'readmit_patient':
+        try:
+            patient.status = 'active'
+            patient.updated_at = get_eat_now()
+            db.session.commit()
+            flash('Patient readmitted successfully!', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error readmitting patient: {str(e)}', 'danger')
+    
+    return redirect(url_for('receptionist_patient_details', patient_id=patient_id))
 
 @app.route('/receptionist/billing', methods=['POST'])
 @login_required
