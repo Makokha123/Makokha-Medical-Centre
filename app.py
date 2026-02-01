@@ -267,6 +267,17 @@ app.config['FERNET_KEY'] = os.getenv('FERNET_KEY')
 app.config['DEEPSEEK_API_KEY'] = os.getenv('DEEPSEEK_API_KEY')
 app.config['RESET_TOKEN_EXPIRATION'] = int(os.getenv('RESET_TOKEN_EXPIRATION', 3600))
 
+# --- AI request tuning (env-driven) ---
+# Keep interactive web requests under upstream/gateway timeouts (Render typically ~30s).
+try:
+    app.config['AI_SUMMARY_TIMEOUT_SECONDS'] = float(os.getenv('AI_SUMMARY_TIMEOUT_SECONDS', '20'))
+except Exception:
+    app.config['AI_SUMMARY_TIMEOUT_SECONDS'] = 20.0
+try:
+    app.config['AI_SUMMARY_MAX_RETRIES'] = int(float(os.getenv('AI_SUMMARY_MAX_RETRIES', '2')))
+except Exception:
+    app.config['AI_SUMMARY_MAX_RETRIES'] = 2
+
 # --- Safaricom Daraja (M-Pesa) configuration (env-driven) ---
 # Receive (Till / Buy Goods): STK Push + manual Till confirmation (C2B URLs)
 app.config['MPESA_ENV'] = (os.getenv('MPESA_ENV') or 'sandbox').strip().lower()  # sandbox|production
@@ -3222,6 +3233,22 @@ Output requirements:
         Generate a comprehensive patient summary from all available patient data
         """
 
+        def _to_text(value) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value.strip()
+            return str(value).strip()
+
+        def _truthy_text(value) -> str:
+            s = _to_text(value)
+            if not s:
+                return ""
+            lowered = s.lower()
+            if lowered in ("not documented", "not specified", "none", "none known", "n/a"):
+                return ""
+            return s
+
         def _clip(value, limit: int = 2000) -> str:
             if value is None:
                 return ""
@@ -3239,7 +3266,18 @@ Output requirements:
             )
         except Exception:
             summary_timeout = 20.0
-        summary_timeout = max(5.0, min(summary_timeout, 25.0))
+        # Clamp to keep request under typical gateway limits.
+        summary_timeout = max(5.0, min(summary_timeout, 20.0))
+
+        try:
+            max_attempts = int(
+                current_app.config.get('AI_SUMMARY_MAX_RETRIES')
+                or 1
+            )
+        except Exception:
+            max_attempts = 1
+        # Interpret as total attempts (not retries). Keep small for interactive requests.
+        max_attempts = max(1, min(max_attempts, 2))
 
         ros_json = json.dumps(patient_data.get('review_systems', {}), ensure_ascii=False)
         exam_json = json.dumps(patient_data.get('examination', {}), ensure_ascii=False)
@@ -3292,15 +3330,113 @@ Output requirements:
         Be concise but comprehensive, focusing on clinically relevant information.
         """
 
-        client = AIService.get_client()
-        response = client.chat.completions.create(
-            model=AIService.MODELS['primary'],
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=900,
-            timeout=summary_timeout,
-        )
-        return response.choices[0].message.content
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                client = AIService.get_client()
+                response = client.chat.completions.create(
+                    model=AIService.MODELS['primary'],
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=900,
+                    timeout=summary_timeout,
+                )
+                return _to_text(response.choices[0].message.content)
+            except (APITimeoutError, httpx.TimeoutException, TimeoutError) as e:
+                last_exc = e
+                # One quick retry at most (bounded by max_attempts).
+                continue
+        if last_exc:
+            raise last_exc
+        return None
+
+    @staticmethod
+    def generate_patient_summary_fallback(patient_data) -> str:
+        """Deterministic fallback summary when upstream AI is slow/unavailable."""
+
+        def _clean(value) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value.strip()
+            return str(value).strip()
+
+        def _fmt(label: str, value) -> str:
+            v = _clean(value)
+            if not v:
+                return ""
+            return f"{label}: {v}"
+
+        name = _clean(patient_data.get('name'))
+        age = _clean(patient_data.get('age'))
+        gender = _clean(patient_data.get('gender'))
+        address = _clean(patient_data.get('address'))
+        occupation = _clean(patient_data.get('occupation'))
+        religion = _clean(patient_data.get('religion'))
+
+        cc = _clean(patient_data.get('chief_complaint'))
+        hpi = _clean(patient_data.get('history_present_illness'))
+        working_dx = _clean(patient_data.get('working_diagnosis'))
+
+        allergies = _clean(patient_data.get('allergies'))
+        meds = _clean(patient_data.get('medications'))
+        pmh = _clean(patient_data.get('medical_history'))
+        psh = _clean(patient_data.get('surgical_history'))
+        fh = _clean(patient_data.get('family_history'))
+        sh = _clean(patient_data.get('social_history'))
+
+        # Try to extract vitals if present.
+        vitals_text = ""
+        exam = patient_data.get('examination')
+        try:
+            vitals = (exam or {}).get('vitals') if isinstance(exam, dict) else None
+            if isinstance(vitals, dict) and vitals:
+                parts = []
+                for k in ('bp', 'temp', 'pulse', 'rr', 'spo2', 'weight', 'height', 'bmi'):
+                    if k in vitals and _clean(vitals.get(k)):
+                        parts.append(f"{k.upper()} {_clean(vitals.get(k))}")
+                vitals_text = ", ".join(parts)
+        except Exception:
+            vitals_text = ""
+
+        lines = []
+        header = ""
+        demo_bits = [b for b in [name, age and f"{age}y", gender] if b]
+        if demo_bits:
+            header = "Patient: " + " / ".join(demo_bits)
+        if header:
+            lines.append(header)
+        lines.extend([s for s in [
+            _fmt("Address", address),
+            _fmt("Occupation", occupation),
+            _fmt("Religion", religion),
+        ] if s])
+
+        if cc:
+            lines.append(f"Chief complaint: {cc}")
+        if hpi:
+            lines.append(f"HPI: {hpi}")
+
+        hx_lines = [s for s in [
+            _fmt("Medical history", pmh),
+            _fmt("Surgical history", psh),
+            _fmt("Family history", fh),
+            _fmt("Social history", sh),
+            _fmt("Allergies", allergies or "None known"),
+            _fmt("Medications", meds or "None"),
+        ] if s]
+        if hx_lines:
+            lines.append("History:")
+            lines.extend(["- " + s for s in hx_lines])
+
+        if vitals_text:
+            lines.append(f"Vitals: {vitals_text}")
+
+        if working_dx:
+            lines.append(f"Working diagnosis: {working_dx}")
+
+        out = "\n".join([l for l in lines if _clean(l)])
+        return out.strip() or "Clinical summary unavailable. Please document key findings and try again."
 
     @staticmethod
     def generate_diagnosis_from_summary(clinical_summary, patient_info=None):
@@ -24766,48 +24902,175 @@ def ai_generate_summary():
         }
 
         summary_text = AIService.generate_patient_summary(patient_data)
-        if not summary_text:
-            return jsonify({
-                'success': False,
-                'error': 'AI service unavailable. Check AI key/config and try again.'
-            }), 503
 
-        # Persist as an AI-generated summary for audit/history
+        # If AI returns empty/None, fall back to deterministic summary instead of 5xx.
+        source = 'ai'
+        warning = None
+        summary_type = 'ai_generated'
+        if not summary_text:
+            summary_text = AIService.generate_patient_summary_fallback(patient_data)
+            source = 'fallback'
+            warning = 'AI service unavailable; generated a basic summary instead.'
+            summary_type = 'ai_fallback'
+
+        # Persist summary for audit/history (both AI and fallback) to keep existing UI flows working.
         summary = PatientSummary(
             patient_id=patient.id,
             summary_text=summary_text,
-            summary_type='ai_generated',
+            summary_type=summary_type,
             generated_by=current_user.id,
         )
         db.session.add(summary)
         db.session.commit()
 
-        return jsonify({'success': True, 'summary_text': summary_text})
+        payload = {'success': True, 'summary_text': summary_text, 'source': source}
+        if warning:
+            payload['warning'] = warning
+        return jsonify(payload)
 
     except (APITimeoutError, httpx.TimeoutException, TimeoutError):
         db.session.rollback()
         current_app.logger.error('AI summary generation timeout.', exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': 'AI service timeout. Please try again in a moment.'
-        }), 504
+        # Avoid 504s (which trip global AJAX error handling). Provide a basic summary instead.
+        try:
+            ctx = _build_doctor_patient_ai_context(patient)
+            patient_data = {
+                'name': ctx['biodata']['name'],
+                'age': ctx['biodata']['age'],
+                'gender': ctx['biodata']['gender'],
+                'address': ctx['biodata']['address'],
+                'occupation': ctx['biodata']['occupation'],
+                'religion': ctx['biodata']['religion'],
+                'chief_complaint': ctx['chief_complaint'],
+                'history_present_illness': ctx['hpi'],
+                'review_systems': ctx['ros'],
+                'social_history': ctx['history']['social_history'],
+                'medical_history': ctx['history']['medical_history'],
+                'surgical_history': ctx['history']['surgical_history'],
+                'family_history': ctx['history']['family_history'],
+                'allergies': ctx['history']['allergies'] or 'None known',
+                'medications': ctx['history']['medications'] or 'None',
+                'examination': ctx['examination'],
+                'working_diagnosis': ctx['diagnosis']['working_diagnosis'],
+            }
+            summary_text = AIService.generate_patient_summary_fallback(patient_data)
+
+            summary = PatientSummary(
+                patient_id=patient.id,
+                summary_text=summary_text,
+                summary_type='ai_fallback',
+                generated_by=current_user.id,
+            )
+            db.session.add(summary)
+            db.session.commit()
+
+            return jsonify({
+                'success': True,
+                'summary_text': summary_text,
+                'source': 'fallback',
+                'warning': 'AI timed out; generated a basic summary instead. You can retry for an AI-written narrative.'
+            }), 200
+        except Exception:
+            db.session.rollback()
+            return jsonify({
+                'success': False,
+                'error': 'AI service timeout. Please try again in a moment.'
+            }), 200
 
     except (APIConnectionError, APIError) as e:
         db.session.rollback()
         current_app.logger.error(f"AI summary generation upstream error: {str(e)}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': 'AI service error. Please try again later.'
-        }), 502
+        try:
+            ctx = _build_doctor_patient_ai_context(patient)
+            patient_data = {
+                'name': ctx['biodata']['name'],
+                'age': ctx['biodata']['age'],
+                'gender': ctx['biodata']['gender'],
+                'address': ctx['biodata']['address'],
+                'occupation': ctx['biodata']['occupation'],
+                'religion': ctx['biodata']['religion'],
+                'chief_complaint': ctx['chief_complaint'],
+                'history_present_illness': ctx['hpi'],
+                'review_systems': ctx['ros'],
+                'social_history': ctx['history']['social_history'],
+                'medical_history': ctx['history']['medical_history'],
+                'surgical_history': ctx['history']['surgical_history'],
+                'family_history': ctx['history']['family_history'],
+                'allergies': ctx['history']['allergies'] or 'None known',
+                'medications': ctx['history']['medications'] or 'None',
+                'examination': ctx['examination'],
+                'working_diagnosis': ctx['diagnosis']['working_diagnosis'],
+            }
+            summary_text = AIService.generate_patient_summary_fallback(patient_data)
+            summary = PatientSummary(
+                patient_id=patient.id,
+                summary_text=summary_text,
+                summary_type='ai_fallback',
+                generated_by=current_user.id,
+            )
+            db.session.add(summary)
+            db.session.commit()
+
+            return jsonify({
+                'success': True,
+                'summary_text': summary_text,
+                'source': 'fallback',
+                'warning': 'AI service error; generated a basic summary instead. You can retry later.'
+            }), 200
+        except Exception:
+            db.session.rollback()
+            return jsonify({
+                'success': False,
+                'error': 'AI service error. Please try again later.'
+            }), 200
 
     except ValueError as e:
         # Typically configuration issues like missing DEEPSEEK_API_KEY
         db.session.rollback()
         current_app.logger.error(f"AI summary generation configuration error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': 'AI service is not configured. Contact administrator.'
-        }), 503
+        try:
+            ctx = _build_doctor_patient_ai_context(patient)
+            patient_data = {
+                'name': ctx['biodata']['name'],
+                'age': ctx['biodata']['age'],
+                'gender': ctx['biodata']['gender'],
+                'address': ctx['biodata']['address'],
+                'occupation': ctx['biodata']['occupation'],
+                'religion': ctx['biodata']['religion'],
+                'chief_complaint': ctx['chief_complaint'],
+                'history_present_illness': ctx['hpi'],
+                'review_systems': ctx['ros'],
+                'social_history': ctx['history']['social_history'],
+                'medical_history': ctx['history']['medical_history'],
+                'surgical_history': ctx['history']['surgical_history'],
+                'family_history': ctx['history']['family_history'],
+                'allergies': ctx['history']['allergies'] or 'None known',
+                'medications': ctx['history']['medications'] or 'None',
+                'examination': ctx['examination'],
+                'working_diagnosis': ctx['diagnosis']['working_diagnosis'],
+            }
+            summary_text = AIService.generate_patient_summary_fallback(patient_data)
+            summary = PatientSummary(
+                patient_id=patient.id,
+                summary_text=summary_text,
+                summary_type='ai_fallback',
+                generated_by=current_user.id,
+            )
+            db.session.add(summary)
+            db.session.commit()
+
+            return jsonify({
+                'success': True,
+                'summary_text': summary_text,
+                'source': 'fallback',
+                'warning': 'AI is not configured; generated a basic summary instead.'
+            }), 200
+        except Exception:
+            db.session.rollback()
+            return jsonify({
+                'success': False,
+                'error': 'AI service is not configured. Contact administrator.'
+            }), 200
 
     except Exception as e:
         db.session.rollback()
