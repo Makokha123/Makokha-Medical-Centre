@@ -926,15 +926,201 @@ $(document).ready(function() {
         });
     });
 
-    // Form navigation with auto-saving
+    // Form navigation with draft auto-save (survives refresh/power loss)
+    const MMC_DRAFT_KEY = 'mmc.doctor.draft:new_patient:v1';
     let currentSection = 0;
     const sections = $('.form-section');
     const progressSteps = $('.progress-step');
+
+    function safeLoadDraft() {
+        try {
+            const raw = window.localStorage.getItem(MMC_DRAFT_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function safeSaveDraft(state) {
+        try {
+            window.localStorage.setItem(MMC_DRAFT_KEY, JSON.stringify(state));
+        } catch (e) {
+            // ignore quota/disabled storage
+        }
+    }
+
+    function clearDraft() {
+        try {
+            window.localStorage.removeItem(MMC_DRAFT_KEY);
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    function collectDraftValues() {
+        const values = {};
+        const $form = $('#patientForm');
+        const elements = $form.find('input[name], textarea[name], select[name]').toArray();
+
+        // Count inputs per name to distinguish checkbox groups.
+        const nameCounts = {};
+        elements.forEach((el) => {
+            const name = el && el.name;
+            if (!name || name === 'csrf_token') return;
+            nameCounts[name] = (nameCounts[name] || 0) + 1;
+        });
+
+        function setValue(name, val) {
+            if (name === 'csrf_token') return;
+            if (values[name] === undefined) {
+                values[name] = val;
+            } else if (Array.isArray(values[name])) {
+                values[name].push(val);
+            } else {
+                values[name] = [values[name], val];
+            }
+        }
+
+        elements.forEach((el) => {
+            if (!el || !el.name || el.name === 'csrf_token') return;
+            const name = el.name;
+            const tag = (el.tagName || '').toLowerCase();
+            const type = (el.type || '').toLowerCase();
+
+            if (type === 'radio') {
+                if (el.checked) setValue(name, el.value);
+                return;
+            }
+
+            if (type === 'checkbox') {
+                const isGroup = (nameCounts[name] || 0) > 1;
+                if (isGroup) {
+                    if (el.checked) setValue(name, el.value);
+                } else {
+                    setValue(name, !!el.checked);
+                }
+                return;
+            }
+
+            if (tag === 'select' && el.multiple) {
+                const selected = $(el).val() || [];
+                setValue(name, Array.isArray(selected) ? selected : [selected]);
+                return;
+            }
+
+            setValue(name, $(el).val());
+        });
+
+        return values;
+    }
+
+    function applyDraftValues(values) {
+        if (!values || typeof values !== 'object') return;
+
+        const $form = $('#patientForm');
+
+        function nameSelector(n) {
+            // Avoid depending on CSS.escape (not available in some browsers).
+            const s = String(n)
+                .replace(/\\/g, '\\\\')
+                .replace(/\]/g, '\\]')
+                .replace(/\"/g, '\\"');
+            return `[name="${s}"]`;
+        }
+
+        Object.keys(values).forEach((name) => {
+            if (!name || name === 'csrf_token') return;
+            const stored = values[name];
+            const $els = $form.find(nameSelector(name));
+            if (!$els.length) return;
+
+            // Handle checkbox groups (array of checked values)
+            const first = $els.get(0);
+            const type = (first && first.type ? String(first.type).toLowerCase() : '');
+            const tag = (first && first.tagName ? String(first.tagName).toLowerCase() : '');
+
+            if (type === 'radio') {
+                $els.each(function () {
+                    this.checked = String(this.value) === String(stored);
+                });
+                return;
+            }
+
+            if (type === 'checkbox') {
+                if (Array.isArray(stored)) {
+                    const set = new Set(stored.map((v) => String(v)));
+                    $els.each(function () {
+                        this.checked = set.has(String(this.value));
+                    });
+                } else {
+                    // Single boolean checkbox
+                    const checked = !!stored;
+                    $els.each(function () {
+                        this.checked = checked;
+                    });
+                }
+                return;
+            }
+
+            if (tag === 'select' && first && first.multiple) {
+                const arr = Array.isArray(stored) ? stored : [stored];
+                $els.val(arr).trigger('change');
+                return;
+            }
+
+            // Multiple inputs with same name (e.g., dynamic prescriptions) - restore in DOM order
+            if (Array.isArray(stored) && $els.length > 1) {
+                $els.each(function (idx) {
+                    const v = stored[idx];
+                    if (v !== undefined) $(this).val(v);
+                });
+                return;
+            }
+
+            $els.val(stored);
+        });
+
+        // Some fields have dependent UI (e.g., patient type -> number)
+        try {
+            $('#patient_type').trigger('change');
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    function saveDraftNow() {
+        const sectionId = String($('#current_section').val() || '').trim();
+        const patientId = String($('#patient_id').val() || '').trim();
+        safeSaveDraft({
+            version: 1,
+            updated_at: new Date().toISOString(),
+            url: window.location.pathname + window.location.search,
+            current_section_id: sectionId,
+            current_section_index: currentSection,
+            patient_id: patientId,
+            scroll_y: window.scrollY || 0,
+            values: collectDraftValues()
+        });
+    }
+
+    let __mmcDraftTimer = null;
+    function scheduleDraftSave() {
+        if (__mmcDraftTimer) window.clearTimeout(__mmcDraftTimer);
+        __mmcDraftTimer = window.setTimeout(() => {
+            __mmcDraftTimer = null;
+            saveDraftNow();
+        }, 400);
+    }
     
     function showSection(index) {
         sections.removeClass('active').eq(index).addClass('active');
         progressSteps.removeClass('active').eq(index).addClass('active');
         $('#current_section').val(sections.eq(index).attr('id').replace('-section', ''));
+
+        // Persist where the doctor is within the wizard
+        scheduleDraftSave();
         
         // Update navigation buttons
         $('#prevBtn').toggle(index !== 0);
@@ -970,6 +1156,7 @@ $(document).ready(function() {
                         if (response.patient_id) {
                             $('#patient_id').val(response.patient_id);
                         }
+                        scheduleDraftSave();
                         resolve(response);
                     } else {
                         reject(response.error || 'Failed to save data');
@@ -1006,8 +1193,56 @@ $(document).ready(function() {
         }
     });
 
-    // Initialize form to show first section
-    showSection(0);
+    // Restore draft (fields + patient_id + current section)
+    (function restoreDraft() {
+        const draft = safeLoadDraft();
+        if (!draft || draft.version !== 1) {
+            currentSection = 0;
+            showSection(0);
+            return;
+        }
+
+        // Restore form values first
+        applyDraftValues(draft.values);
+
+        if (draft.patient_id) {
+            $('#patient_id').val(draft.patient_id);
+        }
+
+        // Restore section index when possible
+        const idx = Number(draft.current_section_index);
+        if (Number.isFinite(idx) && idx >= 0 && idx < sections.length) {
+            currentSection = idx;
+        } else {
+            // fallback: map section id to index
+            const sid = String(draft.current_section_id || '').trim();
+            if (sid) {
+                const wanted = sid + '-section';
+                const found = sections.toArray().findIndex((el) => (el && el.id) === wanted);
+                if (found >= 0) currentSection = found;
+            }
+        }
+
+        showSection(currentSection);
+
+        // Restore scroll position
+        const y = Number(draft.scroll_y || 0);
+        if (Number.isFinite(y) && y > 0) {
+            window.setTimeout(() => {
+                try { window.scrollTo(0, y); } catch (e) { /* ignore */ }
+            }, 50);
+        }
+    })();
+
+    // Keep draft up to date while the doctor types
+    $('#patientForm').on('input change', 'input, textarea, select', scheduleDraftSave);
+    window.addEventListener('pagehide', saveDraftNow);
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') saveDraftNow();
+    });
+    $('#endBtn').on('click', function () {
+        clearDraft();
+    });
 
     // ==================== AI INTEGRATION ====================
     

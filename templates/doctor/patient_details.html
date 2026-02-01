@@ -231,7 +231,7 @@
         {% if biodata_versions %}
         <div class="biodata-history" style="margin-top: 30px;">
             <h3>Biodata Update History</h3>
-            <div class="history-timeline">
+            <div class="history-timeline history-scroll">
                 {% for entry in biodata_versions|reverse %}
                 <div class="history-entry {% if loop.first %}current{% endif %}">
                     <div class="history-header">
@@ -295,41 +295,43 @@
         
         <div class="complaint-history">
             <h3>Complaint History</h3>
-            {% if complaint_versions %}
-                {% for entry in complaint_versions|reverse %}
-                <div class="complaint-entry {% if loop.first %}current{% endif %}">
-                    <div class="complaint-header">
-                        <span class="complaint-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
-                        <span class="complaint-author">
-                            {% if entry.creator %}
-                                Dr. {{ entry.creator.username }}
-                            {% else %}
-                                Unknown Doctor
-                            {% endif %}
-                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
-                        </span>
+            <div class="history-scroll">
+                {% if complaint_versions %}
+                    {% for entry in complaint_versions|reverse %}
+                    <div class="complaint-entry {% if loop.first %}current{% endif %}">
+                        <div class="complaint-header">
+                            <span class="complaint-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                            <span class="complaint-author">
+                                {% if entry.creator %}
+                                    Dr. {{ entry.creator.username }}
+                                {% else %}
+                                    Unknown Doctor
+                                {% endif %}
+                                {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
+                            </span>
+                        </div>
+                        <div class="complaint-content">
+                            {{ entry.complaint_text }}
+                        </div>
                     </div>
-                    <div class="complaint-content">
-                        {{ entry.complaint_text }}
+                    {% endfor %}
+                {% elif chief_complaint_text %}
+                    <div class="complaint-entry current">
+                        <div class="complaint-header">
+                            <span class="complaint-date">Current Entry</span>
+                            <span class="complaint-author">Original Entry</span>
+                        </div>
+                        <div class="complaint-content">
+                            {{ chief_complaint_text }}
+                        </div>
                     </div>
-                </div>
-                {% endfor %}
-            {% elif chief_complaint_text %}
-                <div class="complaint-entry current">
-                    <div class="complaint-header">
-                        <span class="complaint-date">Current Entry</span>
-                        <span class="complaint-author">Original Entry</span>
+                {% else %}
+                    <div class="empty-state">
+                        <i class="fas fa-stethoscope"></i>
+                        <p>No chief complaint entries recorded yet</p>
                     </div>
-                    <div class="complaint-content">
-                        {{ chief_complaint_text }}
-                    </div>
-                </div>
-            {% else %}
-                <div class="empty-state">
-                    <i class="fas fa-stethoscope"></i>
-                    <p>No chief complaint entries recorded yet</p>
-                </div>
-            {% endif %}
+                {% endif %}
+            </div>
         </div>
     </div>
 
@@ -355,45 +357,72 @@
             <button class="btn btn-primary" onclick="doctorPatient.openHPIModal()">
                 <i class="fas fa-plus"></i> Add New Entry
             </button>
+
+            <div class="ai-tools">
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewHPIAI()">
+                    <i class="fas fa-eye"></i> Review
+                </button>
+                <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.generateHPIAI()">
+                    <i class="fas fa-robot"></i> Generate
+                </button>
+            </div>
+        </div>
+
+        <div id="hpiAiPanel" class="ai-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> AI HPI Helper</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">AI suggested HPI questions</div>
+            <pre id="hpiAiQuestionsText">-</pre>
+
+            <div class="text-muted" style="margin: 12px 0 6px;">AI generated HPI draft</div>
+            <pre id="hpiAiGeneratedText">-</pre>
+
+            <div class="ai-tools" style="margin-top: 10px;">
+                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedHPI()">
+                    <i class="fas fa-copy"></i> Use in New HPI Entry
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.hideAIPanel('hpiAiPanel')">Close</button>
+            </div>
         </div>
         
         <div class="hpi-history">
             <h3>HPI History</h3>
-            {% if hpi_versions %}
-                {% for entry in hpi_versions|reverse %}
-                <div class="hpi-entry {% if loop.first %}current{% endif %}">
-                    <div class="hpi-header">
-                        <span class="hpi-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
-                        <span class="hpi-author">
-                            {% if entry.creator %}
-                                Dr. {{ entry.creator.username }}
-                            {% else %}
-                                Unknown Doctor
-                            {% endif %}
-                            {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
-                        </span>
+            <div class="history-scroll">
+                {% if hpi_versions %}
+                    {% for entry in hpi_versions|reverse %}
+                    <div class="hpi-entry {% if loop.first %}current{% endif %}">
+                        <div class="hpi-header">
+                            <span class="hpi-date">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else 'N/A' }}</span>
+                            <span class="hpi-author">
+                                {% if entry.creator %}
+                                    Dr. {{ entry.creator.username }}
+                                {% else %}
+                                    Unknown Doctor
+                                {% endif %}
+                                {% if loop.last %} - Original Entry{% elif loop.first %} - Latest Entry{% else %} - Updated Entry{% endif %}
+                            </span>
+                        </div>
+                        <div class="hpi-content">
+                            {{ entry.hpi_text }}
+                        </div>
                     </div>
-                    <div class="hpi-content">
-                        {{ entry.hpi_text }}
+                    {% endfor %}
+                {% elif hpi_text %}
+                    <div class="hpi-entry current">
+                        <div class="hpi-header">
+                            <span class="hpi-date">Current Entry</span>
+                            <span class="hpi-author">Original Entry</span>
+                        </div>
+                        <div class="hpi-content">
+                            {{ hpi_text }}
+                        </div>
                     </div>
-                </div>
-                {% endfor %}
-            {% elif hpi_text %}
-                <div class="hpi-entry current">
-                    <div class="hpi-header">
-                        <span class="hpi-date">Current Entry</span>
-                        <span class="hpi-author">Original Entry</span>
+                {% else %}
+                    <div class="empty-state">
+                        <i class="fas fa-history"></i>
+                        <p>No HPI entries recorded yet</p>
                     </div>
-                    <div class="hpi-content">
-                        {{ hpi_text }}
-                    </div>
-                </div>
-            {% else %}
-                <div class="empty-state">
-                    <i class="fas fa-history"></i>
-                    <p>No HPI entries recorded yet</p>
-                </div>
-            {% endif %}
+                {% endif %}
+            </div>
         </div>
     </div>
 
@@ -419,6 +448,26 @@
             <button class="btn btn-primary" onclick="doctorPatient.openReviewSystemsModal()">
                 <i class="fas fa-plus"></i> Add New Entry
             </button>
+
+            <div class="ai-tools">
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewROSAI()">
+                    <i class="fas fa-eye"></i> Review
+                </button>
+                <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.generateROSAI()">
+                    <i class="fas fa-robot"></i> Generate
+                </button>
+            </div>
+        </div>
+
+        <textarea id="rosAiStoredQuestions" class="d-none">{{ review_systems.ai_suggested_questions if review_systems and review_systems.ai_suggested_questions else '' }}</textarea>
+
+        <div id="rosAiPanel" class="ai-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> AI Review of Systems Helper</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">Suggested questions to guide ROS documentation</div>
+            <pre id="rosAiQuestionsText">-</pre>
+            <div class="ai-tools" style="margin-top: 10px;">
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.hideAIPanel('rosAiPanel')">Close</button>
+            </div>
         </div>
         
         <div class="review-systems-grid">
@@ -469,7 +518,7 @@
         {% if review_versions %}
         <div class="section-history" style="margin-top: 30px;">
             <h3>Review of Systems Update History</h3>
-            <div class="history-timeline">
+            <div class="history-timeline history-scroll">
                 {% for entry in review_versions|reverse %}
                 <div class="history-entry {% if loop.first %}current{% endif %}">
                     <div class="history-header">
@@ -565,7 +614,7 @@
         {% if history_versions %}
         <div class="section-history" style="margin-top: 30px;">
             <h3>Medical History Update History</h3>
-            <div class="history-timeline">
+            <div class="history-timeline history-scroll">
                 {% for entry in history_versions|reverse %}
                 <div class="history-entry {% if loop.first %}current{% endif %}">
                     <div class="history-header">
@@ -691,7 +740,7 @@
         {% if exam_versions %}
         <div class="section-history" style="margin-top: 30px;">
             <h3>Examination Update History</h3>
-            <div class="history-timeline">
+            <div class="history-timeline history-scroll">
                 {% for entry in exam_versions|reverse %}
                 <div class="history-entry {% if loop.first %}current{% endif %}">
                     <div class="history-header">
@@ -746,6 +795,27 @@
             <button class="btn btn-primary" onclick="doctorPatient.openDiagnosisModal()">
                 <i class="fas fa-plus"></i> Add New Entry
             </button>
+
+            <div class="ai-tools">
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewDiagnosisAI()">
+                    <i class="fas fa-eye"></i> Review
+                </button>
+                <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.generateDiagnosisAI()">
+                    <i class="fas fa-robot"></i> Generate
+                </button>
+            </div>
+        </div>
+
+        <div id="diagnosisAiPanel" class="ai-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> AI Diagnosis Helper</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">Generated diagnosis suggestion (uses latest summary if available)</div>
+            <pre id="diagnosisAiText">-</pre>
+            <div class="ai-tools" style="margin-top: 10px;">
+                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedDiagnosis()">
+                    <i class="fas fa-copy"></i> Use in New Diagnosis Entry
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.hideAIPanel('diagnosisAiPanel')">Close</button>
+            </div>
         </div>
         
         <div class="diagnosis-content">
@@ -766,7 +836,7 @@
         {% if diagnosis_versions %}
         <div class="section-history" style="margin-top: 30px;">
             <h3>Diagnosis Update History</h3>
-            <div class="history-timeline">
+            <div class="history-timeline history-scroll">
                 {% for entry in diagnosis_versions|reverse %}
                 <div class="history-entry {% if loop.first %}current{% endif %}">
                     <div class="history-header">
@@ -817,6 +887,29 @@
                 <button class="btn btn-success" onclick="doctorPatient.openPrescriptionModal()">
                     <i class="fas fa-prescription"></i> New Prescription
                 </button>
+            </div>
+
+            <div class="ai-tools" style="margin-top: 8px;">
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewManagementAI()">
+                    <i class="fas fa-eye"></i> Review
+                </button>
+                <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.generateManagementAI()">
+                    <i class="fas fa-robot"></i> Generate
+                </button>
+            </div>
+        </div>
+
+        <textarea id="mgmtAiStoredPlan" class="d-none">{{ management.ai_alternative_treatments if management and management.ai_alternative_treatments else '' }}</textarea>
+
+        <div id="managementAiPanel" class="ai-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> AI Treatment Plan Helper</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">AI suggested plan (requires a saved Diagnosis)</div>
+            <pre id="managementAiText">-</pre>
+            <div class="ai-tools" style="margin-top: 10px;">
+                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedManagementPlan()">
+                    <i class="fas fa-copy"></i> Use in Treatment Plan Entry
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.hideAIPanel('managementAiPanel')">Close</button>
             </div>
         </div>
         
@@ -1011,7 +1104,7 @@
         {% if management_versions %}
         <div class="section-history" style="margin-top: 30px;">
             <h3>Management Plan Update History</h3>
-            <div class="history-timeline">
+            <div class="history-timeline history-scroll">
                 {% for entry in management_versions|reverse %}
                 <div class="history-entry {% if loop.first %}current{% endif %}">
                     <div class="history-header">
@@ -1041,9 +1134,33 @@
     <div class="tab-content {% if active_tab == 'summary' %}active{% endif %}" id="summary-tab">
         <div class="section-header">
             <h2><i class="fas fa-file-medical"></i> Patient Summary</h2>
-            <button class="btn btn-primary" onclick="doctorPatient.openSummaryModal()">
-                <i class="fas fa-plus"></i> Manage Summary
-            </button>
+            <div class="ai-tools">
+                <button type="button" class="btn btn-primary" onclick="doctorPatient.openSummaryModal()">
+                    <i class="fas fa-plus"></i> Manage Summary
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewSummaryAI()">
+                    <i class="fas fa-eye"></i> Review
+                </button>
+                <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.generateSummaryAI()">
+                    <i class="fas fa-robot"></i> Generate
+                </button>
+            </div>
+        </div>
+
+        <div id="summaryAiPanel" class="ai-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> AI Summary Helper</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">Review the latest saved summary or generate a new AI summary</div>
+            <pre id="summaryAiText">-</pre>
+
+            <div class="ai-tools" style="margin-top: 10px;">
+                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedSummary()">
+                    <i class="fas fa-pen"></i> Use in Manual Summary
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reloadSummaries()">
+                    <i class="fas fa-rotate"></i> Reload List
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.hideAIPanel('summaryAiPanel')">Close</button>
+            </div>
         </div>
         
         <div class="summary-content">
@@ -1982,6 +2099,37 @@
     font-size: 14px;
 }
 
+.ai-tools {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.ai-panel {
+    margin: 16px 0;
+    background: var(--white);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    border-left: 4px solid var(--primary);
+    padding: 14px 16px;
+}
+
+.ai-panel h4 {
+    margin: 0 0 8px 0;
+    color: var(--gray-800);
+    font-size: 16px;
+}
+
+.ai-panel pre {
+    background: var(--gray-100);
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    padding: 10px;
+    white-space: pre-wrap;
+    margin: 0;
+}
+
 .alert {
     padding: 12px 16px;
     border-radius: var(--border-radius);
@@ -2145,6 +2293,14 @@
 /* History timeline styles */
 .complaint-history, .hpi-history, .biodata-history, .section-history {
     margin-bottom: 30px;
+}
+
+.history-scroll {
+    max-height: 560px;
+    overflow-y: auto;
+    padding-right: 6px;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
 }
 
 .complaint-entry, .hpi-entry, .history-entry {
@@ -2838,6 +2994,7 @@ class DoctorPatientManagement {
     init() {
         this.setupEventListeners();
         this.setupFormHandlers();
+        this.setupSummaryHandlers();
     }
 
     setupEventListeners() {
@@ -2904,6 +3061,373 @@ class DoctorPatientManagement {
                 document.getElementById('aiSummaryResult').style.display = 'none';
             }
         });
+    }
+
+    hideAIPanel(panelId) {
+        const el = document.getElementById(panelId);
+        if (el) el.style.display = 'none';
+    }
+
+    _showAIPanel(panelId) {
+        const el = document.getElementById(panelId);
+        if (el) {
+            el.style.display = 'block';
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+
+    async _postAI(endpoint, formData) {
+        const fd = formData || new FormData();
+        fd.append('csrf_token', this.getCsrfToken());
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            body: fd
+        });
+
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        let result = null;
+        let rawText = '';
+
+        if (contentType.includes('application/json')) {
+            result = await response.json().catch(() => null);
+        } else {
+            rawText = await response.text().catch(() => '');
+        }
+
+        if (!response.ok || !result || result.success === false) {
+            const msgFromJson = result && (result.error || result.message);
+            const msgFromText = rawText ? rawText.replace(/\s+/g, ' ').trim().slice(0, 240) : '';
+            const msg = msgFromJson || msgFromText || `AI request failed (HTTP ${response.status})`;
+            throw new Error(msg);
+        }
+        return result;
+    }
+
+    // ROS AI
+    reviewROSAI() {
+        const stored = (document.getElementById('rosAiStoredQuestions') || {}).value || '';
+        const target = document.getElementById('rosAiQuestionsText');
+        if (target) {
+            target.textContent = stored.trim() || 'No saved AI questions yet. Click Generate to create them.';
+        }
+        this._showAIPanel('rosAiPanel');
+    }
+
+    async generateROSAI() {
+        if (!this.patientId) {
+            this.showAlert('Patient ID missing; reload and try again.', 'error');
+            return;
+        }
+        if (!confirm('Generate AI ROS questions from this patient’s data?')) return;
+
+        try {
+            const out = document.getElementById('rosAiQuestionsText');
+            if (out) out.textContent = 'Generating ROS questions...';
+            this._showAIPanel('rosAiPanel');
+
+            this.showAlert('Generating ROS questions...', 'info');
+            const fd = new FormData();
+            fd.append('patient_id', String(this.patientId));
+            const result = await this._postAI('/doctor/patient/ai/review_systems', fd);
+            const questions = result.questions || '';
+
+            if (out) out.textContent = questions || 'No questions returned.';
+
+            const store = document.getElementById('rosAiStoredQuestions');
+            if (store) store.value = questions || '';
+
+            this._showAIPanel('rosAiPanel');
+            this.showAlert('ROS questions generated.', 'success');
+        } catch (e) {
+            const msg = (e && e.message) ? e.message : 'Failed to generate ROS questions';
+            const out = document.getElementById('rosAiQuestionsText');
+            if (out) out.textContent = `Error: ${msg}`;
+            this._showAIPanel('rosAiPanel');
+            this.showAlert(msg, 'error');
+        }
+    }
+
+    // HPI AI
+    async reviewHPIAI() {
+        if (!this.patientId) {
+            this.showAlert('Patient ID missing; reload and try again.', 'error');
+            return;
+        }
+        try {
+            const out = document.getElementById('hpiAiQuestionsText');
+            if (out) out.textContent = 'Loading HPI questions...';
+            this._showAIPanel('hpiAiPanel');
+
+            this.showAlert('Loading HPI questions...', 'info');
+            const fd = new FormData();
+            fd.append('patient_id', String(this.patientId));
+            const result = await this._postAI('/doctor/patient/ai/hpi_questions', fd);
+
+            const questions = result.questions || '';
+            if (out) out.textContent = questions || 'No questions returned.';
+
+            this._showAIPanel('hpiAiPanel');
+            this.showAlert('HPI questions ready.', 'success');
+        } catch (e) {
+            const msg = (e && e.message) ? e.message : 'Failed to load HPI questions';
+            const out = document.getElementById('hpiAiQuestionsText');
+            if (out) out.textContent = `Error: ${msg}`;
+            this._showAIPanel('hpiAiPanel');
+            this.showAlert(msg, 'error');
+        }
+    }
+
+    async generateHPIAI() {
+        if (!this.patientId) {
+            this.showAlert('Patient ID missing; reload and try again.', 'error');
+            return;
+        }
+        if (!confirm('Generate an AI HPI draft from patient data?')) return;
+
+        try {
+            const out = document.getElementById('hpiAiGeneratedText');
+            if (out) out.textContent = 'Generating HPI draft...';
+            this._showAIPanel('hpiAiPanel');
+
+            this.showAlert('Generating HPI draft...', 'info');
+            const fd = new FormData();
+            fd.append('patient_id', String(this.patientId));
+            const result = await this._postAI('/doctor/patient/ai/generate_hpi', fd);
+
+            const hpi = result.hpi_content || '';
+            this.lastGeneratedHpi = hpi;
+            if (out) out.textContent = hpi || 'No HPI content returned.';
+
+            this._showAIPanel('hpiAiPanel');
+            this.showAlert('HPI draft generated.', 'success');
+        } catch (e) {
+            const msg = (e && e.message) ? e.message : 'Failed to generate HPI';
+            const out = document.getElementById('hpiAiGeneratedText');
+            if (out) out.textContent = `Error: ${msg}`;
+            this._showAIPanel('hpiAiPanel');
+            this.showAlert(msg, 'error');
+        }
+    }
+
+    useGeneratedHPI() {
+        const text = (this.lastGeneratedHpi || '').trim();
+        if (!text) {
+            this.showAlert('No generated HPI to use yet. Click Generate first.', 'warning');
+            return;
+        }
+
+        this.openHPIModal();
+        setTimeout(() => {
+            const textarea = document.getElementById('history-present-illness');
+            if (textarea) {
+                textarea.value = text;
+                textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                textarea.focus();
+            }
+        }, 100);
+    }
+
+    // Diagnosis AI
+    reviewDiagnosisAI() {
+        const cards = document.querySelectorAll('#diagnosis-tab .diagnosis-card .diagnosis-text');
+        const working = (cards && cards[0] ? cards[0].textContent : '').trim();
+        const diff = (cards && cards[1] ? cards[1].textContent : '').trim();
+
+        const out = document.getElementById('diagnosisAiText');
+        if (out) {
+            out.textContent = `Working Diagnosis:\n${working || '-'}\n\nDifferential Diagnosis:\n${diff || '-'}`;
+        }
+        this._showAIPanel('diagnosisAiPanel');
+    }
+
+    async generateDiagnosisAI() {
+        if (!this.patientId) {
+            this.showAlert('Patient ID missing; reload and try again.', 'error');
+            return;
+        }
+        if (!confirm('Generate an AI diagnosis suggestion (from latest summary if available)?')) return;
+
+        try {
+            const out = document.getElementById('diagnosisAiText');
+            if (out) out.textContent = 'Generating diagnosis...';
+            this._showAIPanel('diagnosisAiPanel');
+
+            this.showAlert('Generating diagnosis...', 'info');
+            const fd = new FormData();
+            fd.append('patient_id', String(this.patientId));
+            fd.append('patient_summary', '');
+            const result = await this._postAI('/doctor/patient/ai/diagnosis', fd);
+
+            const dx = result.diagnosis || '';
+            this.lastGeneratedDiagnosis = dx;
+            const out = document.getElementById('diagnosisAiText');
+            if (out) out.textContent = dx || 'No diagnosis returned.';
+
+            this._showAIPanel('diagnosisAiPanel');
+            this.showAlert('Diagnosis generated.', 'success');
+        } catch (e) {
+            const msg = (e && e.message) ? e.message : 'Failed to generate diagnosis';
+            const out = document.getElementById('diagnosisAiText');
+            if (out) out.textContent = `Error: ${msg}`;
+            this._showAIPanel('diagnosisAiPanel');
+            this.showAlert(msg, 'error');
+        }
+    }
+
+    useGeneratedDiagnosis() {
+        const text = (this.lastGeneratedDiagnosis || '').trim();
+        if (!text) {
+            this.showAlert('No generated diagnosis to use yet. Click Generate first.', 'warning');
+            return;
+        }
+
+        this.openDiagnosisModal();
+        setTimeout(() => {
+            const textarea = document.getElementById('working-diagnosis');
+            if (textarea) {
+                textarea.value = text;
+                textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                textarea.focus();
+            }
+        }, 100);
+    }
+
+    // Management AI
+    reviewManagementAI() {
+        const stored = (document.getElementById('mgmtAiStoredPlan') || {}).value || '';
+        const out = document.getElementById('managementAiText');
+        if (out) {
+            out.textContent = stored.trim() || 'No saved AI treatment plan yet. Click Generate to create one (requires a saved Diagnosis).';
+        }
+        this._showAIPanel('managementAiPanel');
+    }
+
+    async generateManagementAI() {
+        if (!this.patientId) {
+            this.showAlert('Patient ID missing; reload and try again.', 'error');
+            return;
+        }
+        if (!confirm('Generate an AI treatment plan (requires a saved Diagnosis)?')) return;
+
+        try {
+            const out = document.getElementById('managementAiText');
+            if (out) out.textContent = 'Generating treatment plan...';
+            this._showAIPanel('managementAiPanel');
+
+            this.showAlert('Generating treatment plan...', 'info');
+            const fd = new FormData();
+            fd.append('patient_id', String(this.patientId));
+            const result = await this._postAI('/doctor/patient/ai/treatment', fd);
+
+            const plan = result.treatment_plan || '';
+            this.lastGeneratedManagementPlan = plan;
+            const out = document.getElementById('managementAiText');
+            if (out) out.textContent = plan || 'No plan returned.';
+
+            const store = document.getElementById('mgmtAiStoredPlan');
+            if (store) store.value = plan || '';
+
+            this._showAIPanel('managementAiPanel');
+            this.showAlert('Treatment plan generated.', 'success');
+        } catch (e) {
+            const msg = (e && e.message) ? e.message : 'Failed to generate treatment plan';
+            const out = document.getElementById('managementAiText');
+            if (out) out.textContent = `Error: ${msg}`;
+            this._showAIPanel('managementAiPanel');
+            this.showAlert(msg, 'error');
+        }
+    }
+
+    useGeneratedManagementPlan() {
+        const text = (
+            (this.lastGeneratedManagementPlan || '')
+            || ((document.getElementById('mgmtAiStoredPlan') || {}).value || '')
+        ).trim();
+        if (!text) {
+            this.showAlert('No generated treatment plan to use yet. Click Generate first.', 'warning');
+            return;
+        }
+
+        this.openModal('treatment-plan');
+        setTimeout(() => {
+            const textarea = document.getElementById('treatment-plan-only');
+            if (textarea) {
+                textarea.value = text;
+                textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                textarea.focus();
+            }
+        }, 100);
+    }
+
+    // Summary AI
+    reviewSummaryAI() {
+        const first = document.querySelector('#summary-tab .summary-text');
+        const text = (first ? first.value : '').trim();
+        if (!text) {
+            this.showAlert('No saved summary to review yet. Create or generate one first.', 'warning');
+            return;
+        }
+
+        const out = document.getElementById('summaryAiText');
+        if (out) out.textContent = text;
+        this._showAIPanel('summaryAiPanel');
+    }
+
+    async generateSummaryAI() {
+        if (!this.patientId) {
+            this.showAlert('Patient ID missing; reload and try again.', 'error');
+            return;
+        }
+        if (!confirm('Generate an AI summary from this patient’s data?')) return;
+
+        try {
+            const out = document.getElementById('summaryAiText');
+            if (out) out.textContent = 'Generating summary...';
+            this._showAIPanel('summaryAiPanel');
+
+            this.showAlert('Generating summary...', 'info');
+            const fd = new FormData();
+            fd.append('patient_id', String(this.patientId));
+            const result = await this._postAI('/doctor/patient/ai/generate_summary', fd);
+
+            const text = (result && result.summary_text ? String(result.summary_text) : '').trim();
+            this.lastGeneratedSummary = text;
+
+            if (out) out.textContent = text || 'No summary returned.';
+
+            this._showAIPanel('summaryAiPanel');
+            this.showAlert('AI summary generated and saved. Click Reload List to see it.', 'success');
+        } catch (e) {
+            const msg = (e && e.message) ? e.message : 'Failed to generate summary';
+            const out = document.getElementById('summaryAiText');
+            if (out) out.textContent = `Error: ${msg}`;
+            this._showAIPanel('summaryAiPanel');
+            this.showAlert(msg, 'error');
+        }
+    }
+
+    useGeneratedSummary() {
+        const text = (this.lastGeneratedSummary || '').trim();
+        if (!text) {
+            this.showAlert('No generated summary to use yet. Click Generate first.', 'warning');
+            return;
+        }
+
+        this.openSummaryModal();
+        setTimeout(() => {
+            const textarea = document.getElementById('summaryText');
+            if (textarea) {
+                textarea.value = text;
+                textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                textarea.focus();
+                textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+            }
+        }, 100);
+    }
+
+    reloadSummaries() {
+        location.reload();
     }
 
     // Modal Management
@@ -3065,6 +3589,14 @@ class DoctorPatientManagement {
         if (!confirm('Generate AI summary from patient data?')) return;
 
         try {
+            const resultBox = document.getElementById('aiSummaryResult');
+            const textEl = document.getElementById('generatedSummaryText');
+            if (textEl) textEl.textContent = 'Generating AI summary...';
+            if (resultBox) {
+                resultBox.style.display = 'block';
+                resultBox.scrollIntoView({ behavior: 'smooth' });
+            }
+
             this.showAlert('Generating AI summary...', 'info');
             
             const formData = new FormData();
@@ -3087,10 +3619,18 @@ class DoctorPatientManagement {
                 // Scroll to the result
                 document.getElementById('aiSummaryResult').scrollIntoView({ behavior: 'smooth' });
             } else {
-                this.showAlert(result.error || 'Failed to generate AI summary', 'error');
+                const msg = result.error || 'Failed to generate AI summary';
+                const textEl = document.getElementById('generatedSummaryText');
+                if (textEl) textEl.textContent = `Error: ${msg}`;
+                document.getElementById('aiSummaryResult').style.display = 'block';
+                this.showAlert(msg, 'error');
             }
         } catch (error) {
-            this.showAlert('Network error occurred. Please try again.', 'error');
+            const msg = (error && error.message) ? error.message : 'Network error occurred. Please try again.';
+            const textEl = document.getElementById('generatedSummaryText');
+            if (textEl) textEl.textContent = `Error: ${msg}`;
+            document.getElementById('aiSummaryResult').style.display = 'block';
+            this.showAlert(msg, 'error');
         }
     }
 

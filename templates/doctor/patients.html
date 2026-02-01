@@ -25,8 +25,9 @@
             <input type="text" id="activePatientSearch" class="form-control" placeholder="Search active patients...">
         </div>
 
+        <h5 class="mt-2">Outpatients (OP)</h5>
         <div class="table-responsive">
-            <table class="table table-striped table-hover" id="activePatientsTable">
+            <table class="table table-striped table-hover" id="activeOutpatientsTable">
                 <thead class="thead-light">
                     <tr>
                         <th>Patient ID</th>
@@ -38,11 +39,60 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for patient in active_patients %}
+                    {% for patient in (active_outpatients if active_outpatients is defined else active_patients) %}
+                    {% if patient.op_number and not patient.ip_number %}
                     <tr>
                         <td>
                             <div class="d-flex align-items-center gap-2 flex-wrap">
-                                <span>{{ patient.op_number or patient.ip_number }}</span>
+                                <span>{{ patient.op_number }}</span>
+                                {% if patient.discharge_state == 'pending' %}
+                                    <span class="badge bg-warning text-dark">Pending discharge</span>
+                                {% elif patient.discharge_state == 'discharged' %}
+                                    <span class="badge bg-success">Discharged</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>{{ patient.decrypted_name }}</td>
+                        <td>{{ patient.age or 'N/A' }}</td>
+                        <td>{{ patient.gender or 'N/A' }}</td>
+                        <td>{{ patient.updated_at.strftime('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
+                        <td>
+                            <div class="btn-group">
+                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
+                                <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ patient.id }}')">Complete</button>
+                                <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
+                                <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% else %}
+                    <tr><td colspan="6" class="text-center">No active outpatients found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <h5 class="mt-4">Inpatients (IP)</h5>
+        <div class="table-responsive">
+            <table class="table table-striped table-hover" id="activeInpatientsTable">
+                <thead class="thead-light">
+                    <tr>
+                        <th>Patient ID</th>
+                        <th>Name</th>
+                        <th>Age</th>
+                        <th>Gender</th>
+                        <th>Last Visit</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for patient in (active_inpatients if active_inpatients is defined else active_patients) %}
+                    {% if patient.ip_number %}
+                    <tr>
+                        <td>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <span>{{ patient.ip_number }}</span>
                                 {% if patient.discharge_state == 'pending' %}
                                     <span class="badge bg-warning text-dark">Pending discharge</span>
                                 {% elif patient.discharge_state == 'discharged' %}
@@ -59,18 +109,17 @@
                                 <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
                                 {% if patient.discharge_state == 'pending' %}
                                     <button class="btn btn-sm btn-secondary" disabled>Pending discharge</button>
-                                {% elif patient.ip_number %}
-                                    <button class="btn btn-sm btn-warning" onclick="completeTreatment('{{ patient.id }}')">Request Discharge</button>
                                 {% else %}
-                                    <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ patient.id }}')">Complete</button>
+                                    <button class="btn btn-sm btn-warning" onclick="completeTreatment('{{ patient.id }}')">Request Discharge</button>
                                 {% endif %}
                                 <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
                                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
                             </div>
                         </td>
                     </tr>
+                    {% endif %}
                     {% else %}
-                    <tr><td colspan="6" class="text-center">No active patients found.</td></tr>
+                    <tr><td colspan="6" class="text-center">No active inpatients found.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -83,8 +132,9 @@
             <input type="text" id="oldPatientSearch" class="form-control" placeholder="Search old patients...">
         </div>
 
+        <h5 class="mt-2">Outpatients (OP)</h5>
         <div class="table-responsive">
-            <table class="table table-striped table-hover" id="oldPatientsTable">
+            <table class="table table-striped table-hover" id="oldOutpatientsTable">
                 <thead class="thead-light">
                     <tr>
                         <th>Patient ID</th>
@@ -96,11 +146,12 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for patient in completed_patients %}
+                    {% for patient in (completed_outpatients if completed_outpatients is defined else completed_patients) %}
+                    {% if patient.op_number and not patient.ip_number %}
                     <tr>
                         <td>
                             <div class="d-flex align-items-center gap-2 flex-wrap">
-                                <span>{{ patient.op_number or patient.ip_number }}</span>
+                                <span>{{ patient.op_number }}</span>
                                 {% if patient.discharge_state == 'pending' %}
                                     <span class="badge bg-warning text-dark">Pending discharge</span>
                                 {% elif patient.discharge_state == 'discharged' %}
@@ -120,8 +171,56 @@
                             </div>
                         </td>
                     </tr>
+                    {% endif %}
                     {% else %}
-                    <tr><td colspan="6" class="text-center">No old patients found.</td></tr>
+                    <tr><td colspan="6" class="text-center">No old outpatients found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <h5 class="mt-4">Inpatients (IP)</h5>
+        <div class="table-responsive">
+            <table class="table table-striped table-hover" id="oldInpatientsTable">
+                <thead class="thead-light">
+                    <tr>
+                        <th>Patient ID</th>
+                        <th>Name</th>
+                        <th>Age</th>
+                        <th>Gender</th>
+                        <th>Last Visit</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for patient in (completed_inpatients if completed_inpatients is defined else completed_patients) %}
+                    {% if patient.ip_number %}
+                    <tr>
+                        <td>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <span>{{ patient.ip_number }}</span>
+                                {% if patient.discharge_state == 'pending' %}
+                                    <span class="badge bg-warning text-dark">Pending discharge</span>
+                                {% elif patient.discharge_state == 'discharged' %}
+                                    <span class="badge bg-success">Discharged</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>{{ patient.decrypted_name }}</td>
+                        <td>{{ patient.age or 'N/A' }}</td>
+                        <td>{{ patient.gender or 'N/A' }}</td>
+                        <td>{{ patient.updated_at.strftime('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
+                        <td>
+                            <div class="btn-group">
+                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
+                                <button class="btn btn-sm btn-warning" onclick="readmitPatient('{{ patient.id }}')">Readmit</button>
+                                <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% else %}
+                    <tr><td colspan="6" class="text-center">No old inpatients found.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -295,11 +394,13 @@ function filterTable(inputId, tableId) {
 // Bind search events
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('activePatientSearch').addEventListener('keyup', () => {
-        filterTable('activePatientSearch', 'activePatientsTable');
+        filterTable('activePatientSearch', 'activeOutpatientsTable');
+        filterTable('activePatientSearch', 'activeInpatientsTable');
     });
 
     document.getElementById('oldPatientSearch').addEventListener('keyup', () => {
-        filterTable('oldPatientSearch', 'oldPatientsTable');
+        filterTable('oldPatientSearch', 'oldOutpatientsTable');
+        filterTable('oldPatientSearch', 'oldInpatientsTable');
     });
 });
 </script>

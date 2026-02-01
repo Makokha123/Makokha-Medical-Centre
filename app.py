@@ -5859,7 +5859,7 @@ def home():
         if user_role == 'admin':
             return redirect(url_for('admin_dashboard'))
         elif user_role == 'doctor':
-            return redirect(url_for('doctor_dashboard'))
+            return redirect(url_for('doctor_restore_last'))
         elif user_role == 'pharmacist':
             return redirect(url_for('pharmacist_dashboard'))
         elif user_role == 'receptionist':
@@ -5985,7 +5985,7 @@ def login():
                 if user_role == 'admin':
                     next_page = url_for('admin_dashboard')
                 elif user_role == 'doctor':
-                    next_page = url_for('doctor_dashboard')
+                    next_page = url_for('doctor_restore_last')
                 elif user_role == 'pharmacist':
                     next_page = url_for('pharmacist_dashboard')
                 elif user_role == 'receptionist':
@@ -22364,6 +22364,16 @@ def get_sale_receipt_json(sale_id):
 
    
 # Doctor Routes
+@app.route('/doctor/restore')
+@login_required
+def doctor_restore_last():
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'doctor':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    return render_template('doctor/restore_last.html', fallback_url=url_for('doctor_dashboard'))
+
 @app.route('/doctor')
 @login_required
 def doctor_dashboard():
@@ -22764,10 +22774,19 @@ def doctor_patients():
     )
     completed_patients = Patient.query.filter_by(status='completed').order_by(Patient.updated_at.desc()).all()
 
+    active_outpatients = [p for p in active_patients if getattr(p, 'op_number', None) and not getattr(p, 'ip_number', None)]
+    active_inpatients = [p for p in active_patients if getattr(p, 'ip_number', None)]
+    completed_outpatients = [p for p in completed_patients if getattr(p, 'op_number', None) and not getattr(p, 'ip_number', None)]
+    completed_inpatients = [p for p in completed_patients if getattr(p, 'ip_number', None)]
+
     return render_template(
         'doctor/patients.html',
         active_patients=active_patients,
-        completed_patients=completed_patients
+        completed_patients=completed_patients,
+        active_outpatients=active_outpatients,
+        active_inpatients=active_inpatients,
+        completed_outpatients=completed_outpatients,
+        completed_inpatients=completed_inpatients,
     )
 
 
@@ -23160,7 +23179,7 @@ def patient_summary(patient_id):
                 
                 summary_text = AIService.generate_patient_summary(patient_data)
                 if not summary_text:
-                    return jsonify({'success': False, 'error': 'Failed to generate AI summary'}), 500
+                    return jsonify({'success': False, 'error': 'AI service unavailable. Check AI key/config and try again.'}), 503
                 
                 # Save AI-generated summary
                 summary = PatientSummary(
@@ -23177,10 +23196,27 @@ def patient_summary(patient_id):
                     'summary_text': summary_text,
                     'message': 'AI summary generated successfully'
                 })
-                
+
+            except APITimeoutError:
+                db.session.rollback()
+                current_app.logger.error('AI Summary Generation Error: Request timed out.', exc_info=True)
+                return jsonify({
+                    'success': False,
+                    'error': 'AI service timeout. Please try again in a moment.'
+                }), 503
+
+            except APIError as e:
+                db.session.rollback()
+                current_app.logger.error(f"AI Summary Generation Error: {str(e)}", exc_info=True)
+                return jsonify({
+                    'success': False,
+                    'error': 'AI service error. Please try again later.'
+                }), 502
+
             except Exception as e:
                 db.session.rollback()
-                return jsonify({'success': False, 'error': str(e)}), 500
+                current_app.logger.error(f"AI Summary Generation Error: {str(e)}", exc_info=True)
+                return jsonify({'success': False, 'error': 'Internal server error'}), 500
         
         elif action == 'generate_diagnosis':
             try:
@@ -24157,8 +24193,13 @@ def ai_review_systems():
                 'error': 'Failed to generate questions'
             }), 500
             
-        # Save to review systems record
-        review = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
+        # Save to the latest review systems record (append-only history in UI)
+        review = (
+            PatientReviewSystem.query
+            .filter_by(patient_id=patient.id)
+            .order_by(PatientReviewSystem.created_at.desc(), PatientReviewSystem.id.desc())
+            .first()
+        )
         if not review:
             review = PatientReviewSystem(patient_id=patient.id, created_by=current_user.id)
             db.session.add(review)
@@ -24442,8 +24483,13 @@ def ai_treatment():
                 'error': 'Failed to generate treatment plan'
             }), 500
             
-        # Save to management record
-        management = PatientManagement.query.filter_by(patient_id=patient.id).first()
+        # Save to the latest management record (append-only history in UI)
+        management = (
+            PatientManagement.query
+            .filter_by(patient_id=patient.id)
+            .order_by(PatientManagement.created_at.desc(), PatientManagement.id.desc())
+            .first()
+        )
         if not management:
             management = PatientManagement(patient_id=patient.id, created_by=current_user.id)
             db.session.add(management)

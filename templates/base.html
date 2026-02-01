@@ -1006,6 +1006,10 @@
     <!-- Local JS -->
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+
+    {% if current_user.is_authenticated and current_user.role == 'doctor' %}
+    <script src="{{ url_for('static', filename='js/doctor_resume.js') }}"></script>
+    {% endif %}
     
 
     <!-- Enhanced Sidebar Behavior -->
