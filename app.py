@@ -277,6 +277,10 @@ try:
     app.config['AI_SUMMARY_MAX_RETRIES'] = int(float(os.getenv('AI_SUMMARY_MAX_RETRIES', '2')))
 except Exception:
     app.config['AI_SUMMARY_MAX_RETRIES'] = 2
+try:
+    app.config['AI_SUMMARY_MAX_TOKENS'] = int(float(os.getenv('AI_SUMMARY_MAX_TOKENS', '900')))
+except Exception:
+    app.config['AI_SUMMARY_MAX_TOKENS'] = 900
 
 # --- Safaricom Daraja (M-Pesa) configuration (env-driven) ---
 # Receive (Till / Buy Goods): STK Push + manual Till confirmation (C2B URLs)
@@ -3267,7 +3271,8 @@ Output requirements:
         except Exception:
             summary_timeout = 20.0
         # Clamp to keep request under typical gateway limits.
-        summary_timeout = max(5.0, min(summary_timeout, 20.0))
+        # NOTE: 29s is close to common 30s proxy/worker limits; use with care.
+        summary_timeout = max(5.0, min(summary_timeout, 29.0))
 
         try:
             max_attempts = int(
@@ -3278,6 +3283,15 @@ Output requirements:
             max_attempts = 1
         # Interpret as total attempts (not retries). Keep small for interactive requests.
         max_attempts = max(1, min(max_attempts, 2))
+        # If a single attempt can run close to gateway limits, do not stack retries.
+        if summary_timeout > 20.0:
+            max_attempts = 1
+
+        try:
+            summary_max_tokens = int(current_app.config.get('AI_SUMMARY_MAX_TOKENS') or 900)
+        except Exception:
+            summary_max_tokens = 900
+        summary_max_tokens = max(200, min(summary_max_tokens, 1800))
 
         ros_json = json.dumps(patient_data.get('review_systems', {}), ensure_ascii=False)
         exam_json = json.dumps(patient_data.get('examination', {}), ensure_ascii=False)
@@ -3338,7 +3352,7 @@ Output requirements:
                     model=AIService.MODELS['primary'],
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
-                    max_tokens=900,
+                    max_tokens=summary_max_tokens,
                     timeout=summary_timeout,
                 )
                 return _to_text(response.choices[0].message.content)
