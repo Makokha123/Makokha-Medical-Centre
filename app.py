@@ -15,6 +15,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 import openai
+import httpx
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, date, timezone
 
@@ -2992,11 +2993,26 @@ class AIService:
         api_key = current_app.config.get('DEEPSEEK_API_KEY')
         if not api_key:
             raise ValueError("DEEPSEEK_API_KEY is not configured")
-        
+
+        # Render/Gunicorn worker timeouts are typically ~30s. Keep AI calls well under that
+        # and disable client-side retries (retries can sleep and push requests past worker timeout).
+        try:
+            request_timeout = float(current_app.config.get('AI_REQUEST_TIMEOUT_SECONDS') or 20.0)
+        except Exception:
+            request_timeout = 20.0
+        request_timeout = max(5.0, min(request_timeout, 25.0))
+
+        try:
+            max_retries = int(current_app.config.get('AI_MAX_RETRIES') or 0)
+        except Exception:
+            max_retries = 0
+        max_retries = max(0, min(max_retries, 2))
+
         return OpenAI(
             api_key=api_key,
             base_url="https://api.deepseek.com/v1",
-            timeout=30.0
+            timeout=request_timeout,
+            max_retries=max_retries,
         )
         
     @retry(
@@ -3200,10 +3216,34 @@ Output requirements:
         Please generate the HPI in full paragraph narrative format suitable for a medical record.
         """
 
+    @staticmethod
     def generate_patient_summary(patient_data):
         """
         Generate a comprehensive patient summary from all available patient data
         """
+
+        def _clip(value, limit: int = 2000) -> str:
+            if value is None:
+                return ""
+            text = value if isinstance(value, str) else str(value)
+            text = text.strip()
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+        try:
+            summary_timeout = float(
+                current_app.config.get('AI_SUMMARY_TIMEOUT_SECONDS')
+                or current_app.config.get('AI_REQUEST_TIMEOUT_SECONDS')
+                or 20.0
+            )
+        except Exception:
+            summary_timeout = 20.0
+        summary_timeout = max(5.0, min(summary_timeout, 25.0))
+
+        ros_json = json.dumps(patient_data.get('review_systems', {}), ensure_ascii=False)
+        exam_json = json.dumps(patient_data.get('examination', {}), ensure_ascii=False)
+
         prompt = f"""
         You are an experienced medical professional. Create a comprehensive patient summary 
         by synthesizing all the available patient information into a coherent clinical narrative.
@@ -3219,27 +3259,27 @@ Output requirements:
         - Religion: {patient_data.get('religion', 'Not specified')}
         
         Chief Complaint:
-        {patient_data.get('chief_complaint', 'Not documented')}
+        {_clip(patient_data.get('chief_complaint', 'Not documented'))}
         
         History of Present Illness (HPI):
-        {patient_data.get('history_present_illness', 'Not documented')}
+        {_clip(patient_data.get('history_present_illness', 'Not documented'), 3500)}
         
         Review of Systems (ROS):
-        {json.dumps(patient_data.get('review_systems', {}), indent=2)}
+        {_clip(ros_json, 3500)}
         
         Medical History:
-        - Social History: {patient_data.get('social_history', 'Not documented')}
-        - Medical History: {patient_data.get('medical_history', 'Not documented')}
-        - Surgical History: {patient_data.get('surgical_history', 'Not documented')}
-        - Family History: {patient_data.get('family_history', 'Not documented')}
-        - Allergies: {patient_data.get('allergies', 'None known')}
-        - Current Medications: {patient_data.get('medications', 'None')}
+        - Social History: {_clip(patient_data.get('social_history', 'Not documented'))}
+        - Medical History: {_clip(patient_data.get('medical_history', 'Not documented'))}
+        - Surgical History: {_clip(patient_data.get('surgical_history', 'Not documented'))}
+        - Family History: {_clip(patient_data.get('family_history', 'Not documented'))}
+        - Allergies: {_clip(patient_data.get('allergies', 'None known'))}
+        - Current Medications: {_clip(patient_data.get('medications', 'None'))}
         
         Physical Examination Findings:
-        {json.dumps(patient_data.get('examination', {}), indent=2)}
+        {_clip(exam_json, 3500)}
         
         Current Working Diagnosis:
-        {patient_data.get('working_diagnosis', 'Not established')}
+        {_clip(patient_data.get('working_diagnosis', 'Not established'))}
         
         Please create a well-structured patient summary that includes:
         1. Patient demographics and presenting complaint
@@ -3251,20 +3291,16 @@ Output requirements:
         Format the summary in professional medical narrative style, suitable for inclusion in a medical record.
         Be concise but comprehensive, focusing on clinically relevant information.
         """
-        
-        try:
-            client = AIService.get_client()
-            response = client.chat.completions.create(
-                model=AIService.MODELS['primary'],
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1200,
-                timeout=30
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            current_app.logger.error(f"AI Summary Generation Error: {str(e)}")
-            return None
+
+        client = AIService.get_client()
+        response = client.chat.completions.create(
+            model=AIService.MODELS['primary'],
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=900,
+            timeout=summary_timeout,
+        )
+        return response.choices[0].message.content
 
     @staticmethod
     def generate_diagnosis_from_summary(clinical_summary, patient_info=None):
@@ -18438,11 +18474,67 @@ def admin_load_dosage_index_book():
 @app.before_request
 def log_request_info():
     """Log detailed information about each request"""
-    if request.method == 'POST':
-        app.logger.info(f"POST Request to: {request.path}")
-        app.logger.info(f"Headers: {dict(request.headers)}")
-        app.logger.info(f"Form data: {dict(request.form)}")
-        app.logger.info(f"JSON data: {request.get_json(silent=True)}")
+    if request.method != 'POST':
+        return
+
+    # Avoid logging PHI and secrets (cookies, CSRF tokens, full form bodies) in production.
+    # Large request bodies also create noisy logs and can contribute to memory pressure.
+    verbose = bool(app.debug or current_app.config.get('LOG_VERBOSE_REQUESTS'))
+
+    def _clip(value, limit: int = 250) -> str:
+        if value is None:
+            return ""
+        text = value if isinstance(value, str) else str(value)
+        text = text.strip()
+        if len(text) <= limit:
+            return text
+        return text[:limit] + "..."
+
+    # Minimal, safe log line (always on)
+    patient_id = request.form.get('patient_id')
+    section = request.form.get('section')
+    app.logger.info(
+        "POST %s patient_id=%s section=%s content_length=%s",
+        request.path,
+        patient_id or "-",
+        section or "-",
+        request.content_length or "-",
+    )
+
+    if not verbose:
+        return
+
+    sensitive_headers = {
+        'cookie',
+        'authorization',
+        'x-csrftoken',
+        'x-csrf-token',
+    }
+    headers = {
+        k: _clip(v, 500)
+        for k, v in request.headers.items()
+        if k.lower() not in sensitive_headers
+    }
+    app.logger.info(f"Headers (redacted): {headers}")
+
+    # Log only a small subset of form/json fields to avoid PHI leakage.
+    form_preview = {
+        k: _clip(v)
+        for k, v in request.form.items()
+        if k.lower() in {'patient_id', 'section', 'active_tab', 'action'}
+    }
+    if form_preview:
+        app.logger.info(f"Form preview: {form_preview}")
+
+    json_data = request.get_json(silent=True)
+    if isinstance(json_data, dict):
+        json_preview = {
+            k: _clip(v)
+            for k, v in json_data.items()
+            if str(k).lower() in {'patient_id', 'section', 'active_tab', 'action'}
+        }
+        if json_preview:
+            app.logger.info(f"JSON preview: {json_preview}")
         
 # Admin Patient Management Routes
 @app.route('/admin/patients', methods=['GET'])
@@ -23197,15 +23289,15 @@ def patient_summary(patient_id):
                     'message': 'AI summary generated successfully'
                 })
 
-            except APITimeoutError:
+            except (APITimeoutError, httpx.TimeoutException, TimeoutError):
                 db.session.rollback()
                 current_app.logger.error('AI Summary Generation Error: Request timed out.', exc_info=True)
                 return jsonify({
                     'success': False,
                     'error': 'AI service timeout. Please try again in a moment.'
-                }), 503
+                }), 504
 
-            except APIError as e:
+            except (APIConnectionError, APIError) as e:
                 db.session.rollback()
                 current_app.logger.error(f"AI Summary Generation Error: {str(e)}", exc_info=True)
                 return jsonify({
@@ -23880,6 +23972,11 @@ def doctor_new_patient():
     except Exception:
         controlled_drugs = []
     services = Service.query.all()
+
+    preset_patient_type = (request.args.get('patient_type') or '').strip().upper()
+    if preset_patient_type not in {'OP', 'IP'}:
+        preset_patient_type = ''
+    lock_patient_type = str(request.args.get('lock_patient_type') or '').strip() in {'1', 'true', 'True', 'yes', 'on'}
     
     return render_template('doctor/new_patient.html',
         lab_tests=lab_tests,
@@ -23887,7 +23984,9 @@ def doctor_new_patient():
         drugs=drugs,
         controlled_drugs=controlled_drugs,
         services=services,
-        current_date=date.today().strftime('%Y-%m-%d')
+        current_date=date.today().strftime('%Y-%m-%d'),
+        preset_patient_type=preset_patient_type,
+        lock_patient_type=lock_patient_type,
     )
 
 # AI Assistant for diagnosis and treatment suggestions
@@ -24684,6 +24783,31 @@ def ai_generate_summary():
         db.session.commit()
 
         return jsonify({'success': True, 'summary_text': summary_text})
+
+    except (APITimeoutError, httpx.TimeoutException, TimeoutError):
+        db.session.rollback()
+        current_app.logger.error('AI summary generation timeout.', exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'AI service timeout. Please try again in a moment.'
+        }), 504
+
+    except (APIConnectionError, APIError) as e:
+        db.session.rollback()
+        current_app.logger.error(f"AI summary generation upstream error: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'AI service error. Please try again later.'
+        }), 502
+
+    except ValueError as e:
+        # Typically configuration issues like missing DEEPSEEK_API_KEY
+        db.session.rollback()
+        current_app.logger.error(f"AI summary generation configuration error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'AI service is not configured. Contact administrator.'
+        }), 503
 
     except Exception as e:
         db.session.rollback()

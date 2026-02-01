@@ -8,9 +8,19 @@
       <div class="text-muted small">Quick view of patients in this category.</div>
     </div>
     <div class="d-flex gap-2">
+      {% if category == 'outpatients' %}
+        <a class="btn btn-success" href="{{ url_for('doctor_new_patient', patient_type='OP', lock_patient_type=1) }}">Add New Patient</a>
+      {% elif category == 'inpatients' %}
+        <a class="btn btn-success" href="{{ url_for('doctor_new_patient', patient_type='IP', lock_patient_type=1) }}">Add New Patient</a>
+      {% endif %}
       <a class="btn btn-outline-secondary" href="{{ url_for('doctor_patients') }}">All Patients</a>
       <a class="btn btn-primary" href="{{ url_for('doctor_dashboard') }}">Dashboard</a>
     </div>
+  </div>
+
+  <div id="completeAlert" class="alert alert-warning alert-dismissible fade d-none" role="alert">
+    <div id="completeAlertBody"></div>
+    <button type="button" class="btn-close" aria-label="Close" onclick="hideCompleteAlert()"></button>
   </div>
 
   <div class="card shadow-sm">
@@ -54,18 +64,40 @@
                   </td>
                   <td class="text-end">
                     <div class="d-flex justify-content-end gap-2 flex-wrap">
-                      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('doctor_patient_details', patient_id=p.id) }}">Open</a>
+                      {% if category in ['outpatients', 'inpatients'] %}
+                        <div class="btn-group">
+                          <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="btn btn-sm btn-primary">View</a>
+                          {% if category == 'outpatients' %}
+                            <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ p.id }}')">Complete</button>
+                          {% else %}
+                            {% if p.discharge_state == 'pending' %}
+                              <button class="btn btn-sm btn-secondary" disabled>Pending discharge</button>
+                            {% else %}
+                              <button class="btn btn-sm btn-warning" onclick="completeTreatment('{{ p.id }}')">Request Discharge</button>
+                            {% endif %}
+                          {% endif %}
+                          <button class="btn btn-sm btn-info" onclick="viewSections('{{ p.id }}')">Sections</button>
+                          <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ p.id }}')">Delete</button>
+                        </div>
 
-                      {% if category == 'inpatients' %}
-                        <form method="POST" action="{{ url_for('doctor_request_discharge', patient_id=p.id) }}" class="d-inline">
-                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                          <button class="btn btn-sm btn-warning" type="submit">Request Discharge</button>
-                        </form>
+                      {% elif category in ['old_outpatients', 'old_inpatients'] %}
+                        <div class="btn-group">
+                          <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="btn btn-sm btn-primary">View</a>
+                          <button class="btn btn-sm btn-warning" onclick="readmitPatient('{{ p.id }}')">Readmit</button>
+                          <button class="btn btn-sm btn-info" onclick="viewSections('{{ p.id }}')">Sections</button>
+                        </div>
+
                       {% elif category == 'discharged' %}
-                        <form method="POST" action="{{ url_for('doctor_confirm_discharge', patient_id=p.id) }}" class="d-inline" onsubmit="return confirm('Confirm discharge? This will complete the inpatient record.');">
-                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                          <button class="btn btn-sm btn-success" type="submit">Confirm Discharge</button>
-                        </form>
+                        <div class="btn-group">
+                          <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="btn btn-sm btn-primary">View</a>
+                          <button class="btn btn-sm btn-info" onclick="viewSections('{{ p.id }}')">Sections</button>
+                          <form method="POST" action="{{ url_for('doctor_confirm_discharge', patient_id=p.id) }}" class="d-inline" onsubmit="return confirm('Confirm discharge? This will complete the inpatient record.');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-success" type="submit">Confirm Discharge</button>
+                          </form>
+                        </div>
+                      {% else %}
+                        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('doctor_patient_details', patient_id=p.id) }}">Open</a>
                       {% endif %}
                     </div>
                   </td>
@@ -82,4 +114,136 @@
     </div>
   </div>
 </div>
+
+<script>
+function getCsrfToken() {
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  return meta ? meta.getAttribute('content') : '';
+}
+
+function showCompleteAlert(message, level) {
+  const alertEl = document.getElementById('completeAlert');
+  const bodyEl = document.getElementById('completeAlertBody');
+  if (!alertEl || !bodyEl) return;
+
+  const cls = (level === 'danger') ? 'alert-danger'
+      : (level === 'success') ? 'alert-success'
+      : (level === 'info') ? 'alert-info'
+      : 'alert-warning';
+
+  alertEl.classList.remove('alert-warning', 'alert-danger', 'alert-success', 'alert-info');
+  alertEl.classList.add(cls);
+  bodyEl.textContent = message;
+  alertEl.classList.remove('d-none');
+  alertEl.classList.add('show');
+  try { alertEl.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+}
+
+function hideCompleteAlert() {
+  const alertEl = document.getElementById('completeAlert');
+  if (!alertEl) return;
+  alertEl.classList.remove('show');
+  alertEl.classList.add('d-none');
+}
+
+function completeTreatment(patientId) {
+  if (!confirm('Complete treatment for this patient?')) return;
+
+  fetch(`/doctor/patient/${patientId}/complete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': getCsrfToken(),
+    },
+    body: JSON.stringify({})
+  })
+  .then(async (res) => {
+    let data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+
+    if (res.ok && data.success) {
+      location.reload();
+      return;
+    }
+
+    if (data && data.ward_stay_due) {
+      const w = data.ward_stay_due;
+      const dailyRate = (w.daily_rate !== undefined && w.daily_rate !== null) ? Number(w.daily_rate) : null;
+      const amount = (w.amount !== undefined && w.amount !== null) ? Number(w.amount) : null;
+      const days = (w.days !== undefined && w.days !== null) ? Number(w.days) : null;
+
+      const msg = [
+        'Cannot discharge: ward stay charges are unpaid.',
+        `Ward: ${w.ward_name || '-'}`,
+        `Bed: ${w.bed_number || '-'}`,
+        `Due: ${days !== null && !Number.isNaN(days) ? days : '-'} day(s) (${w.start_date || '-'} to ${w.end_date || '-'})`,
+        `Rate: ${dailyRate !== null && !Number.isNaN(dailyRate) ? dailyRate.toFixed(2) : '-'}`,
+        `Amount: ${amount !== null && !Number.isNaN(amount) ? amount.toFixed(2) : '-'}`,
+        'Please ask reception to bill/pay the ward stay, then try again.'
+      ].join(' | ');
+      showCompleteAlert(msg, 'warning');
+      return;
+    }
+
+    showCompleteAlert((data && data.error) ? data.error : 'Error completing treatment', 'danger');
+  })
+  .catch(() => {
+    showCompleteAlert('Network error completing treatment', 'danger');
+  });
+}
+
+function viewSections(patientId) {
+  fetch(`/doctor/patient/${patientId}/view_sections`, {
+    method: 'GET',
+    headers: { 'X-CSRFToken': getCsrfToken() }
+  })
+  .then((response) => response.json())
+  .then((data) => {
+    if (data.success) {
+      alert(`Sections:\nProgression: ${data.sections.progression}\nFindings: ${data.sections.findings}\nPrescriptions: ${data.sections.prescriptions}`);
+    } else {
+      alert(`Error: ${data.error}`);
+    }
+  })
+  .catch(() => alert('Error loading sections'));
+}
+
+function confirmDelete(patientId) {
+  if (!confirm('Are you sure you want to delete this patient?')) return;
+
+  fetch(`/doctor/patient/${patientId}/delete`, {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': getCsrfToken() }
+  })
+  .then((response) => response.json())
+  .then((data) => {
+    if (data.success) {
+      alert(data.message);
+      location.reload();
+    } else {
+      alert(`Error: ${data.error}`);
+    }
+  })
+  .catch(() => alert('Error deleting patient'));
+}
+
+function readmitPatient(patientId) {
+  if (!confirm('Readmit this patient?')) return;
+
+  fetch('/doctor/patient/readmit', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'X-CSRFToken': getCsrfToken(),
+    },
+    body: `patient_id=${encodeURIComponent(patientId)}`
+  })
+  .then((res) => res.json())
+  .then((data) => {
+    if (data.success) location.reload();
+    else alert(data.error || 'Error readmitting patient');
+  })
+  .catch(() => alert('Error readmitting patient'));
+}
+</script>
 {% endblock %}

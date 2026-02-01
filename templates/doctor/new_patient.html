@@ -651,6 +651,10 @@ This summary will help AI generate accurate diagnosis suggestions in the next se
 
 <script>
 $(document).ready(function() {
+    // Optional preset coming from OP/IP pages (keeps existing wizard flow intact)
+    const MMC_PRESET_PATIENT_TYPE = {{ (preset_patient_type or '')|tojson }};
+    const MMC_LOCK_PATIENT_TYPE = {{ (lock_patient_type or False)|tojson }};
+
     // Function to get CSRF token
     function getCSRFToken() {
         return $('input[name="csrf_token"]').val();
@@ -779,6 +783,20 @@ $(document).ready(function() {
             $('#patient_number').val('');
         }
     });
+
+    // Apply preset after handlers are registered but before draft restore runs.
+    // Draft restore might already set patient_type; we only set preset if empty.
+    (function applyPatientTypePreset() {
+        if (!MMC_PRESET_PATIENT_TYPE) return;
+        const current = String($('#patient_type').val() || '').trim();
+        if (!current) {
+            $('#patient_type').val(MMC_PRESET_PATIENT_TYPE);
+        }
+        if (MMC_LOCK_PATIENT_TYPE) {
+            $('#patient_type').prop('disabled', true);
+        }
+        try { $('#patient_type').trigger('change'); } catch (e) { /* ignore */ }
+    })();
 
     // Calculate BMI when weight or height changes
     $('#weight, #height').on('input', function() {

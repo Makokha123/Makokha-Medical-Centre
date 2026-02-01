@@ -72,46 +72,46 @@
 
     <!-- Navigation Tabs -->
     <div class="navigation-tabs">
-        <div class="tab {% if active_tab == 'biodata' %}active{% endif %}" data-tab="biodata">
+        <a class="tab {% if active_tab == 'biodata' %}active{% endif %}" data-tab="biodata" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='biodata') }}">
             <span class="tab-number">1</span>
             <span class="tab-label">Biodata</span>
-        </div>
-        <div class="tab {% if active_tab == 'chief-complaint' %}active{% endif %}" data-tab="chief-complaint">
+        </a>
+        <a class="tab {% if active_tab == 'chief-complaint' %}active{% endif %}" data-tab="chief-complaint" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='chief-complaint') }}">
             <span class="tab-number">2</span>
             <span class="tab-label">Chief Complaint</span>
-        </div>
-        <div class="tab {% if active_tab == 'review-systems' %}active{% endif %}" data-tab="review-systems">
+        </a>
+        <a class="tab {% if active_tab == 'review-systems' %}active{% endif %}" data-tab="review-systems" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='review-systems') }}">
             <span class="tab-number">3</span>
             <span class="tab-label">Review of Systems</span>
-        </div>
-        <div class="tab {% if active_tab == 'hpi' %}active{% endif %}" data-tab="hpi">
+        </a>
+        <a class="tab {% if active_tab == 'hpi' %}active{% endif %}" data-tab="hpi" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='hpi') }}">
             <span class="tab-number">4</span>
             <span class="tab-label">HPI</span>
-        </div>
-        <div class="tab {% if active_tab == 'history' %}active{% endif %}" data-tab="history">
+        </a>
+        <a class="tab {% if active_tab == 'history' %}active{% endif %}" data-tab="history" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='history') }}">
             <span class="tab-number">5</span>
             <span class="tab-label">SMHx</span>
-        </div>
-        <div class="tab {% if active_tab == 'examination' %}active{% endif %}" data-tab="examination">
+        </a>
+        <a class="tab {% if active_tab == 'examination' %}active{% endif %}" data-tab="examination" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='examination') }}">
             <span class="tab-number">6</span>
             <span class="tab-label">Examination</span>
-        </div>
-        <div class="tab {% if active_tab == 'summary' %}active{% endif %}" data-tab="summary">
+        </a>
+        <a class="tab {% if active_tab == 'summary' %}active{% endif %}" data-tab="summary" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='summary') }}">
             <span class="tab-number">7</span>
                 <span class="tab-label">Summary</span>
-        </div>
-        <div class="tab {% if active_tab == 'diagnosis' %}active{% endif %}" data-tab="diagnosis">
+        </a>
+        <a class="tab {% if active_tab == 'diagnosis' %}active{% endif %}" data-tab="diagnosis" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='diagnosis') }}">
             <span class="tab-number">8</span>
             <span class="tab-label">Diagnosis</span>
-        </div>
-        <div class="tab {% if active_tab == 'investigations' %}active{% endif %}" data-tab="investigations">
+        </a>
+        <a class="tab {% if active_tab == 'investigations' %}active{% endif %}" data-tab="investigations" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='investigations') }}">
             <span class="tab-number">9</span>
                 <span class="tab-label">Investigations</span>
-        </div>
-        <div class="tab {% if active_tab == 'management' %}active{% endif %}" data-tab="management">
+        </a>
+        <a class="tab {% if active_tab == 'management' %}active{% endif %}" data-tab="management" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='management') }}">
             <span class="tab-number">10</span>
             <span class="tab-label">Management</span>
-        </div>
+        </a>
     </div>
 
     <!-- Biodata Tab -->
@@ -2196,6 +2196,8 @@
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     min-width: 72px;
     position: relative;
+    text-decoration: none;
+    color: inherit;
 }
 
 .tab:hover {
@@ -3000,8 +3002,14 @@ class DoctorPatientManagement {
     setupEventListeners() {
         // Tab switching
         document.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', () => {
+            tab.addEventListener('click', (e) => {
+                if (e && typeof e.preventDefault === 'function') e.preventDefault();
                 const tabId = tab.getAttribute('data-tab');
+                if (!tabId) {
+                    const href = tab.getAttribute('href');
+                    if (href) window.location.href = href;
+                    return;
+                }
                 this.switchTab(tabId);
             });
         });
@@ -3768,6 +3776,15 @@ class DoctorPatientManagement {
             } catch (e) {
                 // Non-blocking
             }
+        } else {
+            // As a safe fallback, navigate using the tab link (works even if JS state is inconsistent)
+            try {
+                const el = document.querySelector(`[data-tab="${tabId}"]`);
+                const href = el ? el.getAttribute('href') : null;
+                if (href) window.location.href = href;
+            } catch (e) {
+                // Non-blocking
+            }
         }
     }
 
@@ -4314,7 +4331,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Add smooth scrolling for tab navigation
     document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', function() {
+        tab.addEventListener('click', function(e) {
+            if (e && typeof e.preventDefault === 'function') e.preventDefault();
             const tabContent = document.getElementById(this.getAttribute('data-tab') + '-tab');
             if (tabContent) {
                 tabContent.scrollIntoView({ behavior: 'smooth', block: 'start' });
