@@ -41,7 +41,7 @@
                             <td>{{ patient.name }}</td>
                             <td>{{ patient.age }}</td>
                             <td>{{ patient.gender }}</td>
-                            <td>{{ patient.updated_at.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ patient.updated_at|eat_time('%Y-%m-%d') }}</td>
                             <td>
                                 <div class="btn-group">
                                     <a href="{{ url_for('patient_medical_record', patient_id=patient.id) }}" class="btn btn-sm btn-info">

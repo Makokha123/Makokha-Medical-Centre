@@ -55,7 +55,7 @@
                         <td>{{ patient.decrypted_name }}</td>
                         <td>{{ patient.age or 'N/A' }}</td>
                         <td>{{ patient.gender or 'N/A' }}</td>
-                        <td>{{ patient.updated_at.strftime('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
+                        <td>{{ patient.updated_at|eat_time('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
                         <td>
                             <div class="btn-group">
                                 <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
@@ -104,7 +104,7 @@
                         <td>{{ patient.decrypted_name }}</td>
                         <td>{{ patient.age or 'N/A' }}</td>
                         <td>{{ patient.gender or 'N/A' }}</td>
-                        <td>{{ patient.updated_at.strftime('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
+                        <td>{{ patient.updated_at|eat_time('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
                         <td>
                             <div class="btn-group">
                                 <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>

@@ -38,6 +38,10 @@ def get_eat_now():
     """Get current time in EAT (Africa/Nairobi)."""
     return datetime.now(EAT)
 
+def get_eat_today():
+    """Get current date in EAT (Africa/Nairobi)."""
+    return datetime.now(EAT).date()
+
 from sqlalchemy import create_engine, func, literal
 from sqlalchemy import case
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -120,7 +124,24 @@ def nl2br(value):
     escaped_value = escape(value)
     return Markup(escaped_value.replace('\\n', '<br>\\n'))
 
+def format_eat_time(dt, fmt='%Y-%m-%d %H:%M'):
+    """Format a datetime to EAT (East Africa Time) zone."""
+    if not dt:
+        return ''
+    try:
+        # If datetime is naive, assume it's already in EAT
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=EAT)
+        else:
+            # Convert to EAT if it has timezone info
+            dt = dt.astimezone(EAT)
+        return dt.strftime(fmt)
+    except Exception as e:
+        app.logger.error(f"Error formatting time: {e}")
+        return str(dt)
+
 app.jinja_env.filters['nl2br'] = nl2br
+app.jinja_env.filters['eat_time'] = format_eat_time
 
 
 
@@ -6574,7 +6595,7 @@ def login():
 
 @app.context_processor
 def inject_current_date():
-    return {'current_date': date.today().strftime('%Y-%m-%d')}
+    return {'current_date': get_eat_today().strftime('%Y-%m-%d')}
 
 @app.context_processor
 def inject_csrf_token():
@@ -23249,7 +23270,7 @@ def doctor_dashboard():
     # Count distinct patients who have a sale today (avoid cartesian product with Sales).
     today_patients = (
         db.session.query(func.count(func.distinct(Sale.patient_id)))
-        .filter(func.date(Sale.created_at) == date.today())
+        .filter(func.date(Sale.created_at) == get_eat_today())
         .scalar()
     ) or 0
     
@@ -23914,7 +23935,7 @@ def doctor_notifications_tca_today():
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    today = date.today()
+    today = get_eat_today()
     patients = Patient.query.filter(Patient.tca == today).order_by(Patient.updated_at.desc(), Patient.id.desc()).all()
 
     payload = []

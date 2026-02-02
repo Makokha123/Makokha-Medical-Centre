@@ -203,7 +203,7 @@
                         <td>{{ s.service.name }}</td>
                         <td>{{ s.performed_by_user.name if s.performed_by_user else 'N/A' }}</td>
                         <td>{{ s.notes or 'None' }}</td>
-                        <td>{{ s.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>{{ s.created_at|eat_time }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -278,7 +278,7 @@
                         {% for req in imaging_requests %}
                         <tr>
                             <td>{{ req.test.name }}</td>
-                            <td>{{ req.created_at.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ req.created_at|eat_time('%Y-%m-%d') }}</td>
                             <td>
                                 <span class="badge badge-{{ 'success' if req.status == 'completed' else 'warning' }}">
                                     {{ req.status }}
@@ -392,7 +392,7 @@
             <div class="modal-body">
                 <p><strong>Result:</strong> {{ req.result }}</p>
                 <p><strong>Notes:</strong> {{ req.notes or 'None' }}</p>
-                <p><strong>Date:</strong> {{ req.updated_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                <p><strong>Date:</strong> {{ req.updated_at|eat_time }}</p>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
