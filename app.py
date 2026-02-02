@@ -74,7 +74,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import zipfile
 import hashlib
-from sqlalchemy import text, bindparam
+from sqlalchemy import text
 import base64
 from apscheduler.schedulers.background import BackgroundScheduler
 from openai import OpenAI, APITimeoutError, APIError, APIConnectionError
@@ -199,14 +199,33 @@ from flask_socketio import SocketIO
 
 # Use eventlet in production (Render/gunicorn), threading in development
 async_mode = 'eventlet' if os.environ.get('RENDER') else 'threading'
+
+# Redis configuration for Socket.IO and message queue
+redis_url = os.getenv('REDIS_URL')
+if redis_url:
+    # Use Redis for production (enables multi-worker support)
+    message_queue = redis_url
+    app.logger.info(f"Socket.IO using Redis message queue")
+else:
+    message_queue = None
+    if os.environ.get('RENDER'):
+        app.logger.warning("Socket.IO running without Redis in production - multi-worker communication will not work")
+
+# Configure CORS properly - restrict in production
+allowed_origins = os.getenv('CORS_ORIGINS', '*').split(',')
+if allowed_origins == ['*']:
+    app.logger.warning("Socket.IO CORS set to allow all origins - restrict in production")
+
 socketio = SocketIO(
     app, 
-    cors_allowed_origins="*", 
+    cors_allowed_origins=allowed_origins, 
     async_mode=async_mode,
     logger=True, 
     engineio_logger=False,
     ping_timeout=60,
-    ping_interval=25
+    ping_interval=25,
+    message_queue=message_queue,
+    channel='flask-socketio'
 )
 
 auth_bp = Blueprint('auth', __name__)
@@ -616,18 +635,28 @@ class Message(db.Model):
     conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), nullable=True)
     sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     recipient_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    content = db.Column(db.Text, nullable=False)
-    message_type = db.Column(db.String(20), default='text')  # text, image, file
+    content = db.Column(db.Text)
+    message_type = db.Column(db.String(20), default='text')  # text, image, file, video, audio, voice
+    file_url = db.Column(db.String(500))
+    file_name = db.Column(db.String(255))
+    file_size = db.Column(db.Integer)
+    file_mime_type = db.Column(db.String(100))
     is_delivered = db.Column(db.Boolean, default=False)
     delivered_at = db.Column(db.DateTime)
     is_read = db.Column(db.Boolean, default=False)
     read_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=get_eat_now)
+    created_at = db.Column(db.DateTime, default=get_eat_now, index=True)
+    edited_at = db.Column(db.DateTime)
+    is_deleted = db.Column(db.Boolean, default=False)
+    deleted_at = db.Column(db.DateTime)
+    is_starred = db.Column(db.Boolean, default=False)
+    reply_to_id = db.Column(db.Integer, db.ForeignKey('messages.id'))
     
     # Relationships
     conversation = db.relationship('Conversation', back_populates='messages')
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_messages')
     recipient = db.relationship('User', foreign_keys=[recipient_id], backref='received_messages')
+    reply_to = db.relationship('Message', remote_side=[id], backref='replies')
     
     def __repr__(self):
         return f'<Message {self.message_id}>'
@@ -691,6 +720,193 @@ class TypingIndicator(db.Model):
         return f'<TypingIndicator conv={self.conversation_id} user={self.user_id}>'
 
 
+class GroupChat(db.Model):
+    """Stores group conversation metadata"""
+    __tablename__ = 'group_chats'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text)
+    avatar_url = db.Column(db.String(255))
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    last_message_at = db.Column(db.DateTime, default=get_eat_now)
+    is_active = db.Column(db.Boolean, default=True)
+    
+    # Relationships
+    creator = db.relationship('User', backref='created_groups')
+    members = db.relationship('GroupMember', back_populates='group', cascade='all, delete-orphan')
+    messages = db.relationship('GroupMessage', back_populates='group', cascade='all, delete-orphan')
+    
+    def __repr__(self):
+        return f'<GroupChat {self.name}>'
+
+
+class GroupMember(db.Model):
+    """Tracks group chat members and roles"""
+    __tablename__ = 'group_members'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('group_chats.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    role = db.Column(db.String(20), default='member')  # admin, moderator, member
+    joined_at = db.Column(db.DateTime, default=get_eat_now)
+    is_active = db.Column(db.Boolean, default=True)
+    
+    # Relationships
+    group = db.relationship('GroupChat', back_populates='members')
+    user = db.relationship('User', backref='group_memberships')
+    
+    def __repr__(self):
+        return f'<GroupMember user={self.user_id} group={self.group_id}>'
+
+
+class GroupMessage(db.Model):
+    """Messages in group chats"""
+    __tablename__ = 'group_messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    group_id = db.Column(db.Integer, db.ForeignKey('group_chats.id'), nullable=False)
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content = db.Column(db.Text)
+    message_type = db.Column(db.String(20), default='text')  # text, image, file, video, audio
+    file_url = db.Column(db.String(500))
+    file_name = db.Column(db.String(255))
+    file_size = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    edited_at = db.Column(db.DateTime)
+    is_deleted = db.Column(db.Boolean, default=False)
+    deleted_at = db.Column(db.DateTime)
+    reply_to_id = db.Column(db.Integer, db.ForeignKey('group_messages.id'))
+    
+    # Relationships
+    group = db.relationship('GroupChat', back_populates='messages')
+    sender = db.relationship('User', backref='group_messages_sent')
+    reply_to = db.relationship('GroupMessage', remote_side=[id], backref='replies')
+    reactions = db.relationship('MessageReaction', back_populates='group_message', cascade='all, delete-orphan')
+    
+    def __repr__(self):
+        return f'<GroupMessage {self.message_id}>'
+
+
+class MessageReaction(db.Model):
+    """Emoji reactions to messages"""
+    __tablename__ = 'message_reactions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('messages.id'))
+    group_message_id = db.Column(db.Integer, db.ForeignKey('group_messages.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    emoji = db.Column(db.String(10), nullable=False)  # Unicode emoji
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    
+    # Relationships
+    message = db.relationship('Message', backref='reactions')
+    group_message = db.relationship('GroupMessage', back_populates='reactions')
+    user = db.relationship('User', backref='message_reactions')
+    
+    def __repr__(self):
+        return f'<MessageReaction {self.emoji}>'
+
+
+class MessageEdit(db.Model):
+    """Track message edit history"""
+    __tablename__ = 'message_edits'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('messages.id'), nullable=False)
+    old_content = db.Column(db.Text, nullable=False)
+    edited_at = db.Column(db.DateTime, default=get_eat_now)
+    
+    # Relationships
+    message = db.relationship('Message', backref='edit_history')
+    
+    def __repr__(self):
+        return f'<MessageEdit message={self.message_id}>'
+
+
+class BlockedUser(db.Model):
+    """Track blocked users"""
+    __tablename__ = 'blocked_users'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    blocker_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    blocked_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    blocked_at = db.Column(db.DateTime, default=get_eat_now)
+    reason = db.Column(db.String(255))
+    
+    # Relationships
+    blocker = db.relationship('User', foreign_keys=[blocker_id], backref='blocked_users')
+    blocked = db.relationship('User', foreign_keys=[blocked_id], backref='blocked_by')
+    
+    def __repr__(self):
+        return f'<BlockedUser {self.blocker_id}->{self.blocked_id}>'
+
+
+class ConversationSettings(db.Model):
+    """User-specific conversation settings"""
+    __tablename__ = 'conversation_settings'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    is_muted = db.Column(db.Boolean, default=False)
+    is_archived = db.Column(db.Boolean, default=False)
+    is_pinned = db.Column(db.Boolean, default=False)
+    
+    # Relationships
+    conversation = db.relationship('Conversation', backref='settings')
+    user = db.relationship('User', backref='conversation_settings')
+    
+    def __repr__(self):
+        return f'<ConversationSettings conv={self.conversation_id} user={self.user_id}>'
+
+
+class MessageQueue(db.Model):
+    """Queue for offline message delivery"""
+    __tablename__ = 'message_queue'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(36), nullable=False)
+    recipient_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    message_type = db.Column(db.String(20), default='direct')  # direct, group
+    payload = db.Column(db.Text, nullable=False)  # JSON payload
+    attempts = db.Column(db.Integer, default=0)
+    max_attempts = db.Column(db.Integer, default=5)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    delivered_at = db.Column(db.DateTime)
+    
+    # Relationships
+    recipient = db.relationship('User', backref='queued_messages')
+    
+    def __repr__(self):
+        return f'<MessageQueue {self.message_id}>'
+
+
+class NotificationPreference(db.Model):
+    """User notification preferences"""
+    __tablename__ = 'notification_preferences'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
+    email_notifications = db.Column(db.Boolean, default=True)
+    push_notifications = db.Column(db.Boolean, default=True)
+    sms_notifications = db.Column(db.Boolean, default=False)
+    notification_sound = db.Column(db.Boolean, default=True)
+    message_preview = db.Column(db.Boolean, default=True)
+    do_not_disturb = db.Column(db.Boolean, default=False)
+    dnd_start_time = db.Column(db.Time)
+    dnd_end_time = db.Column(db.Time)
+    
+    # Relationships
+    user = db.relationship('User', backref='notification_preference')
+    
+    def __repr__(self):
+        return f'<NotificationPreference user={self.user_id}>'
+
+
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
 
@@ -698,6 +914,44 @@ class BackupRecord(db.Model):
     backup_id = db.Column(db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     timestamp = db.Column(db.DateTime, nullable=False, default=get_eat_now)
     backup_type = db.Column(db.String(20), nullable=False)  # 'manual', 'scheduled', 'disaster_recovery'
+
+
+# Create database indexes for communication system
+def create_communication_indexes():
+    """Create indexes for communication system tables for better query performance"""
+    with app.app_context():
+        try:
+            # Message indexes
+            db.session.execute(sa_text(
+                'CREATE INDEX IF NOT EXISTS idx_messages_sender_recipient ON messages(sender_id, recipient_id)'
+            ))
+            db.session.execute(sa_text(
+                'CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at DESC)'
+            ))
+            db.session.execute(sa_text(
+                'CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(recipient_id, is_read) WHERE is_read = false'
+            ))
+            
+            # Conversation indexes
+            db.session.execute(sa_text(
+                'CREATE INDEX IF NOT EXISTS idx_conversations_users ON conversations(user1_id, user2_id)'
+            ))
+            
+            # Group message indexes
+            db.session.execute(sa_text(
+                'CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id, created_at DESC)'
+            ))
+            
+            # Call log indexes
+            db.session.execute(sa_text(
+                'CREATE INDEX IF NOT EXISTS idx_call_logs_users ON call_logs(caller_id, receiver_id, started_at DESC)'
+            ))
+            
+            db.session.commit()
+            app.logger.info("Communication indexes created successfully")
+        except Exception as e:
+            app.logger.warning(f"Error creating indexes (may already exist): {e}")
+            db.session.rollback()
     status = db.Column(db.String(20), nullable=False, default='pending')  # 'pending', 'in_progress', 'completed', 'failed'
     size_bytes = db.Column(db.Integer)
     storage_location = db.Column(db.String(255))  # S3 path or local path
@@ -4543,19 +4797,19 @@ class RatibaRun(db.Model):
     schedule = db.relationship('RatibaSchedule', backref='runs')
 
 def generate_transaction_number():
-    return f"TXN-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def generate_receipt_number(prefix: str = 'RCPT'):
-    return f"{prefix}-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def generate_payment_intent_code(prefix: str = 'PI') -> str:
-    return f"{prefix}-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def generate_ratiba_code(prefix: str = 'RAT') -> str:
-    return f"{prefix}-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def _infer_department_for_user(user: 'User') -> str | None:
@@ -5121,7 +5375,7 @@ class Debt(db.Model):
 
 
 def generate_debt_number():
-    return f"DEBT-{get_eat_now().strftime('%Y%m%d')}-{generate_random_string(4)}"
+    return f"DEBT-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
 class Expense(db.Model):
     __tablename__ = 'expenses'
@@ -5152,7 +5406,7 @@ class Expense(db.Model):
         return self.expense_type
 
 def generate_expense_number():
-    return f"EXP-{get_eat_now().strftime('%Y%m%d')}-{generate_random_string(4)}"
+    return f"EXP-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
 class Purchase(db.Model):
     __tablename__ = 'purchases'
@@ -5169,7 +5423,7 @@ class Purchase(db.Model):
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 def generate_purchase_number():
-    return f"PUR-{get_eat_now().strftime('%Y%m%d')}-{generate_random_string(4)}"
+    return f"PUR-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
 class Employee(db.Model):
     __tablename__ = 'employees'
@@ -5228,7 +5482,7 @@ class Payroll(db.Model):
 
 
 def generate_payroll_number():
-    return f"PAY-{get_eat_now().strftime('%Y%m%d')}-{generate_random_string(4)}"
+    return f"PAY-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
 class Debtor(db.Model):
     __tablename__ = 'debtor'
@@ -5732,7 +5986,7 @@ class PurchaseOrderItem(db.Model):
 
 
 def generate_insurance_claim_number():
-    return f"CLM-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"CLM-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def _ensure_insurance_claims_schema_best_effort():
@@ -6369,15 +6623,15 @@ def generate_patient_number(patient_type):
     return f"{prefix}MNC{new_seq:03d}"
 
 def generate_sale_number():
-    now = get_eat_now()
+    now = datetime.now()
     return f"SALE-{now.strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
 
 def generate_bulk_sale_number():
-    now = get_eat_now()
+    now = datetime.now()
     return f"BULK-{now.strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
 
 def generate_individual_sale_number():
-    now = get_eat_now()
+    now = datetime.now()
     return f"ITEM-{now.strftime('%Y%m%d')}-{random.randint(100, 999)}"
 
 def database_is_sqlite():
@@ -7323,7 +7577,7 @@ def admin_dashboard():
         ).scalar() or 0
         
         # UNIVERSAL FIX: Use extract for month and year - works on all databases
-        current_date = get_eat_now()
+        current_date = datetime.now()
         monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.extract('year', Sale.created_at) == current_date.year,
             func.extract('month', Sale.created_at) == current_date.month
@@ -8220,7 +8474,7 @@ def manage_drugs():
         query = query.where(Drug.remaining_quantity < 10)
     elif filter_type == 'expiring_soon':
         # Drugs expiring in the next 30 days or already expired
-        today = get_eat_today()
+        today = datetime.now().date()
         thirty_days_later = today + timedelta(days=30)
         query = query.where(Drug.expiry_date <= thirty_days_later).order_by(Drug.expiry_date)
     elif filter_type == 'out_of_stock':
@@ -8228,7 +8482,7 @@ def manage_drugs():
         query = query.where(Drug.remaining_quantity <= 0)
     elif filter_type == 'expired':
         # Only expired drugs
-        today = get_eat_today()
+        today = datetime.now().date()
         query = query.where(Drug.expiry_date < today)
     
     # Execute the query
@@ -8239,7 +8493,7 @@ def manage_drugs():
                          drugs=drugs, 
                          total_value=total_value, 
                          current_filter=filter_type,
-                         today=get_eat_today())
+                         today=datetime.now().date())
 
 @app.route('/admin/drugs/<int:drug_id>')
 def get_drug(drug_id):
@@ -8259,8 +8513,8 @@ def get_drug(drug_id):
         'sold_quantity': drug.sold_quantity,
         'expiry_date': drug.expiry_date.strftime('%Y-%m-%d'),
         'remaining_quantity': drug.remaining_quantity,
-        'is_expired': drug.expiry_date < get_eat_today(),
-        'expires_soon': drug.expiry_date <= (get_eat_today() + timedelta(days=30))
+        'is_expired': drug.expiry_date < datetime.now().date(),
+        'expires_soon': drug.expiry_date <= (datetime.now().date() + timedelta(days=30))
     })
 
 
@@ -8490,13 +8744,13 @@ def manage_controlled_drugs():
     if filter_type == 'low_stock':
         query = query.where(ControlledDrug.remaining_quantity < 10)
     elif filter_type == 'expiring_soon':
-        today = get_eat_today()
+        today = datetime.now().date()
         thirty_days_later = today + timedelta(days=30)
         query = query.where(ControlledDrug.expiry_date <= thirty_days_later).order_by(ControlledDrug.expiry_date)
     elif filter_type == 'out_of_stock':
         query = query.where(ControlledDrug.remaining_quantity <= 0)
     elif filter_type == 'expired':
-        today = get_eat_today()
+        today = datetime.now().date()
         query = query.where(ControlledDrug.expiry_date < today)
 
     controlled_drugs = db.session.execute(query).scalars().all()
@@ -8508,8 +8762,8 @@ def manage_controlled_drugs():
         controlled_drugs=controlled_drugs,
         total_value=total_value,
         current_filter=filter_type,
-        today=get_eat_today(),
-        expires_soon_cutoff=get_eat_today() + timedelta(days=30),
+        today=datetime.now().date(),
+        expires_soon_cutoff=datetime.now().date() + timedelta(days=30),
     )
 
 
@@ -8534,8 +8788,8 @@ def get_controlled_drug(controlled_drug_id):
         'sold_quantity': drug.sold_quantity,
         'expiry_date': drug.expiry_date.strftime('%Y-%m-%d'),
         'remaining_quantity': drug.remaining_quantity,
-        'is_expired': drug.expiry_date < get_eat_today(),
-        'expires_soon': drug.expiry_date <= (get_eat_today() + timedelta(days=30)),
+        'is_expired': drug.expiry_date < datetime.now().date(),
+        'expires_soon': drug.expiry_date <= (datetime.now().date() + timedelta(days=30)),
     })
 
 
@@ -13211,7 +13465,7 @@ def budget_variance_report():
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
-        fiscal_year = request.args.get('fiscal_year', str(get_eat_now().year), type=str)
+        fiscal_year = request.args.get('fiscal_year', str(datetime.now().year), type=str)
         month_str = (request.args.get('month') or '').strip() or None
         month_first = _parse_year_month(month_str) if month_str else None
         
@@ -16731,7 +16985,7 @@ def create_purchase_order():
         unit_prices = request.form.getlist('item_unit_price')
         
         po = PurchaseOrder(
-            po_number=f"PO-{int(get_eat_now().timestamp())}",
+            po_number=f"PO-{int(datetime.now().timestamp())}",
             vendor_id=vendor_id,
             date_ordered=get_eat_now(),
             notes=notes,
@@ -22473,7 +22727,7 @@ def process__cart_sale():
                 return jsonify({'success': False, 'error': f'Missing unit_price in item {i+1}'}), 400
         
         # Generate sale numbers
-        sale_number = f"SALE-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+        sale_number = f"SALE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
         
         # Calculate total amount
         total_amount = sum(float(item.get('unit_price', 0)) * int(item.get('quantity', 0)) for item in items)
@@ -22548,7 +22802,7 @@ def process__cart_sale():
         
         # Create transaction record
         transaction = Transaction(
-            transaction_number=f"TXN-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}",
+            transaction_number=f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}",
             transaction_type='sale',
             amount=total_amount,
             user_id=current_user.id,
@@ -22588,7 +22842,7 @@ def process__cart_sale():
                 'pharmacist/receipt.html',
                 sale=sale_for_receipt,
                 related_sales=related_sales,
-                now=get_eat_now(),
+                now=datetime.now(),
                 amount_given=amount_given,
                 change=change,
             )
@@ -22675,7 +22929,7 @@ def generate_receipt(sale_id):
         'pharmacist/receipt.html',
         sale=sale,
         related_sales=related_sales,
-        now=get_eat_now(),
+        now=datetime.now(),
         amount_given=None,
         change=None,
     )
@@ -22976,7 +23230,7 @@ def pharmacist_refund_alias():
 
 
 def generate_refund_number():
-    return f"REF-{get_eat_now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+    return f"REF-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
 
 @app.route('/pharmacist/refund/<int:refund_id>/receipt')
 @login_required
@@ -26275,241 +26529,6 @@ def _release_patient_bed_if_any(patient: 'Patient'):
         pass
 
 
-_IDENT_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-
-
-def _safe_ident(name: str) -> str:
-    """Return a safely-quoted SQL identifier.
-
-    We only allow standard unquoted identifiers and then quote them.
-    """
-    if not name or not _IDENT_RE.match(name):
-        raise ValueError(f'Unsafe SQL identifier: {name!r}')
-    return f'"{name}"'
-
-
-def _get_fk_edges_public_schema() -> dict:
-    """Build a mapping of parent_table -> list of fk edges.
-
-    Each edge is a dict: {child_table, child_column, parent_table, parent_column}.
-    """
-    rows = db.session.execute(
-        text(
-            """
-            SELECT
-                tc.table_name AS child_table,
-                kcu.column_name AS child_column,
-                ccu.table_name AS parent_table,
-                ccu.column_name AS parent_column
-            FROM information_schema.table_constraints AS tc
-            JOIN information_schema.key_column_usage AS kcu
-              ON tc.constraint_name = kcu.constraint_name
-             AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage AS ccu
-              ON ccu.constraint_name = tc.constraint_name
-             AND ccu.table_schema = tc.table_schema
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-              AND tc.table_schema = 'public'
-            """
-        )
-    ).fetchall()
-
-    fk_map: dict[str, list[dict]] = {}
-    for child_table, child_column, parent_table, parent_column in rows:
-        if not child_table or not child_column or not parent_table or not parent_column:
-            continue
-        fk_map.setdefault(parent_table, []).append(
-            {
-                'child_table': child_table,
-                'child_column': child_column,
-                'parent_table': parent_table,
-                'parent_column': parent_column,
-            }
-        )
-    return fk_map
-
-
-def _get_primary_key_column_public_schema(table_name: str) -> str | None:
-    rows = db.session.execute(
-        text(
-            """
-            SELECT kcu.column_name
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-              ON tc.constraint_name = kcu.constraint_name
-             AND tc.table_schema = kcu.table_schema
-            WHERE tc.constraint_type = 'PRIMARY KEY'
-              AND tc.table_schema = 'public'
-              AND tc.table_name = :t
-            ORDER BY kcu.ordinal_position
-            """
-        ),
-        {'t': table_name},
-    ).fetchall()
-    if not rows:
-        return None
-    return rows[0][0]
-
-
-def _select_ids_where_fk_in(child_table: str, child_pk_col: str, child_fk_col: str, parent_ids: list[int]) -> list[int]:
-    if not parent_ids:
-        return []
-
-    stmt = (
-        text(
-            f"SELECT {_safe_ident(child_pk_col)} FROM {_safe_ident(child_table)} "
-            f"WHERE {_safe_ident(child_fk_col)} IN :ids"
-        )
-        .bindparams(bindparam('ids', expanding=True))
-    )
-    rows = db.session.execute(stmt, {'ids': list(parent_ids)}).fetchall()
-    return [r[0] for r in rows if r and r[0] is not None]
-
-
-def _delete_where_fk_in(child_table: str, child_fk_col: str, parent_ids: list[int]) -> int:
-    if not parent_ids:
-        return 0
-    stmt = (
-        text(
-            f"DELETE FROM {_safe_ident(child_table)} "
-            f"WHERE {_safe_ident(child_fk_col)} IN :ids"
-        )
-        .bindparams(bindparam('ids', expanding=True))
-    )
-    res = db.session.execute(stmt, {'ids': list(parent_ids)})
-    return int(getattr(res, 'rowcount', 0) or 0)
-
-
-def _nullify_beds_for_patient(patient_id: int) -> int:
-    """Beds should not be deleted; detach them from the patient."""
-    now = get_eat_now()
-    res = db.session.execute(
-        text(
-            """
-            UPDATE beds
-               SET patient_id = NULL,
-                   status = 'available',
-                   released_at = :now
-             WHERE patient_id = :pid
-            """
-        ),
-        {'pid': patient_id, 'now': now},
-    )
-    return int(getattr(res, 'rowcount', 0) or 0)
-
-
-def _cascade_delete_from(
-    parent_table: str,
-    parent_pk_col: str,
-    parent_ids: list[int],
-    fk_map: dict,
-    pk_cache: dict,
-    visiting: list[str],
-    report: dict,
-    patient_id: int,
-):
-    """Recursively delete FK descendants (children first)."""
-    if not parent_ids:
-        return
-
-    edges = fk_map.get(parent_table, [])
-    if not edges:
-        return
-
-    visiting.append(parent_table)
-    try:
-        for edge in edges:
-            child_table = edge.get('child_table')
-            child_fk_col = edge.get('child_column')
-            edge_parent_col = edge.get('parent_column')
-
-            if not child_table or not child_fk_col or not edge_parent_col:
-                continue
-            if edge_parent_col != parent_pk_col:
-                continue
-
-            # Special cases: tables that should not be deleted.
-            if child_table == 'beds' and parent_table == 'patient':
-                updated = _nullify_beds_for_patient(patient_id)
-                if updated:
-                    report.setdefault('updated', {})['beds'] = report.setdefault('updated', {}).get('beds', 0) + updated
-                continue
-
-            # Prevent infinite recursion if a cycle exists.
-            if child_table in visiting:
-                deleted = _delete_where_fk_in(child_table, child_fk_col, parent_ids)
-                if deleted:
-                    report.setdefault('deleted', {})[child_table] = report.setdefault('deleted', {}).get(child_table, 0) + deleted
-                continue
-
-            child_pk_col = pk_cache.get(child_table)
-            if child_pk_col is None:
-                child_pk_col = _get_primary_key_column_public_schema(child_table)
-                pk_cache[child_table] = child_pk_col
-
-            child_ids: list[int] = []
-            if child_pk_col:
-                try:
-                    child_ids = _select_ids_where_fk_in(child_table, child_pk_col, child_fk_col, parent_ids)
-                except Exception:
-                    child_ids = []
-
-            if child_ids and child_pk_col:
-                _cascade_delete_from(
-                    parent_table=child_table,
-                    parent_pk_col=child_pk_col,
-                    parent_ids=child_ids,
-                    fk_map=fk_map,
-                    pk_cache=pk_cache,
-                    visiting=visiting,
-                    report=report,
-                    patient_id=patient_id,
-                )
-
-            deleted = _delete_where_fk_in(child_table, child_fk_col, parent_ids)
-            if deleted:
-                report.setdefault('deleted', {})[child_table] = report.setdefault('deleted', {}).get(child_table, 0) + deleted
-    finally:
-        visiting.pop()
-
-
-def _hard_delete_patient_everything(patient: 'Patient') -> dict:
-    """Hard-delete a patient and all FK-related rows.
-
-    This performs a best-effort cascading delete by traversing FK relationships
-    in the database. It is intended to satisfy strict FK constraints.
-    """
-    if not patient or not getattr(patient, 'id', None):
-        raise ValueError('Invalid patient')
-
-    report: dict = {'deleted': {}, 'updated': {}}
-    pid = int(patient.id)
-
-    # Always detach from a currently assigned bed first.
-    _release_patient_bed_if_any(patient)
-    _nullify_beds_for_patient(pid)
-
-    fk_map = _get_fk_edges_public_schema()
-    pk_cache: dict[str, str | None] = {'patient': 'id'}
-
-    _cascade_delete_from(
-        parent_table='patient',
-        parent_pk_col='id',
-        parent_ids=[pid],
-        fk_map=fk_map,
-        pk_cache=pk_cache,
-        visiting=[],
-        report=report,
-        patient_id=pid,
-    )
-
-    # Finally delete the patient row itself.
-    db.session.delete(patient)
-    report.setdefault('deleted', {})['patient'] = report.setdefault('deleted', {}).get('patient', 0) + 1
-
-    return report
-
-
 @app.route('/doctor/patient/<int:patient_id>/delete', methods=['DELETE'])
 @app.route('/doctor/patient/<int:patient_id>', methods=['DELETE'])
 @login_required
@@ -26526,12 +26545,27 @@ def delete_patient(patient_id):
         return jsonify({'success': False, 'error': 'You do not have access to this patient'}), 403
         
     try:
-        report = _hard_delete_patient_everything(patient)
+        # Detach bed first so deletes don't fail just due to bed occupancy.
+        _release_patient_bed_if_any(patient)
+        db.session.delete(patient)
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Patient deleted permanently.', 'report': report})
-    except IntegrityError as e:
+        return jsonify({'success': True, 'message': 'Patient deleted successfully.'})
+    except IntegrityError:
+        # FK constraints are expected in a medical system; fall back to a safe soft-delete.
         db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 409
+        try:
+            _release_patient_bed_if_any(patient)
+            patient.status = 'deleted'
+            patient.updated_at = get_eat_now()
+            db.session.commit()
+            return jsonify({
+                'success': True,
+                'soft_deleted': True,
+                'message': 'Patient removed from the list (archived).',
+            })
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'success': False, 'error': str(e)}), 500
     except DBAPIError as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -28972,7 +29006,7 @@ def api_drugs():
             query = query.filter(Drug.remaining_quantity <= 0)
         elif filter_type == 'expired':
             # Only expired drugs
-            today = get_eat_today()
+            today = datetime.now().date()
             query = query.filter(Drug.expiry_date < today)
         
         drugs = query.order_by(Drug.name).all()
@@ -29016,7 +29050,7 @@ def api_drugs():
 def get_drug_status(drug):
     remaining = drug.remaining_quantity
     expiry_date = drug.expiry_date
-    today = get_eat_today()
+    today = datetime.now().date()
     
     if remaining <= 0:
         return 'Out of Stock'
@@ -29145,7 +29179,7 @@ def _check_drug_stock_status(drug):
     # Check the stock status of a drug
     remaining = drug.remaining_quantity if hasattr(drug, 'remaining_quantity') else 0
     expiry_date = drug.expiry_date if hasattr(drug, 'expiry_date') else None
-    today = get_eat_today()
+    today = datetime.now().date()
     
     if remaining <= 0:
         return 'Out of Stock'
@@ -29265,7 +29299,7 @@ def _patient_has_paid_sale_for_imaging_test(*, patient_id, imaging_test) -> bool
 
 
 def generate_controlled_sale_number():
-    return f"CSALE-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"CSALE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def _allowed_prescription_file(filename: str) -> bool:
@@ -29297,7 +29331,7 @@ def _save_prescription_image(file_storage):
         raise ValueError('Unsupported file type. Prescription must be an image.')
 
     filename = secure_filename(file_storage.filename) or 'prescription.jpg'
-    stamp = get_eat_now().strftime('%Y%m%d%H%M%S')
+    stamp = datetime.now().strftime('%Y%m%d%H%M%S')
     unique = f"{stamp}_{random.randint(1000, 9999)}_{filename}"
 
     upload_dir = os.path.join(app.root_path, 'uploads', 'controlled_prescriptions')
@@ -29318,7 +29352,7 @@ def _save_prescription_sheet(file_storage):
         raise ValueError('Unsupported file type. Use jpg, png, webp, or pdf.')
 
     filename = secure_filename(file_storage.filename)
-    stamp = get_eat_now().strftime('%Y%m%d%H%M%S')
+    stamp = datetime.now().strftime('%Y%m%d%H%M%S')
     unique = f"{stamp}_{random.randint(1000, 9999)}_{filename}"
 
     upload_dir = os.path.join(app.root_path, 'uploads', 'controlled_prescriptions')
@@ -29410,7 +29444,7 @@ def api_controlled_drugs():
     elif filter_type == 'out_of_stock':
         query = query.filter(ControlledDrug.remaining_quantity <= 0)
     elif filter_type == 'expired':
-        today = get_eat_today()
+        today = datetime.now().date()
         query = query.filter(ControlledDrug.expiry_date < today)
     
     controlled_drugs = query.order_by(ControlledDrug.name).all()
@@ -29459,8 +29493,8 @@ def api_single_controlled_drug(controlled_drug_id):
         'sold_quantity': drug.sold_quantity,
         'expiry_date': drug.expiry_date.isoformat() if drug.expiry_date else None,
         'remaining_quantity': drug.remaining_quantity,
-        'is_expired': drug.expiry_date < get_eat_today(),
-        'expires_soon': drug.expiry_date <= (get_eat_today() + timedelta(days=30)),
+        'is_expired': drug.expiry_date < datetime.now().date(),
+        'expires_soon': drug.expiry_date <= (datetime.now().date() + timedelta(days=30)),
     })
 
 
@@ -29487,7 +29521,7 @@ def get_controlled_drug_status(drug):
     """Helper function to determine controlled drug status"""
     remaining = drug.remaining_quantity
     expiry_date = drug.expiry_date
-    today = get_eat_today()
+    today = datetime.now().date()
     
     if remaining <= 0:
         return 'Out of Stock'
@@ -32720,6 +32754,984 @@ def handle_webrtc_ice_candidate(data):
             'candidate': candidate,
             'call_id': call_id
         }, room=other_socket)
+
+
+# =============================================
+# ENHANCED COMMUNICATION FEATURES - FILE SHARING, MESSAGE MANAGEMENT, GROUP CHATS
+# =============================================
+
+@app.route('/api/communication/upload', methods=['POST'])
+@login_required
+def api_communication_upload():
+    """Upload file/media for messaging"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+        
+        # Validate file size (10MB limit)
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        if file_size > 10 * 1024 * 1024:
+            return jsonify({'success': False, 'error': 'File too large (max 10MB)'}), 400
+        file.seek(0)
+        
+        # Secure filename
+        filename = secure_filename(file.filename)
+        file_ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+        
+        # Determine message type
+        message_type = 'file'
+        if file_ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+            message_type = 'image'
+        elif file_ext in ['mp4', 'webm', 'mov']:
+            message_type = 'video'
+        elif file_ext in ['mp3', 'wav', 'ogg', 'm4a']:
+            message_type = 'audio'
+        
+        # Generate unique filename
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        upload_path = os.path.join(app.config['UPLOAD_FOLDER'], 'chat_media')
+        os.makedirs(upload_path, exist_ok=True)
+        
+        file_path = os.path.join(upload_path, unique_filename)
+        file.save(file_path)
+        
+        file_url = f"/static/uploads/chat_media/{unique_filename}"
+        
+        return jsonify({
+            'success': True,
+            'file_url': file_url,
+            'file_name': filename,
+            'file_size': file_size,
+            'message_type': message_type,
+            'mime_type': file.content_type
+        })
+    
+    except Exception as e:
+        app.logger.error(f"Error uploading file: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/message/<message_id>/edit', methods=['POST'])
+@login_required
+def api_communication_edit_message(message_id):
+    """Edit a message"""
+    try:
+        data = request.get_json()
+        new_content = data.get('content', '').strip()
+        
+        if not new_content:
+            return jsonify({'success': False, 'error': 'Content cannot be empty'}), 400
+        
+        message = Message.query.filter_by(message_id=message_id, sender_id=current_user.id).first()
+        if not message:
+            return jsonify({'success': False, 'error': 'Message not found or unauthorized'}), 404
+        
+        # Store edit history
+        edit_record = MessageEdit(
+            message_id=message.id,
+            old_content=message.content
+        )
+        db.session.add(edit_record)
+        
+        # Update message
+        message.content = new_content
+        message.edited_at = get_eat_now()
+        db.session.commit()
+        
+        # Notify via Socket.IO
+        receiver_socket = None
+        for sid, uid in active_sockets.items():
+            if uid == message.recipient_id:
+                receiver_socket = sid
+                break
+        
+        if receiver_socket:
+            socketio.emit('message_edited', {
+                'message_id': message.message_id,
+                'content': new_content,
+                'edited_at': message.edited_at.isoformat()
+            }, room=receiver_socket)
+        
+        return jsonify({'success': True, 'message': 'Message edited successfully'})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error editing message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/message/<message_id>/delete', methods=['POST'])
+@login_required
+def api_communication_delete_message(message_id):
+    """Delete a message"""
+    try:
+        message = Message.query.filter_by(message_id=message_id, sender_id=current_user.id).first()
+        if not message:
+            return jsonify({'success': False, 'error': 'Message not found or unauthorized'}), 404
+        
+        message.is_deleted = True
+        message.deleted_at = get_eat_now()
+        message.content = "[Message deleted]"
+        db.session.commit()
+        
+        # Notify via Socket.IO
+        receiver_socket = None
+        for sid, uid in active_sockets.items():
+            if uid == message.recipient_id:
+                receiver_socket = sid
+                break
+        
+        if receiver_socket:
+            socketio.emit('message_deleted', {
+                'message_id': message.message_id
+            }, room=receiver_socket)
+        
+        return jsonify({'success': True, 'message': 'Message deleted successfully'})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/message/<message_id>/react', methods=['POST'])
+@login_required
+def api_communication_react_message(message_id):
+    """Add emoji reaction to a message"""
+    try:
+        data = request.get_json()
+        emoji = data.get('emoji', '').strip()
+        
+        if not emoji:
+            return jsonify({'success': False, 'error': 'Emoji required'}), 400
+        
+        message = Message.query.filter_by(message_id=message_id).first()
+        if not message:
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+        
+        # Check if user already reacted with this emoji
+        existing = MessageReaction.query.filter_by(
+            message_id=message.id,
+            user_id=current_user.id,
+            emoji=emoji
+        ).first()
+        
+        if existing:
+            # Remove reaction
+            db.session.delete(existing)
+            action = 'removed'
+        else:
+            # Add reaction
+            reaction = MessageReaction(
+                message_id=message.id,
+                user_id=current_user.id,
+                emoji=emoji
+            )
+            db.session.add(reaction)
+            action = 'added'
+        
+        db.session.commit()
+        
+        # Get all reactions for this message
+        reactions = {}
+        for r in MessageReaction.query.filter_by(message_id=message.id).all():
+            if r.emoji not in reactions:
+                reactions[r.emoji] = []
+            reactions[r.emoji].append({'user_id': r.user_id, 'username': r.user.username})
+        
+        # Notify via Socket.IO
+        other_user_id = message.recipient_id if message.sender_id == current_user.id else message.sender_id
+        other_socket = None
+        for sid, uid in active_sockets.items():
+            if uid == other_user_id:
+                other_socket = sid
+                break
+        
+        if other_socket:
+            socketio.emit('message_reaction', {
+                'message_id': message.message_id,
+                'emoji': emoji,
+                'action': action,
+                'user_id': current_user.id,
+                'reactions': reactions
+            }, room=other_socket)
+        
+        return jsonify({'success': True, 'action': action, 'reactions': reactions})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error reacting to message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/message/<message_id>/star', methods=['POST'])
+@login_required
+def api_communication_star_message(message_id):
+    """Star/unstar a message"""
+    try:
+        message = Message.query.filter_by(message_id=message_id).first()
+        if not message:
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+        
+        # Only allow starring own messages or messages sent to user
+        if message.sender_id != current_user.id and message.recipient_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+        message.is_starred = not message.is_starred
+        db.session.commit()
+        
+        return jsonify({'success': True, 'is_starred': message.is_starred})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error starring message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/search', methods=['GET'])
+@login_required
+def api_communication_search():
+    """Search messages"""
+    try:
+        query = request.args.get('q', '').strip()
+        if not query:
+            return jsonify({'success': True, 'messages': []})
+        
+        # Search in messages where user is sender or recipient
+        messages = Message.query.filter(
+            or_(
+                Message.sender_id == current_user.id,
+                Message.recipient_id == current_user.id
+            ),
+            Message.content.ilike(f'%{query}%'),
+            Message.is_deleted == False
+        ).order_by(Message.created_at.desc()).limit(50).all()
+        
+        results = []
+        for msg in messages:
+            other_user = msg.recipient if msg.sender_id == current_user.id else msg.sender
+            results.append({
+                'message_id': msg.message_id,
+                'content': msg.content,
+                'created_at': msg.created_at.isoformat(),
+                'other_user': {
+                    'id': other_user.id,
+                    'username': other_user.username
+                }
+            })
+        
+        return jsonify({'success': True, 'messages': results})
+    
+    except Exception as e:
+        app.logger.error(f"Error searching messages: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/conversation/<int:other_user_id>/paginated', methods=['GET'])
+@login_required
+def api_communication_conversation_paginated(other_user_id):
+    """Get paginated messages"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 50))
+        before_id = request.args.get('before_id')  # Load messages before this message
+        
+        conversation = Conversation.query.filter(
+            or_(
+                and_(Conversation.user1_id == current_user.id, Conversation.user2_id == other_user_id),
+                and_(Conversation.user1_id == other_user_id, Conversation.user2_id == current_user.id)
+            )
+        ).first()
+        
+        if not conversation:
+            return jsonify({'success': True, 'messages': [], 'has_more': False})
+        
+        query = Message.query.filter_by(
+            conversation_id=conversation.id,
+            is_deleted=False
+        )
+        
+        if before_id:
+            before_msg = Message.query.filter_by(message_id=before_id).first()
+            if before_msg:
+                query = query.filter(Message.id < before_msg.id)
+        
+        messages = query.order_by(Message.created_at.desc()).limit(per_page + 1).all()
+        
+        has_more = len(messages) > per_page
+        if has_more:
+            messages = messages[:per_page]
+        
+        messages_data = []
+        for msg in reversed(messages):
+            msg_data = {
+                'message_id': msg.message_id,
+                'sender_id': msg.sender_id,
+                'recipient_id': msg.recipient_id,
+                'content': msg.content,
+                'message_type': msg.message_type,
+                'is_read': msg.is_read,
+                'created_at': msg.created_at.isoformat(),
+                'edited_at': msg.edited_at.isoformat() if msg.edited_at else None,
+                'is_starred': msg.is_starred
+            }
+            
+            if msg.file_url:
+                msg_data.update({
+                    'file_url': msg.file_url,
+                    'file_name': msg.file_name,
+                    'file_size': msg.file_size
+                })
+            
+            if msg.reply_to_id:
+                reply_to_msg = Message.query.get(msg.reply_to_id)
+                if reply_to_msg:
+                    msg_data['reply_to'] = {
+                        'message_id': reply_to_msg.message_id,
+                        'content': reply_to_msg.content[:100],
+                        'sender_id': reply_to_msg.sender_id
+                    }
+            
+            # Get reactions
+            reactions = {}
+            for r in MessageReaction.query.filter_by(message_id=msg.id).all():
+                if r.emoji not in reactions:
+                    reactions[r.emoji] = []
+                reactions[r.emoji].append(r.user_id)
+            msg_data['reactions'] = reactions
+            
+            messages_data.append(msg_data)
+        
+        return jsonify({'success': True, 'messages': messages_data, 'has_more': has_more})
+    
+    except Exception as e:
+        app.logger.error(f"Error fetching paginated messages: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/user/<int:user_id>/block', methods=['POST'])
+@login_required
+def api_communication_block_user(user_id):
+    """Block/unblock a user"""
+    try:
+        if user_id == current_user.id:
+            return jsonify({'success': False, 'error': 'Cannot block yourself'}), 400
+        
+        blocked = BlockedUser.query.filter_by(
+            blocker_id=current_user.id,
+            blocked_id=user_id
+        ).first()
+        
+        if blocked:
+            # Unblock
+            db.session.delete(blocked)
+            action = 'unblocked'
+        else:
+            # Block
+            blocked = BlockedUser(
+                blocker_id=current_user.id,
+                blocked_id=user_id
+            )
+            db.session.add(blocked)
+            action = 'blocked'
+        
+        db.session.commit()
+        
+        return jsonify({'success': True, 'action': action})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error blocking user: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/conversation/<int:conversation_id>/settings', methods=['POST'])
+@login_required
+def api_communication_conversation_settings(conversation_id):
+    """Update conversation settings (mute, archive, pin)"""
+    try:
+        data = request.get_json()
+        
+        conversation = Conversation.query.get_or_404(conversation_id)
+        
+        # Verify user is part of conversation
+        if conversation.user1_id != current_user.id and conversation.user2_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+        settings = ConversationSettings.query.filter_by(
+            conversation_id=conversation_id,
+            user_id=current_user.id
+        ).first()
+        
+        if not settings:
+            settings = ConversationSettings(
+                conversation_id=conversation_id,
+                user_id=current_user.id
+            )
+            db.session.add(settings)
+        
+        if 'is_muted' in data:
+            settings.is_muted = data['is_muted']
+        if 'is_archived' in data:
+            settings.is_archived = data['is_archived']
+        if 'is_pinned' in data:
+            settings.is_pinned = data['is_pinned']
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'settings': {
+                'is_muted': settings.is_muted,
+                'is_archived': settings.is_archived,
+                'is_pinned': settings.is_pinned
+            }
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error updating conversation settings: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# =============================================
+# GROUP CHAT ROUTES
+# =============================================
+
+@app.route('/api/communication/groups', methods=['GET'])
+@login_required
+def api_communication_groups():
+    """Get user's group chats"""
+    try:
+        memberships = GroupMember.query.filter_by(
+            user_id=current_user.id,
+            is_active=True
+        ).all()
+        
+        groups_data = []
+        for membership in memberships:
+            group = membership.group
+            if not group.is_active:
+                continue
+            
+            # Get last message
+            last_message = GroupMessage.query.filter_by(
+                group_id=group.id,
+                is_deleted=False
+            ).order_by(GroupMessage.created_at.desc()).first()
+            
+            # Get unread count
+            if last_message:
+                unread_count = GroupMessage.query.filter(
+                    GroupMessage.group_id == group.id,
+                    GroupMessage.created_at > membership.joined_at,
+                    GroupMessage.sender_id != current_user.id,
+                    GroupMessage.is_deleted == False
+                ).count()
+            else:
+                unread_count = 0
+            
+            groups_data.append({
+                'id': group.id,
+                'group_id': group.group_id,
+                'name': group.name,
+                'description': group.description,
+                'avatar_url': group.avatar_url,
+                'member_count': GroupMember.query.filter_by(group_id=group.id, is_active=True).count(),
+                'last_message': last_message.content if last_message else None,
+                'last_message_at': group.last_message_at.isoformat() if group.last_message_at else None,
+                'unread_count': unread_count,
+                'role': membership.role
+            })
+        
+        return jsonify({'success': True, 'groups': groups_data})
+    
+    except Exception as e:
+        app.logger.error(f"Error fetching groups: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/groups/create', methods=['POST'])
+@login_required
+def api_communication_create_group():
+    """Create a new group chat"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        description = data.get('description', '').strip()
+        member_ids = data.get('members', [])
+        
+        if not name:
+            return jsonify({'success': False, 'error': 'Group name required'}), 400
+        
+        if len(member_ids) < 1:
+            return jsonify({'success': False, 'error': 'At least one member required'}), 400
+        
+        # Create group
+        group = GroupChat(
+            name=name,
+            description=description,
+            created_by=current_user.id
+        )
+        db.session.add(group)
+        db.session.flush()
+        
+        # Add creator as admin
+        creator_member = GroupMember(
+            group_id=group.id,
+            user_id=current_user.id,
+            role='admin'
+        )
+        db.session.add(creator_member)
+        
+        # Add other members
+        for member_id in member_ids:
+            if member_id != current_user.id:
+                member = GroupMember(
+                    group_id=group.id,
+                    user_id=member_id,
+                    role='member'
+                )
+                db.session.add(member)
+        
+        db.session.commit()
+        
+        # Notify members via Socket.IO
+        notification_data = {
+            'group_id': group.group_id,
+            'name': group.name,
+            'created_by': current_user.username
+        }
+        
+        for member_id in member_ids:
+            member_socket = None
+            for sid, uid in active_sockets.items():
+                if uid == member_id:
+                    member_socket = sid
+                    break
+            
+            if member_socket:
+                socketio.emit('group_created', notification_data, room=member_socket)
+        
+        return jsonify({
+            'success': True,
+            'group': {
+                'id': group.id,
+                'group_id': group.group_id,
+                'name': group.name,
+                'description': group.description
+            }
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error creating group: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/groups/<group_id>/messages', methods=['GET'])
+@login_required
+def api_communication_group_messages(group_id):
+    """Get group messages"""
+    try:
+        group = GroupChat.query.filter_by(group_id=group_id).first_or_404()
+        
+        # Verify user is member
+        membership = GroupMember.query.filter_by(
+            group_id=group.id,
+            user_id=current_user.id,
+            is_active=True
+        ).first()
+        
+        if not membership:
+            return jsonify({'success': False, 'error': 'Not a member of this group'}), 403
+        
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 50))
+        
+        messages = GroupMessage.query.filter_by(
+            group_id=group.id,
+            is_deleted=False
+        ).order_by(GroupMessage.created_at.desc()).limit(per_page).all()
+        
+        messages_data = []
+        for msg in reversed(messages):
+            msg_data = {
+                'message_id': msg.message_id,
+                'sender_id': msg.sender_id,
+                'sender_name': msg.sender.username,
+                'content': msg.content,
+                'message_type': msg.message_type,
+                'created_at': msg.created_at.isoformat(),
+                'edited_at': msg.edited_at.isoformat() if msg.edited_at else None
+            }
+            
+            if msg.file_url:
+                msg_data.update({
+                    'file_url': msg.file_url,
+                    'file_name': msg.file_name,
+                    'file_size': msg.file_size
+                })
+            
+            # Get reactions
+            reactions = {}
+            for r in MessageReaction.query.filter_by(group_message_id=msg.id).all():
+                if r.emoji not in reactions:
+                    reactions[r.emoji] = []
+                reactions[r.emoji].append({'user_id': r.user_id, 'username': r.user.username})
+            msg_data['reactions'] = reactions
+            
+            messages_data.append(msg_data)
+        
+        return jsonify({'success': True, 'messages': messages_data})
+    
+    except Exception as e:
+        app.logger.error(f"Error fetching group messages: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/groups/<group_id>/send', methods=['POST'])
+@login_required
+def api_communication_send_group_message(group_id):
+    """Send message to group"""
+    try:
+        data = request.get_json()
+        content = data.get('content', '').strip()
+        message_type = data.get('message_type', 'text')
+        
+        group = GroupChat.query.filter_by(group_id=group_id).first_or_404()
+        
+        # Verify user is member
+        membership = GroupMember.query.filter_by(
+            group_id=group.id,
+            user_id=current_user.id,
+            is_active=True
+        ).first()
+        
+        if not membership:
+            return jsonify({'success': False, 'error': 'Not a member of this group'}), 403
+        
+        # Create message
+        message = GroupMessage(
+            group_id=group.id,
+            sender_id=current_user.id,
+            content=content,
+            message_type=message_type
+        )
+        
+        if message_type != 'text':
+            message.file_url = data.get('file_url')
+            message.file_name = data.get('file_name')
+            message.file_size = data.get('file_size')
+        
+        db.session.add(message)
+        group.last_message_at = get_eat_now()
+        db.session.commit()
+        
+        # Emit to all group members via Socket.IO
+        msg_data = {
+            'message_id': message.message_id,
+            'group_id': group_id,
+            'sender_id': current_user.id,
+            'sender_name': current_user.username,
+            'content': content,
+            'message_type': message_type,
+            'created_at': message.created_at.isoformat()
+        }
+        
+        if message.file_url:
+            msg_data.update({
+                'file_url': message.file_url,
+                'file_name': message.file_name,
+                'file_size': message.file_size
+            })
+        
+        # Send to all members except sender
+        members = GroupMember.query.filter_by(group_id=group.id, is_active=True).all()
+        for member in members:
+            if member.user_id != current_user.id:
+                member_socket = None
+                for sid, uid in active_sockets.items():
+                    if uid == member.user_id:
+                        member_socket = sid
+                        break
+                
+                if member_socket:
+                    socketio.emit('group_message', msg_data, room=member_socket)
+        
+        return jsonify({'success': True, 'message': msg_data})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error sending group message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/groups/<group_id>/members', methods=['GET'])
+@login_required
+def api_communication_group_members(group_id):
+    """Get group members"""
+    try:
+        group = GroupChat.query.filter_by(group_id=group_id).first_or_404()
+        
+        # Verify user is member
+        membership = GroupMember.query.filter_by(
+            group_id=group.id,
+            user_id=current_user.id,
+            is_active=True
+        ).first()
+        
+        if not membership:
+            return jsonify({'success': False, 'error': 'Not a member of this group'}), 403
+        
+        members = GroupMember.query.filter_by(group_id=group.id, is_active=True).all()
+        
+        members_data = []
+        for member in members:
+            user = member.user
+            status = UserOnlineStatus.query.filter_by(user_id=user.id).first()
+            
+            members_data.append({
+                'user_id': user.id,
+                'username': user.username,
+                'role': member.role,
+                'joined_at': member.joined_at.isoformat(),
+                'is_online': status.is_online if status else False
+            })
+        
+        return jsonify({'success': True, 'members': members_data})
+    
+    except Exception as e:
+        app.logger.error(f"Error fetching group members: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/groups/<group_id>/add_member', methods=['POST'])
+@login_required
+def api_communication_group_add_member(group_id):
+    """Add member to group"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        group = GroupChat.query.filter_by(group_id=group_id).first_or_404()
+        
+        # Verify user is admin or moderator
+        membership = GroupMember.query.filter_by(
+            group_id=group.id,
+            user_id=current_user.id,
+            is_active=True
+        ).first()
+        
+        if not membership or membership.role not in ['admin', 'moderator']:
+            return jsonify({'success': False, 'error': 'Insufficient permissions'}), 403
+        
+        # Check if user already a member
+        existing = GroupMember.query.filter_by(
+            group_id=group.id,
+            user_id=user_id
+        ).first()
+        
+        if existing:
+            if existing.is_active:
+                return jsonify({'success': False, 'error': 'User already a member'}), 400
+            else:
+                existing.is_active = True
+        else:
+            new_member = GroupMember(
+                group_id=group.id,
+                user_id=user_id,
+                role='member'
+            )
+            db.session.add(new_member)
+        
+        db.session.commit()
+        
+        # Notify new member via Socket.IO
+        member_socket = None
+        for sid, uid in active_sockets.items():
+            if uid == user_id:
+                member_socket = sid
+                break
+        
+        if member_socket:
+            socketio.emit('added_to_group', {
+                'group_id': group_id,
+                'name': group.name,
+                'added_by': current_user.username
+            }, room=member_socket)
+        
+        return jsonify({'success': True, 'message': 'Member added successfully'})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error adding group member: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# =============================================
+# CALL HISTORY & ADVANCED FEATURES
+# =============================================
+
+@app.route('/api/communication/calls/history', methods=['GET'])
+@login_required
+def api_communication_call_history():
+    """Get call history"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        
+        calls = CallLog.query.filter(
+            or_(
+                CallLog.caller_id == current_user.id,
+                CallLog.receiver_id == current_user.id
+            )
+        ).order_by(CallLog.started_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        calls_data = []
+        for call in calls.items:
+            other_user = call.receiver if call.caller_id == current_user.id else call.caller
+            is_outgoing = call.caller_id == current_user.id
+            
+            calls_data.append({
+                'call_id': call.call_id,
+                'call_type': call.call_type,
+                'call_status': call.call_status,
+                'duration_seconds': call.duration_seconds,
+                'started_at': call.started_at.isoformat(),
+                'is_outgoing': is_outgoing,
+                'other_user': {
+                    'id': other_user.id,
+                    'username': other_user.username
+                }
+            })
+        
+        return jsonify({
+            'success': True,
+            'calls': calls_data,
+            'total': calls.total,
+            'pages': calls.pages,
+            'current_page': page
+        })
+    
+    except Exception as e:
+        app.logger.error(f"Error fetching call history: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/notifications/preferences', methods=['GET', 'POST'])
+@login_required
+def api_communication_notification_preferences():
+    """Get or update notification preferences"""
+    try:
+        if request.method == 'GET':
+            prefs = NotificationPreference.query.filter_by(user_id=current_user.id).first()
+            
+            if not prefs:
+                prefs = NotificationPreference(user_id=current_user.id)
+                db.session.add(prefs)
+                db.session.commit()
+            
+            return jsonify({
+                'success': True,
+                'preferences': {
+                    'email_notifications': prefs.email_notifications,
+                    'push_notifications': prefs.push_notifications,
+                    'sms_notifications': prefs.sms_notifications,
+                    'notification_sound': prefs.notification_sound,
+                    'message_preview': prefs.message_preview,
+                    'do_not_disturb': prefs.do_not_disturb
+                }
+            })
+        
+        else:  # POST
+            data = request.get_json()
+            prefs = NotificationPreference.query.filter_by(user_id=current_user.id).first()
+            
+            if not prefs:
+                prefs = NotificationPreference(user_id=current_user.id)
+                db.session.add(prefs)
+            
+            if 'email_notifications' in data:
+                prefs.email_notifications = data['email_notifications']
+            if 'push_notifications' in data:
+                prefs.push_notifications = data['push_notifications']
+            if 'notification_sound' in data:
+                prefs.notification_sound = data['notification_sound']
+            if 'do_not_disturb' in data:
+                prefs.do_not_disturb = data['do_not_disturb']
+            
+            db.session.commit()
+            
+            return jsonify({'success': True, 'message': 'Preferences updated'})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error with notification preferences: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# =============================================
+# ADMIN COMMUNICATION FEATURES
+# =============================================
+
+@app.route('/admin/communication/analytics')
+@login_required
+@admin_required
+def admin_communication_analytics():
+    """Communication analytics dashboard"""
+    try:
+        from sqlalchemy import func
+        
+        # Total messages
+        total_messages = Message.query.filter_by(is_deleted=False).count()
+        
+        # Messages today
+        today_start = get_eat_today()
+        messages_today = Message.query.filter(
+            Message.created_at >= today_start,
+            Message.is_deleted == False
+        ).count()
+        
+        # Total calls
+        total_calls = CallLog.query.count()
+        
+        # Active users (sent message in last 7 days)
+        seven_days_ago = get_eat_now() - timedelta(days=7)
+        active_users = db.session.query(func.count(func.distinct(Message.sender_id))).filter(
+            Message.created_at >= seven_days_ago
+        ).scalar()
+        
+        # Most active users
+        top_users = db.session.query(
+            User.username,
+            func.count(Message.id).label('message_count')
+        ).join(Message, Message.sender_id == User.id).group_by(User.id).order_by(
+            func.count(Message.id).desc()
+        ).limit(10).all()
+        
+        # Group stats
+        total_groups = GroupChat.query.filter_by(is_active=True).count()
+        
+        return render_template('admin/communication_analytics.html',
+                             total_messages=total_messages,
+                             messages_today=messages_today,
+                             total_calls=total_calls,
+                             active_users=active_users,
+                             top_users=top_users,
+                             total_groups=total_groups)
+    
+    except Exception as e:
+        app.logger.error(f"Error loading communication analytics: {str(e)}")
+        flash('Error loading analytics', 'danger')
+        return redirect(url_for('admin_dashboard'))
 
 
 # =====================
