@@ -19,6 +19,7 @@ class CommunicationSystem {
         this.isVideoEnabled = true;
         this.callDurationInterval = null;
         this.typingTimeout = null;
+        this.eatTimezone = 'Africa/Nairobi'; // EAT timezone
         
         this.init();
     }
@@ -452,7 +453,8 @@ class CommunicationSystem {
         messageDiv.className = `message ${isSent ? 'sent' : 'received'}`;
         messageDiv.dataset.messageId = message.message_id;
         
-        const time = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        // Format time in EAT timezone
+        const time = this.formatTimeEAT(message.created_at);
         
         messageDiv.innerHTML = `
             <div class="message-bubble">
@@ -1105,6 +1107,55 @@ class CommunicationSystem {
     getCSRFToken() {
         const meta = document.querySelector('meta[name="csrf-token"]');
         return meta ? meta.content : '';
+    }
+
+    formatTimeEAT(dateString) {
+        /**
+         * Format time to EAT (East Africa Time) timezone
+         * Converts ISO timestamp to EAT and displays in HH:MM format
+         */
+        try {
+            const date = new Date(dateString);
+            
+            // Format time in EAT timezone
+            return date.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                timeZone: this.eatTimezone,
+                hour12: false
+            });
+        } catch (error) {
+            console.error('Error formatting time:', error);
+            // Fallback to local time if timezone conversion fails
+            return new Date(dateString).toLocaleTimeString([], { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: false
+            });
+        }
+    }
+
+    formatDateTimeEAT(dateString) {
+        /**
+         * Format full date and time to EAT timezone
+         * Used for detailed timestamps
+         */
+        try {
+            const date = new Date(dateString);
+            
+            return date.toLocaleString('en-US', {
+                timeZone: this.eatTimezone,
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+        } catch (error) {
+            console.error('Error formatting datetime:', error);
+            return new Date(dateString).toLocaleString();
+        }
     }
 
     setupDragFunctionality() {

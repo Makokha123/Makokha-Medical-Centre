@@ -31774,7 +31774,7 @@ def api_communication_users():
             # Get unread message count from this user
             unread_count = Message.query.filter_by(
                 sender_id=user.id,
-                receiver_id=current_user.id,
+                recipient_id=current_user.id,
                 is_read=False
             ).count()
             
