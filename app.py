@@ -74,13 +74,13 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import zipfile
 import hashlib
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 import base64
 from apscheduler.schedulers.background import BackgroundScheduler
 from openai import OpenAI, APITimeoutError, APIError, APIConnectionError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import logging
-from sqlalchemy.exc import OperationalError, DBAPIError
+from sqlalchemy.exc import OperationalError, DBAPIError, IntegrityError
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from itsdangerous import URLSafeTimedSerializer
@@ -618,6 +618,8 @@ class Message(db.Model):
     recipient_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     content = db.Column(db.Text, nullable=False)
     message_type = db.Column(db.String(20), default='text')  # text, image, file
+    is_delivered = db.Column(db.Boolean, default=False)
+    delivered_at = db.Column(db.DateTime)
     is_read = db.Column(db.Boolean, default=False)
     read_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=get_eat_now)
@@ -4541,19 +4543,19 @@ class RatibaRun(db.Model):
     schedule = db.relationship('RatibaSchedule', backref='runs')
 
 def generate_transaction_number():
-    return f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"TXN-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def generate_receipt_number(prefix: str = 'RCPT'):
-    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"{prefix}-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def generate_payment_intent_code(prefix: str = 'PI') -> str:
-    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"{prefix}-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def generate_ratiba_code(prefix: str = 'RAT') -> str:
-    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"{prefix}-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def _infer_department_for_user(user: 'User') -> str | None:
@@ -5119,7 +5121,7 @@ class Debt(db.Model):
 
 
 def generate_debt_number():
-    return f"DEBT-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
+    return f"DEBT-{get_eat_now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
 class Expense(db.Model):
     __tablename__ = 'expenses'
@@ -5150,7 +5152,7 @@ class Expense(db.Model):
         return self.expense_type
 
 def generate_expense_number():
-    return f"EXP-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
+    return f"EXP-{get_eat_now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
 class Purchase(db.Model):
     __tablename__ = 'purchases'
@@ -5167,7 +5169,7 @@ class Purchase(db.Model):
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
 def generate_purchase_number():
-    return f"PUR-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
+    return f"PUR-{get_eat_now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
 class Employee(db.Model):
     __tablename__ = 'employees'
@@ -5226,7 +5228,7 @@ class Payroll(db.Model):
 
 
 def generate_payroll_number():
-    return f"PAY-{datetime.now().strftime('%Y%m%d')}-{generate_random_string(4)}"
+    return f"PAY-{get_eat_now().strftime('%Y%m%d')}-{generate_random_string(4)}"
 
 class Debtor(db.Model):
     __tablename__ = 'debtor'
@@ -5730,7 +5732,7 @@ class PurchaseOrderItem(db.Model):
 
 
 def generate_insurance_claim_number():
-    return f"CLM-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"CLM-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def _ensure_insurance_claims_schema_best_effort():
@@ -6367,15 +6369,15 @@ def generate_patient_number(patient_type):
     return f"{prefix}MNC{new_seq:03d}"
 
 def generate_sale_number():
-    now = datetime.now()
+    now = get_eat_now()
     return f"SALE-{now.strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
 
 def generate_bulk_sale_number():
-    now = datetime.now()
+    now = get_eat_now()
     return f"BULK-{now.strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
 
 def generate_individual_sale_number():
-    now = datetime.now()
+    now = get_eat_now()
     return f"ITEM-{now.strftime('%Y%m%d')}-{random.randint(100, 999)}"
 
 def database_is_sqlite():
@@ -7321,7 +7323,7 @@ def admin_dashboard():
         ).scalar() or 0
         
         # UNIVERSAL FIX: Use extract for month and year - works on all databases
-        current_date = datetime.now()
+        current_date = get_eat_now()
         monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.extract('year', Sale.created_at) == current_date.year,
             func.extract('month', Sale.created_at) == current_date.month
@@ -8218,7 +8220,7 @@ def manage_drugs():
         query = query.where(Drug.remaining_quantity < 10)
     elif filter_type == 'expiring_soon':
         # Drugs expiring in the next 30 days or already expired
-        today = datetime.now().date()
+        today = get_eat_today()
         thirty_days_later = today + timedelta(days=30)
         query = query.where(Drug.expiry_date <= thirty_days_later).order_by(Drug.expiry_date)
     elif filter_type == 'out_of_stock':
@@ -8226,7 +8228,7 @@ def manage_drugs():
         query = query.where(Drug.remaining_quantity <= 0)
     elif filter_type == 'expired':
         # Only expired drugs
-        today = datetime.now().date()
+        today = get_eat_today()
         query = query.where(Drug.expiry_date < today)
     
     # Execute the query
@@ -8237,7 +8239,7 @@ def manage_drugs():
                          drugs=drugs, 
                          total_value=total_value, 
                          current_filter=filter_type,
-                         today=datetime.now().date())
+                         today=get_eat_today())
 
 @app.route('/admin/drugs/<int:drug_id>')
 def get_drug(drug_id):
@@ -8257,8 +8259,8 @@ def get_drug(drug_id):
         'sold_quantity': drug.sold_quantity,
         'expiry_date': drug.expiry_date.strftime('%Y-%m-%d'),
         'remaining_quantity': drug.remaining_quantity,
-        'is_expired': drug.expiry_date < datetime.now().date(),
-        'expires_soon': drug.expiry_date <= (datetime.now().date() + timedelta(days=30))
+        'is_expired': drug.expiry_date < get_eat_today(),
+        'expires_soon': drug.expiry_date <= (get_eat_today() + timedelta(days=30))
     })
 
 
@@ -8488,13 +8490,13 @@ def manage_controlled_drugs():
     if filter_type == 'low_stock':
         query = query.where(ControlledDrug.remaining_quantity < 10)
     elif filter_type == 'expiring_soon':
-        today = datetime.now().date()
+        today = get_eat_today()
         thirty_days_later = today + timedelta(days=30)
         query = query.where(ControlledDrug.expiry_date <= thirty_days_later).order_by(ControlledDrug.expiry_date)
     elif filter_type == 'out_of_stock':
         query = query.where(ControlledDrug.remaining_quantity <= 0)
     elif filter_type == 'expired':
-        today = datetime.now().date()
+        today = get_eat_today()
         query = query.where(ControlledDrug.expiry_date < today)
 
     controlled_drugs = db.session.execute(query).scalars().all()
@@ -8506,8 +8508,8 @@ def manage_controlled_drugs():
         controlled_drugs=controlled_drugs,
         total_value=total_value,
         current_filter=filter_type,
-        today=datetime.now().date(),
-        expires_soon_cutoff=datetime.now().date() + timedelta(days=30),
+        today=get_eat_today(),
+        expires_soon_cutoff=get_eat_today() + timedelta(days=30),
     )
 
 
@@ -8532,8 +8534,8 @@ def get_controlled_drug(controlled_drug_id):
         'sold_quantity': drug.sold_quantity,
         'expiry_date': drug.expiry_date.strftime('%Y-%m-%d'),
         'remaining_quantity': drug.remaining_quantity,
-        'is_expired': drug.expiry_date < datetime.now().date(),
-        'expires_soon': drug.expiry_date <= (datetime.now().date() + timedelta(days=30)),
+        'is_expired': drug.expiry_date < get_eat_today(),
+        'expires_soon': drug.expiry_date <= (get_eat_today() + timedelta(days=30)),
     })
 
 
@@ -13209,7 +13211,7 @@ def budget_variance_report():
         return jsonify({'error': 'Unauthorized'}), 403
     
     try:
-        fiscal_year = request.args.get('fiscal_year', str(datetime.now().year), type=str)
+        fiscal_year = request.args.get('fiscal_year', str(get_eat_now().year), type=str)
         month_str = (request.args.get('month') or '').strip() or None
         month_first = _parse_year_month(month_str) if month_str else None
         
@@ -16729,7 +16731,7 @@ def create_purchase_order():
         unit_prices = request.form.getlist('item_unit_price')
         
         po = PurchaseOrder(
-            po_number=f"PO-{int(datetime.now().timestamp())}",
+            po_number=f"PO-{int(get_eat_now().timestamp())}",
             vendor_id=vendor_id,
             date_ordered=get_eat_now(),
             notes=notes,
@@ -22471,7 +22473,7 @@ def process__cart_sale():
                 return jsonify({'success': False, 'error': f'Missing unit_price in item {i+1}'}), 400
         
         # Generate sale numbers
-        sale_number = f"SALE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+        sale_number = f"SALE-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
         
         # Calculate total amount
         total_amount = sum(float(item.get('unit_price', 0)) * int(item.get('quantity', 0)) for item in items)
@@ -22546,7 +22548,7 @@ def process__cart_sale():
         
         # Create transaction record
         transaction = Transaction(
-            transaction_number=f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}",
+            transaction_number=f"TXN-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}",
             transaction_type='sale',
             amount=total_amount,
             user_id=current_user.id,
@@ -22586,7 +22588,7 @@ def process__cart_sale():
                 'pharmacist/receipt.html',
                 sale=sale_for_receipt,
                 related_sales=related_sales,
-                now=datetime.now(),
+                now=get_eat_now(),
                 amount_given=amount_given,
                 change=change,
             )
@@ -22673,7 +22675,7 @@ def generate_receipt(sale_id):
         'pharmacist/receipt.html',
         sale=sale,
         related_sales=related_sales,
-        now=datetime.now(),
+        now=get_eat_now(),
         amount_given=None,
         change=None,
     )
@@ -22974,7 +22976,7 @@ def pharmacist_refund_alias():
 
 
 def generate_refund_number():
-    return f"REF-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+    return f"REF-{get_eat_now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
 
 @app.route('/pharmacist/refund/<int:refund_id>/receipt')
 @login_required
@@ -26238,6 +26240,277 @@ def complete_patient_treatment(patient_id):
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
+def _release_patient_bed_if_any(patient: 'Patient'):
+    """Release the currently assigned bed (if any) for a patient.
+
+    This is intentionally best-effort and safe to call multiple times.
+    """
+    if not patient or not getattr(patient, 'id', None):
+        return
+
+    bed = Bed.query.filter_by(patient_id=patient.id).first()
+    if not bed:
+        return
+
+    now = get_eat_now()
+
+    # Update bed state
+    bed.status = 'available'
+    bed.released_at = now
+    bed.patient_id = None
+
+    # Close the latest open BedAssignment (if present)
+    try:
+        last_assign = (
+            BedAssignment.query
+            .filter_by(bed_id=bed.id, patient_id=patient.id)
+            .filter(BedAssignment.released_at.is_(None))
+            .order_by(BedAssignment.assigned_at.desc())
+            .first()
+        )
+        if last_assign:
+            last_assign.released_at = now
+            db.session.add(last_assign)
+    except Exception:
+        pass
+
+
+_IDENT_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+def _safe_ident(name: str) -> str:
+    """Return a safely-quoted SQL identifier.
+
+    We only allow standard unquoted identifiers and then quote them.
+    """
+    if not name or not _IDENT_RE.match(name):
+        raise ValueError(f'Unsafe SQL identifier: {name!r}')
+    return f'"{name}"'
+
+
+def _get_fk_edges_public_schema() -> dict:
+    """Build a mapping of parent_table -> list of fk edges.
+
+    Each edge is a dict: {child_table, child_column, parent_table, parent_column}.
+    """
+    rows = db.session.execute(
+        text(
+            """
+            SELECT
+                tc.table_name AS child_table,
+                kcu.column_name AS child_column,
+                ccu.table_name AS parent_table,
+                ccu.column_name AS parent_column
+            FROM information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage AS ccu
+              ON ccu.constraint_name = tc.constraint_name
+             AND ccu.table_schema = tc.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = 'public'
+            """
+        )
+    ).fetchall()
+
+    fk_map: dict[str, list[dict]] = {}
+    for child_table, child_column, parent_table, parent_column in rows:
+        if not child_table or not child_column or not parent_table or not parent_column:
+            continue
+        fk_map.setdefault(parent_table, []).append(
+            {
+                'child_table': child_table,
+                'child_column': child_column,
+                'parent_table': parent_table,
+                'parent_column': parent_column,
+            }
+        )
+    return fk_map
+
+
+def _get_primary_key_column_public_schema(table_name: str) -> str | None:
+    rows = db.session.execute(
+        text(
+            """
+            SELECT kcu.column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+            WHERE tc.constraint_type = 'PRIMARY KEY'
+              AND tc.table_schema = 'public'
+              AND tc.table_name = :t
+            ORDER BY kcu.ordinal_position
+            """
+        ),
+        {'t': table_name},
+    ).fetchall()
+    if not rows:
+        return None
+    return rows[0][0]
+
+
+def _select_ids_where_fk_in(child_table: str, child_pk_col: str, child_fk_col: str, parent_ids: list[int]) -> list[int]:
+    if not parent_ids:
+        return []
+
+    stmt = (
+        text(
+            f"SELECT {_safe_ident(child_pk_col)} FROM {_safe_ident(child_table)} "
+            f"WHERE {_safe_ident(child_fk_col)} IN :ids"
+        )
+        .bindparams(bindparam('ids', expanding=True))
+    )
+    rows = db.session.execute(stmt, {'ids': list(parent_ids)}).fetchall()
+    return [r[0] for r in rows if r and r[0] is not None]
+
+
+def _delete_where_fk_in(child_table: str, child_fk_col: str, parent_ids: list[int]) -> int:
+    if not parent_ids:
+        return 0
+    stmt = (
+        text(
+            f"DELETE FROM {_safe_ident(child_table)} "
+            f"WHERE {_safe_ident(child_fk_col)} IN :ids"
+        )
+        .bindparams(bindparam('ids', expanding=True))
+    )
+    res = db.session.execute(stmt, {'ids': list(parent_ids)})
+    return int(getattr(res, 'rowcount', 0) or 0)
+
+
+def _nullify_beds_for_patient(patient_id: int) -> int:
+    """Beds should not be deleted; detach them from the patient."""
+    now = get_eat_now()
+    res = db.session.execute(
+        text(
+            """
+            UPDATE beds
+               SET patient_id = NULL,
+                   status = 'available',
+                   released_at = :now
+             WHERE patient_id = :pid
+            """
+        ),
+        {'pid': patient_id, 'now': now},
+    )
+    return int(getattr(res, 'rowcount', 0) or 0)
+
+
+def _cascade_delete_from(
+    parent_table: str,
+    parent_pk_col: str,
+    parent_ids: list[int],
+    fk_map: dict,
+    pk_cache: dict,
+    visiting: list[str],
+    report: dict,
+    patient_id: int,
+):
+    """Recursively delete FK descendants (children first)."""
+    if not parent_ids:
+        return
+
+    edges = fk_map.get(parent_table, [])
+    if not edges:
+        return
+
+    visiting.append(parent_table)
+    try:
+        for edge in edges:
+            child_table = edge.get('child_table')
+            child_fk_col = edge.get('child_column')
+            edge_parent_col = edge.get('parent_column')
+
+            if not child_table or not child_fk_col or not edge_parent_col:
+                continue
+            if edge_parent_col != parent_pk_col:
+                continue
+
+            # Special cases: tables that should not be deleted.
+            if child_table == 'beds' and parent_table == 'patient':
+                updated = _nullify_beds_for_patient(patient_id)
+                if updated:
+                    report.setdefault('updated', {})['beds'] = report.setdefault('updated', {}).get('beds', 0) + updated
+                continue
+
+            # Prevent infinite recursion if a cycle exists.
+            if child_table in visiting:
+                deleted = _delete_where_fk_in(child_table, child_fk_col, parent_ids)
+                if deleted:
+                    report.setdefault('deleted', {})[child_table] = report.setdefault('deleted', {}).get(child_table, 0) + deleted
+                continue
+
+            child_pk_col = pk_cache.get(child_table)
+            if child_pk_col is None:
+                child_pk_col = _get_primary_key_column_public_schema(child_table)
+                pk_cache[child_table] = child_pk_col
+
+            child_ids: list[int] = []
+            if child_pk_col:
+                try:
+                    child_ids = _select_ids_where_fk_in(child_table, child_pk_col, child_fk_col, parent_ids)
+                except Exception:
+                    child_ids = []
+
+            if child_ids and child_pk_col:
+                _cascade_delete_from(
+                    parent_table=child_table,
+                    parent_pk_col=child_pk_col,
+                    parent_ids=child_ids,
+                    fk_map=fk_map,
+                    pk_cache=pk_cache,
+                    visiting=visiting,
+                    report=report,
+                    patient_id=patient_id,
+                )
+
+            deleted = _delete_where_fk_in(child_table, child_fk_col, parent_ids)
+            if deleted:
+                report.setdefault('deleted', {})[child_table] = report.setdefault('deleted', {}).get(child_table, 0) + deleted
+    finally:
+        visiting.pop()
+
+
+def _hard_delete_patient_everything(patient: 'Patient') -> dict:
+    """Hard-delete a patient and all FK-related rows.
+
+    This performs a best-effort cascading delete by traversing FK relationships
+    in the database. It is intended to satisfy strict FK constraints.
+    """
+    if not patient or not getattr(patient, 'id', None):
+        raise ValueError('Invalid patient')
+
+    report: dict = {'deleted': {}, 'updated': {}}
+    pid = int(patient.id)
+
+    # Always detach from a currently assigned bed first.
+    _release_patient_bed_if_any(patient)
+    _nullify_beds_for_patient(pid)
+
+    fk_map = _get_fk_edges_public_schema()
+    pk_cache: dict[str, str | None] = {'patient': 'id'}
+
+    _cascade_delete_from(
+        parent_table='patient',
+        parent_pk_col='id',
+        parent_ids=[pid],
+        fk_map=fk_map,
+        pk_cache=pk_cache,
+        visiting=[],
+        report=report,
+        patient_id=pid,
+    )
+
+    # Finally delete the patient row itself.
+    db.session.delete(patient)
+    report.setdefault('deleted', {})['patient'] = report.setdefault('deleted', {}).get('patient', 0) + 1
+
+    return report
+
+
+@app.route('/doctor/patient/<int:patient_id>/delete', methods=['DELETE'])
 @app.route('/doctor/patient/<int:patient_id>', methods=['DELETE'])
 @login_required
 def delete_patient(patient_id):
@@ -26247,11 +26520,21 @@ def delete_patient(patient_id):
     patient = db.session.get(Patient, patient_id)
     if not patient:
         return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+    # Enforce ward/department access rules (prevents deleting patients outside assignment scope)
+    if not can_user_access_patient(current_user, patient):
+        return jsonify({'success': False, 'error': 'You do not have access to this patient'}), 403
         
     try:
-        db.session.delete(patient)
+        report = _hard_delete_patient_everything(patient)
         db.session.commit()
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'message': 'Patient deleted permanently.', 'report': report})
+    except IntegrityError as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 409
+    except DBAPIError as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -28689,7 +28972,7 @@ def api_drugs():
             query = query.filter(Drug.remaining_quantity <= 0)
         elif filter_type == 'expired':
             # Only expired drugs
-            today = datetime.now().date()
+            today = get_eat_today()
             query = query.filter(Drug.expiry_date < today)
         
         drugs = query.order_by(Drug.name).all()
@@ -28733,7 +29016,7 @@ def api_drugs():
 def get_drug_status(drug):
     remaining = drug.remaining_quantity
     expiry_date = drug.expiry_date
-    today = datetime.now().date()
+    today = get_eat_today()
     
     if remaining <= 0:
         return 'Out of Stock'
@@ -28862,7 +29145,7 @@ def _check_drug_stock_status(drug):
     # Check the stock status of a drug
     remaining = drug.remaining_quantity if hasattr(drug, 'remaining_quantity') else 0
     expiry_date = drug.expiry_date if hasattr(drug, 'expiry_date') else None
-    today = datetime.now().date()
+    today = get_eat_today()
     
     if remaining <= 0:
         return 'Out of Stock'
@@ -28982,7 +29265,7 @@ def _patient_has_paid_sale_for_imaging_test(*, patient_id, imaging_test) -> bool
 
 
 def generate_controlled_sale_number():
-    return f"CSALE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
+    return f"CSALE-{get_eat_now().strftime('%Y%m%d%H%M%S')}-{random.randint(100, 999)}"
 
 
 def _allowed_prescription_file(filename: str) -> bool:
@@ -29014,7 +29297,7 @@ def _save_prescription_image(file_storage):
         raise ValueError('Unsupported file type. Prescription must be an image.')
 
     filename = secure_filename(file_storage.filename) or 'prescription.jpg'
-    stamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    stamp = get_eat_now().strftime('%Y%m%d%H%M%S')
     unique = f"{stamp}_{random.randint(1000, 9999)}_{filename}"
 
     upload_dir = os.path.join(app.root_path, 'uploads', 'controlled_prescriptions')
@@ -29035,7 +29318,7 @@ def _save_prescription_sheet(file_storage):
         raise ValueError('Unsupported file type. Use jpg, png, webp, or pdf.')
 
     filename = secure_filename(file_storage.filename)
-    stamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    stamp = get_eat_now().strftime('%Y%m%d%H%M%S')
     unique = f"{stamp}_{random.randint(1000, 9999)}_{filename}"
 
     upload_dir = os.path.join(app.root_path, 'uploads', 'controlled_prescriptions')
@@ -29127,7 +29410,7 @@ def api_controlled_drugs():
     elif filter_type == 'out_of_stock':
         query = query.filter(ControlledDrug.remaining_quantity <= 0)
     elif filter_type == 'expired':
-        today = datetime.now().date()
+        today = get_eat_today()
         query = query.filter(ControlledDrug.expiry_date < today)
     
     controlled_drugs = query.order_by(ControlledDrug.name).all()
@@ -29176,8 +29459,8 @@ def api_single_controlled_drug(controlled_drug_id):
         'sold_quantity': drug.sold_quantity,
         'expiry_date': drug.expiry_date.isoformat() if drug.expiry_date else None,
         'remaining_quantity': drug.remaining_quantity,
-        'is_expired': drug.expiry_date < datetime.now().date(),
-        'expires_soon': drug.expiry_date <= (datetime.now().date() + timedelta(days=30)),
+        'is_expired': drug.expiry_date < get_eat_today(),
+        'expires_soon': drug.expiry_date <= (get_eat_today() + timedelta(days=30)),
     })
 
 
@@ -29204,7 +29487,7 @@ def get_controlled_drug_status(drug):
     """Helper function to determine controlled drug status"""
     remaining = drug.remaining_quantity
     expiry_date = drug.expiry_date
-    today = datetime.now().date()
+    today = get_eat_today()
     
     if remaining <= 0:
         return 'Out of Stock'
@@ -31829,6 +32112,7 @@ def api_communication_conversation(other_user_id):
                 'sender_id': msg.sender_id,
                 'recipient_id': msg.recipient_id,
                 'content': msg.content,
+                'is_delivered': msg.is_delivered,
                 'is_read': msg.is_read,
                 'created_at': msg.created_at.isoformat()
             })
@@ -31896,6 +32180,8 @@ def api_communication_send_message():
                 'sender_id': message.sender_id,
                 'recipient_id': message.recipient_id,
                 'content': message.content,
+                'is_delivered': message.is_delivered,
+                'is_read': message.is_read,
                 'created_at': message.created_at.isoformat()
             }
         })
@@ -31918,14 +32204,27 @@ def api_communication_mark_read():
             return jsonify({'success': False, 'error': 'Missing sender_id'}), 400
         
         # Update all unread messages from this sender
-        Message.query.filter_by(
+        unread_messages = Message.query.filter_by(
             sender_id=sender_id,
             recipient_id=current_user.id,
             is_read=False
-        ).update({
-            'is_read': True,
-            'read_at': get_eat_now()
-        })
+        ).all()
+        
+        for msg in unread_messages:
+            msg.is_read = True
+            msg.read_at = get_eat_now()
+            
+            # Notify sender that message was read via Socket.IO
+            sender_socket = None
+            for sid, uid in active_sockets.items():
+                if uid == sender_id:
+                    sender_socket = sid
+                    break
+            
+            if sender_socket:
+                socketio.emit('message_read', {
+                    'message_id': msg.message_id
+                }, room=sender_socket)
         
         db.session.commit()
         
@@ -32175,6 +32474,60 @@ def handle_send_message(data):
         socketio.emit('new_message', {
             'message': message
         }, room=receiver_socket)
+        
+        # Mark message as delivered if receiver is online
+        try:
+            msg = Message.query.filter_by(message_id=message.get('message_id')).first()
+            if msg and not msg.is_delivered:
+                msg.is_delivered = True
+                msg.delivered_at = get_eat_now()
+                db.session.commit()
+                
+                # Notify sender that message was delivered
+                sender_socket = None
+                for sid, uid in active_sockets.items():
+                    if uid == message.get('sender_id'):
+                        sender_socket = sid
+                        break
+                
+                if sender_socket:
+                    socketio.emit('message_delivered', {
+                        'message_id': message.get('message_id')
+                    }, room=sender_socket)
+        except Exception as e:
+            app.logger.error(f"Error marking message as delivered: {str(e)}")
+
+
+@socketio.on('message_received')
+def handle_message_received(data):
+    """Handle message received confirmation"""
+    message_id = data.get('message_id')
+    sender_id = data.get('sender_id')
+    
+    if not message_id:
+        return
+    
+    try:
+        # Mark message as delivered
+        msg = Message.query.filter_by(message_id=message_id).first()
+        if msg and not msg.is_delivered:
+            msg.is_delivered = True
+            msg.delivered_at = get_eat_now()
+            db.session.commit()
+            
+            # Notify sender
+            sender_socket = None
+            for sid, uid in active_sockets.items():
+                if uid == sender_id:
+                    sender_socket = sid
+                    break
+            
+            if sender_socket:
+                socketio.emit('message_delivered', {
+                    'message_id': message_id
+                }, room=sender_socket)
+    except Exception as e:
+        app.logger.error(f"Error in message_received handler: {str(e)}")
 
 
 @socketio.on('typing')

@@ -81,6 +81,10 @@ class CommunicationSystem {
             this.handleNewMessage(data);
         });
 
+        this.socket.on('message_delivered', (data) => {
+            this.handleMessageDelivered(data);
+        });
+
         this.socket.on('message_read', (data) => {
             this.handleMessageRead(data);
         });
@@ -456,10 +460,28 @@ class CommunicationSystem {
         // Format time in EAT timezone
         const time = this.formatTimeEAT(message.created_at);
         
+        // Generate tick marks for sent messages
+        let tickMarks = '';
+        if (isSent) {
+            if (message.is_read) {
+                // Two blue ticks for read
+                tickMarks = '<span class="message-ticks read"><i class="bi bi-check-all"></i></span>';
+            } else if (message.is_delivered) {
+                // Two grey ticks for delivered
+                tickMarks = '<span class="message-ticks delivered"><i class="bi bi-check-all"></i></span>';
+            } else {
+                // One grey tick for sent
+                tickMarks = '<span class="message-ticks sent"><i class="bi bi-check"></i></span>';
+            }
+        }
+        
         messageDiv.innerHTML = `
             <div class="message-bubble">
                 <div class="message-content">${this.escapeHtml(message.content)}</div>
-                <div class="message-time">${time}</div>
+                <div class="message-time">
+                    ${time}
+                    ${tickMarks}
+                </div>
             </div>
         `;
         
@@ -514,6 +536,12 @@ class CommunicationSystem {
     handleNewMessage(data) {
         const message = data.message;
         
+        // Emit message received confirmation
+        this.socket.emit('message_received', {
+            message_id: message.message_id,
+            sender_id: message.sender_id
+        });
+        
         // If message is from current conversation, append it
         if (message.sender_id === this.activeChatUserId) {
             this.appendMessage(message);
@@ -526,6 +554,30 @@ class CommunicationSystem {
             
             // Show notification
             this.showNotification(message);
+        }
+    }
+
+    handleMessageDelivered(data) {
+        // Update tick marks for delivered message
+        const messageDiv = document.querySelector(`[data-message-id="${data.message_id}"]`);
+        if (messageDiv) {
+            const ticksElement = messageDiv.querySelector('.message-ticks');
+            if (ticksElement) {
+                ticksElement.className = 'message-ticks delivered';
+                ticksElement.innerHTML = '<i class="bi bi-check-all"></i>';
+            }
+        }
+    }
+
+    handleMessageRead(data) {
+        // Update tick marks for read message
+        const messageDiv = document.querySelector(`[data-message-id="${data.message_id}"]`);
+        if (messageDiv) {
+            const ticksElement = messageDiv.querySelector('.message-ticks');
+            if (ticksElement) {
+                ticksElement.className = 'message-ticks read';
+                ticksElement.innerHTML = '<i class="bi bi-check-all"></i>';
+            }
         }
     }
 
@@ -1112,26 +1164,28 @@ class CommunicationSystem {
     formatTimeEAT(dateString) {
         /**
          * Format time to EAT (East Africa Time) timezone
-         * Converts ISO timestamp to EAT and displays in HH:MM format
+         * Converts ISO timestamp to EAT and displays in 24-hour HH:MM format
          */
         try {
+            // Parse the ISO string to Date object
             const date = new Date(dateString);
             
-            // Format time in EAT timezone
-            return date.toLocaleTimeString('en-US', { 
-                hour: '2-digit', 
-                minute: '2-digit',
+            // Get time in EAT timezone using Intl.DateTimeFormat
+            const eatTime = new Intl.DateTimeFormat('en-GB', {
                 timeZone: this.eatTimezone,
+                hour: '2-digit',
+                minute: '2-digit',
                 hour12: false
-            });
+            }).format(date);
+            
+            return eatTime;
         } catch (error) {
             console.error('Error formatting time:', error);
             // Fallback to local time if timezone conversion fails
-            return new Date(dateString).toLocaleTimeString([], { 
-                hour: '2-digit', 
-                minute: '2-digit',
-                hour12: false
-            });
+            const date = new Date(dateString);
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            return `${hours}:${minutes}`;
         }
     }
 

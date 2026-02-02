@@ -371,13 +371,48 @@
     font-size: 11px;
     margin-top: 4px;
     opacity: 0.7;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .message.sent .message-time {
     text-align: right;
+    justify-content: flex-end;
 }
 
 .message.received .message-time {
+    text-align: left;
+    justify-content: flex-start;
+}
+
+/* WhatsApp-style tick marks */
+.message-ticks {
+    display: inline-flex;
+    font-size: 13px;
+    margin-left: 3px;
+}
+
+.message-ticks.sent {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.message-ticks.delivered {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.message-ticks.read {
+    color: #4fc3f7;
+}
+
+.message.sent .message-bubble .message-ticks.sent,
+.message.sent .message-bubble .message-ticks.delivered {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.message.sent .message-bubble .message-ticks.read {
+    color: #4fc3f7;
+}
     text-align: left;
 }
 

@@ -3561,5 +3561,25 @@
         });
     })();
     </script>
+
+    <!-- Communication System Components -->
+    {% if current_user.is_authenticated %}
+    <!-- Meta tag for user ID (required by communication.js) -->
+    <meta name="user-id" content="{{ current_user.id }}">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    
+    <!-- Socket.IO Client Library -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    
+    <!-- Communication Floating Icon -->
+    {% include 'components/communication_icon.html' %}
+    
+    <!-- Communication Modal -->
+    {% include 'components/communication_modal.html' %}
+    
+    <!-- Communication System JavaScript -->
+    <script src="{{ url_for('static', filename='js/communication.js') }}"></script>
+    {% endif %}
+    <!-- End Communication System -->
 </body>
 </html>

@@ -799,50 +799,6 @@
                                 <span class="nav-text">Lab Requests</span>
                             </a>
                         </div>
-                    {% elif current_user.role == 'pharmacist' %}
-                        <!-- Pharmacist Navigation -->
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_dashboard') }}" class="nav-link">
-                                <i class="bi bi-speedometer2"></i>
-                                <span class="nav-text">Dashboard</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_dispense') }}" class="nav-link">
-                                <i class="bi bi-capsule"></i>
-                                <span class="nav-text">Dispense</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_sales') }}" class="nav-link">
-                                <i class="bi bi-cash-stack"></i>
-                                <span class="nav-text">Sales</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_inventory') }}" class="nav-link">
-                                <i class="bi bi-box-seam"></i>
-                                <span class="nav-text">Inventory</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_controlled_inventory') }}" class="nav-link">
-                                <i class="bi bi-shield-lock"></i>
-                                <span class="nav-text">Controlled Drug Inventory</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('patient_prescriptions') }}" class="nav-link">
-                                <i class="bi bi-prescription2"></i>
-                                <span class="nav-text">Prescriptions</span>
-                            </a>
-                        </div>
-                        <div class="nav-item">
-                            <a href="{{ url_for('pharmacist_refunds') }}" class="nav-link">
-                                <i class="bi bi-arrow-counterclockwise"></i>
-                                <span class="nav-text">Refunds</span>
-                            </a>
-                        </div>
                     {% elif current_user.role == 'receptionist' %}
                         <!-- Receptionist Navigation -->
                         <div class="nav-item">
