@@ -324,17 +324,19 @@
                     </thead>
                     <tbody>
                         {% for prescription in prescriptions %}
-                        <tr>
-                            <td>{{ prescription.drug.name }}</td>
-                            <td>{{ prescription.dosage }}</td>
-                            <td>{{ prescription.frequency }}</td>
-                            <td>{{ prescription.duration }}</td>
-                            <td>
-                                <span class="badge badge-{{ 'success' if prescription.status == 'completed' else 'warning' }}">
-                                    {{ prescription.status }}
-                                </span>
-                            </td>
-                        </tr>
+                            {% for item in prescription.items %}
+                            <tr>
+                                <td>{{ item.drug.name if item.drug else 'N/A' }}</td>
+                                <td>{{ item.dosage }}</td>
+                                <td>{{ item.frequency }}</td>
+                                <td>{{ item.duration }}</td>
+                                <td>
+                                    <span class="badge badge-{{ 'success' if item.status == 'dispensed' else 'warning' }}">
+                                        {{ item.status }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
                         {% endfor %}
                     </tbody>
                 </table>

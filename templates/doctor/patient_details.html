@@ -357,7 +357,7 @@
                 <i class="fas fa-plus"></i> Add New Entry
             </button>
 
-            <div class="ai-tools">
+            <div class="assistant-tools">
                 <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewHPIAI()">
                     <i class="fas fa-eye"></i> Review
                 </button>
@@ -367,15 +367,15 @@
             </div>
         </div>
 
-        <div id="hpiAiPanel" class="ai-panel" style="display: none;">
-            <h4><i class="fas fa-robot"></i> AI HPI Helper</h4>
-            <div class="text-muted" style="margin-bottom: 6px;">AI suggested HPI questions</div>
+        <div id="hpiAiPanel" class="assistant-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> Doctor Assistant - HPI</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">Doctor Assistant suggested HPI questions</div>
             <pre id="hpiAiQuestionsText">-</pre>
 
-            <div class="text-muted" style="margin: 12px 0 6px;">AI generated HPI draft</div>
+            <div class="text-muted" style="margin: 12px 0 6px;">Doctor Assistant generated HPI draft</div>
             <pre id="hpiAiGeneratedText">-</pre>
 
-            <div class="ai-tools" style="margin-top: 10px;">
+            <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedHPI()">
                     <i class="fas fa-copy"></i> Use in New HPI Entry
                 </button>
@@ -448,7 +448,7 @@
                 <i class="fas fa-plus"></i> Add New Entry
             </button>
 
-            <div class="ai-tools">
+            <div class="assistant-tools">
                 <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewROSAI()">
                     <i class="fas fa-eye"></i> Review
                 </button>
@@ -460,11 +460,11 @@
 
         <textarea id="rosAiStoredQuestions" class="d-none">{{ review_systems.ai_suggested_questions if review_systems and review_systems.ai_suggested_questions else '' }}</textarea>
 
-        <div id="rosAiPanel" class="ai-panel" style="display: none;">
-            <h4><i class="fas fa-robot"></i> AI Review of Systems Helper</h4>
+        <div id="rosAiPanel" class="assistant-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> Doctor Assistant - Review of Systems</h4>
             <div class="text-muted" style="margin-bottom: 6px;">Suggested questions to guide ROS documentation</div>
             <pre id="rosAiQuestionsText">-</pre>
-            <div class="ai-tools" style="margin-top: 10px;">
+            <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.hideAIPanel('rosAiPanel')">Close</button>
             </div>
         </div>
@@ -795,21 +795,21 @@
                 <i class="fas fa-plus"></i> Add New Entry
             </button>
 
-            <div class="ai-tools">
+            <div class="assistant-tools">
                 <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewDiagnosisAI()">
                     <i class="fas fa-eye"></i> Review
                 </button>
-                <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.generateDiagnosisAI()">
+                <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.generateDiagnosisAssistant()">
                     <i class="fas fa-robot"></i> Generate
                 </button>
             </div>
         </div>
 
-        <div id="diagnosisAiPanel" class="ai-panel" style="display: none;">
-            <h4><i class="fas fa-robot"></i> AI Diagnosis Helper</h4>
+        <div id="diagnosisAiPanel" class="assistant-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> Doctor Assistant - Diagnosis</h4>
             <div class="text-muted" style="margin-bottom: 6px;">Generated diagnosis suggestion (uses latest summary if available)</div>
             <pre id="diagnosisAiText">-</pre>
-            <div class="ai-tools" style="margin-top: 10px;">
+            <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedDiagnosis()">
                     <i class="fas fa-copy"></i> Use in New Diagnosis Entry
                 </button>
@@ -888,7 +888,7 @@
                 </button>
             </div>
 
-            <div class="ai-tools" style="margin-top: 8px;">
+            <div class="assistant-tools" style="margin-top: 8px;">
                 <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewManagementAI()">
                     <i class="fas fa-eye"></i> Review
                 </button>
@@ -900,11 +900,11 @@
 
         <textarea id="mgmtAiStoredPlan" class="d-none">{{ management.ai_alternative_treatments if management and management.ai_alternative_treatments else '' }}</textarea>
 
-        <div id="managementAiPanel" class="ai-panel" style="display: none;">
-            <h4><i class="fas fa-robot"></i> AI Treatment Plan Helper</h4>
-            <div class="text-muted" style="margin-bottom: 6px;">AI suggested plan (requires a saved Diagnosis)</div>
+        <div id="managementAiPanel" class="assistant-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> Doctor Assistant - Treatment Plan</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">Doctor Assistant suggested plan (requires a saved Diagnosis)</div>
             <pre id="managementAiText">-</pre>
-            <div class="ai-tools" style="margin-top: 10px;">
+            <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedManagementPlan()">
                     <i class="fas fa-copy"></i> Use in Treatment Plan Entry
                 </button>
@@ -1126,7 +1126,7 @@
     <div class="tab-content {% if active_tab == 'summary' %}active{% endif %}" id="summary-tab">
         <div class="section-header">
             <h2><i class="fas fa-file-medical"></i> Patient Summary</h2>
-            <div class="ai-tools">
+            <div class="assistant-tools">
                 <button type="button" class="btn btn-primary" onclick="doctorPatient.openSummaryModal()">
                     <i class="fas fa-plus"></i> Manage Summary
                 </button>
@@ -1139,12 +1139,12 @@
             </div>
         </div>
 
-        <div id="summaryAiPanel" class="ai-panel" style="display: none;">
-            <h4><i class="fas fa-robot"></i> AI Summary Helper</h4>
-            <div class="text-muted" style="margin-bottom: 6px;">Review the latest saved summary or generate a new AI summary</div>
+        <div id="summaryAiPanel" class="assistant-panel" style="display: none;">
+            <h4><i class="fas fa-robot"></i> Doctor Assistant - Summary</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">Review the latest saved summary or generate a new summary with Doctor Assistant</div>
             <pre id="summaryAiText">-</pre>
 
-            <div class="ai-tools" style="margin-top: 10px;">
+            <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedSummary()">
                     <i class="fas fa-pen"></i> Use in Manual Summary
                 </button>
@@ -1199,7 +1199,7 @@
                 <div class="empty-state">
                     <i class="fas fa-file-medical"></i>
                     <p>No patient summaries available</p>
-                    <p class="text-muted">Create a summary to get AI-powered diagnosis and comprehensive patient overview</p>
+                    <p class="text-muted">Create a summary to get Doctor Assistant diagnosis and comprehensive patient overview</p>
                     <button class="btn btn-primary" onclick="doctorPatient.openSummaryModal()">
                         <i class="fas fa-plus"></i> Create First Summary
                     </button>
@@ -1696,23 +1696,23 @@
                     <i class="fas fa-save"></i> Save Manual Summary
                 </button>
                 <button type="button" class="btn btn-success" onclick="doctorPatient.generateAISummary()">
-                    <i class="fas fa-robot"></i> Generate AI Summary
+                    <i class="fas fa-robot"></i> Generate Summary (Doctor Assistant)
                 </button>
                 <button type="button" class="btn btn-warning" onclick="doctorPatient.generateDiagnosisFromLatestSummary()">
                     <i class="fas fa-stethoscope"></i> Generate Diagnosis from Summary
                 </button>
             </div>
             
-            <!-- AI Summary Result -->
+            <!-- Assistant Summary Result -->
             <div id="aiSummaryResult" class="mt-3" style="display: none;">
                 <div class="card">
                     <div class="card-header">
-                        <h6>AI Generated Summary</h6>
+                        <h6>Doctor Assistant generated Summary</h6>
                     </div>
                     <div class="card-body">
                         <div id="generatedSummaryText" class="mb-3" style="white-space: pre-wrap;"></div>
                         <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.saveAISummary()">
-                            <i class="fas fa-save"></i> Save AI Summary
+                            <i class="fas fa-save"></i> Save Doctor Assistant Summary
                         </button>
                     </div>
                 </div>
@@ -2091,14 +2091,14 @@
     font-size: 14px;
 }
 
-.ai-tools {
+.assistant-tools {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
     align-items: center;
 }
 
-.ai-panel {
+.assistant-panel {
     margin: 16px 0;
     background: var(--white);
     border-radius: var(--border-radius);
@@ -2107,13 +2107,13 @@
     padding: 14px 16px;
 }
 
-.ai-panel h4 {
+.assistant-panel h4 {
     margin: 0 0 8px 0;
     color: var(--gray-800);
     font-size: 16px;
 }
 
-.ai-panel pre {
+.assistant-panel pre {
     background: var(--gray-100);
     border: 1px solid var(--gray-300);
     border-radius: 6px;
@@ -3058,6 +3058,16 @@ class DoctorPatientManagement {
         });
     }
 
+    showAlert(message, type = 'info') {
+        // Use global showAlert if available, otherwise create a simple fallback
+        if (typeof window.showAlert === 'function') {
+            window.showAlert(message, type);
+        } else {
+            // Fallback: simple alert display
+            alert(message);
+        }
+    }
+
     hideAIPanel(panelId) {
         const el = document.getElementById(panelId);
         if (el) el.style.display = 'none';
@@ -3124,7 +3134,7 @@ class DoctorPatientManagement {
             this.showAlert('Generating ROS questions...', 'info');
             const fd = new FormData();
             fd.append('patient_id', String(this.patientId));
-            const result = await this._postAI('/doctor/patient/ai/review_systems', fd);
+            const result = await this._postAI('/doctor/patient/assistant/review_systems', fd);
             const questions = result.questions || '';
 
             if (out) out.textContent = questions || 'No questions returned.';
@@ -3136,8 +3146,8 @@ class DoctorPatientManagement {
             this.showAlert('ROS questions generated.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate ROS questions';
-            const out = document.getElementById('rosAiQuestionsText');
-            if (out) out.textContent = `Error: ${msg}`;
+            const outElement = document.getElementById('rosAiQuestionsText');
+            if (outElement) outElement.textContent = `Error: ${msg}`;
             this._showAIPanel('rosAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3157,7 +3167,7 @@ class DoctorPatientManagement {
             this.showAlert('Loading HPI questions...', 'info');
             const fd = new FormData();
             fd.append('patient_id', String(this.patientId));
-            const result = await this._postAI('/doctor/patient/ai/hpi_questions', fd);
+            const result = await this._postAI('/doctor/patient/assistant/hpi_questions', fd);
 
             const questions = result.questions || '';
             if (out) out.textContent = questions || 'No questions returned.';
@@ -3166,8 +3176,8 @@ class DoctorPatientManagement {
             this.showAlert('HPI questions ready.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to load HPI questions';
-            const out = document.getElementById('hpiAiQuestionsText');
-            if (out) out.textContent = `Error: ${msg}`;
+            const outElement = document.getElementById('hpiAiQuestionsText');
+            if (outElement) outElement.textContent = `Error: ${msg}`;
             this._showAIPanel('hpiAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3188,7 +3198,7 @@ class DoctorPatientManagement {
             this.showAlert('Generating HPI draft...', 'info');
             const fd = new FormData();
             fd.append('patient_id', String(this.patientId));
-            const result = await this._postAI('/doctor/patient/ai/generate_hpi', fd);
+            const result = await this._postAI('/doctor/patient/assistant/generate_hpi', fd);
 
             const hpi = result.hpi_content || '';
             this.lastGeneratedHpi = hpi;
@@ -3198,8 +3208,8 @@ class DoctorPatientManagement {
             this.showAlert('HPI draft generated.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate HPI';
-            const out = document.getElementById('hpiAiGeneratedText');
-            if (out) out.textContent = `Error: ${msg}`;
+            const outElement = document.getElementById('hpiAiGeneratedText');
+            if (outElement) outElement.textContent = `Error: ${msg}`;
             this._showAIPanel('hpiAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3236,7 +3246,7 @@ class DoctorPatientManagement {
         this._showAIPanel('diagnosisAiPanel');
     }
 
-    async generateDiagnosisAI() {
+    async generateDiagnosisAssistant() {
         if (!this.patientId) {
             this.showAlert('Patient ID missing; reload and try again.', 'error');
             return;
@@ -3252,19 +3262,19 @@ class DoctorPatientManagement {
             const fd = new FormData();
             fd.append('patient_id', String(this.patientId));
             fd.append('patient_summary', '');
-            const result = await this._postAI('/doctor/patient/ai/diagnosis', fd);
+            const result = await this._postAI('/doctor/patient/assistant/diagnosis', fd);
 
             const dx = result.diagnosis || '';
             this.lastGeneratedDiagnosis = dx;
-            const out = document.getElementById('diagnosisAiText');
+            // Reuse out variable declared earlier
             if (out) out.textContent = dx || 'No diagnosis returned.';
 
             this._showAIPanel('diagnosisAiPanel');
             this.showAlert('Diagnosis generated.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate diagnosis';
-            const out = document.getElementById('diagnosisAiText');
-            if (out) out.textContent = `Error: ${msg}`;
+            const outElement = document.getElementById('diagnosisAiText');
+            if (outElement) outElement.textContent = `Error: ${msg}`;
             this._showAIPanel('diagnosisAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3313,11 +3323,11 @@ class DoctorPatientManagement {
             this.showAlert('Generating treatment plan...', 'info');
             const fd = new FormData();
             fd.append('patient_id', String(this.patientId));
-            const result = await this._postAI('/doctor/patient/ai/treatment', fd);
+            const result = await this._postAI('/doctor/patient/assistant/treatment', fd);
 
             const plan = result.treatment_plan || '';
             this.lastGeneratedManagementPlan = plan;
-            const out = document.getElementById('managementAiText');
+            // Reuse out variable declared earlier
             if (out) out.textContent = plan || 'No plan returned.';
 
             const store = document.getElementById('mgmtAiStoredPlan');
@@ -3327,8 +3337,8 @@ class DoctorPatientManagement {
             this.showAlert('Treatment plan generated.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate treatment plan';
-            const out = document.getElementById('managementAiText');
-            if (out) out.textContent = `Error: ${msg}`;
+            const outElement = document.getElementById('managementAiText');
+            if (outElement) outElement.textContent = `Error: ${msg}`;
             this._showAIPanel('managementAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3384,7 +3394,7 @@ class DoctorPatientManagement {
             this.showAlert('Generating summary...', 'info');
             const fd = new FormData();
             fd.append('patient_id', String(this.patientId));
-            const result = await this._postAI('/doctor/patient/ai/generate_summary', fd);
+            const result = await this._postAI('/doctor/patient/assistant/generate_summary', fd);
 
             const text = (result && result.summary_text ? String(result.summary_text) : '').trim();
             this.lastGeneratedSummary = text;
@@ -3395,8 +3405,8 @@ class DoctorPatientManagement {
             this.showAlert('AI summary generated and saved. Click Reload List to see it.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate summary';
-            const out = document.getElementById('summaryAiText');
-            if (out) out.textContent = `Error: ${msg}`;
+            const outElement = document.getElementById('summaryAiText');
+            if (outElement) outElement.textContent = `Error: ${msg}`;
             this._showAIPanel('summaryAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3581,7 +3591,7 @@ class DoctorPatientManagement {
     }
 
     async generateAISummary() {
-        if (!confirm('Generate AI summary from patient data?')) return;
+        if (!confirm('Generate Summary (Doctor Assistant) from patient data?')) return;
 
         try {
             const resultBox = document.getElementById('aiSummaryResult');
@@ -3614,7 +3624,7 @@ class DoctorPatientManagement {
                 // Scroll to the result
                 document.getElementById('aiSummaryResult').scrollIntoView({ behavior: 'smooth' });
             } else {
-                const msg = result.error || 'Failed to generate AI summary';
+                const msg = result.error || 'Failed to Generate Summary (Doctor Assistant)';
                 const textEl = document.getElementById('generatedSummaryText');
                 if (textEl) textEl.textContent = `Error: ${msg}`;
                 document.getElementById('aiSummaryResult').style.display = 'block';
@@ -3630,7 +3640,7 @@ class DoctorPatientManagement {
     }
 
     async saveAISummary() {
-        // AI summary is automatically saved when generated
+        // Assistant summary is automatically saved when generated
         this.showAlert('AI summary was automatically saved', 'info');
         document.getElementById('aiSummaryResult').style.display = 'none';
         this.closeModal('summary');
@@ -4225,7 +4235,7 @@ class DoctorPatientManagement {
 
     async openDosageLookup(buttonElement) {
         if (typeof window.showAlert === 'function') {
-            window.showAlert(message, type);
+            this.showAlert(message, type);
             return;
         }
         // Fallback to native alert only if global helper is unavailable
@@ -4403,3 +4413,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 {% endblock %}
+
+
+
+
+

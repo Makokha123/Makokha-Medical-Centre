@@ -69,6 +69,7 @@
                           <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="btn btn-sm btn-primary">View</a>
                           {% if category == 'outpatients' %}
                             <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ p.id }}')">Complete</button>
+                            <button class="btn btn-sm btn-warning" onclick="admitPatient('{{ p.id }}')">Admit</button>
                           {% else %}
                             {% if p.discharge_state == 'pending' %}
                               <button class="btn btn-sm btn-secondary" disabled>Pending discharge</button>
@@ -193,19 +194,13 @@ function completeTreatment(patientId) {
 }
 
 function viewSections(patientId) {
-  fetch(`/doctor/patient/${patientId}/view_sections`, {
-    method: 'GET',
-    headers: { 'X-CSRFToken': getCsrfToken() }
-  })
-  .then((response) => response.json())
-  .then((data) => {
-    if (data.success) {
-      alert(`Sections:\nProgression: ${data.sections.progression}\nFindings: ${data.sections.findings}\nPrescriptions: ${data.sections.prescriptions}`);
-    } else {
-      alert(`Error: ${data.error}`);
-    }
-  })
-  .catch(() => alert('Error loading sections'));
+  // Navigate to medical record page
+  window.location.href = `/doctor/patient/${patientId}/record`;
+}
+
+function admitPatient(patientId) {
+  // Navigate to admission page
+  window.location.href = `/doctor/patient/${patientId}/admit`;
 }
 
 function confirmDelete(patientId) {

@@ -540,6 +540,8 @@ class User(db.Model, UserMixin):
         return None
     # Relationships 
     generated_summaries = db.relationship('PatientSummary', back_populates='generator', lazy=True)
+    ward_assignments = db.relationship('UserWardAssignment', back_populates='user', lazy=True, cascade='all, delete-orphan')
+    department_assignments = db.relationship('UserDepartmentAssignment', back_populates='user', lazy=True, cascade='all, delete-orphan')
 
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
@@ -764,6 +766,77 @@ class Bed(db.Model):
     patient = db.relationship('Patient', backref='bed_assignment')
 
 
+class OutpatientDepartment(db.Model):
+    """Outpatient departments and clinics."""
+    __tablename__ = 'outpatient_departments'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    type = db.Column(db.String(20), nullable=False)  # 'department' or 'clinic'
+    description = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    # Relationships
+    user_assignments = db.relationship('UserDepartmentAssignment', back_populates='department', lazy=True, cascade='all, delete-orphan')
+    
+    def __repr__(self):
+        return f'<OutpatientDepartment {self.name} ({self.type})>'
+
+
+class UserWardAssignment(db.Model):
+    """Many-to-many assignment of users to wards with roles."""
+    __tablename__ = 'user_ward_assignments'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    ward_id = db.Column(db.Integer, db.ForeignKey('wards.id'), nullable=False)
+    role = db.Column(db.String(50), nullable=False)  # consultant, general (doctors); incharge, general, student, intern (nurses)
+    is_primary = db.Column(db.Boolean, default=False)  # Primary ward assignment
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    __table_args__ = (
+        db.Index('ix_user_ward_assignments_user_id', 'user_id'),
+        db.Index('ix_user_ward_assignments_ward_id', 'ward_id'),
+        db.UniqueConstraint('user_id', 'ward_id', name='uq_user_ward'),
+    )
+    
+    # Relationships
+    user = db.relationship('User', back_populates='ward_assignments')
+    ward = db.relationship('Ward', backref='user_assignments')
+    
+    def __repr__(self):
+        return f'<UserWardAssignment User {self.user_id} - Ward {self.ward_id} - {self.role}>'
+
+
+class UserDepartmentAssignment(db.Model):
+    """Many-to-many assignment of users to outpatient departments with roles."""
+    __tablename__ = 'user_department_assignments'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    department_id = db.Column(db.Integer, db.ForeignKey('outpatient_departments.id'), nullable=False)
+    role = db.Column(db.String(50), nullable=False)  # consultant, general, specialist
+    is_primary = db.Column(db.Boolean, default=False)  # Primary department assignment
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    __table_args__ = (
+        db.Index('ix_user_department_assignments_user_id', 'user_id'),
+        db.Index('ix_user_department_assignments_department_id', 'department_id'),
+        db.UniqueConstraint('user_id', 'department_id', name='uq_user_department'),
+    )
+    
+    # Relationships
+    user = db.relationship('User', back_populates='department_assignments')
+    department = db.relationship('OutpatientDepartment', back_populates='user_assignments')
+    
+    def __repr__(self):
+        return f'<UserDepartmentAssignment User {self.user_id} - Department {self.department_id} - {self.role}>'
+
+
 class BedAssignment(db.Model):
     """Historical record of bed occupancy.
 
@@ -776,8 +849,11 @@ class BedAssignment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     bed_id = db.Column(db.Integer, db.ForeignKey('beds.id'), nullable=False)
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    ward_id = db.Column(db.Integer, db.ForeignKey('wards.id'), nullable=False)
     assigned_at = db.Column(db.DateTime, nullable=False)
+    start_date = db.Column(db.DateTime, nullable=False)
     released_at = db.Column(db.DateTime)
+    notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=get_eat_now)
 
     __table_args__ = (
@@ -788,6 +864,7 @@ class BedAssignment(db.Model):
 
     bed = db.relationship('Bed', backref='assignments')
     patient = db.relationship('Patient', backref='bed_assignments')
+    ward = db.relationship('Ward', backref='bed_assignments')
 
 
 class BedStayCharge(db.Model):
@@ -858,6 +935,7 @@ def update_ward_stay_bill_for_patient(patient_id: int, context: dict):
         return None, 0
 
     amount = daily_rate * unbilled_days
+
     patient = Patient.query.get(patient_id)
     ward_name = context.get('ward_name', 'Ward')
 
@@ -920,6 +998,138 @@ def update_ward_stay_bill_for_patient(patient_id: int, context: dict):
         db.session.rollback()
         current_app.logger.error(f"Failed to update ward stay bill: {e}")
         return None, 0
+
+
+class NurseNotification(db.Model):
+    __tablename__ = 'nurse_notifications'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    ward_id = db.Column(db.Integer, db.ForeignKey('wards.id'), nullable=False)
+    bed_id = db.Column(db.Integer, db.ForeignKey('beds.id'), nullable=False)
+    doctor_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    notified_at = db.Column(db.DateTime, nullable=False, default=get_eat_now)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), default='pending')  # pending, completed, expired
+    notes = db.Column(db.Text, nullable=True)
+    
+    # Relationships
+    patient = db.relationship('Patient', backref='nurse_notifications')
+    ward = db.relationship('Ward', backref='nurse_notifications')
+    bed = db.relationship('Bed', backref='nurse_notifications')
+    doctor = db.relationship('User', backref='nurse_notifications')
+    
+    # Indexes for query performance
+    __table_args__ = (
+        db.Index('idx_nurse_notif_patient', 'patient_id'),
+        db.Index('idx_nurse_notif_status', 'status'),
+        db.Index('idx_nurse_notif_ward', 'ward_id'),
+    )
+    
+    def __repr__(self):
+        return f'<NurseNotification {self.id} - Patient {self.patient_id} - Status {self.status}>'
+
+
+class NursingReport(db.Model):
+    """Nursing reports and observations for patients."""
+    __tablename__ = 'nursing_reports'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    nurse_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    report_type = db.Column(db.String(50), default='general')  # general, admission, discharge, incident
+    
+    # Vital signs
+    temperature = db.Column(db.Float)  # Celsius
+    blood_pressure_systolic = db.Column(db.Integer)
+    blood_pressure_diastolic = db.Column(db.Integer)
+    pulse_rate = db.Column(db.Integer)  # beats per minute
+    respiratory_rate = db.Column(db.Integer)  # breaths per minute
+    oxygen_saturation = db.Column(db.Integer)  # percentage
+    blood_sugar = db.Column(db.Float)  # mg/dL
+    weight = db.Column(db.Float)  # kg
+    height = db.Column(db.Float)  # cm
+    
+    # Observations and notes
+    observations = db.Column(db.Text)  # General observations
+    symptoms = db.Column(db.Text)  # Patient symptoms
+    pain_level = db.Column(db.Integer)  # 0-10 scale
+    consciousness_level = db.Column(db.String(50))  # alert, drowsy, unconscious, etc.
+    mobility_status = db.Column(db.String(100))  # ambulatory, bed-bound, assisted, etc.
+    
+    # Care activities
+    care_provided = db.Column(db.Text)  # Description of care activities
+    medications_given = db.Column(db.Text)  # Summary of medications administered
+    intake_output = db.Column(db.Text)  # Fluid intake/output tracking
+    
+    # Follow-up
+    recommendations = db.Column(db.Text)
+    doctor_notified = db.Column(db.Boolean, default=False)
+    urgent = db.Column(db.Boolean, default=False)
+    
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    # Relationships
+    patient = db.relationship('Patient', backref='nursing_reports')
+    nurse = db.relationship('User', backref='nursing_reports')
+    
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_nursing_reports_patient', 'patient_id'),
+        db.Index('idx_nursing_reports_nurse', 'nurse_id'),
+        db.Index('idx_nursing_reports_created', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f'<NursingReport {self.id} - Patient {self.patient_id}>'
+
+
+class MedicationAdministration(db.Model):
+    """Track medication administration by nurses."""
+    __tablename__ = 'medication_administrations'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
+    nurse_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    
+    # Medication details
+    medication_name = db.Column(db.String(255), nullable=False)
+    dosage = db.Column(db.String(100), nullable=False)
+    route = db.Column(db.String(50))  # oral, IV, IM, topical, etc.
+    frequency = db.Column(db.String(100))  # e.g., "twice daily", "every 6 hours"
+    
+    # Administration details
+    scheduled_time = db.Column(db.DateTime)  # When it was supposed to be given
+    administered_at = db.Column(db.DateTime, nullable=False, default=get_eat_now)
+    status = db.Column(db.String(20), default='administered')  # administered, refused, missed, delayed
+    
+    # Additional information
+    site = db.Column(db.String(100))  # Injection site if applicable
+    reaction = db.Column(db.Text)  # Any adverse reactions
+    notes = db.Column(db.Text)
+    
+    # Prescription reference
+    prescription_id = db.Column(db.Integer)  # Link to prescription if applicable
+    doctor_id = db.Column(db.Integer, db.ForeignKey('user.id'))  # Prescribing doctor
+    
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    # Relationships
+    patient = db.relationship('Patient', backref='medication_administrations')
+    nurse = db.relationship('User', foreign_keys=[nurse_id], backref='medications_administered')
+    doctor = db.relationship('User', foreign_keys=[doctor_id], backref='medications_prescribed_for_admin')
+    
+    # Indexes
+    __table_args__ = (
+        db.Index('idx_med_admin_patient', 'patient_id'),
+        db.Index('idx_med_admin_nurse', 'nurse_id'),
+        db.Index('idx_med_admin_time', 'administered_at'),
+    )
+    
+    def __repr__(self):
+        return f'<MedicationAdministration {self.id} - {self.medication_name} to Patient {self.patient_id}>'
 
 
 def get_ward_stay_bill(patient_id: int, context: dict):
@@ -2583,7 +2793,10 @@ class Patient(db.Model):
     chief_complaint = db.Column(db.Text, nullable=True)
     history_present_illness = db.Column(db.Text, nullable=True)
     
-    # AI Integration Fields
+    # Outpatient department assignment (for outpatient visits)
+    department_id = db.Column(db.Integer, db.ForeignKey('outpatient_departments.id'), nullable=True)
+    
+    # Assistant Integration Fields
     ai_assistance_enabled = db.Column(db.Boolean, default=False)
     ai_diagnosis = db.Column(db.Text)
     ai_treatment_recommendations = db.Column(db.Text)
@@ -2602,6 +2815,7 @@ class Patient(db.Model):
     lab_requests = db.relationship('LabRequest', backref='patient', lazy=True)
     imaging_requests = db.relationship('ImagingRequest', backref='patient', lazy=True)
     summaries = db.relationship('PatientSummary', back_populates='patient', lazy=True)
+    department = db.relationship('OutpatientDepartment', backref='patients')
 
     discharge_requester = db.relationship('User', foreign_keys=[discharge_requested_by])
     discharger = db.relationship('User', foreign_keys=[discharged_by])
@@ -2719,7 +2933,7 @@ class PatientReviewSystem(db.Model):
     skin = db.Column(db.Text)
     msk = db.Column(db.Text)
     
-    # AI fields
+    # Assistant fields
     ai_suggested_questions = db.Column(db.Text)  # Stores AI-generated questions for review of systems
     ai_last_updated = db.Column(db.DateTime)
 
@@ -2741,7 +2955,7 @@ class PatientHistory(db.Model):
     allergies = db.Column(db.Text)
     medications = db.Column(db.Text)
     
-    # AI fields
+    # Assistant fields
     ai_identified_risk_factors = db.Column(db.Text)
 
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -2778,7 +2992,7 @@ class PatientExamination(db.Model):
     msk_exam = db.Column(db.Text)
     skin_exam = db.Column(db.Text)
     
-    # AI fields
+    # Assistant fields
     ai_identified_red_flags = db.Column(db.Text)
 
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -2807,7 +3021,7 @@ class PatientDiagnosis(db.Model):
     working_diagnosis = db.Column(db.Text)
     differential_diagnosis = db.Column(db.Text)
     
-        # AI fields
+        # Assistant fields
     ai_supported_diagnosis = db.Column(db.Boolean, default=False)
     ai_alternative_diagnoses = db.Column(db.Text)
 
@@ -2825,7 +3039,7 @@ class PatientManagement(db.Model):
     follow_up = db.Column(db.Text)
     notes = db.Column(db.Text)   
      
-    # AI fields
+    # Assistant fields
     ai_generated_plan = db.Column(db.Boolean, default=False)
     ai_alternative_treatments = db.Column(db.Text)
 
@@ -3116,7 +3330,7 @@ Output requirements:
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
-                    max_tokens=800
+                    max_tokens=3800
                 )
                 return response.choices[0].message.content
             except Exception as e:
@@ -3154,7 +3368,7 @@ Output requirements:
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
-                    max_tokens=800,
+                    max_tokens=3800,
                     timeout=ai_timeout  # Use configured timeout
                 )
                 return response.choices[0].message.content
@@ -3519,7 +3733,7 @@ Output requirements:
             response = AIService._chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=900,
+                max_tokens=3800,
                 temperature=0.4,
                 timeout=ai_timeout,
             )
@@ -3613,7 +3827,7 @@ Output requirements:
             response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=1000,
+                max_tokens=3800,
                 temperature=0.7,
             )
             
@@ -3678,7 +3892,7 @@ Output requirements:
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
-                    max_tokens=900,
+                    max_tokens=3800,
                     timeout=ai_timeout,
                 )
                 return response.choices[0].message.content
@@ -6106,6 +6320,164 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg', 'gif'}
 
 
+# ============================================
+# Access Control Helper Functions
+# ============================================
+
+def get_user_accessible_ward_ids(user):
+    """Get IDs of wards accessible by the user."""
+    if not user or user.role not in ['doctor', 'nurse']:
+        return []
+    
+    ward_assignments = UserWardAssignment.query.filter_by(user_id=user.id).all()
+    return [a.ward_id for a in ward_assignments]
+
+
+def get_user_accessible_department_ids(user):
+    """Get IDs of outpatient departments accessible by the user."""
+    if not user or user.role != 'doctor':
+        return []
+    
+    department_assignments = UserDepartmentAssignment.query.filter_by(user_id=user.id).all()
+    return [a.department_id for a in department_assignments]
+
+
+def filter_accessible_patients(query, user):
+    """
+    Filter patient query based on user's ward and department assignments.
+    
+    Args:
+        query: SQLAlchemy query object for Patient model
+        user: Current user object
+        
+    Returns:
+        Filtered query object
+    """
+    # Admin can see all patients
+    if user.role == 'admin':
+        return query
+    
+    # If user has no assignments, return empty query for safety (or all patients for backward compatibility)
+    ward_ids = get_user_accessible_ward_ids(user)
+    dept_ids = get_user_accessible_department_ids(user)
+    
+    # If no assignments, show all patients (backward compatibility with existing system)
+    if not ward_ids and not dept_ids:
+        return query
+    
+    # Build filter conditions
+    conditions = []
+    
+    # For doctors and nurses: filter inpatients by ward
+    if ward_ids and user.role in ['doctor', 'nurse']:
+        # Inpatients are those with IP numbers and currently admitted (have a bed)
+        inpatient_condition = db.and_(
+            Patient.ip_number.isnot(None),
+            Patient.id.in_(
+                db.select([Bed.patient_id]).where(
+                    db.and_(
+                        Bed.patient_id.isnot(None),
+                        Bed.ward_id.in_(ward_ids)
+                    )
+                )
+            )
+        )
+        conditions.append(inpatient_condition)
+    
+    # For doctors: filter outpatients by department
+    if dept_ids and user.role == 'doctor':
+        # Outpatients are those with OP numbers and assigned to a department
+        outpatient_condition = db.and_(
+            Patient.op_number.isnot(None),
+            Patient.department_id.in_(dept_ids)
+        )
+        conditions.append(outpatient_condition)
+    
+    # Apply OR condition if we have any filters
+    if conditions:
+        query = query.filter(db.or_(*conditions))
+    
+    return query
+
+
+def get_accessible_inpatients(user):
+    """Get inpatients accessible by the user based on ward assignments."""
+    base_query = Patient.query.filter(Patient.ip_number.isnot(None))
+    
+    # Admin sees all inpatients
+    if user.role == 'admin':
+        return base_query.all()
+    
+    # Get user's ward assignments
+    ward_ids = get_user_accessible_ward_ids(user)
+    
+    # If no assignments, return all inpatients (backward compatibility)
+    if not ward_ids:
+        return base_query.all()
+    
+    # Filter inpatients by ward
+    accessible_patients = base_query.join(Bed, Bed.patient_id == Patient.id).filter(
+        Bed.ward_id.in_(ward_ids),
+        Bed.patient_id.isnot(None)
+    ).all()
+    
+    return accessible_patients
+
+
+def get_accessible_outpatients(user):
+    """Get outpatients accessible by the user based on department assignments."""
+    base_query = Patient.query.filter(Patient.op_number.isnot(None))
+    
+    # Admin sees all outpatients
+    if user.role == 'admin':
+        return base_query.all()
+    
+    # Only doctors have department assignments
+    if user.role != 'doctor':
+        return base_query.all()
+    
+    # Get user's department assignments
+    dept_ids = get_user_accessible_department_ids(user)
+    
+    # If no assignments, return all outpatients (backward compatibility)
+    if not dept_ids:
+        return base_query.all()
+    
+    # Filter outpatients by department
+    accessible_patients = base_query.filter(
+        Patient.department_id.in_(dept_ids)
+    ).all()
+    
+    return accessible_patients
+
+
+def can_user_access_patient(user, patient):
+    """Check if user can access a specific patient."""
+    # Admin can access all patients
+    if user.role == 'admin':
+        return True
+    
+    # Get user assignments
+    ward_ids = get_user_accessible_ward_ids(user)
+    dept_ids = get_user_accessible_department_ids(user)
+    
+    # If no assignments, allow access (backward compatibility)
+    if not ward_ids and not dept_ids:
+        return True
+    
+    # Check if patient is an inpatient in user's ward
+    if patient.ip_number and ward_ids:
+        if patient.bed_assignment and patient.bed_assignment.ward_id in ward_ids:
+            return True
+    
+    # Check if patient is an outpatient in user's department
+    if patient.op_number and patient.department_id and dept_ids:
+        if patient.department_id in dept_ids:
+            return True
+    
+    return False
+
+
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 @limiter.limit("5 per minute")
@@ -6179,6 +6551,8 @@ def login():
                     next_page = url_for('admin_dashboard')
                 elif user_role == 'doctor':
                     next_page = url_for('doctor_restore_last')
+                elif user_role == 'nurse':
+                    next_page = url_for('nurse_dashboard')
                 elif user_role == 'pharmacist':
                     next_page = url_for('pharmacist_dashboard')
                 elif user_role == 'receptionist':
@@ -8323,6 +8697,244 @@ def manage_users():
     # Order users by last login (most recent first) and then by username
     users = User.query.order_by(User.last_login.desc().nullslast(), User.username.asc()).all()
     return render_template('admin/users.html', users=users)
+
+
+# ============================================
+# Ward and Department Assignment Routes
+# ============================================
+
+@app.route('/admin/wards', methods=['GET'])
+@login_required
+def get_wards():
+    """Get all active wards for dropdown selection."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    wards = Ward.query.order_by(Ward.name).all()
+    return jsonify([{
+        'id': w.id,
+        'name': w.name,
+        'description': w.description
+    } for w in wards])
+
+
+@app.route('/admin/departments', methods=['GET'])
+@login_required
+def get_departments():
+    """Get all active outpatient departments for dropdown selection."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    departments = OutpatientDepartment.query.filter_by(is_active=True).order_by(OutpatientDepartment.name).all()
+    return jsonify([{
+        'id': d.id,
+        'name': d.name,
+        'type': d.type,
+        'description': d.description
+    } for d in departments])
+
+
+@app.route('/admin/user/<int:user_id>/ward-assignments', methods=['GET'])
+@login_required
+def get_user_ward_assignments(user_id):
+    """Get all ward assignments for a user."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    user = User.query.get_or_404(user_id)
+    assignments = UserWardAssignment.query.filter_by(user_id=user_id).all()
+    
+    return jsonify({
+        'assignments': [{
+            'id': a.id,
+            'ward_id': a.ward_id,
+            'ward_name': a.ward.name,
+            'role': a.role,
+            'is_primary': a.is_primary,
+            'created_at': a.created_at.isoformat() if a.created_at else None
+        } for a in assignments]
+    })
+
+
+@app.route('/admin/user/<int:user_id>/department-assignments', methods=['GET'])
+@login_required
+def get_user_department_assignments(user_id):
+    """Get all department assignments for a user."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    user = User.query.get_or_404(user_id)
+    assignments = UserDepartmentAssignment.query.filter_by(user_id=user_id).all()
+    
+    return jsonify({
+        'assignments': [{
+            'id': a.id,
+            'department_id': a.department_id,
+            'department_name': a.department.name,
+            'role': a.role,
+            'is_primary': a.is_primary,
+            'created_at': a.created_at.isoformat() if a.created_at else None
+        } for a in assignments]
+    })
+
+
+@app.route('/admin/user/<int:user_id>/ward-assignment', methods=['POST'])
+@login_required
+def add_user_ward_assignment(user_id):
+    """Add a ward assignment for a user."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    user = User.query.get_or_404(user_id)
+    data = request.get_json()
+    
+    ward_id = data.get('ward_id')
+    role = data.get('role')
+    is_primary = data.get('is_primary', False)
+    
+    if not ward_id or not role:
+        return jsonify({'error': 'Ward ID and role are required'}), 400
+    
+    # Check if ward exists
+    ward = Ward.query.get(ward_id)
+    if not ward:
+        return jsonify({'error': 'Ward not found'}), 404
+    
+    # Check if assignment already exists
+    existing = UserWardAssignment.query.filter_by(user_id=user_id, ward_id=ward_id).first()
+    if existing:
+        return jsonify({'error': 'User already assigned to this ward'}), 400
+    
+    # If this is primary, unset other primary assignments
+    if is_primary:
+        UserWardAssignment.query.filter_by(user_id=user_id, is_primary=True).update({'is_primary': False})
+    
+    # Create new assignment
+    assignment = UserWardAssignment(
+        user_id=user_id,
+        ward_id=ward_id,
+        role=role,
+        is_primary=is_primary
+    )
+    
+    try:
+        db.session.add(assignment)
+        db.session.commit()
+        return jsonify({
+            'message': 'Ward assignment added successfully',
+            'assignment': {
+                'id': assignment.id,
+                'ward_id': assignment.ward_id,
+                'ward_name': ward.name,
+                'role': assignment.role,
+                'is_primary': assignment.is_primary
+            }
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error adding ward assignment: {e}')
+        return jsonify({'error': 'Failed to add ward assignment'}), 500
+
+
+@app.route('/admin/user/<int:user_id>/department-assignment', methods=['POST'])
+@login_required
+def add_user_department_assignment(user_id):
+    """Add a department assignment for a user."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    user = User.query.get_or_404(user_id)
+    data = request.get_json()
+    
+    department_id = data.get('department_id')
+    role = data.get('role')
+    is_primary = data.get('is_primary', False)
+    
+    if not department_id or not role:
+        return jsonify({'error': 'Department ID and role are required'}), 400
+    
+    # Check if department exists
+    department = OutpatientDepartment.query.get(department_id)
+    if not department:
+        return jsonify({'error': 'Department not found'}), 404
+    
+    # Check if assignment already exists
+    existing = UserDepartmentAssignment.query.filter_by(user_id=user_id, department_id=department_id).first()
+    if existing:
+        return jsonify({'error': 'User already assigned to this department'}), 400
+    
+    # If this is primary, unset other primary assignments
+    if is_primary:
+        UserDepartmentAssignment.query.filter_by(user_id=user_id, is_primary=True).update({'is_primary': False})
+    
+    # Create new assignment
+    assignment = UserDepartmentAssignment(
+        user_id=user_id,
+        department_id=department_id,
+        role=role,
+        is_primary=is_primary
+    )
+    
+    try:
+        db.session.add(assignment)
+        db.session.commit()
+        return jsonify({
+            'message': 'Department assignment added successfully',
+            'assignment': {
+                'id': assignment.id,
+                'department_id': assignment.department_id,
+                'department_name': department.name,
+                'role': assignment.role,
+                'is_primary': assignment.is_primary
+            }
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error adding department assignment: {e}')
+        return jsonify({'error': 'Failed to add department assignment'}), 500
+
+
+@app.route('/admin/user/<int:user_id>/ward-assignment/<int:assignment_id>', methods=['DELETE'])
+@login_required
+def remove_user_ward_assignment(user_id, assignment_id):
+    """Remove a ward assignment for a user."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    assignment = UserWardAssignment.query.filter_by(id=assignment_id, user_id=user_id).first()
+    if not assignment:
+        return jsonify({'error': 'Assignment not found'}), 404
+    
+    try:
+        db.session.delete(assignment)
+        db.session.commit()
+        return jsonify({'message': 'Ward assignment removed successfully'}), 200
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error removing ward assignment: {e}')
+        return jsonify({'error': 'Failed to remove ward assignment'}), 500
+
+
+@app.route('/admin/user/<int:user_id>/department-assignment/<int:assignment_id>', methods=['DELETE'])
+@login_required
+def remove_user_department_assignment(user_id, assignment_id):
+    """Remove a department assignment for a user."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    assignment = UserDepartmentAssignment.query.filter_by(id=assignment_id, user_id=user_id).first()
+    if not assignment:
+        return jsonify({'error': 'Assignment not found'}), 404
+    
+    try:
+        db.session.delete(assignment)
+        db.session.commit()
+        return jsonify({'message': 'Department assignment removed successfully'}), 200
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error removing department assignment: {e}')
+        return jsonify({'error': 'Failed to remove department assignment'}), 500
+
 
 @app.route('/admin/employees', methods=['GET', 'POST'])
 @login_required
@@ -20148,7 +20760,7 @@ def admin_load_controlled_dosage_index_book():
     return redirect(url_for('manage_controlled_dosage'))
 
 
-@app.route('/admin/dosage/ai-suggest')
+@app.route('/admin/dosage/assistant-suggest')
 @login_required
 def admin_ai_suggest_dosage():
     """Admin-only helper that returns suggested dosage fields for a drug.
@@ -20215,7 +20827,7 @@ def admin_ai_suggest_dosage():
     })
 
 
-@app.route('/admin/dosage/ai-fill-missing', methods=['POST'])
+@app.route('/admin/dosage/assistant-fill-missing', methods=['POST'])
 @login_required
 def admin_ai_fill_missing_dosage_fields():
     """Admin-only batch helper: fills ONLY missing dosage fields using AI generation (+ optional local index-book context).
@@ -20361,7 +20973,7 @@ def admin_ai_fill_missing_dosage_fields():
     return redirect(url_for('manage_controlled_dosage' if kind == 'controlled' else 'manage_dosage'))
 
 
-@app.route('/admin/dosage/ai-agent/toggle', methods=['POST'])
+@app.route('/admin/dosage/assistant-agent/toggle', methods=['POST'])
 @login_required
 def admin_toggle_ai_dosage_agent():
     if current_user.role != 'admin':
@@ -20374,7 +20986,7 @@ def admin_toggle_ai_dosage_agent():
     return redirect(request.referrer or url_for('manage_dosage'))
 
 
-@app.route('/admin/dosage/ai-agent/run-now', methods=['POST'])
+@app.route('/admin/dosage/assistant-agent/run-now', methods=['POST'])
 @login_required
 def admin_run_ai_dosage_agent_now():
     if current_user.role != 'admin':
@@ -20415,7 +21027,7 @@ def admin_run_ai_dosage_agent_now():
     return redirect(request.referrer or url_for('manage_dosage'))
 
 
-@app.route('/admin/dosage/ai-agent/start-job', methods=['POST'])
+@app.route('/admin/dosage/assistant-agent/start-job', methods=['POST'])
 @login_required
 def admin_start_ai_dosage_agent_job():
     if current_user.role != 'admin':
@@ -20480,7 +21092,7 @@ def admin_start_ai_dosage_agent_job():
     return jsonify({'job_id': job_id})
 
 
-@app.route('/admin/dosage/ai-agent/job/<job_id>/status')
+@app.route('/admin/dosage/assistant-agent/job/<job_id>/status')
 @login_required
 def admin_ai_dosage_agent_job_status(job_id):
     if current_user.role != 'admin':
@@ -20524,7 +21136,7 @@ def admin_ai_dosage_agent_job_status(job_id):
     })
 
 
-@app.route('/admin/dosage/ai-agent/job/<job_id>/complete')
+@app.route('/admin/dosage/assistant-agent/job/<job_id>/complete')
 @login_required
 def admin_ai_dosage_agent_job_complete(job_id):
     if current_user.role != 'admin':
@@ -22630,19 +23242,26 @@ def doctor_dashboard():
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
-    # Get counts for the stats cards
-    active_patients_count = Patient.query.filter_by(status='active').count()
+    # Get counts for the stats cards with access control filtering
+    base_active_query = Patient.query.filter_by(status='active')
+    active_patients_count = filter_accessible_patients(base_active_query, current_user).count()
+    
     # Count distinct patients who have a sale today (avoid cartesian product with Sales).
     today_patients = (
         db.session.query(func.count(func.distinct(Sale.patient_id)))
         .filter(func.date(Sale.created_at) == date.today())
         .scalar()
     ) or 0
-    completed_patients_count = Patient.query.filter_by(status='completed').count()
     
-    # Get actual patient lists for the tables
-    active_patients = Patient.query.filter_by(status='active').order_by(Patient.updated_at.desc()).limit(50).all()
-    completed_patients = Patient.query.filter_by(status='completed').order_by(Patient.updated_at.desc()).limit(50).all()
+    base_completed_query = Patient.query.filter_by(status='completed')
+    completed_patients_count = filter_accessible_patients(base_completed_query, current_user).count()
+    
+    # Get actual patient lists for the tables with access control filtering
+    active_query = Patient.query.filter_by(status='active')
+    active_patients = filter_accessible_patients(active_query, current_user).order_by(Patient.updated_at.desc()).limit(50).all()
+    
+    completed_query = Patient.query.filter_by(status='completed')
+    completed_patients = filter_accessible_patients(completed_query, current_user).order_by(Patient.updated_at.desc()).limit(50).all()
 
     # Diagnosis analytics (safe, additive; never blocks dashboard rendering).
     diagnosis_stats = None
@@ -22780,9 +23399,14 @@ def doctor_dashboard():
 
                 endemic_tag = _endemic_label(c)
                 if endemic_tag and dx_created_at:
-                    if dx_created_at >= last7_cutoff:
+                    # Make dx_created_at timezone-aware if it's naive
+                    dx_aware = dx_created_at
+                    if dx_created_at.tzinfo is None:
+                        dx_aware = dx_created_at.replace(tzinfo=EAT)
+                    
+                    if dx_aware >= last7_cutoff:
                         endemic_last7[endemic_tag] += 1
-                    elif base_start <= dx_created_at < base_end:
+                    elif base_start <= dx_aware < base_end:
                         endemic_baseline[endemic_tag] += 1
 
         def _top(counter: Counter, n: int = 10):
@@ -23014,19 +23638,47 @@ def doctor_patients():
         flash('Unauthorized', 'danger')
         return redirect(url_for('home'))
 
-    active_patients = (
-        Patient.query
-        .filter(Patient.status == 'active')
-        .filter(or_(Patient.discharge_state.is_(None), Patient.discharge_state != 'pending'))
-        .order_by(Patient.created_at.desc())
-        .all()
-    )
-    completed_patients = Patient.query.filter_by(status='completed').order_by(Patient.updated_at.desc()).all()
+    # Check for search query parameter to help find specific patients
+    search_query = request.args.get('search', '').strip()
+    
+    if search_query:
+        # Direct search for debugging with access control
+        base_search_query = Patient.query.filter(
+            or_(
+                Patient.op_number.ilike(f'%{search_query}%'),
+                Patient.ip_number.ilike(f'%{search_query}%')
+            )
+        )
+        matching_patients = filter_accessible_patients(base_search_query, current_user).all()
+        
+        if matching_patients:
+            current_app.logger.info(f"Found {len(matching_patients)} patients matching '{search_query}'")
+            for p in matching_patients:
+                current_app.logger.info(f"  - ID: {p.id}, OP: {p.op_number}, IP: {p.ip_number}, Status: {p.status}, Name: {p.decrypted_name}")
+        else:
+            current_app.logger.info(f"No patients found matching '{search_query}'")
 
-    active_outpatients = [p for p in active_patients if getattr(p, 'op_number', None) and not getattr(p, 'ip_number', None)]
-    active_inpatients = [p for p in active_patients if getattr(p, 'ip_number', None)]
-    completed_outpatients = [p for p in completed_patients if getattr(p, 'op_number', None) and not getattr(p, 'ip_number', None)]
-    completed_inpatients = [p for p in completed_patients if getattr(p, 'ip_number', None)]
+    # Apply access control filtering
+    base_active_query = Patient.query.filter(Patient.status == 'active').filter(
+        or_(Patient.discharge_state.is_(None), Patient.discharge_state != 'pending')
+    )
+    active_patients = filter_accessible_patients(base_active_query, current_user).order_by(Patient.created_at.desc()).all()
+    
+    base_completed_query = Patient.query.filter_by(status='completed')
+    completed_patients = filter_accessible_patients(base_completed_query, current_user).order_by(Patient.updated_at.desc()).all()
+
+    # Filter outpatients and inpatients
+    # FIXED: Check for op_number/ip_number truthiness (not empty string)
+    active_outpatients = [p for p in active_patients if p.op_number and not p.ip_number]
+    active_inpatients = [p for p in active_patients if p.ip_number]
+    completed_outpatients = [p for p in completed_patients if p.op_number and not p.ip_number]
+    completed_inpatients = [p for p in completed_patients if p.ip_number]
+
+    # Debug logging
+    current_app.logger.info(f"Active patients count: {len(active_patients)}")
+    current_app.logger.info(f"Active outpatients: {len(active_outpatients)}, Active inpatients: {len(active_inpatients)}")
+    if active_outpatients:
+        current_app.logger.info(f"Sample OP numbers: {[p.op_number for p in active_outpatients[:3]]}")
 
     return render_template(
         'doctor/patients.html',
@@ -24209,7 +24861,7 @@ def doctor_new_patient():
         lock_patient_type=lock_patient_type,
     )
 
-# AI Assistant for diagnosis and treatment suggestions
+# Assistant Assistant for diagnosis and treatment suggestions
 # NOTE: This legacy class previously overwrote the primary AIService defined earlier in this file.
 # It is kept only to avoid merge-loss, but it must NOT shadow the main AIService.
 
@@ -24481,7 +25133,7 @@ def verify_models():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/doctor/patient/ai/review_systems', methods=['POST'])
+@app.route('/doctor/patient/assistant/review_systems', methods=['POST'])
 @login_required
 def ai_review_systems():
     if current_user.role != 'doctor':
@@ -24543,7 +25195,7 @@ def ai_review_systems():
             'details': str(e)
         }), 500
         
-@app.route('/doctor/patient/ai/hpi_questions', methods=['POST'])
+@app.route('/doctor/patient/assistant/hpi_questions', methods=['POST'])
 @login_required
 def ai_hpi_questions():
     if current_user.role != 'doctor':
@@ -24587,7 +25239,7 @@ def ai_hpi_questions():
             'error': 'Internal server error'
         }), 500
 
-@app.route('/doctor/patient/ai/generate_hpi', methods=['POST'])
+@app.route('/doctor/patient/assistant/generate_hpi', methods=['POST'])
 @login_required
 def ai_generate_hpi():
     if current_user.role != 'doctor':
@@ -24655,7 +25307,7 @@ def ai_generate_hpi():
             'error': 'Internal server error'
         }), 500
         
-@app.route('/doctor/patient/ai/diagnosis', methods=['POST'])
+@app.route('/doctor/patient/assistant/diagnosis', methods=['POST'])
 @login_required
 def ai_diagnosis():
     if current_user.role != 'doctor':
@@ -24718,7 +25370,7 @@ def ai_diagnosis():
             'error': 'Internal server error'
         }), 500
         
-@app.route('/doctor/patient/ai/analyze_lab', methods=['POST'])
+@app.route('/doctor/patient/assistant/analyze_lab', methods=['POST'])
 @login_required
 def ai_analyze_lab():
     if current_user.role != 'doctor':
@@ -24764,7 +25416,7 @@ def ai_analyze_lab():
             'details': str(e)
         }), 500
 
-@app.route('/doctor/patient/ai/treatment', methods=['POST'])
+@app.route('/doctor/patient/assistant/treatment', methods=['POST'])
 @login_required
 def ai_treatment():
     if current_user.role != 'doctor':
@@ -24947,7 +25599,7 @@ def _build_doctor_patient_ai_context(patient: 'Patient') -> dict:
     }
 
 
-@app.route('/doctor/patient/ai/generate_summary', methods=['POST'])
+@app.route('/doctor/patient/assistant/generate_summary', methods=['POST'])
 @login_required
 def ai_generate_summary():
     if current_user.role != 'doctor':
@@ -25263,6 +25915,11 @@ def patient_medical_record(patient_id):
         flash('Patient not found', 'danger')
         return redirect(url_for('doctor_patients'))
     
+    # Check if user can access this patient
+    if not can_user_access_patient(current_user, patient):
+        flash('You do not have access to this patient', 'danger')
+        return redirect(url_for('doctor_patients'))
+    
     # Get all medical record components
     review_systems = PatientReviewSystem.query.filter_by(patient_id=patient.id).first()
     history = PatientHistory.query.filter_by(patient_id=patient.id).first()
@@ -25333,6 +25990,180 @@ def delete_patient(patient_id):
         db.session.delete(patient)
         db.session.commit()
         return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/doctor/patient/<int:patient_id>/admit', methods=['GET', 'POST'])
+@login_required
+def admit_patient(patient_id):
+    if current_user.role != 'doctor':
+        flash('Unauthorized access', 'error')
+        return redirect(url_for('doctor_patients'))
+    
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        flash('Patient not found', 'error')
+        return redirect(url_for('doctor_patients'))
+    
+    if request.method == 'GET':
+        # Get all wards
+        wards = Ward.query.order_by(Ward.name).all()
+        return render_template('doctor/admit_patient.html', patient=patient, wards=wards)
+    
+    # POST request - process admission
+    try:
+        ward_id = request.form.get('ward_id', type=int)
+        bed_id = request.form.get('bed_id', type=int)
+        
+        if not ward_id or not bed_id:
+            flash('Please select both ward and bed', 'error')
+            return redirect(url_for('admit_patient', patient_id=patient_id))
+        
+        # Verify ward and bed exist
+        ward = db.session.get(Ward, ward_id)
+        bed = db.session.get(Bed, bed_id)
+        
+        if not ward or not bed or bed.ward_id != ward_id:
+            flash('Invalid ward or bed selection', 'error')
+            return redirect(url_for('admit_patient', patient_id=patient_id))
+        
+        # Check if bed is available
+        if bed.status != 'available':
+            flash('Selected bed is not available', 'error')
+            return redirect(url_for('admit_patient', patient_id=patient_id))
+        
+        # Generate IP number if patient doesn't have one
+        if not patient.ip_number:
+            # Use existing generate_patient_number logic
+            # Get the latest IP number
+            latest_ip = Patient.query.filter(
+                Patient.ip_number.isnot(None)
+            ).order_by(Patient.ip_number.desc()).first()
+            
+            if latest_ip and latest_ip.ip_number:
+                # Extract number from format IP-XXXXX
+                try:
+                    last_num = int(latest_ip.ip_number.split('-')[1])
+                    new_num = last_num + 1
+                except (IndexError, ValueError):
+                    new_num = 1
+            else:
+                new_num = 1
+            
+            patient.ip_number = f'IP-{new_num:05d}'
+        
+        # Update patient to inpatient
+        patient.patient_type = 'IP'
+        patient.status = 'active'
+        
+        # Create bed assignment
+        bed_assignment = BedAssignment(
+            patient_id=patient.id,
+            bed_id=bed.id,
+            ward_id=ward.id,
+            assigned_at=get_eat_now(),
+            start_date=get_eat_now(),
+            notes=f'Admitted by Dr. {current_user.full_name}'
+        )
+        db.session.add(bed_assignment)
+        
+        # Update bed status
+        bed.status = 'occupied'
+        bed.patient_id = patient.id
+        bed.assigned_at = get_eat_now()
+        
+        # Create nurse notification
+        notification = NurseNotification(
+            patient_id=patient.id,
+            ward_id=ward.id,
+            bed_id=bed.id,
+            doctor_id=current_user.id,
+            notified_at=get_eat_now(),
+            status='pending'
+        )
+        db.session.add(notification)
+        
+        db.session.commit()
+        
+        flash(f'Patient admitted successfully with IP Number: {patient.ip_number}', 'success')
+        return redirect(url_for('nurse_notification_page', patient_id=patient.id, notification_id=notification.id))
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error during admission: {str(e)}', 'error')
+        return redirect(url_for('admit_patient', patient_id=patient_id))
+
+
+@app.route('/api/wards/<int:ward_id>/beds/available', methods=['GET'])
+@login_required
+def get_available_beds(ward_id):
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    # Get all available beds for the ward
+    beds = Bed.query.filter_by(
+        ward_id=ward_id,
+        status='available'
+    ).order_by(Bed.bed_number).all()
+    
+    beds_data = [{
+        'id': bed.id,
+        'bed_number': bed.bed_number,
+        'bed_type': bed.bed_type
+    } for bed in beds]
+    
+    return jsonify({
+        'success': True,
+        'beds': beds_data
+    })
+
+
+@app.route('/doctor/patient/<int:patient_id>/notify-nurse/<int:notification_id>')
+@login_required
+def nurse_notification_page(patient_id, notification_id):
+    if current_user.role != 'doctor':
+        flash('Unauthorized access', 'error')
+        return redirect(url_for('doctor_patients'))
+    
+    patient = db.session.get(Patient, patient_id)
+    notification = db.session.get(NurseNotification, notification_id)
+    
+    if not patient or not notification:
+        flash('Patient or notification not found', 'error')
+        return redirect(url_for('doctor_patients'))
+    
+    return render_template('doctor/nurse_notification.html', 
+                         patient=patient, 
+                         notification=notification)
+
+
+@app.route('/doctor/patient/<int:patient_id>/complete-admission/<int:notification_id>', methods=['POST'])
+@login_required
+def complete_admission(patient_id, notification_id):
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    patient = db.session.get(Patient, patient_id)
+    notification = db.session.get(NurseNotification, notification_id)
+    
+    if not patient or not notification:
+        return jsonify({'success': False, 'error': 'Patient or notification not found'}), 404
+    
+    try:
+        # Update notification status
+        notification.status = 'completed'
+        notification.completed_at = get_eat_now()
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Admission completed successfully',
+            'redirect': url_for('doctor_patient_details', patient_id=patient.id)
+        })
+        
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -26640,6 +27471,400 @@ def complete_prescription():
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================================================
+# NURSE ROUTES
+# ============================================================================
+
+@app.route('/nurse')
+@login_required
+def nurse_dashboard():
+    """Nurse dashboard with quick stats and pending tasks."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    # Count inpatients with access control
+    base_inpatients_query = Patient.query.filter_by(patient_type='inpatient', status='active')
+    inpatients_count = filter_accessible_patients(base_inpatients_query, current_user).count()
+    
+    # Count pending nurse notifications
+    pending_notifications = NurseNotification.query.filter_by(status='pending').count()
+    
+    # Count medications due (placeholder - would need prescription system integration)
+    medications_due = 0
+    
+    # Count available beds in accessible wards
+    accessible_ward_ids = get_user_accessible_ward_ids(current_user)
+    if accessible_ward_ids:
+        available_beds = Bed.query.filter_by(status='available').filter(Bed.ward_id.in_(accessible_ward_ids)).count()
+    else:
+        available_beds = Bed.query.filter_by(status='available').count()
+    
+    # Get recent nursing reports
+    recent_reports = (
+        NursingReport.query
+        .filter_by(nurse_id=current_user.id)
+        .order_by(NursingReport.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    
+    # Get pending notifications for display (filtered by accessible wards if assigned)
+    if accessible_ward_ids:
+        # Filter notifications for patients in accessible wards
+        notifications = (
+            NurseNotification.query
+            .join(Patient, NurseNotification.patient_id == Patient.id)
+            .join(Bed, Bed.patient_id == Patient.id)
+            .filter(NurseNotification.status == 'pending')
+            .filter(Bed.ward_id.in_(accessible_ward_ids))
+            .order_by(NurseNotification.notified_at.asc())
+            .limit(10)
+            .all()
+        )
+    else:
+        notifications = (
+            NurseNotification.query
+            .filter_by(status='pending')
+            .order_by(NurseNotification.notified_at.asc())
+            .limit(10)
+            .all()
+        )
+    
+    return render_template(
+        'nurse/dashboard.html',
+        inpatients_count=inpatients_count,
+        pending_notifications=pending_notifications,
+        medications_due=medications_due,
+        available_beds=available_beds,
+        recent_reports=recent_reports,
+        notifications=notifications
+    )
+
+
+@app.route('/nurse/patients')
+@login_required
+def nurse_patients():
+    """List all inpatients."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    # Get all inpatients with access control
+    base_patients_query = Patient.query.filter_by(patient_type='inpatient', status='active')
+    patients = filter_accessible_patients(base_patients_query, current_user).order_by(Patient.created_at.desc()).all()
+    
+    # Attach latest nursing report to each patient
+    for patient in patients:
+        patient.latest_report = (
+            NursingReport.query
+            .filter_by(patient_id=patient.id)
+            .order_by(NursingReport.created_at.desc())
+            .first()
+        )
+    
+    # Get all wards for filtering
+    wards = Ward.query.order_by(Ward.name).all()
+    
+    return render_template(
+        'nurse/patients.html',
+        patients=patients,
+        wards=wards
+    )
+
+
+@app.route('/nurse/patient/<int:patient_id>')
+@login_required
+def nurse_patient_details(patient_id):
+    """Detailed view of a patient with vitals, reports, and medications."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    patient = Patient.query.get_or_404(patient_id)
+    
+    # Check if nurse can access this patient
+    if not can_user_access_patient(current_user, patient):
+        flash('You do not have access to this patient', 'danger')
+        return redirect(url_for('nurse_patients'))
+    
+    # Get latest vitals (most recent nursing report with vitals)
+    latest_vitals = (
+        NursingReport.query
+        .filter_by(patient_id=patient_id)
+        .filter(
+            or_(
+                NursingReport.temperature.isnot(None),
+                NursingReport.blood_pressure_systolic.isnot(None),
+                NursingReport.pulse_rate.isnot(None)
+            )
+        )
+        .order_by(NursingReport.created_at.desc())
+        .first()
+    )
+    
+    # Get all nursing reports
+    nursing_reports = (
+        NursingReport.query
+        .filter_by(patient_id=patient_id)
+        .order_by(NursingReport.created_at.desc())
+        .all()
+    )
+    
+    # Get medication administration history
+    medications = (
+        MedicationAdministration.query
+        .filter_by(patient_id=patient_id)
+        .order_by(MedicationAdministration.administered_at.desc())
+        .limit(50)
+        .all()
+    )
+    
+    return render_template(
+        'nurse/patient_details.html',
+        patient=patient,
+        latest_vitals=latest_vitals,
+        nursing_reports=nursing_reports,
+        medications=medications
+    )
+
+
+@app.route('/nurse/patient/<int:patient_id>/vitals', methods=['POST'])
+@login_required
+def nurse_add_vitals(patient_id):
+    """Add vital signs for a patient."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    patient = Patient.query.get_or_404(patient_id)
+    
+    try:
+        # Create nursing report with vitals
+        report = NursingReport(
+            patient_id=patient_id,
+            nurse_id=current_user.id,
+            report_type='general',
+            temperature=float(request.form.get('temperature')) if request.form.get('temperature') else None,
+            blood_pressure_systolic=int(request.form.get('blood_pressure_systolic')) if request.form.get('blood_pressure_systolic') else None,
+            blood_pressure_diastolic=int(request.form.get('blood_pressure_diastolic')) if request.form.get('blood_pressure_diastolic') else None,
+            pulse_rate=int(request.form.get('pulse_rate')) if request.form.get('pulse_rate') else None,
+            respiratory_rate=int(request.form.get('respiratory_rate')) if request.form.get('respiratory_rate') else None,
+            oxygen_saturation=int(request.form.get('oxygen_saturation')) if request.form.get('oxygen_saturation') else None,
+            blood_sugar=float(request.form.get('blood_sugar')) if request.form.get('blood_sugar') else None,
+            observations=request.form.get('observations'),
+            pain_level=int(request.form.get('pain_level')) if request.form.get('pain_level') else None,
+            urgent=bool(request.form.get('urgent'))
+        )
+        
+        db.session.add(report)
+        db.session.commit()
+        
+        flash('Vital signs recorded successfully', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error recording vitals: {e}")
+        flash(f'Error recording vitals: {str(e)}', 'danger')
+    
+    return redirect(url_for('nurse_patient_details', patient_id=patient_id))
+
+
+@app.route('/nurse/patient/<int:patient_id>/medication', methods=['POST'])
+@login_required
+def nurse_administer_medication(patient_id):
+    """Record medication administration."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    patient = Patient.query.get_or_404(patient_id)
+    
+    try:
+        # Create medication administration record
+        med_admin = MedicationAdministration(
+            patient_id=patient_id,
+            nurse_id=current_user.id,
+            medication_name=request.form.get('medication_name'),
+            dosage=request.form.get('dosage'),
+            route=request.form.get('route', 'oral'),
+            frequency=request.form.get('frequency'),
+            status=request.form.get('status', 'administered'),
+            notes=request.form.get('notes'),
+            administered_at=get_eat_now()
+        )
+        
+        db.session.add(med_admin)
+        db.session.commit()
+        
+        flash('Medication administration recorded successfully', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error recording medication: {e}")
+        flash(f'Error recording medication: {str(e)}', 'danger')
+    
+    return redirect(url_for('nurse_patient_details', patient_id=patient_id))
+
+
+@app.route('/nurse/patient/<int:patient_id>/report', methods=['POST'])
+@login_required
+def nurse_add_report(patient_id):
+    """Add a nursing report/observation."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    patient = Patient.query.get_or_404(patient_id)
+    
+    try:
+        # Create nursing report
+        report = NursingReport(
+            patient_id=patient_id,
+            nurse_id=current_user.id,
+            report_type=request.form.get('report_type', 'general'),
+            observations=request.form.get('observations'),
+            symptoms=request.form.get('symptoms'),
+            care_provided=request.form.get('care_provided'),
+            consciousness_level=request.form.get('consciousness_level'),
+            recommendations=request.form.get('recommendations'),
+            urgent=bool(request.form.get('urgent')),
+            doctor_notified=bool(request.form.get('doctor_notified'))
+        )
+        
+        db.session.add(report)
+        db.session.commit()
+        
+        flash('Nursing report saved successfully', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error saving report: {e}")
+        flash(f'Error saving report: {str(e)}', 'danger')
+    
+    return redirect(url_for('nurse_patient_details', patient_id=patient_id))
+
+
+@app.route('/nurse/notifications')
+@login_required
+def nurse_notifications():
+    """View all nurse notifications (pending admissions)."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    # Get pending notifications
+    pending_notifications = (
+        NurseNotification.query
+        .filter_by(status='pending')
+        .order_by(NurseNotification.notified_at.asc())
+        .all()
+    )
+    
+    # Calculate elapsed time for each notification
+    now = get_eat_now()
+    for notif in pending_notifications:
+        elapsed = now - notif.notified_at
+        notif.elapsed_minutes = int(elapsed.total_seconds() / 60)
+    
+    # Get completed notifications (last 24 hours)
+    completed_cutoff = get_eat_now() - timedelta(hours=24)
+    completed_notifications = (
+        NurseNotification.query
+        .filter_by(status='completed')
+        .filter(NurseNotification.completed_at >= completed_cutoff)
+        .order_by(NurseNotification.completed_at.desc())
+        .limit(50)
+        .all()
+    )
+    
+    pending_count = len(pending_notifications)
+    
+    return render_template(
+        'nurse/notifications.html',
+        pending_notifications=pending_notifications,
+        completed_notifications=completed_notifications,
+        pending_count=pending_count
+    )
+
+
+@app.route('/nurse/notification/<int:notification_id>/complete', methods=['POST'])
+@login_required
+def nurse_complete_notification(notification_id):
+    """Mark a nurse notification as completed."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    try:
+        notification = NurseNotification.query.get_or_404(notification_id)
+        notification.status = 'completed'
+        notification.completed_at = get_eat_now()
+        
+        db.session.commit()
+        
+        flash('Notification marked as completed', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error completing notification: {e}")
+        flash(f'Error: {str(e)}', 'danger')
+    
+    return redirect(url_for('nurse_notifications'))
+
+
+@app.route('/nurse/medication-schedule')
+@login_required
+def nurse_medication_schedule():
+    """View medication schedule (placeholder for future integration)."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role != 'nurse':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+    
+    # Get all inpatients with their latest medication administrations
+    patients = Patient.query.filter_by(patient_type='inpatient', status='active').all()
+    
+    medications = []
+    now = get_eat_now()
+    
+    # This is a simplified version - in production, you'd have a proper scheduling system
+    for patient in patients:
+        # Get recent medications that might need to be repeated
+        recent_meds = (
+            MedicationAdministration.query
+            .filter_by(patient_id=patient.id)
+            .filter(MedicationAdministration.status == 'administered')
+            .order_by(MedicationAdministration.administered_at.desc())
+            .limit(5)
+            .all()
+        )
+        
+        for med in recent_meds:
+            # Create a mock schedule entry
+            med.patient = patient
+            med.time_status = 'upcoming'  # Could be 'due', 'overdue', or 'upcoming'
+            medications.append(med)
+    
+    # Get all wards for filtering
+    wards = Ward.query.order_by(Ward.name).all()
+    
+    return render_template(
+        'nurse/medication_schedule.html',
+        medications=medications,
+        wards=wards
+    )
+
     
 # Receptionist Routes
 @app.route('/receptionist')

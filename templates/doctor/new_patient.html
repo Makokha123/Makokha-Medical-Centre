@@ -29,12 +29,12 @@
                 <div class="form-row">
                     <div class="form-group">
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="enable-ai-assistance" name="ai_assistance">
-                            <label class="form-check-label" for="enable-ai-assistance">
-                                Enable AI Assistance
+                            <input class="form-check-input" type="checkbox" id="enable-assistant" name="assistant_enabled">
+                            <label class="form-check-label" for="enable-assistant">
+                                Enable Doctor Assistant
                             </label>
                             <small class="form-text text-muted">
-                                Get AI-powered suggestions for diagnosis and treatment
+                                Get Doctor Assistant suggestions for diagnosis and treatment
                             </small>
                         </div>
                     </div>
@@ -134,17 +134,17 @@
             <div class="form-section" id="review_systems-section">
                 <h3>Review of Systems</h3>
                 <div class="split-screen-container">
-                    <!-- AI Suggestions Panel -->
-                    <div class="ai-suggestions-panel">
+                    <!-- Assistant Suggestions Panel -->
+                    <div class="assistant-suggestions-panel">
                         <div class="panel-header bg-info text-white">
-                            <h5><i class="fas fa-robot"></i> AI Assistance</h5>
+                            <h5><i class="fas fa-robot"></i> Doctor Assistant</h5>
                         </div>
                         <div class="panel-body">
                             <button type="button" class="btn btn-sm btn-info mb-2" id="suggest-review-questions">
                                 <i class="fas fa-lightbulb"></i> Suggest Review Questions
                             </button>
-                            <div id="review-suggestions" class="ai-suggestions-content">
-                                <p class="text-muted">AI suggestions will appear here. Click the button above to generate questions.</p>
+                            <div id="review-suggestions" class="assistant-suggestions-content">
+                                <p class="text-muted">Doctor Assistant suggestions will appear here. Click the button above to generate questions.</p>
                             </div>
                         </div>
                     </div>
@@ -193,10 +193,10 @@
             <div class="form-section" id="hpi-section">
                 <h3>History of Present Illness (HPI)</h3>
                 <div class="split-screen-container">
-                    <!-- AI Suggestions Panel -->
-                    <div class="ai-suggestions-panel">
+                    <!-- Assistant Suggestions Panel -->
+                    <div class="assistant-suggestions-panel">
                         <div class="panel-header bg-info text-white">
-                            <h5><i class="fas fa-robot"></i> AI Assistance</h5>
+                            <h5><i class="fas fa-robot"></i> Doctor Assistant</h5>
                         </div>
                         <div class="panel-body">
                             <button type="button" class="btn btn-sm btn-info mb-2" id="suggest-hpi-questions">
@@ -205,8 +205,8 @@
                             <button type="button" class="btn btn-sm btn-success mb-2" id="generate-hpi-content">
                                 <i class="fas fa-magic"></i> Generate HPI Content
                             </button>
-                            <div id="hpi-suggestions" class="ai-suggestions-content">
-                                <p class="text-muted">AI suggestions will appear here. Use the buttons above to generate questions or content.</p>
+                            <div id="hpi-suggestions" class="assistant-suggestions-content">
+                                <p class="text-muted">Doctor Assistant suggestions will appear here. Use the buttons above to generate questions or content.</p>
                             </div>
                         </div>
                     </div>
@@ -401,21 +401,21 @@
                     <div class="card-header bg-info text-white">
                         <h5 class="card-title mb-0">
                             <i class="fas fa-file-medical"></i> Clinical Summary
-                            <small class="float-right">(Used for AI Diagnosis)</small>
+                            <small class="float-right">(Used for Doctor Assistant Diagnosis)</small>
                         </h5>
                     </div>
                     <div class="card-body">
                         <div class="summary-importance">
                             <i class="fas fa-lightbulb text-warning"></i>
-                            <strong>Important:</strong> This summary will be used by AI to generate accurate diagnosis suggestions. 
+                            <strong>Important:</strong> This summary will be used by Doctor Assistant to generate accurate diagnosis suggestions. 
                             Include key findings from history and examination.
                         </div>
                         
                         <div class="form-group">
                             <label for="patient_summary" class="form-label"><strong>Clinical Summary</strong></label>
                             <div class="mb-2">
-                                <button type="button" class="btn btn-sm btn-success" id="generate-summary-ai">
-                                    <i class="fas fa-magic"></i> Generate Summary (AI)
+                                <button type="button" class="btn btn-sm btn-success" id="generate-summary-assistant">
+                                    <i class="fas fa-magic"></i> Generate Summary (Doctor Assistant)
                                 </button>
                             </div>
                             <textarea class="form-control" id="patient_summary" name="patient_summary" rows="6"
@@ -425,9 +425,9 @@
 - Relevant positive and negative findings
 - Initial clinical impression
 
-This summary will help AI generate accurate diagnosis suggestions in the next section."></textarea>
+This summary will help Doctor Assistant generate accurate diagnosis suggestions in the next section."></textarea>
                             <small class="form-text text-muted">
-                                A good clinical summary helps AI provide better diagnostic suggestions.
+                                A good clinical summary helps Doctor Assistant provide better diagnostic suggestions.
                             </small>
                         </div>
                     </div>
@@ -438,29 +438,29 @@ This summary will help AI generate accurate diagnosis suggestions in the next se
             <div class="form-section" id="diagnosis-section">
                 <h3>Diagnosis</h3>
                 <div class="split-screen-container">
-                    <!-- AI Suggestions Panel -->
-                    <div class="ai-suggestions-panel">
+                    <!-- Assistant Suggestions Panel -->
+                    <div class="assistant-suggestions-panel">
                         <div class="panel-header bg-info text-white">
-                            <h5><i class="fas fa-robot"></i> AI Assistance</h5>
+                            <h5><i class="fas fa-robot"></i> Doctor Assistant</h5>
                         </div>
                         <div class="panel-body">
                             <button type="button" class="btn btn-sm btn-info mb-2" id="suggest-diagnosis">
                                 <i class="fas fa-lightbulb"></i> Suggest Diagnosis
                             </button>
-                            <div id="ai-diagnosis-loading" class="text-center" style="display: none;">
+                            <div id="assistant-diagnosis-loading" class="text-center" style="display: none;">
                                 <div class="spinner-border text-primary" role="status">
                                     <span class="visually-hidden">Loading...</span>
                                 </div>
                                 <p>Analyzing clinical summary...</p>
                             </div>
-                            <div id="ai-diagnosis-results" class="ai-suggestions-content" style="display: none;">
-                                <div class="alert alert-info" id="ai-diagnosis-text"></div>
-                                <button id="apply-ai-diagnosis" class="btn btn-sm btn-success mt-2">
+                            <div id="assistant-diagnosis-results" class="assistant-suggestions-content" style="display: none;">
+                                <div class="alert alert-info" id="assistant-diagnosis-text"></div>
+                                <button id="apply-assistant-diagnosis" class="btn btn-sm btn-success mt-2">
                                     <i class="fas fa-check"></i> Apply Suggestions
                                 </button>
                             </div>
-                            <div id="diagnosis-placeholder" class="ai-suggestions-content">
-                                <p class="text-muted">AI diagnosis suggestions will appear here. Click the button above to generate recommendations based on your clinical summary.</p>
+                            <div id="diagnosis-placeholder" class="assistant-suggestions-content">
+                                <p class="text-muted">Doctor Assistant diagnosis suggestions will appear here. Click the button above to generate recommendations based on your clinical summary.</p>
                             </div>
                         </div>
                     </div>
@@ -519,9 +519,9 @@ This summary will help AI generate accurate diagnosis suggestions in the next se
             <!-- Management Section -->
             <div class="form-section" id="management-section">
                 <h3>Management Plan</h3>
-                <div class="ai-assistance-card mb-3">
+                <div class="assistant-card mb-3">
                     <div class="card-header bg-info text-white">
-                        <h5><i class="fas fa-robot"></i> AI Assistance</h5>
+                        <h5><i class="fas fa-robot"></i> Doctor Assistant</h5>
                     </div>
                     <div class="card-body">
                         <button type="button" class="btn btn-sm btn-info mb-2" id="suggest-treatment">
@@ -580,6 +580,11 @@ This summary will help AI generate accurate diagnosis suggestions in the next se
                         </div>
                         <div class="form-group col-md-2">
                             <input type="text" class="form-control" name="prescription_notes" placeholder="Notes">
+                        </div>
+                        <div class="form-group col-md-1 d-flex align-items-center">
+                            <button type="button" class="btn btn-sm btn-danger remove-prescription" title="Remove this medication">
+                                <i class="fas fa-times"></i>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -827,6 +832,16 @@ $(document).ready(function() {
         });
     });
 
+    // Remove prescription item
+    $(document).on('click', '.remove-prescription', function() {
+        const prescriptionItems = $('.prescription-item');
+        if (prescriptionItems.length > 1) {
+            $(this).closest('.prescription-item').remove();
+        } else {
+            alert('You must keep at least one prescription row. Clear the fields instead of removing.');
+        }
+    });
+
     // Drug stock validation
     $(document).on('change', '.drug-select, .controlled-drug-select', function() {
         const selectedOption = $(this).find('option:selected');
@@ -923,15 +938,11 @@ $(document).ready(function() {
             }),
             success: function(response) {
                 if (response.success) {
-                    $('#prescription-feedback').html('<div class="alert alert-success">Prescription saved successfully! The pharmacist can now dispense the medications.</div>');
+                    $('#prescription-feedback').html('<div class="alert alert-success">Prescription saved successfully! You can continue adding more prescriptions or proceed to the next section.</div>');
                     
-                    // Optionally clear the prescription form
-                    $('.prescription-item').not(':first').remove();
-                    $('.prescription-item').find('input').val('');
-                    $('.prescription-item').find('select').val('');
-                    $('.prescription-item').find('.controlled-toggle').prop('checked', false);
-                    $('.prescription-item').find('.controlled-drug-select').hide();
-                    $('.prescription-item').find('.drug-select').show();
+                    // Keep form enabled - don't clear or disable anything
+                    // Allow doctor to add more prescriptions after saving
+                    $('#complete-prescription').prop('disabled', false);
                 } else {
                     $('#prescription-feedback').html('<div class="alert alert-danger">Error: ' + (response.error || 'Failed to save prescription') + '</div>');
                     $('#complete-prescription').prop('disabled', false);
@@ -1145,6 +1156,51 @@ $(document).ready(function() {
         $('#nextBtn').toggle(index < sections.length - 1);
         $('#endBtn').toggle(index === sections.length - 1);
     }
+
+    // Handle End button click - save and reset for next patient
+    $('#endBtn').click(function(e) {
+        e.preventDefault();
+        
+        // Save the final management section
+        saveCurrentSection().then(() => {
+            // Clear the draft from localStorage
+            try {
+                localStorage.removeItem(MMC_DRAFT_KEY);
+            } catch (err) {
+                console.warn('Could not clear draft:', err);
+            }
+            
+            // Show success message
+            alert('Patient record completed successfully!');
+            
+            // Reset form to start fresh for next patient
+            $('#patientForm')[0].reset();
+            $('#patient_id').val('');
+            currentSection = 0;
+            showSection(0);
+            
+            // Clear prescription items except first
+            $('.prescription-item').not(':first').remove();
+            $('.prescription-item').find('input').val('');
+            $('.prescription-item').find('select').val('').trigger('change');
+            
+            // Scroll to top
+            window.scrollTo(0, 0);
+        }).catch(error => {
+            console.error('Error completing patient record:', error);
+            if (confirm('Error saving final section: ' + error + '\n\nDo you still want to close and start a new patient?')) {
+                // Reset anyway if user confirms
+                try {
+                    localStorage.removeItem(MMC_DRAFT_KEY);
+                } catch (err) {}
+                $('#patientForm')[0].reset();
+                $('#patient_id').val('');
+                currentSection = 0;
+                showSection(0);
+                window.scrollTo(0, 0);
+            }
+        });
+    });
     
     // Update section validation (summary is now optional)
     function validateCurrentSection() {
@@ -1264,7 +1320,7 @@ $(document).ready(function() {
 
     // ==================== AI INTEGRATION ====================
     
-    // AI Review Systems Questions
+    // Assistant Review Systems Questions
     $('#suggest-review-questions').click(function() {
         const patientId = $('#patient_id').val();
         const chiefComplaint = $('#chief_complaint').val().trim();
@@ -1282,7 +1338,7 @@ $(document).ready(function() {
         $('#review-suggestions').html('<div class="spinner-border spinner-border-sm" role="status"></div> Generating questions...');
         
         $.ajax({
-            url: '/doctor/patient/ai/review_systems',
+            url: '/doctor/patient/assistant/review_systems',
             method: 'POST',
             data: { 
                 patient_id: patientId,
@@ -1294,20 +1350,20 @@ $(document).ready(function() {
                         `<div class="alert alert-success">
                             <button type="button" class="close" data-dismiss="alert">&times;</button>
                             <h5>Suggested Review of Systems Questions</h5>
-                            ${formatAIText(response.questions)}
+                            ${formatAssistantText(response.questions)}
                         </div>`
                     );
                 } else {
-                    showAIError(response.error || 'Failed to generate questions');
+                    showAssistantError(response.error || 'Failed to generate questions');
                 }
             },
             error: function(xhr) {
-                showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                showAssistantError(xhr.responseJSON?.error || 'Failed to connect to AI service');
             }
         });
     });
 
-    // AI HPI Questions
+    // Assistant HPI Questions
     $('#suggest-hpi-questions').click(function() {
         const patientId = $('#patient_id').val();
         const chiefComplaint = $('#chief_complaint').val().trim();
@@ -1325,7 +1381,7 @@ $(document).ready(function() {
         $('#hpi-suggestions').html('<div class="spinner-border spinner-border-sm" role="status"></div> Generating questions...');
         
         $.ajax({
-            url: '/doctor/patient/ai/hpi_questions',
+            url: '/doctor/patient/assistant/hpi_questions',
             method: 'POST',
             data: { 
                 patient_id: patientId,
@@ -1337,20 +1393,20 @@ $(document).ready(function() {
                         `<div class="alert alert-success">
                             <button type="button" class="close" data-dismiss="alert">&times;</button>
                             <h5>Suggested HPI Questions</h5>
-                            ${formatAIText(response.questions)}
+                            ${formatAssistantText(response.questions)}
                         </div>`
                     );
                 } else {
-                    showAIError(response.error || 'Failed to generate questions');
+                    showAssistantError(response.error || 'Failed to generate questions');
                 }
             },
             error: function(xhr) {
-                showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                showAssistantError(xhr.responseJSON?.error || 'Failed to connect to AI service');
             }
         });
     });
 
-    // AI Generate HPI Content
+    // Assistant Generate HPI Content
     $('#generate-hpi-content').click(function() {
         const patientId = $('#patient_id').val();
         
@@ -1362,7 +1418,7 @@ $(document).ready(function() {
         $('#hpi_details').val('Generating HPI content...');
         
         $.ajax({
-            url: '/doctor/patient/ai/generate_hpi',
+            url: '/doctor/patient/assistant/generate_hpi',
             method: 'POST',
             data: { 
                 patient_id: patientId,
@@ -1371,20 +1427,20 @@ $(document).ready(function() {
             success: function(response) {
                 if (response.success) {
                     $('#hpi_details').val(response.hpi_content);
-                    showAISuccess('HPI content generated successfully');
+                    showAssistantSuccess('HPI content generated successfully');
                 } else {
-                    showAIError(response.error || 'Failed to generate HPI');
+                    showAssistantError(response.error || 'Failed to generate HPI');
                     $('#hpi_details').val('');
                 }
             },
             error: function(xhr) {
-                showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                showAssistantError(xhr.responseJSON?.error || 'Failed to connect to AI service');
                 $('#hpi_details').val('');
             }
         });
     });
 
-    // AI Diagnosis Suggestions - Now reads from summary section
+    // Doctor Assistant diagnosis suggestions - Now reads from summary section
     $('#suggest-diagnosis').click(function() {
         const patientId = $('#patient_id').val();
         const clinicalSummary = $('#patient_summary').val().trim();
@@ -1400,15 +1456,15 @@ $(document).ready(function() {
             return;
         }
         
-        $('#ai-diagnosis-loading').show();
-        $('#ai-diagnosis-results').hide();
+        $('#assistant-diagnosis-loading').show();
+        $('#assistant-diagnosis-results').hide();
         $('#diagnosis-placeholder').hide();
         
         // First save the current summary section to ensure data is available
         saveCurrentSection().then(() => {
             // Now generate diagnosis
             $.ajax({
-                url: '/doctor/patient/ai/diagnosis',
+                url: '/doctor/patient/assistant/diagnosis',
                 method: 'POST',
                 data: { 
                     patient_id: patientId,
@@ -1416,30 +1472,30 @@ $(document).ready(function() {
                     csrf_token: getCSRFToken()
                 },
                 success: function(response) {
-                    $('#ai-diagnosis-loading').hide();
+                    $('#assistant-diagnosis-loading').hide();
                     if (response.success) {
-                        $('#ai-diagnosis-text').html(formatAIText(response.diagnosis));
-                        $('#ai-diagnosis-results').show();
+                        $('#assistant-diagnosis-text').html(formatAssistantText(response.diagnosis));
+                        $('#assistant-diagnosis-results').show();
                         $('#diagnosis-placeholder').hide();
                         
                         // Show source of diagnosis
                         if (response.source === 'clinical_summary') {
-                            showAISuccess('Diagnosis generated from clinical summary');
+                            showAssistantSuccess('Diagnosis generated from clinical summary');
                         }
                     } else {
-                        showAIError(response.error || 'Failed to generate diagnosis');
+                        showAssistantError(response.error || 'Failed to generate diagnosis');
                         $('#diagnosis-placeholder').show();
                     }
                 },
                 error: function(xhr) {
-                    $('#ai-diagnosis-loading').hide();
-                    showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                    $('#assistant-diagnosis-loading').hide();
+                    showAssistantError(xhr.responseJSON?.error || 'Failed to connect to AI service');
                     $('#diagnosis-placeholder').show();
                 }
             });
         }).catch(error => {
-            $('#ai-diagnosis-loading').hide();
-            showAIError('Error saving summary section: ' + error);
+            $('#assistant-diagnosis-loading').hide();
+            showAssistantError('Error saving summary section: ' + error);
             $('#diagnosis-placeholder').show();
         });
     });
@@ -1447,7 +1503,7 @@ $(document).ready(function() {
     // Auto-generate diagnosis when entering diagnosis section if summary exists
     function autoGenerateDiagnosisIfSummaryExists() {
         const clinicalSummary = $('#patient_summary').val().trim();
-        if (clinicalSummary && $('#enable-ai-assistance').is(':checked')) {
+        if (clinicalSummary && $('#enable-assistant').is(':checked')) {
             setTimeout(() => {
                 if (confirm('You have a clinical summary entered. Would you like AI to generate diagnosis suggestions based on it?')) {
                     $('#suggest-diagnosis').click();
@@ -1457,8 +1513,8 @@ $(document).ready(function() {
     }
 
     // Apply AI diagnosis to form
-    $('#apply-ai-diagnosis').click(function() {
-        const raw = ($('#ai-diagnosis-text').text() || '').trim();
+    $('#apply-assistant-diagnosis').click(function() {
+        const raw = ($('#assistant-diagnosis-text').text() || '').trim();
 
         function _cleanSection(text) {
             return (text || '')
@@ -1511,10 +1567,10 @@ $(document).ready(function() {
         $('#differential_diagnosis').val(differentialDx).trigger('input');
 
         $(this).html('<i class="fas fa-check"></i> Applied').prop('disabled', true);
-        showAISuccess('AI suggestions applied to Working Dx and Differentials');
+        showAssistantSuccess('AI suggestions applied to Working Dx and Differentials');
     });
 
-    // AI Treatment Plan
+    // Assistant Treatment Plan
     $('#suggest-treatment').click(function() {
         const patientId = $('#patient_id').val();
         const diagnosis = $('#working_diagnosis').val().trim();
@@ -1532,7 +1588,7 @@ $(document).ready(function() {
         $('#treatment-suggestions').html('<div class="spinner-border spinner-border-sm" role="status"></div> Generating treatment plan...').show();
         
         $.ajax({
-            url: '/doctor/patient/ai/treatment',
+            url: '/doctor/patient/assistant/treatment',
             method: 'POST',
             data: { 
                 patient_id: patientId,
@@ -1544,18 +1600,18 @@ $(document).ready(function() {
                         `<div class="alert alert-success">
                             <button type="button" class="close" data-dismiss="alert">&times;</button>
                             <h5>Suggested Treatment Plan</h5>
-                            ${formatAIText(response.treatment_plan)}
+                            ${formatAssistantText(response.treatment_plan)}
                         </div>`
                     ).show();
                     
                     // Auto-populate drugs if mentioned
                     autoPopulateDrugs(response.treatment_plan);
                 } else {
-                    showAIError(response.error || 'Failed to generate treatment plan');
+                    showAssistantError(response.error || 'Failed to generate treatment plan');
                 }
             },
             error: function(xhr) {
-                showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                showAssistantError(xhr.responseJSON?.error || 'Failed to connect to AI service');
             }
         });
     });
@@ -1578,7 +1634,7 @@ $(document).ready(function() {
         $('#lab-analysis-results').html('<div class="spinner-border spinner-border-sm" role="status"></div> Analyzing results...').show();
         
         $.ajax({
-            url: '/doctor/patient/ai/analyze_lab',
+            url: '/doctor/patient/assistant/analyze_lab',
             method: 'POST',
             data: {
                 patient_id: patientId,
@@ -1591,27 +1647,27 @@ $(document).ready(function() {
                         `<div class="alert alert-success">
                             <button type="button" class="close" data-dismiss="alert">&times;</button>
                             <h5>Lab Results Analysis</h5>
-                            ${formatAIText(response.analysis)}
+                            ${formatAssistantText(response.analysis)}
                         </div>`
                     ).show();
                 } else {
-                    showAIError(response.error || 'Failed to analyze lab results');
+                    showAssistantError(response.error || 'Failed to analyze lab results');
                 }
             },
             error: function(xhr) {
-                showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                showAssistantError(xhr.responseJSON?.error || 'Failed to connect to AI service');
             }
         });
     });
 
     // Helper function to format AI text with proper line breaks
-    function formatAIText(text) {
+    function formatAssistantText(text) {
         if (!text) return '';
         return text.replace(/\n/g, '<br>');
     }
 
     // Helper function to show AI errors
-    function showAIError(message) {
+    function showAssistantError(message) {
         if (typeof window.showAlert === 'function') {
             window.showAlert(String(message ?? ''), 'danger');
             return;
@@ -1620,7 +1676,7 @@ $(document).ready(function() {
     }
 
     // Helper function to show AI success
-    function showAISuccess(message) {
+    function showAssistantSuccess(message) {
         if (typeof window.showAlert === 'function') {
             window.showAlert(String(message ?? ''), 'success');
             return;
@@ -1628,8 +1684,8 @@ $(document).ready(function() {
         alert(String(message ?? ''));
     }
 
-    // AI Generate Clinical Summary
-    $('#generate-summary-ai').click(function() {
+    // Assistant Generate Clinical Summary
+    $('#generate-summary-assistant').click(function() {
         const patientId = $('#patient_id').val();
         if (!patientId) {
             alert('Please save patient biodata first');
@@ -1641,7 +1697,7 @@ $(document).ready(function() {
 
         saveCurrentSection().then(() => {
             $.ajax({
-                url: '/doctor/patient/ai/generate_summary',
+                url: '/doctor/patient/assistant/generate_summary',
                 method: 'POST',
                 data: {
                     patient_id: patientId,
@@ -1650,19 +1706,19 @@ $(document).ready(function() {
                 success: function(response) {
                     if (response.success) {
                         $('#patient_summary').val(response.summary_text);
-                        showAISuccess('Clinical summary generated');
+                        showAssistantSuccess('Clinical summary generated');
                     } else {
-                        showAIError(response.error || 'Failed to generate summary');
+                        showAssistantError(response.error || 'Failed to generate summary');
                         $('#patient_summary').val('');
                     }
                 },
                 error: function(xhr) {
-                    showAIError(xhr.responseJSON?.error || 'Failed to connect to AI service');
+                    showAssistantError(xhr.responseJSON?.error || 'Failed to connect to AI service');
                     $('#patient_summary').val('');
                 }
             });
         }).catch(error => {
-            showAIError('Error saving current section: ' + error);
+            showAssistantError('Error saving current section: ' + error);
             $('#patient_summary').val('');
         });
     });
@@ -1737,7 +1793,7 @@ $(document).ready(function() {
     margin-bottom: 20px;
 }
 
-.ai-suggestions-panel {
+.assistant-suggestions-panel {
     flex: 1;
     min-width: 300px;
     max-width: 400px;
@@ -1765,7 +1821,7 @@ $(document).ready(function() {
     flex-direction: column;
 }
 
-.ai-suggestions-content {
+.assistant-suggestions-content {
     flex: 1;
     overflow-y: auto;
     max-height: 500px;
@@ -1775,20 +1831,20 @@ $(document).ready(function() {
     border: 1px solid #e9ecef;
 }
 
-/* AI Assistance Cards */
-.ai-assistance-card {
+/* Assistant Assistance Cards */
+.assistant-card {
     border-left: 4px solid #17a2b8;
     margin-bottom: 20px;
     border-radius: 5px;
     overflow: hidden;
 }
 
-.ai-assistance-card .card-header {
+.assistant-card .card-header {
     background-color: #17a2b8;
     padding: 10px 15px;
 }
 
-.ai-assistance-card .card-body {
+.assistant-card .card-body {
     padding: 15px;
     background-color: #f8f9fa;
 }
@@ -1969,13 +2025,13 @@ $(document).ready(function() {
         flex-direction: column;
     }
     
-    .ai-suggestions-panel,
+    .assistant-suggestions-panel,
     .form-input-panel {
         min-width: 100%;
         max-width: 100%;
     }
     
-    .ai-suggestions-content {
+    .assistant-suggestions-content {
         max-height: 300px;
     }
 }
@@ -2049,3 +2105,8 @@ $(document).ready(function() {
 }
 </style>
 {% endblock %}
+
+
+
+
+

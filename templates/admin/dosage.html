@@ -25,7 +25,7 @@
         flex-wrap: wrap;
     }
     
-    .ai-toggle {
+    .assistant-toggle {
         display: flex;
         align-items: center;
         gap: 0.75rem;
@@ -84,7 +84,7 @@
         cursor: not-allowed;
     }
     
-    .ai-toggle label {
+    .assistant-toggle label {
         margin: 0;
         cursor: pointer;
         font-weight: 500;
@@ -115,7 +115,7 @@
     .stat-card.total { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
     .stat-card.with-dosage { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
     .stat-card.missing { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); }
-    .stat-card.ai-generated { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+    .stat-card.assistant-generated { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
     
     .stat-card .stat-value {
         font-size: 2rem;
@@ -199,7 +199,7 @@
         font-size: 0.85rem;
     }
     
-    .ai-buttons-disabled {
+    .assistant-buttons-disabled {
         opacity: 0.5;
         pointer-events: none;
         cursor: not-allowed;
@@ -248,7 +248,7 @@
         }
 
         .header-actions-left .btn i,
-        .header-actions-right .ai-control-btn i {
+        .header-actions-right .assistant-control-btn i {
             display: none;
         }
 
@@ -311,17 +311,17 @@
             </button>
         </div>
         <div class="header-actions-right">
-            <div class="ai-toggle">
-                <label class="toggle-switch" id="aiToggleDrug">
-                    <input type="checkbox" id="aiToggleDrugInput" {{ 'checked' if ai_dosage_agent_enabled else '' }} onchange="handleAIToggleDrug(this)">
+            <div class="assistant-toggle">
+                <label class="toggle-switch" id="assistantToggleDrug">
+                    <input type="checkbox" id="assistantToggleDrugInput" {{ 'checked' if assistant_dosage_agent_enabled else '' }} onchange="handleAssistantToggleDrug(this)">
                     <span class="toggle-slider"></span>
                 </label>
-                <label for="aiToggleDrugInput">Enable AI</label>
+                <label for="assistantToggleDrugInput">Enable Pharmacist Assistant</label>
             </div>
-            <button type="button" class="btn btn-outline-info btn-sm ai-control-btn" id="runNowBtn" {{ 'disabled' if not ai_dosage_agent_enabled else '' }} onclick="runAIAgent()" title="Run AI agent once">
+            <button type="button" class="btn btn-outline-info btn-sm ai-control-btn" id="runAssistantNowBtn" {{ 'disabled' if not assistant_dosage_agent_enabled else '' }} onclick="runAssistantAgent()" title="Run Pharmacist Assistant once">
                 <i class="fas fa-play"></i> Run Now
             </button>
-            <button type="button" class="btn btn-outline-success btn-sm ai-control-btn" id="fillFieldsBtn" {{ 'disabled' if not ai_dosage_agent_enabled else '' }} onclick="fillMissingFields()" title="Fill missing fields with AI">
+            <button type="button" class="btn btn-outline-success btn-sm ai-control-btn" id="fillAssistantFieldsBtn" {{ 'disabled' if not assistant_dosage_agent_enabled else '' }} onclick="fillMissingAssistantFields()" title="Fill missing fields with Pharmacist Assistant">
                 <i class="fas fa-magic"></i> Fill Missing
             </button>
         </div>
@@ -352,19 +352,19 @@
             <div class="stat-value">{{ stats.without_dosage }}</div>
             <div class="stat-label">Missing Dosage</div>
         </div>
-        <div class="stat-card ai-generated">
+        <div class="stat-card Pharmacist Assistant Generated">
             <div class="stat-value">{{ stats.ai_generated }}</div>
-            <div class="stat-label">AI-Generated (50/run)</div>
+            <div class="stat-label">Pharmacist Assistant Generated (50/run)</div>
         </div>
 
-        <!-- Hidden AI Progress (appears only while running) -->
-        <div class="stat-card ai-generated" id="aiProgressCard" style="display:none;">
+        <!-- Hidden Assistant Progress (appears only while running) -->
+        <div class="stat-card Pharmacist Assistant Generated" id="assistantProgressCard" style="display:none;">
             <div class="d-flex justify-content-between align-items-start">
                 <div>
-                    <div class="stat-value" id="aiProgressCounts">0/0</div>
-                    <div class="stat-label" id="aiProgressText">Starting...</div>
+                    <div class="stat-value" id="assistantProgressCounts">0/0</div>
+                    <div class="stat-label" id="assistantProgressText">Starting...</div>
                 </div>
-                <button type="button" class="btn btn-sm btn-light" onclick="hideAIProgressCard()" title="Hide">
+                <button type="button" class="btn btn-sm btn-light" onclick="hideAssistantProgressCard()" title="Hide">
                     Hide
                 </button>
             </div>
@@ -420,19 +420,19 @@
 </div>
 
 <script>
-function handleAIToggleDrug(checkbox) {
+function handleAssistantToggleDrug(checkbox) {
     // Check if master toggle is disabled
-    const isMasterDisabled = !localStorage.getItem('ai_dosage_master_enabled') || localStorage.getItem('ai_dosage_master_enabled') === 'false';
+    const isMasterDisabled = !localStorage.getItem('assistant_dosage_master_enabled') || localStorage.getItem('assistant_dosage_master_enabled') === 'false';
     
     if (isMasterDisabled && checkbox.checked) {
         checkbox.checked = false;
-        alert('AI must be enabled in the Dosage Management dashboard first.');
+        alert('Pharmacist Assistant must be enabled in the Dosage Management dashboard first.');
         return;
     }
     
     const form = document.createElement('form');
     form.method = 'POST';
-    form.action = '{{ url_for("admin_toggle_ai_dosage_agent") }}';
+    form.action = '{{ url_for("admin_toggle_assistant_dosage_agent") }}';
     
     const csrfInput = document.createElement('input');
     csrfInput.type = 'hidden';
@@ -451,9 +451,9 @@ function handleAIToggleDrug(checkbox) {
 }
 
 function updateDrugToggleState() {
-    const isMasterDisabled = !localStorage.getItem('ai_dosage_master_enabled') || localStorage.getItem('ai_dosage_master_enabled') === 'false';
-    const toggle = document.getElementById('aiToggleDrug');
-    const input = document.getElementById('aiToggleDrugInput');
+    const isMasterDisabled = !localStorage.getItem('assistant_dosage_master_enabled') || localStorage.getItem('assistant_dosage_master_enabled') === 'false';
+    const toggle = document.getElementById('assistantToggleDrug');
+    const input = document.getElementById('assistantToggleDrugInput');
     
     if (isMasterDisabled) {
         toggle.classList.add('disabled');
@@ -464,38 +464,38 @@ function updateDrugToggleState() {
     }
 }
 
-function runAIAgent() {
-    startAIDosageJob({ kind: 'drug', mode: 'full', limit: 50 });
+function runAssistantAgent() {
+    startAssistantDosageJob({ kind: 'drug', mode: 'full', limit: 50 });
 }
 
-function fillMissingFields() {
-    startAIDosageJob({ kind: 'drug', mode: 'fill', limit: 50 });
+function fillMissingAssistantFields() {
+    startAssistantDosageJob({ kind: 'drug', mode: 'fill', limit: 50 });
 }
 
-let _aiJobPollTimer = null;
-let _aiJobLastSeq = 0;
-let _aiProgressCardDismissed = false;
+let _assistantJobPollTimer = null;
+let _assistantJobLastSeq = 0;
+let _assistantProgressCardDismissed = false;
 
-function showAIProgressCard() {
-    if (_aiProgressCardDismissed) return;
-    const el = document.getElementById('aiProgressCard');
+function showAssistantProgressCard() {
+    if (_assistantProgressCardDismissed) return;
+    const el = document.getElementById('assistantProgressCard');
     if (el) el.style.display = '';
 }
 
-function hideAIProgressCard() {
-    _aiProgressCardDismissed = true;
-    const el = document.getElementById('aiProgressCard');
+function hideAssistantProgressCard() {
+    _assistantProgressCardDismissed = true;
+    const el = document.getElementById('assistantProgressCard');
     if (el) el.style.display = 'none';
 }
 
 function resetAIProgressCard() {
-    _aiProgressCardDismissed = false;
-    const el = document.getElementById('aiProgressCard');
+    _assistantProgressCardDismissed = false;
+    const el = document.getElementById('assistantProgressCard');
     if (el) el.style.display = '';
 }
 
-function _setProgressText(text) {
-    const el = document.getElementById('aiProgressText');
+function _setAssistantProgressText(text) {
+    const el = document.getElementById('assistantProgressText');
     if (el) el.textContent = text;
 }
 
@@ -578,19 +578,19 @@ function _applyDrugRowUpdate(u) {
     }
 }
 
-function startAIDosageJob(opts) {
+function startAssistantDosageJob(opts) {
     const kind = (opts && opts.kind) ? opts.kind : 'drug';
     const mode = (opts && opts.mode) ? opts.mode : 'full';
     const limit = (opts && opts.limit) ? opts.limit : 50;
-    if (_aiJobPollTimer) {
-        clearTimeout(_aiJobPollTimer);
-        _aiJobPollTimer = null;
+    if (_assistantJobPollTimer) {
+        clearTimeout(_assistantJobPollTimer);
+        _assistantJobPollTimer = null;
     }
-    _aiJobLastSeq = 0;
+    _assistantJobLastSeq = 0;
 
     resetAIProgressCard();
-    showAIProgressCard();
-    _setProgressText('Starting generation...');
+    showAssistantProgressCard();
+    _setAssistantProgressText('Starting generation...');
     $('#aiProgressCounts').text('0/0');
 
     $.post('{{ url_for("admin_start_ai_dosage_agent_job") }}', {
@@ -601,19 +601,19 @@ function startAIDosageJob(opts) {
     }).done(function(resp) {
         const jobId = resp && resp.job_id ? resp.job_id : null;
         if (!jobId) {
-            _setProgressText('Failed to start AI job.');
+            _setAssistantProgressText('Failed to start AI job.');
             return;
         }
         pollAIDosageJob(jobId);
     }).fail(function(xhr) {
         const msg = (xhr && xhr.responseJSON && xhr.responseJSON.error) ? xhr.responseJSON.error : 'Failed to start AI job';
-        _setProgressText(msg);
+        _setAssistantProgressText(msg);
         $('#aiProgressCounts').text('');
     });
 }
 
 function pollAIDosageJob(jobId) {
-    $.getJSON(`/admin/dosage/ai-agent/job/${jobId}/status?since=${_aiJobLastSeq}`, function(s) {
+    $.getJSON(`/admin/dosage/assistant-agent/job/${jobId}/status?since=${_assistantJobLastSeq}`, function(s) {
         const total = parseInt(s.total || 0, 10);
         const processed = parseInt(s.processed || 0, 10);
         const remaining = parseInt(s.remaining || 0, 10);
@@ -622,36 +622,36 @@ function pollAIDosageJob(jobId) {
 
         const counts = `${processed}/${total} (remaining: ${remaining})`;
         $('#aiProgressCounts').text(counts);
-        _setProgressText(`Generating... Completed: ${completed}/${total}. Failed: ${failed}.`);
+        _setAssistantProgressText(`Generating... Completed: ${completed}/${total}. Failed: ${failed}.`);
 
         const updates = s.updates || [];
         updates.forEach(function(u) {
             const seq = parseInt(u.seq || 0, 10);
-            if (seq > _aiJobLastSeq) _aiJobLastSeq = seq;
+            if (seq > _assistantJobLastSeq) _assistantJobLastSeq = seq;
             if (u.kind === 'drug') _applyDrugRowUpdate(u);
         });
 
         if (s.status === 'running' || s.status === 'starting') {
-            _aiJobPollTimer = setTimeout(function() { pollAIDosageJob(jobId); }, 1200);
+            _assistantJobPollTimer = setTimeout(function() { pollAIDosageJob(jobId); }, 1200);
             return;
         }
 
         if (s.status === 'complete') {
-            _setProgressText('Generation complete.');
+            _setAssistantProgressText('Generation complete.');
         } else {
-            _setProgressText('Generation stopped with errors.');
+            _setAssistantProgressText('Generation stopped with errors.');
         }
 
         setTimeout(function() {
-            const el = document.getElementById('aiProgressCard');
+            const el = document.getElementById('assistantProgressCard');
             if (el) el.style.display = 'none';
             if (s.complete_url) {
                 window.location.href = s.complete_url;
             }
         }, 700);
     }).fail(function() {
-        _setProgressText('Lost connection while polling.');
-        _aiJobPollTimer = setTimeout(function() { pollAIDosageJob(jobId); }, 2000);
+        _setAssistantProgressText('Lost connection while polling.');
+        _assistantJobPollTimer = setTimeout(function() { pollAIDosageJob(jobId); }, 2000);
     });
 }
 
@@ -684,7 +684,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Listen for storage changes from dashboard
 window.addEventListener('storage', function(e) {
-    if (e.key === 'ai_dosage_master_enabled') {
+    if (e.key === 'assistant_dosage_master_enabled') {
         updateDrugToggleState();
     }
 });
@@ -1059,7 +1059,7 @@ $(document).ready(function() {
 
         const $btn = $(this);
         $btn.prop('disabled', true).text('Suggesting...');
-        $.get(`/admin/dosage/ai-suggest?kind=drug&drug_id=${drugId}`, function(resp) {
+        $.get(`/admin/dosage/assistant-suggest?kind=drug&drug_id=${drugId}`, function(resp) {
             const s = resp && resp.suggested ? resp.suggested : null;
             if (!s) {
                 alert('No suggestion available for this drug.');
@@ -1202,3 +1202,5 @@ $(document).ready(function() {
     }
 </style>
 {% endblock %}
+
+

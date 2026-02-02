@@ -152,6 +152,7 @@
                             <select class="form-control" id="role" name="role" required>
                                 <option value="admin" {% if add_state.get('role') == 'admin' %}selected{% endif %}>Admin</option>
                                 <option value="doctor" {% if add_state.get('role') == 'doctor' %}selected{% endif %}>Doctor</option>
+                                <option value="nurse" {% if add_state.get('role') == 'nurse' %}selected{% endif %}>Nurse</option>
                                 <option value="pharmacist" {% if add_state.get('role') == 'pharmacist' %}selected{% endif %}>Pharmacist</option>
                                 <option value="receptionist" {% if add_state.get('role') == 'receptionist' %}selected{% endif %}>Receptionist</option>
                             </select>
@@ -249,6 +250,7 @@
                         <select class="form-control" id="edit_role" name="role" required>
                             <option value="admin">Admin</option>
                             <option value="doctor">Doctor</option>
+                            <option value="nurse">Nurse</option>
                             <option value="pharmacist">Pharmacist</option>
                             <option value="receptionist">Receptionist</option>
                         </select>
@@ -283,6 +285,28 @@
                     <div class="form-group form-check">
                         <input type="checkbox" class="form-check-input" id="edit_is_active" name="is_active">
                         <label class="form-check-label" for="edit_is_active">Active User</label>
+                    </div>
+
+                    <!-- Ward Assignments Section -->
+                    <div id="editWardAssignmentsSection" style="display:none;">
+                        <hr>
+                        <h5><i class="fas fa-bed"></i> Ward Assignments</h5>
+                        <p class="text-muted small">Assign user to specific wards for inpatient care</p>
+                        <div id="editWardAssignmentsList"></div>
+                        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="btnAddEditWardAssignment">
+                            <i class="fas fa-plus"></i> Add Ward Assignment
+                        </button>
+                    </div>
+
+                    <!-- Department Assignments Section -->
+                    <div id="editDepartmentAssignmentsSection" style="display:none;">
+                        <hr>
+                        <h5><i class="fas fa-hospital"></i> Department Assignments</h5>
+                        <p class="text-muted small">Assign user to specific outpatient departments/clinics</p>
+                        <div id="editDepartmentAssignmentsList"></div>
+                        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="btnAddEditDepartmentAssignment">
+                            <i class="fas fa-plus"></i> Add Department Assignment
+                        </button>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -952,6 +976,12 @@ $(document).ready(function() {
         $('#edit_email').val(user.email);
         $('#edit_role').val(user.role);
         $('#edit_is_active').prop('checked', user.is_active);
+        
+        // Show/hide assignment sections based on role
+        showAssignmentSectionsForRole(user.role);
+        
+        // Load ward and department assignments
+        loadUserAssignments(user.id);
     });
         
     // Delete user modal handler
@@ -1119,6 +1149,255 @@ $(document).ready(function() {
         }
         window.alert(String(message ?? ''));
     }
+    
+    // Show/hide assignment sections based on role
+    function showAssignmentSectionsForRole(role) {
+        const wardSection = $('#editWardAssignmentsSection');
+        const deptSection = $('#editDepartmentAssignmentsSection');
+        
+        if (role === 'doctor' || role === 'nurse') {
+            wardSection.show();
+        } else {
+            wardSection.hide();
+        }
+        
+        if (role === 'doctor') {
+            deptSection.show();
+        } else {
+            deptSection.hide();
+        }
+    }
+    
+    // Handle role change in edit modal
+    $('#edit_role').change(function() {
+        const role = $(this).val();
+        showAssignmentSectionsForRole(role);
+    });
+    
+    // Load user ward and department assignments
+    function loadUserAssignments(userId) {
+        // Load ward assignments
+        $.get('/admin/user/' + userId + '/ward-assignments', function(data) {
+            renderWardAssignments(data.assignments || []);
+        }).fail(function() {
+            $('#editWardAssignmentsList').html('<div class="alert alert-warning">Could not load ward assignments</div>');
+        });
+        
+        // Load department assignments
+        $.get('/admin/user/' + userId + '/department-assignments', function(data) {
+            renderDepartmentAssignments(data.assignments || []);
+        }).fail(function() {
+            $('#editDepartmentAssignmentsList').html('<div class="alert alert-warning">Could not load department assignments</div>');
+        });
+    }
+    
+    // Render ward assignments
+    function renderWardAssignments(assignments) {
+        const container = $('#editWardAssignmentsList');
+        container.empty();
+        
+        if (assignments.length === 0) {
+            container.html('<div class="alert alert-info">No ward assignments</div>');
+            return;
+        }
+        
+        assignments.forEach(function(assignment) {
+            const html = `
+                <div class="card mb-2" data-assignment-id="${assignment.id}">
+                    <div class="card-body p-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${assignment.ward_name}</strong>
+                                <span class="badge badge-secondary ml-2">${assignment.role}</span>
+                                ${assignment.is_primary ? '<span class="badge badge-success ml-1">Primary</span>' : ''}
+                            </div>
+                            <button type="button" class="btn btn-sm btn-danger btn-remove-ward" data-assignment-id="${assignment.id}">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.append(html);
+        });
+    }
+    
+    // Render department assignments
+    function renderDepartmentAssignments(assignments) {
+        const container = $('#editDepartmentAssignmentsList');
+        container.empty();
+        
+        if (assignments.length === 0) {
+            container.html('<div class="alert alert-info">No department assignments</div>');
+            return;
+        }
+        
+        assignments.forEach(function(assignment) {
+            const html = `
+                <div class="card mb-2" data-assignment-id="${assignment.id}">
+                    <div class="card-body p-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${assignment.department_name}</strong>
+                                <span class="badge badge-secondary ml-2">${assignment.role}</span>
+                                ${assignment.is_primary ? '<span class="badge badge-success ml-1">Primary</span>' : ''}
+                            </div>
+                            <button type="button" class="btn btn-sm btn-danger btn-remove-department" data-assignment-id="${assignment.id}">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.append(html);
+        });
+    }
+    
+    // Add ward assignment button handler
+    $('#btnAddEditWardAssignment').click(function() {
+        const userId = $('#edit_user_id').val();
+        const userRole = $('#edit_role').val();
+        
+        // Get available wards
+        $.get('/admin/wards', function(wards) {
+            const rolesHtml = userRole === 'nurse' 
+                ? '<option value="incharge">In-Charge</option><option value="general">General</option><option value="student">Student</option><option value="intern">Intern</option>'
+                : '<option value="consultant">Consultant</option><option value="general">General</option>';
+                
+            const html = `
+                <div class="form-row">
+                    <div class="form-group col-md-5">
+                        <label>Ward</label>
+                        <select class="form-control ward-select">
+                            <option value="">Select Ward...</option>
+                            ${wards.map(w => `<option value="${w.id}">${w.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group col-md-4">
+                        <label>Role</label>
+                        <select class="form-control role-select">
+                            ${rolesHtml}
+                        </select>
+                    </div>
+                    <div class="form-group col-md-3">
+                        <label>Primary</label>
+                        <div class="form-check mt-2">
+                            <input type="checkbox" class="form-check-input primary-check">
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            const result = confirm('Add new ward assignment?\n\nNote: This will save immediately.');
+            if (result) {
+                showWardAssignmentDialog(userId, wards);
+            }
+        });
+    });
+    
+    // Add department assignment button handler
+    $('#btnAddEditDepartmentAssignment').click(function() {
+        const userId = $('#edit_user_id').val();
+        
+        // Get available departments
+        $.get('/admin/departments', function(departments) {
+            showDepartmentAssignmentDialog(userId, departments);
+        });
+    });
+    
+    // Show ward assignment dialog (simplified version - you can enhance this)
+    function showWardAssignmentDialog(userId, wards) {
+        const wardId = prompt('Enter ward ID (see available wards in console):');
+        const role = prompt('Enter role (consultant, general, incharge, student, intern):');
+        const isPrimary = confirm('Is this the primary ward?');
+        
+        if (wardId && role) {
+            $.ajax({
+                url: '/admin/user/' + userId + '/ward-assignment',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    ward_id: parseInt(wardId),
+                    role: role,
+                    is_primary: isPrimary
+                }),
+                success: function() {
+                    showAlert('success', 'Ward assignment added successfully');
+                    loadUserAssignments(userId);
+                },
+                error: function(xhr) {
+                    showAlert('danger', xhr.responseJSON?.error || 'Failed to add ward assignment');
+                }
+            });
+        }
+    }
+    
+    // Show department assignment dialog
+    function showDepartmentAssignmentDialog(userId, departments) {
+        const deptId = prompt('Enter department ID (see available departments in console):');
+        const role = prompt('Enter role (consultant, general, specialist):');
+        const isPrimary = confirm('Is this the primary department?');
+        
+        if (deptId && role) {
+            $.ajax({
+                url: '/admin/user/' + userId + '/department-assignment',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    department_id: parseInt(deptId),
+                    role: role,
+                    is_primary: isPrimary
+                }),
+                success: function() {
+                    showAlert('success', 'Department assignment added successfully');
+                    loadUserAssignments(userId);
+                },
+                error: function(xhr) {
+                    showAlert('danger', xhr.responseJSON?.error || 'Failed to add department assignment');
+                }
+            });
+        }
+    }
+    
+    // Remove ward assignment handler (using event delegation)
+    $(document).on('click', '.btn-remove-ward', function() {
+        const assignmentId = $(this).data('assignment-id');
+        const userId = $('#edit_user_id').val();
+        
+        if (confirm('Remove this ward assignment?')) {
+            $.ajax({
+                url: '/admin/user/' + userId + '/ward-assignment/' + assignmentId,
+                method: 'DELETE',
+                success: function() {
+                    showAlert('success', 'Ward assignment removed');
+                    loadUserAssignments(userId);
+                },
+                error: function(xhr) {
+                    showAlert('danger', xhr.responseJSON?.error || 'Failed to remove ward assignment');
+                }
+            });
+        }
+    });
+    
+    // Remove department assignment handler
+    $(document).on('click', '.btn-remove-department', function() {
+        const assignmentId = $(this).data('assignment-id');
+        const userId = $('#edit_user_id').val();
+        
+        if (confirm('Remove this department assignment?')) {
+            $.ajax({
+                url: '/admin/user/' + userId + '/department-assignment/' + assignmentId,
+                method: 'DELETE',
+                success: function() {
+                    showAlert('success', 'Department assignment removed');
+                    loadUserAssignments(userId);
+                },
+                error: function(xhr) {
+                    showAlert('danger', xhr.responseJSON?.error || 'Failed to remove department assignment');
+                }
+            });
+        }
+    });
     
     // Local close buttons removed; global popup auto-closes
 });

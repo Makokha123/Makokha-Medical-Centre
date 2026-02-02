@@ -60,6 +60,7 @@
                             <div class="btn-group">
                                 <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
                                 <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ patient.id }}')">Complete</button>
+                                <button class="btn btn-sm btn-warning" onclick="admitPatient('{{ patient.id }}')">Admit</button>
                                 <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
                                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
                             </div>
@@ -322,21 +323,13 @@ function completeTreatment(patientId) {
 }
 
 function viewSections(patientId) {
-    fetch(`/doctor/patient/${patientId}/view_sections`, {
-        method: 'GET',
-        headers: {
-            'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert(`Sections:\nProgression: ${data.sections.progression}\nFindings: ${data.sections.findings}\nPrescriptions: ${data.sections.prescriptions}`);
-        } else {
-            alert(`Error: ${data.error}`);
-        }
-    })
-    .catch(error => console.error('Error:', error));
+    // Navigate to medical record page
+    window.location.href = `/doctor/patient/${patientId}/record`;
+}
+
+function admitPatient(patientId) {
+    // Navigate to admission page
+    window.location.href = `/doctor/patient/${patientId}/admit`;
 }
 
 function confirmDelete(patientId) {
