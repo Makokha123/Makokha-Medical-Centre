@@ -370,10 +370,10 @@
         <div id="hpiAiPanel" class="assistant-panel" style="display: none;">
             <h4><i class="fas fa-robot"></i> Doctor Assistant - HPI</h4>
             <div class="text-muted" style="margin-bottom: 6px;">Doctor Assistant suggested HPI questions</div>
-            <pre id="hpiAiQuestionsText">-</pre>
+            <div id="hpiAiQuestionsText" class="assistant-outline">-</div>
 
             <div class="text-muted" style="margin: 12px 0 6px;">Doctor Assistant generated HPI draft</div>
-            <pre id="hpiAiGeneratedText">-</pre>
+            <div id="hpiAiGeneratedText" class="assistant-outline">-</div>
 
             <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedHPI()">
@@ -463,7 +463,7 @@
         <div id="rosAiPanel" class="assistant-panel" style="display: none;">
             <h4><i class="fas fa-robot"></i> Doctor Assistant - Review of Systems</h4>
             <div class="text-muted" style="margin-bottom: 6px;">Suggested questions to guide ROS documentation</div>
-            <pre id="rosAiQuestionsText">-</pre>
+            <div id="rosAiQuestionsText" class="assistant-outline">-</div>
             <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.hideAIPanel('rosAiPanel')">Close</button>
             </div>
@@ -808,7 +808,7 @@
         <div id="diagnosisAiPanel" class="assistant-panel" style="display: none;">
             <h4><i class="fas fa-robot"></i> Doctor Assistant - Diagnosis</h4>
             <div class="text-muted" style="margin-bottom: 6px;">Generated diagnosis suggestion (uses latest summary if available)</div>
-            <pre id="diagnosisAiText">-</pre>
+            <div id="diagnosisAiText" class="assistant-outline">-</div>
             <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedDiagnosis()">
                     <i class="fas fa-copy"></i> Use in New Diagnosis Entry
@@ -823,12 +823,24 @@
                 <div class="diagnosis-text">
                     {{ diagnosis.working_diagnosis if diagnosis and diagnosis.working_diagnosis else 'Not documented' }}
                 </div>
+                {% if diagnosis and diagnosis.working_diagnosis_supporting_argument %}
+                <div class="diagnosis-text" style="margin-top: 10px;">
+                    <div class="text-muted" style="font-size: 0.9rem; margin-bottom: 4px;">Dx supporting argument</div>
+                    <div>{{ diagnosis.working_diagnosis_supporting_argument }}</div>
+                </div>
+                {% endif %}
             </div>
             <div class="diagnosis-card">
                 <h4>Differential Diagnosis</h4>
                 <div class="diagnosis-text">
                     {{ diagnosis.differential_diagnosis if diagnosis and diagnosis.differential_diagnosis else 'Not documented' }}
                 </div>
+                {% if diagnosis and diagnosis.differential_diagnosis_supporting_argument %}
+                <div class="diagnosis-text" style="margin-top: 10px;">
+                    <div class="text-muted" style="font-size: 0.9rem; margin-bottom: 4px;">DDx supporting argument</div>
+                    <div>{{ diagnosis.differential_diagnosis_supporting_argument }}</div>
+                </div>
+                {% endif %}
             </div>
         </div>
 
@@ -851,7 +863,13 @@
                     </div>
                     <div class="history-details">
                         <div class="detail-row"><strong>Working:</strong> {{ entry.working_diagnosis or 'N/A' }}</div>
+                        {% if entry.working_diagnosis_supporting_argument %}
+                        <div class="detail-row"><strong>Dx support:</strong> {{ entry.working_diagnosis_supporting_argument }}</div>
+                        {% endif %}
                         <div class="detail-row"><strong>Differential:</strong> {{ entry.differential_diagnosis or 'N/A' }}</div>
+                        {% if entry.differential_diagnosis_supporting_argument %}
+                        <div class="detail-row"><strong>DDx support:</strong> {{ entry.differential_diagnosis_supporting_argument }}</div>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -903,7 +921,7 @@
         <div id="managementAiPanel" class="assistant-panel" style="display: none;">
             <h4><i class="fas fa-robot"></i> Doctor Assistant - Treatment Plan</h4>
             <div class="text-muted" style="margin-bottom: 6px;">Doctor Assistant suggested plan (requires a saved Diagnosis)</div>
-            <pre id="managementAiText">-</pre>
+            <div id="managementAiText" class="assistant-outline">-</div>
             <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedManagementPlan()">
                     <i class="fas fa-copy"></i> Use in Treatment Plan Entry
@@ -1142,7 +1160,7 @@
         <div id="summaryAiPanel" class="assistant-panel" style="display: none;">
             <h4><i class="fas fa-robot"></i> Doctor Assistant - Summary</h4>
             <div class="text-muted" style="margin-bottom: 6px;">Review the latest saved summary or generate a new summary with Doctor Assistant</div>
-            <pre id="summaryAiText">-</pre>
+            <div id="summaryAiText" class="assistant-outline">-</div>
 
             <div class="assistant-tools" style="margin-top: 10px;">
                 <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedSummary()">
@@ -1236,14 +1254,14 @@
                         </div>
                         <div class="request-details">
                             <span class="request-date">
-                                Requested: {{ request.created_at.strftime('%Y-%m-%d %H:%M') }}
+                                Requested: {{ request.created_at|eat_time('%Y-%m-%d %H:%M') }}
                                 {% if request.requester %}by {{ request.requester.username }}{% endif %}
                             </span>
                             {% if request.notes %}<div class="request-notes">{{ request.notes }}</div>{% endif %}
                             {% if request.status == 'completed' and request.result %}
                                 <div class="request-notes"><strong>Result:</strong> {{ request.result }}</div>
                                 {% if request.performer and request.performed_at %}
-                                    <div class="request-notes"><strong>Recorded:</strong> {{ request.performed_at.strftime('%Y-%m-%d %H:%M') }} by {{ request.performer.username }}</div>
+                                    <div class="request-notes"><strong>Recorded:</strong> {{ request.performed_at|eat_time('%Y-%m-%d %H:%M') }} by {{ request.performer.username }}</div>
                                 {% endif %}
                             {% endif %}
                             {% if request.status != 'completed' %}
@@ -1278,14 +1296,14 @@
                         </div>
                         <div class="request-details">
                             <span class="request-date">
-                                Requested: {{ request.created_at.strftime('%Y-%m-%d %H:%M') }}
+                                Requested: {{ request.created_at|eat_time('%Y-%m-%d %H:%M') }}
                                 {% if request.requester %}by {{ request.requester.username }}{% endif %}
                             </span>
                             {% if request.notes %}<div class="request-notes">{{ request.notes }}</div>{% endif %}
                             {% if request.status == 'completed' and request.result %}
                                 <div class="request-notes"><strong>Result:</strong> {{ request.result }}</div>
                                 {% if request.performer and request.performed_at %}
-                                    <div class="request-notes"><strong>Recorded:</strong> {{ request.performed_at.strftime('%Y-%m-%d %H:%M') }} by {{ request.performer.username }}</div>
+                                    <div class="request-notes"><strong>Recorded:</strong> {{ request.performed_at|eat_time('%Y-%m-%d %H:%M') }} by {{ request.performer.username }}</div>
                                 {% endif %}
                             {% endif %}
                             {% if request.status != 'completed' %}
@@ -1542,8 +1560,16 @@
                 <textarea id="working-diagnosis" name="working_diagnosis" rows="4" placeholder="Primary diagnosis based on current findings..."></textarea>
             </div>
             <div class="form-group">
+                <label for="working-diagnosis-support">Dx supporting argument (optional)</label>
+                <textarea id="working-diagnosis-support" name="working_diagnosis_supporting_argument" rows="3" placeholder="Key findings supporting this diagnosis..."></textarea>
+            </div>
+            <div class="form-group">
                 <label for="differential-diagnosis">Differential Diagnosis</label>
                 <textarea id="differential-diagnosis" name="differential_diagnosis" rows="4" placeholder="Alternative diagnoses to consider..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="differential-diagnosis-support">DDx supporting argument (optional)</label>
+                <textarea id="differential-diagnosis-support" name="differential_diagnosis_supporting_argument" rows="3" placeholder="Key findings supporting the differential diagnoses..."></textarea>
             </div>
             <div class="form-actions">
                 <button type="button" class="btn" onclick="doctorPatient.closeModal('diagnosis')">Cancel</button>
@@ -1730,6 +1756,32 @@
         </div>
         <div class="modal-body">
             <div id="viewSummaryContent" style="white-space: pre-wrap; line-height: 1.6;"></div>
+
+            <hr style="margin: 18px 0;">
+            <div>
+                <h3 style="margin: 0 0 8px;">Diagnosis</h3>
+                <div style="margin-bottom: 10px;">
+                    <strong>Working Diagnosis:</strong>
+                    <div style="white-space: pre-wrap;">{{ diagnosis.working_diagnosis if diagnosis and diagnosis.working_diagnosis else 'Not documented' }}</div>
+                </div>
+                {% if diagnosis and diagnosis.working_diagnosis_supporting_argument %}
+                <div style="margin-bottom: 10px;">
+                    <strong>Dx supporting argument:</strong>
+                    <div style="white-space: pre-wrap;">{{ diagnosis.working_diagnosis_supporting_argument }}</div>
+                </div>
+                {% endif %}
+
+                <div style="margin-bottom: 10px;">
+                    <strong>Differential Diagnosis:</strong>
+                    <div style="white-space: pre-wrap;">{{ diagnosis.differential_diagnosis if diagnosis and diagnosis.differential_diagnosis else 'Not documented' }}</div>
+                </div>
+                {% if diagnosis and diagnosis.differential_diagnosis_supporting_argument %}
+                <div style="margin-bottom: 0;">
+                    <strong>DDx supporting argument:</strong>
+                    <div style="white-space: pre-wrap;">{{ diagnosis.differential_diagnosis_supporting_argument }}</div>
+                </div>
+                {% endif %}
+            </div>
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-primary" onclick="window.print()">
@@ -2968,9 +3020,100 @@
         margin-bottom: 10px;
     }
 }
+
+/* Professional outline styling for Doctor Assistant outputs (display-only) */
+.assistant-outline {
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 12px 14px;
+    white-space: normal;
+}
+
+.assistant-outline h6 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin: 10px 0 6px;
+    color: #1f2937;
+}
+
+.assistant-outline p {
+    margin: 0 0 6px;
+    color: #374151;
+    line-height: 1.4;
+}
+
+.assistant-outline ul,
+.assistant-outline ol {
+    margin: 0 0 8px 1.25rem;
+    padding-left: 1.1rem;
+}
+
+.assistant-outline li {
+    margin: 0 0 4px;
+    color: #374151;
+    line-height: 1.35;
+}
 </style>
 
 <script>
+function mmcEscapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function mmcFormatAssistantOutline(text) {
+    const raw = (text === null || text === undefined) ? '' : String(text);
+    const t = raw.replace(/\r/g, '').trim();
+    if (!t) return '<span class="text-muted">-</span>';
+
+    const lines = t.split('\n');
+    let html = '<div class="assistant-outline">';
+    let inUl = false;
+    let inOl = false;
+
+    function closeLists() {
+        if (inUl) { html += '</ul>'; inUl = false; }
+        if (inOl) { html += '</ol>'; inOl = false; }
+    }
+
+    for (const rawLine of lines) {
+        const line = (rawLine || '').trim();
+        if (!line) continue;
+
+        if (/^.{2,80}:$/.test(line) && !/^\d+[\).]\s+/.test(line)) {
+            closeLists();
+            html += `<h6>${mmcEscapeHtml(line.replace(/:$/, ''))}</h6>`;
+            continue;
+        }
+
+        const olMatch = line.match(/^\s*(\d+)[\).]\s+(.*)$/);
+        if (olMatch) {
+            if (!inOl) { closeLists(); html += '<ol>'; inOl = true; }
+            html += `<li>${mmcEscapeHtml(olMatch[2].trim())}</li>`;
+            continue;
+        }
+
+        const ulMatch = line.match(/^\s*([•\-*]|\u2022)\s+(.*)$/);
+        if (ulMatch) {
+            if (!inUl) { closeLists(); html += '<ul>'; inUl = true; }
+            html += `<li>${mmcEscapeHtml(ulMatch[2].trim())}</li>`;
+            continue;
+        }
+
+        closeLists();
+        html += `<p>${mmcEscapeHtml(line)}</p>`;
+    }
+
+    closeLists();
+    html += '</div>';
+    return html;
+}
+
 class DoctorPatientManagement {
     constructor() {
         const root = document.querySelector('.doctor-patient-container');
@@ -3114,7 +3257,9 @@ class DoctorPatientManagement {
         const stored = (document.getElementById('rosAiStoredQuestions') || {}).value || '';
         const target = document.getElementById('rosAiQuestionsText');
         if (target) {
-            target.textContent = stored.trim() || 'No saved AI questions yet. Click Generate to create them.';
+            target.innerHTML = mmcFormatAssistantOutline(
+                stored.trim() || 'No saved questions yet. Click Generate to create them.'
+            );
         }
         this._showAIPanel('rosAiPanel');
     }
@@ -3128,7 +3273,7 @@ class DoctorPatientManagement {
 
         try {
             const out = document.getElementById('rosAiQuestionsText');
-            if (out) out.textContent = 'Generating ROS questions...';
+            if (out) out.innerHTML = '<span class="text-muted">Generating ROS questions...</span>';
             this._showAIPanel('rosAiPanel');
 
             this.showAlert('Generating ROS questions...', 'info');
@@ -3137,7 +3282,7 @@ class DoctorPatientManagement {
             const result = await this._postAI('/doctor/patient/assistant/review_systems', fd);
             const questions = result.questions || '';
 
-            if (out) out.textContent = questions || 'No questions returned.';
+            if (out) out.innerHTML = mmcFormatAssistantOutline(questions || 'No questions returned.');
 
             const store = document.getElementById('rosAiStoredQuestions');
             if (store) store.value = questions || '';
@@ -3147,7 +3292,7 @@ class DoctorPatientManagement {
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate ROS questions';
             const outElement = document.getElementById('rosAiQuestionsText');
-            if (outElement) outElement.textContent = `Error: ${msg}`;
+            if (outElement) outElement.innerHTML = `<span class="text-danger">Error: ${mmcEscapeHtml(msg)}</span>`;
             this._showAIPanel('rosAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3161,7 +3306,7 @@ class DoctorPatientManagement {
         }
         try {
             const out = document.getElementById('hpiAiQuestionsText');
-            if (out) out.textContent = 'Loading HPI questions...';
+            if (out) out.innerHTML = '<span class="text-muted">Loading HPI questions...</span>';
             this._showAIPanel('hpiAiPanel');
 
             this.showAlert('Loading HPI questions...', 'info');
@@ -3170,14 +3315,14 @@ class DoctorPatientManagement {
             const result = await this._postAI('/doctor/patient/assistant/hpi_questions', fd);
 
             const questions = result.questions || '';
-            if (out) out.textContent = questions || 'No questions returned.';
+            if (out) out.innerHTML = mmcFormatAssistantOutline(questions || 'No questions returned.');
 
             this._showAIPanel('hpiAiPanel');
             this.showAlert('HPI questions ready.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to load HPI questions';
             const outElement = document.getElementById('hpiAiQuestionsText');
-            if (outElement) outElement.textContent = `Error: ${msg}`;
+            if (outElement) outElement.innerHTML = `<span class="text-danger">Error: ${mmcEscapeHtml(msg)}</span>`;
             this._showAIPanel('hpiAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3192,7 +3337,7 @@ class DoctorPatientManagement {
 
         try {
             const out = document.getElementById('hpiAiGeneratedText');
-            if (out) out.textContent = 'Generating HPI draft...';
+            if (out) out.innerHTML = '<span class="text-muted">Generating HPI draft...</span>';
             this._showAIPanel('hpiAiPanel');
 
             this.showAlert('Generating HPI draft...', 'info');
@@ -3202,14 +3347,14 @@ class DoctorPatientManagement {
 
             const hpi = result.hpi_content || '';
             this.lastGeneratedHpi = hpi;
-            if (out) out.textContent = hpi || 'No HPI content returned.';
+            if (out) out.innerHTML = mmcFormatAssistantOutline(hpi || 'No HPI content returned.');
 
             this._showAIPanel('hpiAiPanel');
             this.showAlert('HPI draft generated.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate HPI';
             const outElement = document.getElementById('hpiAiGeneratedText');
-            if (outElement) outElement.textContent = `Error: ${msg}`;
+            if (outElement) outElement.innerHTML = `<span class="text-danger">Error: ${mmcEscapeHtml(msg)}</span>`;
             this._showAIPanel('hpiAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3241,7 +3386,9 @@ class DoctorPatientManagement {
 
         const out = document.getElementById('diagnosisAiText');
         if (out) {
-            out.textContent = `Working Diagnosis:\n${working || '-'}\n\nDifferential Diagnosis:\n${diff || '-'}`;
+            out.innerHTML = mmcFormatAssistantOutline(
+                `Working Diagnosis:\n${working || '-'}\n\nDifferential Diagnosis:\n${diff || '-'}`
+            );
         }
         this._showAIPanel('diagnosisAiPanel');
     }
@@ -3255,7 +3402,7 @@ class DoctorPatientManagement {
 
         try {
             const out = document.getElementById('diagnosisAiText');
-            if (out) out.textContent = 'Generating diagnosis...';
+            if (out) out.innerHTML = '<span class="text-muted">Generating diagnosis...</span>';
             this._showAIPanel('diagnosisAiPanel');
 
             this.showAlert('Generating diagnosis...', 'info');
@@ -3266,15 +3413,14 @@ class DoctorPatientManagement {
 
             const dx = result.diagnosis || '';
             this.lastGeneratedDiagnosis = dx;
-            // Reuse out variable declared earlier
-            if (out) out.textContent = dx || 'No diagnosis returned.';
+            if (out) out.innerHTML = mmcFormatAssistantOutline(dx || 'No diagnosis returned.');
 
             this._showAIPanel('diagnosisAiPanel');
             this.showAlert('Diagnosis generated.', 'success');
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate diagnosis';
             const outElement = document.getElementById('diagnosisAiText');
-            if (outElement) outElement.textContent = `Error: ${msg}`;
+            if (outElement) outElement.innerHTML = `<span class="text-danger">Error: ${mmcEscapeHtml(msg)}</span>`;
             this._showAIPanel('diagnosisAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3303,7 +3449,9 @@ class DoctorPatientManagement {
         const stored = (document.getElementById('mgmtAiStoredPlan') || {}).value || '';
         const out = document.getElementById('managementAiText');
         if (out) {
-            out.textContent = stored.trim() || 'No saved AI treatment plan yet. Click Generate to create one (requires a saved Diagnosis).';
+            out.innerHTML = mmcFormatAssistantOutline(
+                stored.trim() || 'No saved treatment plan yet. Click Generate to create one (requires a saved Diagnosis).'
+            );
         }
         this._showAIPanel('managementAiPanel');
     }
@@ -3317,7 +3465,7 @@ class DoctorPatientManagement {
 
         try {
             const out = document.getElementById('managementAiText');
-            if (out) out.textContent = 'Generating treatment plan...';
+            if (out) out.innerHTML = '<span class="text-muted">Generating treatment plan...</span>';
             this._showAIPanel('managementAiPanel');
 
             this.showAlert('Generating treatment plan...', 'info');
@@ -3327,8 +3475,7 @@ class DoctorPatientManagement {
 
             const plan = result.treatment_plan || '';
             this.lastGeneratedManagementPlan = plan;
-            // Reuse out variable declared earlier
-            if (out) out.textContent = plan || 'No plan returned.';
+            if (out) out.innerHTML = mmcFormatAssistantOutline(plan || 'No plan returned.');
 
             const store = document.getElementById('mgmtAiStoredPlan');
             if (store) store.value = plan || '';
@@ -3338,7 +3485,7 @@ class DoctorPatientManagement {
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate treatment plan';
             const outElement = document.getElementById('managementAiText');
-            if (outElement) outElement.textContent = `Error: ${msg}`;
+            if (outElement) outElement.innerHTML = `<span class="text-danger">Error: ${mmcEscapeHtml(msg)}</span>`;
             this._showAIPanel('managementAiPanel');
             this.showAlert(msg, 'error');
         }
@@ -3375,7 +3522,7 @@ class DoctorPatientManagement {
         }
 
         const out = document.getElementById('summaryAiText');
-        if (out) out.textContent = text;
+        if (out) out.innerHTML = mmcFormatAssistantOutline(text);
         this._showAIPanel('summaryAiPanel');
     }
 
@@ -3388,7 +3535,7 @@ class DoctorPatientManagement {
 
         try {
             const out = document.getElementById('summaryAiText');
-            if (out) out.textContent = 'Generating summary...';
+            if (out) out.innerHTML = '<span class="text-muted">Generating summary...</span>';
             this._showAIPanel('summaryAiPanel');
 
             this.showAlert('Generating summary...', 'info');
@@ -3399,6 +3546,8 @@ class DoctorPatientManagement {
             const text = (result && result.summary_text ? String(result.summary_text) : '').trim();
             this.lastGeneratedSummary = text;
 
+            if (out) out.innerHTML = mmcFormatAssistantOutline(text || 'No summary returned.');
+
             if (out) out.textContent = text || 'No summary returned.';
 
             this._showAIPanel('summaryAiPanel');
@@ -3406,7 +3555,7 @@ class DoctorPatientManagement {
         } catch (e) {
             const msg = (e && e.message) ? e.message : 'Failed to generate summary';
             const outElement = document.getElementById('summaryAiText');
-            if (outElement) outElement.textContent = `Error: ${msg}`;
+            if (outElement) outElement.innerHTML = `<span class="text-danger">Error: ${mmcEscapeHtml(msg)}</span>`;
             this._showAIPanel('summaryAiPanel');
             this.showAlert(msg, 'error');
         }

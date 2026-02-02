@@ -1,0 +1,910 @@
+<!-- Communication Modal - WhatsApp-like Interface -->
+<div id="communication-modal" class="communication-modal" style="display: none;">
+    <div class="communication-container" id="communication-drag-container">
+        <!-- Header -->
+        <div class="communication-header" id="communication-drag-handle">
+            <div class="d-flex align-items-center justify-content-between">
+                <h5 class="mb-0"><i class="bi bi-chat-dots-fill me-2"></i>Messages</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-light" id="minimize-chat" title="Minimize">
+                        <i class="bi bi-dash-lg"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-light" id="close-chat" title="Close">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="communication-content">
+            <!-- Sidebar - User List -->
+            <div class="users-sidebar" id="users-sidebar">
+                <div class="users-search p-2">
+                    <input type="text" class="form-control" id="search-users" placeholder="Search users...">
+                </div>
+                <div class="users-list" id="users-list">
+                    <!-- Users will be loaded here dynamically -->
+                    <div class="text-center text-muted py-4">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 small">Loading users...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Area -->
+            <div class="chat-area" id="chat-area">
+                <div class="no-chat-selected">
+                    <i class="bi bi-chat-text display-1 text-muted"></i>
+                    <p class="text-muted mt-3">Select a user to start chatting</p>
+                </div>
+
+                <!-- Active Chat -->
+                <div class="active-chat" id="active-chat" style="display: none;">
+                    <!-- Chat Header -->
+                    <div class="chat-header">
+                        <div class="d-flex align-items-center">
+                            <div class="user-avatar me-2" id="chat-user-avatar">
+                                <i class="bi bi-person-circle"></i>
+                            </div>
+                            <div class="flex-grow-1">
+                                <h6 class="mb-0" id="chat-user-name">User Name</h6>
+                                <small class="text-muted" id="chat-user-status">offline</small>
+                            </div>
+                            <div class="chat-actions">
+                                <button class="btn btn-sm btn-outline-primary me-1" id="voice-call-btn" title="Voice Call">
+                                    <i class="bi bi-telephone-fill"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-primary" id="video-call-btn" title="Video Call">
+                                    <i class="bi bi-camera-video-fill"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Messages Container -->
+                    <div class="messages-container" id="messages-container">
+                        <!-- Messages will be loaded here -->
+                    </div>
+
+                    <!-- Typing Indicator -->
+                    <div class="typing-indicator" id="typing-indicator" style="display: none;">
+                        <span class="typing-dots">
+                            <span></span><span></span><span></span>
+                        </span>
+                        <span class="typing-text">typing...</span>
+                    </div>
+
+                    <!-- Message Input -->
+                    <div class="message-input">
+                        <input type="text" class="form-control" id="message-input" placeholder="Type a message...">
+                        <button class="btn btn-primary" id="send-message-btn">
+                            <i class="bi bi-send-fill"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Call Modal -->
+<div id="call-modal" class="call-modal" style="display: none;">
+    <div class="call-container">
+        <div class="call-content">
+            <!-- Incoming Call -->
+            <div class="incoming-call" id="incoming-call" style="display: none;">
+                <div class="caller-info text-center">
+                    <div class="caller-avatar mb-3">
+                        <i class="bi bi-person-circle display-1"></i>
+                    </div>
+                    <h4 id="incoming-caller-name">User Name</h4>
+                    <p class="text-muted" id="incoming-call-type">Incoming Voice Call</p>
+                </div>
+                <div class="call-actions mt-4">
+                    <button class="btn btn-success btn-lg me-2" id="accept-call-btn">
+                        <i class="bi bi-telephone-fill me-2"></i>Accept
+                    </button>
+                    <button class="btn btn-danger btn-lg" id="reject-call-btn">
+                        <i class="bi bi-telephone-x-fill me-2"></i>Reject
+                    </button>
+                </div>
+            </div>
+
+            <!-- Active Call -->
+            <div class="active-call" id="active-call" style="display: none;">
+                <!-- Video Container -->
+                <div class="video-container" id="video-container" style="display: none;">
+                    <video id="remote-video" class="remote-video" autoplay playsinline></video>
+                    <video id="local-video" class="local-video" autoplay playsinline muted></video>
+                    <button class="btn btn-sm btn-secondary toggle-camera-btn" id="toggle-camera-btn">
+                        <i class="bi bi-camera-video-fill"></i>
+                    </button>
+                </div>
+
+                <!-- Voice Call Display -->
+                <div class="voice-call-display" id="voice-call-display" style="display: none;">
+                    <div class="caller-info text-center">
+                        <div class="caller-avatar mb-3">
+                            <i class="bi bi-person-circle display-1"></i>
+                        </div>
+                        <h4 id="active-caller-name">User Name</h4>
+                        <p class="text-muted" id="call-duration">00:00</p>
+                    </div>
+                </div>
+
+                <!-- Call Controls -->
+                <div class="call-controls">
+                    <button class="btn btn-secondary" id="mute-btn" title="Mute">
+                        <i class="bi bi-mic-fill"></i>
+                    </button>
+                    <button class="btn btn-danger" id="end-call-btn" title="End Call">
+                        <i class="bi bi-telephone-x-fill"></i>
+                    </button>
+                    <button class="btn btn-secondary" id="toggle-video-btn" style="display: none;" title="Toggle Video">
+                        <i class="bi bi-camera-video-fill"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Communication Modal Styles */
+.communication-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 800px;
+    height: 600px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.communication-modal.minimized {
+    height: 60px;
+    overflow: hidden;
+}
+
+.communication-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.communication-header {
+    background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 12px 12px 0 0;
+    flex-shrink: 0;
+    cursor: move;
+    user-select: none;
+}
+
+.communication-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Users Sidebar */
+.users-sidebar {
+    width: 280px;
+    border-right: 1px solid #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    background: #f8f9fa;
+}
+
+.users-search {
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.users-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.user-item {
+    padding: 12px 15px;
+    border-bottom: 1px solid #e0e0e0;
+    cursor: pointer;
+    transition: background 0.2s;
+    display: flex;
+    align-items: center;
+}
+
+.user-item:hover {
+    background: #e9ecef;
+}
+
+.user-item.active {
+    background: #d3e5ff;
+}
+
+.user-avatar {
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #e9ecef;
+    font-size: 24px;
+    color: #6c757d;
+    position: relative;
+}
+
+.user-avatar .online-badge {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 12px;
+    height: 12px;
+    background: #28a745;
+    border: 2px solid white;
+    border-radius: 50%;
+}
+
+.user-info {
+    flex: 1;
+    margin-left: 12px;
+}
+
+.user-name {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 2px;
+}
+
+.user-role {
+    font-size: 12px;
+    color: #6c757d;
+}
+
+.unread-badge {
+    background: #0d6efd;
+    color: white;
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* Chat Area */
+.chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.no-chat-selected {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.active-chat {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.chat-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background: white;
+    flex-shrink: 0;
+}
+
+.chat-user-status {
+    font-size: 12px;
+}
+
+.chat-user-status.online {
+    color: #28a745;
+}
+
+/* Messages Container */
+.messages-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    background: #f8f9fa;
+}
+
+.message {
+    margin-bottom: 15px;
+    display: flex;
+}
+
+.message.sent {
+    justify-content: flex-end;
+}
+
+.message.received {
+    justify-content: flex-start;
+}
+
+.message-bubble {
+    max-width: 60%;
+    padding: 10px 15px;
+    border-radius: 12px;
+    word-wrap: break-word;
+}
+
+.message.sent .message-bubble {
+    background: #0d6efd;
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.message.received .message-bubble {
+    background: white;
+    color: #333;
+    border-bottom-left-radius: 4px;
+}
+
+.message-time {
+    font-size: 11px;
+    margin-top: 4px;
+    opacity: 0.7;
+}
+
+.message.sent .message-time {
+    text-align: right;
+}
+
+.message.received .message-time {
+    text-align: left;
+}
+
+/* Typing Indicator */
+.typing-indicator {
+    padding: 10px 20px;
+    background: white;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.typing-dots {
+    display: flex;
+    gap: 3px;
+}
+
+.typing-dots span {
+    width: 6px;
+    height: 6px;
+    background: #6c757d;
+    border-radius: 50%;
+    animation: typingBounce 1.4s infinite;
+}
+
+.typing-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes typingBounce {
+    0%, 60%, 100% {
+        transform: translateY(0);
+    }
+    30% {
+        transform: translateY(-8px);
+    }
+}
+
+.typing-text {
+    font-size: 12px;
+    color: #6c757d;
+    font-style: italic;
+}
+
+/* Message Input */
+.message-input {
+    padding: 15px 20px;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    gap: 10px;
+    background: white;
+    flex-shrink: 0;
+}
+
+.message-input input {
+    flex: 1;
+}
+
+/* Call Modal */
+.call-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.9);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.call-container {
+    width: 100%;
+    max-width: 800px;
+    height: 600px;
+    background: #1a1a1a;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.call-content {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: white;
+}
+
+.caller-info {
+    padding: 40px;
+}
+
+.caller-avatar {
+    font-size: 80px;
+}
+
+.call-actions {
+    display: flex;
+    gap: 20px;
+}
+
+/* Video Container */
+.video-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: #000;
+}
+
+.remote-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.local-video {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 200px;
+    height: 150px;
+    border-radius: 8px;
+    object-fit: cover;
+    border: 2px solid white;
+}
+
+.toggle-camera-btn {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+}
+
+/* Voice Call Display */
+.voice-call-display {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Call Controls */
+.call-controls {
+    padding: 30px;
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+}
+
+.call-controls .btn {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    font-size: 24px;
+}
+
+/* Responsive Design for All Screen Sizes */
+
+/* Extra Small Phones (320px - 480px) */
+@media (max-width: 480px) {
+    .communication-modal {
+        width: 100% !important;
+        height: 100% !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        transform: none !important;
+        border-radius: 0;
+        max-width: 100%;
+    }
+
+    .communication-header {
+        padding: 12px 15px;
+        cursor: default;
+    }
+
+    .communication-header h5 {
+        font-size: 16px;
+    }
+
+    .users-sidebar {
+        width: 100%;
+        position: absolute;
+        height: 100%;
+        z-index: 2;
+        transition: transform 0.3s ease;
+        background: white;
+    }
+
+    .users-sidebar.hidden {
+        transform: translateX(-100%);
+    }
+
+    .chat-area {
+        width: 100%;
+        position: relative;
+    }
+
+    .user-avatar {
+        width: 38px;
+        height: 38px;
+        font-size: 20px;
+    }
+
+    .user-name {
+        font-size: 13px;
+    }
+
+    .user-role {
+        font-size: 11px;
+    }
+
+    .chat-header {
+        padding: 12px 15px;
+    }
+
+    .chat-header h6 {
+        font-size: 14px;
+    }
+
+    .messages-container {
+        padding: 15px 10px;
+    }
+
+    .message-bubble {
+        max-width: 75%;
+        padding: 8px 12px;
+        font-size: 14px;
+    }
+
+    .message-time {
+        font-size: 10px;
+    }
+
+    .message-input {
+        padding: 10px 12px;
+        gap: 8px;
+    }
+
+    .message-input input {
+        font-size: 14px;
+    }
+
+    .message-input .btn {
+        padding: 8px 12px;
+    }
+
+    /* Call Modal for Small Phones */
+    .call-container {
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        border-radius: 0;
+    }
+
+    .caller-info {
+        padding: 20px;
+    }
+
+    .caller-avatar {
+        font-size: 60px;
+    }
+
+    .call-actions .btn {
+        padding: 12px 20px;
+        font-size: 14px;
+    }
+
+    .local-video {
+        width: 90px;
+        height: 70px;
+        bottom: 15px;
+        right: 15px;
+    }
+
+    .call-controls {
+        padding: 20px 15px;
+        gap: 15px;
+    }
+
+    .call-controls .btn {
+        width: 50px;
+        height: 50px;
+        font-size: 20px;
+    }
+
+    .chat-actions .btn {
+        padding: 6px 10px;
+        font-size: 14px;
+    }
+
+    /* Back button for mobile navigation */
+    .chat-header::before {
+        content: '‹';
+        font-size: 28px;
+        margin-right: 10px;
+        cursor: pointer;
+        display: none;
+    }
+}
+
+/* Small to Medium Phones (481px - 767px) */
+@media (min-width: 481px) and (max-width: 767px) {
+    .communication-modal {
+        width: 100% !important;
+        height: 100% !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        transform: none !important;
+        border-radius: 0;
+        max-width: 100%;
+    }
+
+    .communication-header {
+        cursor: default;
+    }
+
+    .users-sidebar {
+        width: 100%;
+        position: absolute;
+        height: 100%;
+        z-index: 2;
+        transition: transform 0.3s ease;
+        background: white;
+    }
+
+    .users-sidebar.hidden {
+        transform: translateX(-100%);
+    }
+
+    .chat-area {
+        width: 100%;
+    }
+
+    .message-bubble {
+        max-width: 70%;
+    }
+
+    .local-video {
+        width: 120px;
+        height: 90px;
+    }
+
+    .call-controls .btn {
+        width: 55px;
+        height: 55px;
+        font-size: 22px;
+    }
+}
+
+/* Tablets Portrait (768px - 1024px) */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .communication-modal {
+        width: 90% !important;
+        height: 85% !important;
+        max-width: 700px;
+        max-height: 650px;
+    }
+
+    .users-sidebar {
+        width: 240px;
+    }
+
+    .message-bubble {
+        max-width: 65%;
+    }
+
+    .call-container {
+        max-width: 90%;
+        height: 80%;
+    }
+
+    .local-video {
+        width: 150px;
+        height: 110px;
+    }
+}
+
+/* Small Desktops (1025px - 1280px) */
+@media (min-width: 1025px) and (max-width: 1280px) {
+    .communication-modal {
+        width: 750px;
+        height: 580px;
+    }
+
+    .users-sidebar {
+        width: 260px;
+    }
+}
+
+/* Large Desktops (1281px - 1600px) */
+@media (min-width: 1281px) and (max-width: 1600px) {
+    .communication-modal {
+        width: 850px;
+        height: 650px;
+    }
+
+    .users-sidebar {
+        width: 300px;
+    }
+}
+
+/* Extra Large Desktops (1601px+) */
+@media (min-width: 1601px) {
+    .communication-modal {
+        width: 950px;
+        height: 700px;
+    }
+
+    .users-sidebar {
+        width: 320px;
+    }
+
+    .message-bubble {
+        max-width: 55%;
+    }
+}
+
+/* Landscape Phone Orientation */
+@media (max-width: 896px) and (orientation: landscape) {
+    .communication-modal {
+        width: 100% !important;
+        height: 100% !important;
+        transform: none !important;
+        top: 0 !important;
+        left: 0 !important;
+    }
+
+    .users-sidebar {
+        width: 35%;
+        min-width: 200px;
+    }
+
+    .messages-container {
+        padding: 15px;
+    }
+
+    .call-container {
+        width: 100%;
+        height: 100%;
+        border-radius: 0;
+    }
+
+    .local-video {
+        width: 140px;
+        height: 105px;
+    }
+}
+
+/* Tablet Landscape */
+@media (min-width: 768px) and (max-width: 1024px) and (orientation: landscape) {
+    .communication-modal {
+        width: 85%;
+        height: 90%;
+        max-width: 900px;
+    }
+
+    .users-sidebar {
+        width: 280px;
+    }
+}
+
+/* Touch Device Optimizations */
+@media (hover: none) and (pointer: coarse) {
+    .user-item {
+        padding: 15px;
+    }
+
+    .user-item:active {
+        background: #d3e5ff;
+    }
+
+    .message-input input {
+        font-size: 16px; /* Prevent zoom on iOS */
+    }
+
+    .users-search input {
+        font-size: 16px; /* Prevent zoom on iOS */
+    }
+
+    .btn {
+        min-height: 44px; /* Touch target size */
+        min-width: 44px;
+    }
+
+    .call-controls .btn {
+        min-width: 60px;
+        min-height: 60px;
+    }
+}
+
+/* High DPI Screens */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    .communication-modal {
+        box-shadow: 0 12px 48px rgba(0, 0, 0, 0.25);
+    }
+
+    .message-bubble {
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    }
+}
+
+/* Print Styles (Hide communication features when printing) */
+@media print {
+    .communication-modal,
+    .call-modal,
+    #communication-float-icon {
+        display: none !important;
+    }
+}
+
+/* Accessibility: Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+    .communication-modal,
+    .users-sidebar,
+    .typing-dots span {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+</style>

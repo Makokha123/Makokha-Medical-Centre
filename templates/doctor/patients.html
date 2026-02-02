@@ -64,6 +64,9 @@
                                 <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
                                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
                             </div>
+                            <div class="small text-muted mt-1">
+                                Clinical note: {{ (patient.chief_complaint or patient.ai_diagnosis or '—')|replace('\n', ' ')|truncate(90, True, '…') }}
+                            </div>
                         </td>
                     </tr>
                     {% endif %}
@@ -115,6 +118,9 @@
                                 {% endif %}
                                 <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
                                 <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
+                            </div>
+                            <div class="small text-muted mt-1">
+                                Clinical note: {{ (patient.chief_complaint or patient.ai_diagnosis or '—')|replace('\n', ' ')|truncate(90, True, '…') }}
                             </div>
                         </td>
                     </tr>
@@ -170,6 +176,9 @@
                                 <button class="btn btn-sm btn-warning" onclick="readmitPatient('{{ patient.id }}')">Readmit</button>
                                 <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
                             </div>
+                            <div class="small text-muted mt-1">
+                                Clinical note: {{ (patient.chief_complaint or patient.ai_diagnosis or '—')|replace('\n', ' ')|truncate(90, True, '…') }}
+                            </div>
                         </td>
                     </tr>
                     {% endif %}
@@ -216,6 +225,9 @@
                                 <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
                                 <button class="btn btn-sm btn-warning" onclick="readmitPatient('{{ patient.id }}')">Readmit</button>
                                 <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
+                            </div>
+                            <div class="small text-muted mt-1">
+                                Clinical note: {{ (patient.chief_complaint or patient.ai_diagnosis or '—')|replace('\n', ' ')|truncate(90, True, '…') }}
                             </div>
                         </td>
                     </tr>

@@ -151,6 +151,60 @@
         </div>
     </div>
 
+    <!-- Lab Results -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <strong><i class="fas fa-flask"></i> Lab Tests</strong>
+        </div>
+        <div class="card-body">
+            {% if lab_requests %}
+            <div class="table-responsive">
+                <table class="table table-sm table-striped">
+                    <thead>
+                        <tr>
+                            <th>Requested</th>
+                            <th>Test</th>
+                            <th>Status</th>
+                            <th>Result</th>
+                            <th>Recorded</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for req in lab_requests %}
+                        <tr>
+                            <td>{{ req.created_at|eat_time('%Y-%m-%d %H:%M') }}</td>
+                            <td>{{ req.test.name if req.test else 'N/A' }}</td>
+                            <td>
+                                <span class="badge badge-{% if req.status == 'completed' %}success{% elif req.status == 'cancelled' %}secondary{% else %}warning{% endif %}">
+                                    {{ req.status|title }}
+                                </span>
+                            </td>
+                            <td style="white-space: pre-wrap; max-width: 420px;">
+                                {% if req.status == 'completed' %}
+                                    {{ req.result or '-' }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if req.status == 'completed' and req.performed_at %}
+                                    {{ req.performed_at|eat_time('%Y-%m-%d %H:%M') }}
+                                    {% if req.performer %}<div class="text-muted small">by {{ req.performer.username }}</div>{% endif %}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No lab tests for this patient yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
     <!-- Medication Administration History -->
     <div class="card mb-4">
         <div class="card-header">

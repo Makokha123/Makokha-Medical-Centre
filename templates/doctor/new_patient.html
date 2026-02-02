@@ -429,6 +429,11 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
                             <small class="form-text text-muted">
                                 A good clinical summary helps Doctor Assistant provide better diagnostic suggestions.
                             </small>
+
+                            <div class="mt-2">
+                                <div class="small text-muted mb-1">Preview (formatted)</div>
+                                <div id="patientSummaryPreview" class="assistant-outline"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -467,13 +472,25 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
                     
                     <!-- Form Input Panel -->
                     <div class="form-input-panel">
-                        <div class="form-group">
-                            <label for="working_diagnosis">Working Diagnosis*</label>
-                            <textarea class="form-control" id="working_diagnosis" name="working_diagnosis" rows="3" required></textarea>
+                        <div class="form-row">
+                            <div class="form-group col-md-6">
+                                <label for="working_diagnosis">Working Diagnosis*</label>
+                                <textarea class="form-control" id="working_diagnosis" name="working_diagnosis" rows="3" required></textarea>
+                            </div>
+                            <div class="form-group col-md-6">
+                                <label for="working_diagnosis_supporting_argument">Dx supporting argument (optional)</label>
+                                <textarea class="form-control" id="working_diagnosis_supporting_argument" name="working_diagnosis_supporting_argument" rows="3" placeholder="Key findings supporting this diagnosis"></textarea>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label for="differential_diagnosis">Differential Diagnosis</label>
-                            <textarea class="form-control" id="differential_diagnosis" name="differential_diagnosis" rows="3" placeholder="List possible diagnoses in order of likelihood"></textarea>
+                        <div class="form-row">
+                            <div class="form-group col-md-6">
+                                <label for="differential_diagnosis">Differential Diagnosis</label>
+                                <textarea class="form-control" id="differential_diagnosis" name="differential_diagnosis" rows="3" placeholder="List possible diagnoses in order of likelihood"></textarea>
+                            </div>
+                            <div class="form-group col-md-6">
+                                <label for="differential_diagnosis_supporting_argument">DDx supporting argument (optional)</label>
+                                <textarea class="form-control" id="differential_diagnosis_supporting_argument" name="differential_diagnosis_supporting_argument" rows="3" placeholder="Key findings supporting the differential diagnoses"></textarea>
+                            </div>
                         </div>
                         
                         <h4>Investigations</h4>
@@ -654,6 +671,41 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
 <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 
+<style>
+/* Professional outline styling for assistant outputs (display-only) */
+.assistant-outline {
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+
+.assistant-outline h6 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin: 10px 0 6px;
+    color: #1f2937;
+}
+
+.assistant-outline p {
+    margin: 0 0 6px;
+    color: #374151;
+    line-height: 1.4;
+}
+
+.assistant-outline ul,
+.assistant-outline ol {
+    margin: 0 0 8px 1.25rem;
+    padding-left: 1.1rem;
+}
+
+.assistant-outline li {
+    margin: 0 0 4px;
+    color: #374151;
+    line-height: 1.35;
+}
+</style>
+
 <script>
 $(document).ready(function() {
     // Optional preset coming from OP/IP pages (keeps existing wizard flow intact)
@@ -688,6 +740,57 @@ $(document).ready(function() {
             .replace(/>/g, '&gt;')
             .replace(/\"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function formatAssistantText(text) {
+        const raw = (text === null || text === undefined) ? '' : String(text);
+        const t = raw.replace(/\r/g, '').trim();
+        if (!t) return '';
+
+        const lines = t.split('\n');
+        let html = '<div class="assistant-outline">';
+        let inUl = false;
+        let inOl = false;
+
+        function closeLists() {
+            if (inUl) { html += '</ul>'; inUl = false; }
+            if (inOl) { html += '</ol>'; inOl = false; }
+        }
+
+        for (const rawLine of lines) {
+            const line = (rawLine || '').trim();
+            if (!line) { continue; }
+
+            // Heading-ish lines
+            if (/^.{2,80}:$/.test(line) && !/^\d+[\).]\s+/.test(line)) {
+                closeLists();
+                html += `<h6>${escapeHtml(line.replace(/:$/, ''))}</h6>`;
+                continue;
+            }
+
+            // Numbered list
+            const olMatch = line.match(/^\s*(\d+)[\).]\s+(.*)$/);
+            if (olMatch) {
+                if (!inOl) { closeLists(); html += '<ol>'; inOl = true; }
+                html += `<li>${escapeHtml(olMatch[2].trim())}</li>`;
+                continue;
+            }
+
+            // Bulleted list
+            const ulMatch = line.match(/^\s*([•\-*]|\u2022)\s+(.*)$/);
+            if (ulMatch) {
+                if (!inUl) { closeLists(); html += '<ul>'; inUl = true; }
+                html += `<li>${escapeHtml(ulMatch[2].trim())}</li>`;
+                continue;
+            }
+
+            closeLists();
+            html += `<p>${escapeHtml(line)}</p>`;
+        }
+
+        closeLists();
+        html += '</div>';
+        return html;
     }
 
     function splitToBulletItems(text) {
@@ -1660,11 +1763,19 @@ $(document).ready(function() {
         });
     });
 
-    // Helper function to format AI text with proper line breaks
-    function formatAssistantText(text) {
-        if (!text) return '';
-        return text.replace(/\n/g, '<br>');
+    // Live preview for summary textarea (display-only; does not change saved content)
+    function updateSummaryPreview() {
+        const val = ($('#patient_summary').val() || '').trim();
+        const html = formatAssistantText(val);
+        if (val) {
+            $('#patientSummaryPreview').html(html).show();
+        } else {
+            $('#patientSummaryPreview').html('').hide();
+        }
     }
+
+    $('#patient_summary').on('input', updateSummaryPreview);
+    updateSummaryPreview();
 
     // Helper function to show AI errors
     function showAssistantError(message) {
@@ -1706,20 +1817,24 @@ $(document).ready(function() {
                 success: function(response) {
                     if (response.success) {
                         $('#patient_summary').val(response.summary_text);
+                        updateSummaryPreview();
                         showAssistantSuccess('Clinical summary generated');
                     } else {
                         showAssistantError(response.error || 'Failed to generate summary');
                         $('#patient_summary').val('');
+                        updateSummaryPreview();
                     }
                 },
                 error: function(xhr) {
                     showAssistantError(xhr.responseJSON?.error || 'Failed to connect to AI service');
                     $('#patient_summary').val('');
+                    updateSummaryPreview();
                 }
             });
         }).catch(error => {
             showAssistantError('Error saving current section: ' + error);
             $('#patient_summary').val('');
+            updateSummaryPreview();
         });
     });
 

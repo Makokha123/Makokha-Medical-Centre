@@ -153,6 +153,7 @@
                                 <option value="admin" {% if add_state.get('role') == 'admin' %}selected{% endif %}>Admin</option>
                                 <option value="doctor" {% if add_state.get('role') == 'doctor' %}selected{% endif %}>Doctor</option>
                                 <option value="nurse" {% if add_state.get('role') == 'nurse' %}selected{% endif %}>Nurse</option>
+                                <option value="labtech" {% if add_state.get('role') == 'labtech' %}selected{% endif %}>Lab Technician</option>
                                 <option value="pharmacist" {% if add_state.get('role') == 'pharmacist' %}selected{% endif %}>Pharmacist</option>
                                 <option value="receptionist" {% if add_state.get('role') == 'receptionist' %}selected{% endif %}>Receptionist</option>
                             </select>
@@ -251,6 +252,7 @@
                             <option value="admin">Admin</option>
                             <option value="doctor">Doctor</option>
                             <option value="nurse">Nurse</option>
+                            <option value="labtech">Lab Technician</option>
                             <option value="pharmacist">Pharmacist</option>
                             <option value="receptionist">Receptionist</option>
                         </select>

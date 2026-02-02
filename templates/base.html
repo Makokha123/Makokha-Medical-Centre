@@ -759,6 +759,46 @@
                                 <span class="nav-text">All Patients</span>
                             </a>
                         </div>
+                    {% elif current_user.role == 'nurse' %}
+                        <!-- Nurse Navigation -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('nurse_dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('nurse_patients') }}" class="nav-link">
+                                <i class="bi bi-people"></i>
+                                <span class="nav-text">Patients</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('nurse_medication_schedule') }}" class="nav-link">
+                                <i class="bi bi-capsule"></i>
+                                <span class="nav-text">Medication Schedule</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('nurse_notifications') }}" class="nav-link">
+                                <i class="bi bi-bell"></i>
+                                <span class="nav-text">Notifications</span>
+                            </a>
+                        </div>
+                    {% elif current_user.role == 'labtech' %}
+                        <!-- Lab Technician Navigation -->
+                        <div class="nav-item">
+                            <a href="{{ url_for('labtech_dashboard') }}" class="nav-link">
+                                <i class="bi bi-speedometer2"></i>
+                                <span class="nav-text">Dashboard</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('labtech_lab_requests') }}" class="nav-link">
+                                <i class="bi bi-flask"></i>
+                                <span class="nav-text">Lab Requests</span>
+                            </a>
+                        </div>
                     {% elif current_user.role == 'pharmacist' %}
                         <!-- Pharmacist Navigation -->
                         <div class="nav-item">
@@ -1664,6 +1704,22 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
     </script>
+    
+    <!-- Communication System -->
+    {% if current_user.is_authenticated %}
+        <!-- Add user ID meta tag for communication system -->
+        <meta name="user-id" content="{{ current_user.id }}">
+        
+        <!-- Include Socket.IO -->
+        <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+        
+        <!-- Include Communication Components -->
+        {% include 'components/communication_icon.html' %}
+        {% include 'components/communication_modal.html' %}
+        
+        <!-- Include Communication JavaScript -->
+        <script src="{{ url_for('static', filename='js/communication.js') }}"></script>
+    {% endif %}
     
     {% block extra_js %}{% endblock %}
 </body>

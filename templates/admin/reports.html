@@ -62,7 +62,7 @@
             
             <div id="reportResults">
                 <div class="alert alert-info text-center py-4">
-                    <i class="fas fa-info-circle fa-2x"></i>
+                    <i class="fas fa-info-circle"></i>
                     <p class="mt-2 mb-0">Select report type, date range, granularity, and click Generate</p>
                 </div>
             </div>
@@ -2330,15 +2330,29 @@ document.addEventListener('DOMContentLoaded', function() {
 }
 
 .summary-icon {
-    width: 50px;
-    height: 50px;
+    width: 42px;
+    height: 42px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     margin: 0 auto 10px;
     color: white;
-    font-size: 1.5rem;
+    font-size: 1.15rem;
+}
+
+/* Slightly smaller icons across report sections */
+#generationPanel i.fas,
+#generationPanel i.far,
+#generationPanel i.fa,
+#reportDisplay i.fas,
+#reportDisplay i.far,
+#reportDisplay i.fa {
+    font-size: 0.95em;
+}
+
+#reportDisplay .summary-icon i {
+    font-size: 1.05rem;
 }
 
 .summary-label {

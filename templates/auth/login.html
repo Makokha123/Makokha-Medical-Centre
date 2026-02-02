@@ -42,6 +42,7 @@
                     <option value="admin" {% if prefill_role|default('') == 'admin' %}selected{% endif %}>Administrator</option>
                     <option value="doctor" {% if prefill_role|default('') == 'doctor' %}selected{% endif %}>Doctor</option>
                     <option value="nurse" {% if prefill_role|default('') == 'nurse' %}selected{% endif %}>Nurse</option>
+                    <option value="labtech" {% if prefill_role|default('') == 'labtech' %}selected{% endif %}>Lab Technician</option>
                     <option value="pharmacist" {% if prefill_role|default('') == 'pharmacist' %}selected{% endif %}>Pharmacist</option>
                     <option value="receptionist" {% if prefill_role|default('') == 'receptionist' %}selected{% endif %}>Receptionist</option>
                 </select>

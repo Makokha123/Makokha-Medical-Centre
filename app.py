@@ -1,4 +1,11 @@
 from __future__ import annotations
+import os
+if os.environ.get('RENDER'):
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+    except ImportError:
+        pass
 from logging.handlers import RotatingFileHandler
 from operator import and_
 from sqlalchemy import MetaData, Table
@@ -186,7 +193,21 @@ if not os.environ.get('RENDER'):
 
 Config.init_fernet(app)
 EncryptionUtils.init_fernet(app)
-# Socket.IO removed - using standard Flask dev server
+
+# Initialize Socket.IO for real-time communication
+from flask_socketio import SocketIO
+
+# Use eventlet in production (Render/gunicorn), threading in development
+async_mode = 'eventlet' if os.environ.get('RENDER') else 'threading'
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*", 
+    async_mode=async_mode,
+    logger=True, 
+    engineio_logger=False,
+    ping_timeout=60,
+    ping_interval=25
+)
 
 auth_bp = Blueprint('auth', __name__)
 csrf = CSRFProtect()
@@ -563,6 +584,110 @@ class User(db.Model, UserMixin):
     generated_summaries = db.relationship('PatientSummary', back_populates='generator', lazy=True)
     ward_assignments = db.relationship('UserWardAssignment', back_populates='user', lazy=True, cascade='all, delete-orphan')
     department_assignments = db.relationship('UserDepartmentAssignment', back_populates='user', lazy=True, cascade='all, delete-orphan')
+
+
+# Communication System Models
+class Conversation(db.Model):
+    """Stores conversation metadata between users"""
+    __tablename__ = 'conversations'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    user1_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user2_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    last_message_at = db.Column(db.DateTime, default=get_eat_now)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    
+    # Relationships
+    user1 = db.relationship('User', foreign_keys=[user1_id], backref='conversations_as_user1')
+    user2 = db.relationship('User', foreign_keys=[user2_id], backref='conversations_as_user2')
+    messages = db.relationship('Message', back_populates='conversation', lazy=True, cascade='all, delete-orphan')
+    
+    def __repr__(self):
+        return f'<Conversation {self.conversation_id}>'
+
+
+class Message(db.Model):
+    """Stores individual messages in conversations"""
+    __tablename__ = 'messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), nullable=True)
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    recipient_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    message_type = db.Column(db.String(20), default='text')  # text, image, file
+    is_read = db.Column(db.Boolean, default=False)
+    read_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    
+    # Relationships
+    conversation = db.relationship('Conversation', back_populates='messages')
+    sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_messages')
+    recipient = db.relationship('User', foreign_keys=[recipient_id], backref='received_messages')
+    
+    def __repr__(self):
+        return f'<Message {self.message_id}>'
+
+
+class CallLog(db.Model):
+    """Stores call history (voice and video)"""
+    __tablename__ = 'call_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    call_id = db.Column(db.String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    caller_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    receiver_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    call_type = db.Column(db.String(20), nullable=False)  # voice, video
+    call_status = db.Column(db.String(20), default='initiated')  # initiated, ringing, answered, ended, missed, rejected
+    started_at = db.Column(db.DateTime, default=get_eat_now)
+    answered_at = db.Column(db.DateTime)
+    ended_at = db.Column(db.DateTime)
+    duration_seconds = db.Column(db.Integer, default=0)
+    
+    # Relationships
+    caller = db.relationship('User', foreign_keys=[caller_id], backref='calls_made')
+    receiver = db.relationship('User', foreign_keys=[receiver_id], backref='calls_received')
+    
+    def __repr__(self):
+        return f'<CallLog {self.call_id}>'
+
+
+class UserOnlineStatus(db.Model):
+    """Tracks online status of users"""
+    __tablename__ = 'user_online_status'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
+    is_online = db.Column(db.Boolean, default=False)
+    last_seen = db.Column(db.DateTime, default=get_eat_now)
+    socket_id = db.Column(db.String(100))
+    
+    # Relationship
+    user = db.relationship('User', backref='online_status')
+    
+    def __repr__(self):
+        return f'<UserOnlineStatus user_id={self.user_id} online={self.is_online}>'
+
+
+class TypingIndicator(db.Model):
+    """Tracks who is typing in which conversation"""
+    __tablename__ = 'typing_indicators'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    is_typing = db.Column(db.Boolean, default=False)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+    
+    # Relationships
+    conversation = db.relationship('Conversation', backref='typing_indicators')
+    user = db.relationship('User', backref='typing_activity')
+    
+    def __repr__(self):
+        return f'<TypingIndicator conv={self.conversation_id} user={self.user_id}>'
+
 
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
@@ -2833,8 +2958,8 @@ class Patient(db.Model):
     examinations = db.relationship('PatientExamination', backref='patient', lazy=True)
     diagnoses = db.relationship('PatientDiagnosis', backref='patient', lazy=True)
     management = db.relationship('PatientManagement', backref='patient', lazy=True)
-    lab_requests = db.relationship('LabRequest', backref='patient', lazy=True)
-    imaging_requests = db.relationship('ImagingRequest', backref='patient', lazy=True)
+    # lab_requests relationship defined in LabRequest model with cascade rules
+    # imaging_requests relationship defined in ImagingRequest model with cascade rules
     summaries = db.relationship('PatientSummary', back_populates='patient', lazy=True)
     department = db.relationship('OutpatientDepartment', backref='patients')
 
@@ -3041,6 +3166,10 @@ class PatientDiagnosis(db.Model):
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
     working_diagnosis = db.Column(db.Text)
     differential_diagnosis = db.Column(db.Text)
+
+    # Optional clinician rationale fields
+    working_diagnosis_supporting_argument = db.Column(db.Text)
+    differential_diagnosis_supporting_argument = db.Column(db.Text)
     
         # Assistant fields
     ai_supported_diagnosis = db.Column(db.Boolean, default=False)
@@ -3137,6 +3266,7 @@ class LabRequest(db.Model):
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     # Relationships for template access
+    patient = db.relationship('Patient', backref=db.backref('lab_requests', lazy=True, cascade='all, delete-orphan'))
     test = db.relationship('LabTest', backref='lab_requests')
     requester = db.relationship('User', foreign_keys=[requested_by], backref='created_lab_requests')
     performer = db.relationship('User', foreign_keys=[performed_by])
@@ -3156,6 +3286,7 @@ class ImagingRequest(db.Model):
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     # Relationships for template access
+    patient = db.relationship('Patient', backref=db.backref('imaging_requests', lazy=True, cascade='all, delete-orphan'))
     test = db.relationship('ImagingTest', backref='imaging_requests')
     requester = db.relationship('User', foreign_keys=[requested_by], backref='created_imaging_requests')
     performer = db.relationship('User', foreign_keys=[performed_by])
@@ -3198,6 +3329,7 @@ class LabTest(db.Model):
     name = db.Column(db.String(100), nullable=False)
     price = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
@@ -3953,6 +4085,7 @@ class Service(db.Model):
     name = db.Column(db.String(100), nullable=False)
     price = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=get_eat_now)
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 class Prescription(db.Model):
@@ -6578,6 +6711,8 @@ def login():
                     next_page = url_for('pharmacist_dashboard')
                 elif user_role == 'receptionist':
                     next_page = url_for('receptionist_dashboard')
+                elif user_role == 'labtech':
+                    next_page = url_for('labtech_dashboard')
                 else:
                     next_page = url_for('home')
             
@@ -19603,6 +19738,7 @@ def add_service():
     name = (request.form.get('name') or '').strip()
     price_str = request.form.get('price')
     description = (request.form.get('description') or '').strip() or None
+    is_active = True if request.form.get('is_active') is None else parse_bool(request.form.get('is_active'))
 
     if not name:
         return bad_request('Name is required')
@@ -19610,7 +19746,7 @@ def add_service():
     if err:
         return bad_request(err)
 
-    service = Service(name=name, price=float(price), description=description)
+    service = Service(name=name, price=float(price), description=description, is_active=is_active)
     try:
         db.session.add(service)
         db.session.commit()
@@ -19622,12 +19758,13 @@ def add_service():
     try:
         log_audit('add_service', 'Service', service.id, None, {
             'name': service.name,
-            'price': service.price
+            'price': service.price,
+            'is_active': service.is_active,
         })
     except Exception as e:
         current_app.logger.error(f'audit add_service failed: {str(e)}', exc_info=True)
 
-    return success_response({'id': service.id, 'name': service.name, 'price': service.price, 'description': service.description}, status=201)
+    return success_response({'id': service.id, 'name': service.name, 'price': service.price, 'description': service.description, 'is_active': service.is_active}, status=201)
 
 @app.route('/admin/services/<int:id>')
 @limiter.limit("60 per minute")
@@ -19640,7 +19777,8 @@ def get_service(id):
         'id': service.id,
         'name': service.name,
         'price': service.price,
-        'description': service.description
+        'description': service.description,
+        'is_active': service.is_active,
     })
 
 @app.route('/admin/services/<int:id>/update', methods=['POST'])
@@ -19654,12 +19792,15 @@ def update_service(id):
     old_data = {
         'name': service.name,
         'price': service.price,
-        'description': service.description
+        'description': service.description,
+        'is_active': getattr(service, 'is_active', True),
     }
 
     name = (request.form.get('name') or '').strip()
     price_str = request.form.get('price')
     description = (request.form.get('description') or '').strip() or None
+    has_is_active = 'is_active' in request.form
+    is_active = parse_bool(request.form.get('is_active')) if has_is_active else None
 
     if not name:
         return bad_request('Name is required')
@@ -19671,6 +19812,8 @@ def update_service(id):
         service.name = name
         service.price = float(price)
         service.description = description
+        if has_is_active:
+            service.is_active = is_active
         db.session.commit()
     except Exception as e:
         db.session.rollback()
@@ -19681,12 +19824,38 @@ def update_service(id):
         log_audit('update_service', 'Service', service.id, old_data, {
             'name': service.name,
             'price': service.price,
-            'description': service.description
+            'description': service.description,
+            'is_active': getattr(service, 'is_active', True),
         })
     except Exception as e:
         current_app.logger.error(f'audit update_service failed: {str(e)}', exc_info=True)
 
-    return success_response({'id': service.id, 'name': service.name, 'price': service.price, 'description': service.description})
+    return success_response({'id': service.id, 'name': service.name, 'price': service.price, 'description': service.description, 'is_active': getattr(service, 'is_active', True)})
+
+
+@app.route('/admin/services/<int:id>/toggle-active', methods=['POST'])
+@limiter.limit("30 per minute")
+@admin_required_json
+def toggle_service_active(id):
+    service = Service.query.get(id)
+    if not service:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    old_is_active = getattr(service, 'is_active', True)
+    try:
+        service.is_active = not bool(old_is_active)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'toggle_service_active failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
+        log_audit('toggle_service_active', 'Service', service.id, {'is_active': old_is_active}, {'is_active': service.is_active})
+    except Exception as e:
+        current_app.logger.error(f'audit toggle_service_active failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': service.id, 'is_active': service.is_active})
 
 @app.route('/admin/services/<int:id>/delete', methods=['POST'])
 @limiter.limit("20 per minute")
@@ -19719,6 +19888,7 @@ def add_lab_test():
     name = (request.form.get('name') or '').strip()
     price_str = request.form.get('price')
     description = (request.form.get('description') or '').strip() or None
+    is_active = True if request.form.get('is_active') is None else parse_bool(request.form.get('is_active'))
 
     if not name:
         return bad_request('Name is required')
@@ -19726,7 +19896,7 @@ def add_lab_test():
     if err:
         return bad_request(err)
 
-    lab_test = LabTest(name=name, price=float(price), description=description)
+    lab_test = LabTest(name=name, price=float(price), description=description, is_active=is_active)
     try:
         db.session.add(lab_test)
         db.session.commit()
@@ -19738,12 +19908,13 @@ def add_lab_test():
     try:
         log_audit('add_lab_test', 'LabTest', lab_test.id, None, {
             'name': lab_test.name,
-            'price': lab_test.price
+            'price': lab_test.price,
+            'is_active': lab_test.is_active,
         })
     except Exception as e:
         current_app.logger.error(f'audit add_lab_test failed: {str(e)}', exc_info=True)
 
-    return success_response({'id': lab_test.id, 'name': lab_test.name, 'price': lab_test.price, 'description': lab_test.description}, status=201)
+    return success_response({'id': lab_test.id, 'name': lab_test.name, 'price': lab_test.price, 'description': lab_test.description, 'is_active': lab_test.is_active}, status=201)
 
 @app.route('/admin/lab-tests/<int:id>')
 @limiter.limit("60 per minute")
@@ -19756,7 +19927,8 @@ def get_lab_test(id):
         'id': lab_test.id,
         'name': lab_test.name,
         'price': lab_test.price,
-        'description': lab_test.description
+        'description': lab_test.description,
+        'is_active': lab_test.is_active,
     })
 
 @app.route('/admin/lab-tests/<int:id>/update', methods=['POST'])
@@ -19770,12 +19942,15 @@ def update_lab_test(id):
     old_data = {
         'name': lab_test.name,
         'price': lab_test.price,
-        'description': lab_test.description
+        'description': lab_test.description,
+        'is_active': getattr(lab_test, 'is_active', True),
     }
 
     name = (request.form.get('name') or '').strip()
     price_str = request.form.get('price')
     description = (request.form.get('description') or '').strip() or None
+    has_is_active = 'is_active' in request.form
+    is_active = parse_bool(request.form.get('is_active')) if has_is_active else None
 
     if not name:
         return bad_request('Name is required')
@@ -19787,6 +19962,8 @@ def update_lab_test(id):
         lab_test.name = name
         lab_test.price = float(price)
         lab_test.description = description
+        if has_is_active:
+            lab_test.is_active = is_active
         db.session.commit()
     except Exception as e:
         db.session.rollback()
@@ -19797,12 +19974,38 @@ def update_lab_test(id):
         log_audit('update_lab_test', 'LabTest', lab_test.id, old_data, {
             'name': lab_test.name,
             'price': lab_test.price,
-            'description': lab_test.description
+            'description': lab_test.description,
+            'is_active': getattr(lab_test, 'is_active', True),
         })
     except Exception as e:
         current_app.logger.error(f'audit update_lab_test failed: {str(e)}', exc_info=True)
 
-    return success_response({'id': lab_test.id, 'name': lab_test.name, 'price': lab_test.price, 'description': lab_test.description})
+    return success_response({'id': lab_test.id, 'name': lab_test.name, 'price': lab_test.price, 'description': lab_test.description, 'is_active': getattr(lab_test, 'is_active', True)})
+
+
+@app.route('/admin/lab-tests/<int:id>/toggle-active', methods=['POST'])
+@limiter.limit("30 per minute")
+@admin_required_json
+def toggle_lab_test_active(id):
+    lab_test = LabTest.query.get(id)
+    if not lab_test:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    old_is_active = getattr(lab_test, 'is_active', True)
+    try:
+        lab_test.is_active = not bool(old_is_active)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'toggle_lab_test_active failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
+        log_audit('toggle_lab_test_active', 'LabTest', lab_test.id, {'is_active': old_is_active}, {'is_active': lab_test.is_active})
+    except Exception as e:
+        current_app.logger.error(f'audit toggle_lab_test_active failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': lab_test.id, 'is_active': lab_test.is_active})
 
 @app.route('/admin/lab-tests/<int:id>/delete', methods=['POST'])
 @limiter.limit("20 per minute")
@@ -19934,6 +20137,31 @@ def update_imaging_test(id):
         current_app.logger.error(f'audit update_imaging_test failed: {str(e)}', exc_info=True)
 
     return success_response({'id': imaging_test.id, 'name': imaging_test.name, 'price': imaging_test.price, 'description': imaging_test.description, 'is_active': imaging_test.is_active})
+
+
+@app.route('/admin/imaging-tests/<int:id>/toggle-active', methods=['POST'])
+@limiter.limit("30 per minute")
+@admin_required_json
+def toggle_imaging_test_active(id):
+    imaging_test = ImagingTest.query.get(id)
+    if not imaging_test:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    old_is_active = imaging_test.is_active
+    try:
+        imaging_test.is_active = not bool(imaging_test.is_active)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'toggle_imaging_test_active failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+
+    try:
+        log_audit('toggle_imaging_test_active', 'ImagingTest', imaging_test.id, {'is_active': old_is_active}, {'is_active': imaging_test.is_active})
+    except Exception as e:
+        current_app.logger.error(f'audit toggle_imaging_test_active failed: {str(e)}', exc_info=True)
+
+    return success_response({'id': imaging_test.id, 'is_active': imaging_test.is_active})
 
 @app.route('/admin/imaging-tests/<int:id>/delete', methods=['POST'])
 @limiter.limit("20 per minute")
@@ -23398,13 +23626,12 @@ def doctor_dashboard():
         endemic_last7 = Counter()
         endemic_baseline = Counter()
 
-        for working_dx, differential_dx, dx_created_at, gender, age in rows:
+        for working_dx, _differential_dx, dx_created_at, gender, age in rows:
             g = _norm_gender(gender)
             a = _age_bucket(age)
 
             tokens: list[str] = []
             tokens.extend(_split_dx(working_dx))
-            tokens.extend(_split_dx(differential_dx))
             if not tokens:
                 continue
 
@@ -23483,7 +23710,7 @@ def doctor_dashboard():
         }
 
         # Re-scan rows to populate per-day series for the top diseases.
-        for working_dx, differential_dx, dx_created_at, _gender, _age in rows:
+        for working_dx, _differential_dx, dx_created_at, _gender, _age in rows:
             if not dx_created_at:
                 continue
             day_label = dx_created_at.date().strftime('%Y-%m-%d')
@@ -23492,7 +23719,6 @@ def doctor_dashboard():
                 continue
             tokens: list[str] = []
             tokens.extend(_split_dx(working_dx))
-            tokens.extend(_split_dx(differential_dx))
             if not tokens:
                 continue
             for t in tokens:
@@ -24663,6 +24889,12 @@ def doctor_new_patient():
 
                 diagnosis.working_diagnosis = request.form.get('working_diagnosis')
                 diagnosis.differential_diagnosis = request.form.get('differential_diagnosis')
+                diagnosis.working_diagnosis_supporting_argument = request.form.get(
+                    'working_diagnosis_supporting_argument'
+                )
+                diagnosis.differential_diagnosis_supporting_argument = request.form.get(
+                    'differential_diagnosis_supporting_argument'
+                )
                 db.session.commit()
 
                 return jsonify({
@@ -24724,11 +24956,20 @@ def doctor_new_patient():
                 
                 diagnosis = PatientDiagnosis.query.filter_by(patient_id=patient.id).first()
                 if not diagnosis:
-                    diagnosis = PatientDiagnosis(patient_id=patient.id)
+                    diagnosis = PatientDiagnosis(patient_id=patient.id, created_by=current_user.id)
                     db.session.add(diagnosis)
+
+                if not getattr(diagnosis, 'created_by', None):
+                    diagnosis.created_by = current_user.id
                 
                 diagnosis.working_diagnosis = request.form.get('working_diagnosis')
                 diagnosis.differential_diagnosis = request.form.get('differential_diagnosis')
+                diagnosis.working_diagnosis_supporting_argument = request.form.get(
+                    'working_diagnosis_supporting_argument'
+                )
+                diagnosis.differential_diagnosis_supporting_argument = request.form.get(
+                    'differential_diagnosis_supporting_argument'
+                )
                 
                 # Lab requests
                 if request.form.getlist('lab_tests'):
@@ -26776,6 +27017,8 @@ def doctor_patient_details(patient_id):
                     patient_id=patient.id,
                     working_diagnosis=request.form.get('working_diagnosis'),
                     differential_diagnosis=request.form.get('differential_diagnosis'),
+                    working_diagnosis_supporting_argument=request.form.get('working_diagnosis_supporting_argument'),
+                    differential_diagnosis_supporting_argument=request.form.get('differential_diagnosis_supporting_argument'),
                     created_by=current_user.id,
                 )
                 db.session.add(diagnosis)
@@ -27180,68 +27423,6 @@ def doctor_prescription_details(prescription_id):
 @app.route('/doctor/lab-request/<int:request_id>/complete', methods=['POST'])
 @login_required
 def complete_lab_request(request_id):
-    lab_request = LabRequest.query.get_or_404(request_id)
-    if lab_request.status == 'completed':
-        flash('Lab request is already completed.', 'info')
-        return redirect(url_for('doctor_dashboard'))
-
-    result = request.form.get('result')
-    notes = request.form.get('notes')
-
-    lab_request.status = 'completed'
-    lab_request.result = result
-    lab_request.performed_by = current_user.id
-    lab_request.performed_at = get_eat_now()
-    lab_request.notes = notes
-
-    try:
-        db.session.commit()
-
-        # Create a sale and transaction for the completed lab test
-        patient = lab_request.patient
-        lab_test = lab_request.test
-        if patient and lab_test and lab_test.price > 0:
-            sale = Sale(
-                sale_number=generate_sale_number(),
-                patient_id=patient.id,
-                user_id=current_user.id,
-                pharmacist_name=current_user.username,
-                total_amount=lab_test.price,
-                payment_method='internal',
-                status='completed',
-                notes=f"Lab test: {lab_test.name}"
-            )
-            db.session.add(sale)
-            db.session.flush()
-
-            sale_item = SaleItem(
-                sale_id=sale.id,
-                lab_test_id=lab_test.id,
-                description=f"Lab Test: {lab_test.name}",
-                quantity=1,
-                unit_price=lab_test.price,
-                total_price=lab_test.price
-            )
-            db.session.add(sale_item)
-
-            transaction = _ensure_sale_transaction(sale)
-            if transaction:
-                _maybe_set_transaction_meta(
-                    transaction,
-                    department='laboratory',
-                    category='diagnostics',
-                    payer=patient.name,
-                    notes=f"Lab test for {patient.name}: {lab_test.name}"
-                )
-            db.session.commit()
-
-        flash('Lab request completed successfully.', 'success')
-        return redirect(url_for('doctor_dashboard'))
-    except Exception as e:
-        db.session.rollback()
-        flash('An error occurred while completing the lab request.', 'danger')
-        return redirect(url_for('doctor_dashboard'))
-def complete_lab_request(request_id):
     if current_user.role not in ('doctor', 'admin'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
@@ -27284,68 +27465,6 @@ def complete_lab_request(request_id):
 
 @app.route('/doctor/imaging-request/<int:request_id>/complete', methods=['POST'])
 @login_required
-def complete_imaging_request(request_id):
-    imaging_request = ImagingRequest.query.get_or_404(request_id)
-    if imaging_request.status == 'completed':
-        flash('Imaging request already completed.', 'info')
-        return redirect(url_for('doctor_dashboard'))
-
-    result = request.form.get('result')
-    notes = request.form.get('notes')
-
-    imaging_request.status = 'completed'
-    imaging_request.result = result
-    imaging_request.performed_by = current_user.id
-    imaging_request.performed_at = get_eat_now()
-    imaging_request.notes = notes
-
-    try:
-        db.session.commit()
-
-        # Create a sale and transaction for the completed imaging test
-        patient = imaging_request.patient
-        imaging_test = imaging_request.test
-        if patient and imaging_test and imaging_test.price > 0:
-            sale = Sale(
-                sale_number=generate_sale_number(),
-                patient_id=patient.id,
-                user_id=current_user.id,
-                pharmacist_name=current_user.username,
-                total_amount=imaging_test.price,
-                payment_method='internal',
-                status='completed',
-                notes=f"Imaging test: {imaging_test.name}"
-            )
-            db.session.add(sale)
-            db.session.flush()
-
-            sale_item = SaleItem(
-                sale_id=sale.id,
-                imaging_test_id=imaging_test.id,
-                description=f"Imaging Test: {imaging_test.name}",
-                quantity=1,
-                unit_price=imaging_test.price,
-                total_price=imaging_test.price
-            )
-            db.session.add(sale_item)
-
-            transaction = _ensure_sale_transaction(sale)
-            if transaction:
-                _maybe_set_transaction_meta(
-                    transaction,
-                    department='radiology',
-                    category='diagnostics',
-                    payer=patient.name,
-                    notes=f"Imaging test for {patient.name}: {imaging_test.name}"
-                )
-            db.session.commit()
-
-        flash('Imaging request completed successfully.', 'success')
-        return redirect(url_for('doctor_dashboard'))
-    except Exception as e:
-        db.session.rollback()
-        flash('Error completing imaging request: {}'.format(str(e)), 'danger')
-        return redirect(url_for('doctor_dashboard'))
 def complete_imaging_request(request_id):
     if current_user.role not in ('doctor', 'admin'):
         flash('Unauthorized access', 'danger')
@@ -27645,13 +27764,22 @@ def nurse_patient_details(patient_id):
         .limit(50)
         .all()
     )
+
+    lab_requests = (
+        LabRequest.query
+        .filter(LabRequest.patient_id == patient_id)
+        .order_by(LabRequest.created_at.desc())
+        .limit(30)
+        .all()
+    )
     
     return render_template(
         'nurse/patient_details.html',
         patient=patient,
         latest_vitals=latest_vitals,
         nursing_reports=nursing_reports,
-        medications=medications
+        medications=medications,
+        lab_requests=lab_requests,
     )
 
 
@@ -27842,6 +27970,198 @@ def nurse_complete_notification(notification_id):
         flash(f'Error: {str(e)}', 'danger')
     
     return redirect(url_for('nurse_notifications'))
+
+
+def _require_role(required_roles):
+    """Shared helper to gate routes by user role."""
+    user_role = str(getattr(current_user, 'role', '') or '').lower().strip()
+    if isinstance(required_roles, str):
+        required = {required_roles}
+    else:
+        required = {str(r).lower().strip() for r in (required_roles or [])}
+    if user_role not in required:
+        flash('Unauthorized access', 'danger')
+        return False
+    return True
+
+
+@app.route('/labtech/dashboard')
+@login_required
+def labtech_dashboard():
+    if not _require_role({'labtech', 'admin'}):
+        return redirect(url_for('home'))
+
+    pending_count = LabRequest.query.filter(LabRequest.status == 'pending').count()
+    since_7d = get_eat_now() - timedelta(days=7)
+    completed_7d_count = LabRequest.query.filter(LabRequest.status == 'completed', LabRequest.updated_at >= since_7d).count()
+    cancelled_7d_count = LabRequest.query.filter(LabRequest.status == 'cancelled', LabRequest.updated_at >= since_7d).count()
+
+    recent_pending = (
+        LabRequest.query
+        .filter(LabRequest.status == 'pending')
+        .order_by(LabRequest.created_at.desc())
+        .limit(15)
+        .all()
+    )
+
+    return render_template(
+        'labtech/dashboard.html',
+        pending_count=pending_count,
+        completed_7d_count=completed_7d_count,
+        cancelled_7d_count=cancelled_7d_count,
+        recent_pending=recent_pending,
+    )
+
+
+@app.route('/labtech/lab-requests')
+@login_required
+def labtech_lab_requests():
+    if not _require_role({'labtech', 'admin'}):
+        return redirect(url_for('home'))
+
+    status = (request.args.get('status') or '').strip().lower() or None
+    scope = (request.args.get('scope') or '').strip().lower() or None
+    dept_id = (request.args.get('department_id') or '').strip() or None
+    q = (request.args.get('q') or '').strip()
+
+    query = LabRequest.query
+    if status in {'pending', 'completed', 'cancelled'}:
+        query = query.filter(LabRequest.status == status)
+
+    # Scope: inpatient/outpatient based on patient numbers
+    if scope in {'inpatient', 'outpatient'}:
+        query = query.join(Patient, Patient.id == LabRequest.patient_id)
+        if scope == 'inpatient':
+            query = query.filter(Patient.ip_number.isnot(None)).filter(Patient.ip_number != '')
+        else:
+            query = query.filter(Patient.op_number.isnot(None)).filter(Patient.op_number != '')
+
+    # Department filter (outpatient)
+    if dept_id:
+        try:
+            dept_id_int = int(dept_id)
+            if 'patient' not in str(query):
+                query = query.join(Patient, Patient.id == LabRequest.patient_id)
+            query = query.filter(Patient.department_id == dept_id_int)
+        except Exception:
+            dept_id = None
+
+    if q:
+        like = f"%{q}%"
+        query = (
+            query
+            .join(Patient, Patient.id == LabRequest.patient_id)
+            .join(LabTest, LabTest.id == LabRequest.test_id)
+            .filter(
+                or_(
+                    Patient.name.ilike(like),
+                    Patient.op_number.ilike(like),
+                    Patient.ip_number.ilike(like),
+                    LabTest.name.ilike(like),
+                )
+            )
+        )
+
+    requests_list = query.order_by(LabRequest.created_at.desc()).limit(500).all()
+
+    departments = []
+    try:
+        departments = OutpatientDepartment.query.order_by(OutpatientDepartment.name).all()
+    except Exception:
+        departments = []
+
+    return render_template(
+        'labtech/lab_requests.html',
+        requests=requests_list,
+        status=status,
+        scope=scope,
+        departments=departments,
+        department_id=str(dept_id) if dept_id else '',
+        q=q,
+    )
+
+
+@app.route('/labtech/lab-request/<int:request_id>')
+@login_required
+def labtech_lab_request_detail(request_id):
+    if not _require_role({'labtech', 'admin'}):
+        return redirect(url_for('home'))
+
+    lab_request = db.session.get(LabRequest, request_id)
+    if not lab_request:
+        flash('Lab request not found', 'danger')
+        return redirect(url_for('labtech_lab_requests'))
+
+    patient = db.session.get(Patient, lab_request.patient_id)
+    return render_template('labtech/lab_request_detail.html', lab_request=lab_request, patient=patient)
+
+
+@app.route('/labtech/lab-request/<int:request_id>/complete', methods=['POST'])
+@login_required
+def labtech_complete_lab_request(request_id):
+    if not _require_role({'labtech', 'admin'}):
+        return redirect(url_for('home'))
+
+    lab_request = db.session.get(LabRequest, request_id)
+    if not lab_request:
+        flash('Lab request not found', 'danger')
+        return redirect(url_for('labtech_lab_requests'))
+
+    if lab_request.status == 'cancelled':
+        flash('Cannot complete a cancelled lab request.', 'warning')
+        return redirect(url_for('labtech_lab_request_detail', request_id=request_id))
+
+    result_text = (request.form.get('result') or '').strip()
+    if not result_text:
+        flash('Result cannot be empty', 'danger')
+        return redirect(url_for('labtech_lab_request_detail', request_id=request_id))
+
+    # Enforce billing (admin can force)
+    patient = db.session.get(Patient, lab_request.patient_id)
+    force = (request.form.get('force') == '1') and (str(current_user.role).lower().strip() == 'admin')
+    if not force and patient:
+        is_paid = _patient_has_paid_sale_for_item(patient_id=patient.id, lab_test_id=lab_request.test_id)
+        if not is_paid:
+            flash('Payment required before completing this lab test. Please bill and pay via Reception.', 'warning')
+            return redirect(url_for('labtech_lab_request_detail', request_id=request_id))
+
+    try:
+        lab_request.result = result_text
+        lab_request.status = 'completed'
+        lab_request.performed_by = current_user.id
+        lab_request.performed_at = get_eat_now()
+        # Preserve existing notes; allow labtech notes override if provided
+        notes = (request.form.get('notes') or '').strip() or None
+        if notes is not None:
+            lab_request.notes = notes
+
+        db.session.commit()
+
+        # Notify the requesting doctor (best-effort)
+        try:
+            requester = db.session.get(User, lab_request.requested_by)
+            if requester:
+                title = 'Lab result ready'
+                test_name = lab_request.test.name if lab_request.test else 'Lab Test'
+                patient_name = patient.decrypted_name if patient else 'Patient'
+                message = f"{test_name} result ready for {patient_name}."
+                db.session.add(Notification(
+                    user_id=requester.id,
+                    title=title,
+                    message=message,
+                    is_read=False,
+                    created_at=get_eat_now(),
+                ))
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+        flash('Lab result saved and request marked completed.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error saving lab result: {str(e)}', 'danger')
+
+    return redirect(url_for('labtech_lab_request_detail', request_id=request_id))
 
 
 @app.route('/nurse/medication-schedule')
@@ -28429,6 +28749,14 @@ def get_drug_status(drug):
 
 def create_service_sale_and_transaction(patient_id, service_item, service_type, requested_by_id, notes=None):
     try:
+        st = (service_type or '').strip().lower()
+        if st in ('lab', 'labtest', 'laboratory'):
+            st = 'lab_test'
+        elif st in ('imaging', 'radiology'):
+            st = 'imaging_test'
+        elif st in ('service', 'services'):
+            st = 'service'
+
         # Create Sale
         sale = Sale(
             sale_number=generate_sale_number(),
@@ -28438,7 +28766,7 @@ def create_service_sale_and_transaction(patient_id, service_item, service_type, 
             total_amount=service_item.price,
             payment_method='internal',
             status='completed',
-            notes=notes or f"{service_type.capitalize()} service sale for patient {patient_id}"
+            notes=notes or f"{st.replace('_', ' ').title()} service sale for patient {patient_id}"
         )
         db.session.add(sale)
         db.session.flush()  # To get sale.id
@@ -28446,10 +28774,10 @@ def create_service_sale_and_transaction(patient_id, service_item, service_type, 
         # Create SaleItem
         sale_item = SaleItem(
             sale_id=sale.id,
-            service_id=service_item.id if service_type == 'service' else None,
-            lab_test_id=service_item.id if service_type == 'lab_test' else None,
-            imaging_test_id=service_item.id if service_type == 'imaging_test' else None,
-            description=f"{service_type.capitalize()} sale",
+            service_id=service_item.id if st == 'service' else None,
+            lab_test_id=service_item.id if st == 'lab_test' else None,
+            imaging_test_id=service_item.id if st == 'imaging_test' else None,
+            description=f"{st.replace('_', ' ').title()} sale",
             quantity=1,
             unit_price=service_item.price,
             total_price=service_item.price
@@ -28466,10 +28794,10 @@ def create_service_sale_and_transaction(patient_id, service_item, service_type, 
             reference_table='sales',
             direction='IN',
             status='posted',
-            department=service_type,
+            department=st,
             category='service',
             payer=f"Patient {patient_id}",
-            notes=f"{service_type.capitalize()} sale for patient {patient_id}"
+            notes=f"{st.replace('_', ' ').title()} sale for patient {patient_id}"
         )
 
         db.session.add(transaction)
@@ -31429,6 +31757,618 @@ def download_payroll_receipt_employee(receipt_id):
     resp.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
     return resp
 
+# =================================
+# COMMUNICATION SYSTEM ROUTES & SOCKET.IO HANDLERS
+# =================================
+
+@app.route('/api/communication/users', methods=['GET'])
+@login_required
+def api_communication_users():
+    """Get list of all users for communication"""
+    try:
+        # Get all users except current user
+        users = User.query.filter(User.id != current_user.id, User.is_active == True).all()
+        
+        users_data = []
+        for user in users:
+            # Get unread message count from this user
+            unread_count = Message.query.filter_by(
+                sender_id=user.id,
+                receiver_id=current_user.id,
+                is_read=False
+            ).count()
+            
+            # Get online status
+            status = UserOnlineStatus.query.filter_by(user_id=user.id).first()
+            is_online = status.is_online if status else False
+            
+            users_data.append({
+                'id': user.id,
+                'username': user.username,
+                'role': user.role,
+                'is_online': is_online,
+                'unread_count': unread_count
+            })
+        
+        return jsonify({'success': True, 'users': users_data})
+    
+    except Exception as e:
+        app.logger.error(f"Error fetching users: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/conversation/<int:other_user_id>', methods=['GET'])
+@login_required
+def api_communication_conversation(other_user_id):
+    """Get conversation and messages with another user"""
+    try:
+        # Find or create conversation
+        conversation = Conversation.query.filter(
+            or_(
+                and_(Conversation.user1_id == current_user.id, Conversation.user2_id == other_user_id),
+                and_(Conversation.user1_id == other_user_id, Conversation.user2_id == current_user.id)
+            )
+        ).first()
+        
+        if not conversation:
+            # Create new conversation
+            conversation = Conversation(
+                user1_id=current_user.id,
+                user2_id=other_user_id
+            )
+            db.session.add(conversation)
+            db.session.commit()
+        
+        # Get messages
+        messages = Message.query.filter_by(conversation_id=conversation.id).order_by(Message.created_at).all()
+        
+        messages_data = []
+        for msg in messages:
+            messages_data.append({
+                'message_id': msg.message_id,
+                'sender_id': msg.sender_id,
+                'recipient_id': msg.recipient_id,
+                'content': msg.content,
+                'is_read': msg.is_read,
+                'created_at': msg.created_at.isoformat()
+            })
+        
+        return jsonify({
+            'success': True,
+            'conversation': {
+                'id': conversation.id,
+                'conversation_id': conversation.conversation_id
+            },
+            'messages': messages_data
+        })
+    
+    except Exception as e:
+        app.logger.error(f"Error fetching conversation: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/send_message', methods=['POST'])
+@login_required
+def api_communication_send_message():
+    """Send a message to another user"""
+    try:
+        data = request.get_json()
+        receiver_id = data.get('receiver_id')
+        content = data.get('content')
+        
+        if not receiver_id or not content:
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+        # Find or create conversation
+        conversation = Conversation.query.filter(
+            or_(
+                and_(Conversation.user1_id == current_user.id, Conversation.user2_id == receiver_id),
+                and_(Conversation.user1_id == receiver_id, Conversation.user2_id == current_user.id)
+            )
+        ).first()
+        
+        if not conversation:
+            conversation = Conversation(
+                user1_id=current_user.id,
+                user2_id=receiver_id
+            )
+            db.session.add(conversation)
+            db.session.flush()
+        
+        # Create message
+        message = Message(
+            conversation_id=conversation.id,
+            sender_id=current_user.id,
+            recipient_id=receiver_id,
+            content=content
+        )
+        db.session.add(message)
+        
+        # Update conversation last message time
+        conversation.last_message_at = get_eat_now()
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': {
+                'message_id': message.message_id,
+                'sender_id': message.sender_id,
+                'recipient_id': message.recipient_id,
+                'content': message.content,
+                'created_at': message.created_at.isoformat()
+            }
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error sending message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/mark_read', methods=['POST'])
+@login_required
+def api_communication_mark_read():
+    """Mark messages from a sender as read"""
+    try:
+        data = request.get_json()
+        sender_id = data.get('sender_id')
+        
+        if not sender_id:
+            return jsonify({'success': False, 'error': 'Missing sender_id'}), 400
+        
+        # Update all unread messages from this sender
+        Message.query.filter_by(
+            sender_id=sender_id,
+            recipient_id=current_user.id,
+            is_read=False
+        ).update({
+            'is_read': True,
+            'read_at': get_eat_now()
+        })
+        
+        db.session.commit()
+        
+        return jsonify({'success': True})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error marking messages as read: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/unread_count', methods=['GET'])
+@login_required
+def api_communication_unread_count():
+    """Get total unread message count for current user"""
+    try:
+        unread_count = Message.query.filter_by(
+            recipient_id=current_user.id,
+            is_read=False
+        ).count()
+        
+        return jsonify({'success': True, 'unread_count': unread_count})
+    
+    except Exception as e:
+        app.logger.error(f"Error fetching unread count: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/initiate_call', methods=['POST'])
+@login_required
+def api_communication_initiate_call():
+    """Initiate a voice or video call"""
+    try:
+        data = request.get_json()
+        receiver_id = data.get('receiver_id')
+        call_type = data.get('call_type')
+        
+        if not receiver_id or not call_type:
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+        # Create call log
+        call_log = CallLog(
+            caller_id=current_user.id,
+            receiver_id=receiver_id,
+            call_type=call_type,
+            call_status='initiated'
+        )
+        db.session.add(call_log)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'call_id': call_log.call_id
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error initiating call: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/answer_call', methods=['POST'])
+@login_required
+def api_communication_answer_call():
+    """Answer an incoming call"""
+    try:
+        data = request.get_json()
+        call_id = data.get('call_id')
+        
+        if not call_id:
+            return jsonify({'success': False, 'error': 'Missing call_id'}), 400
+        
+        call_log = CallLog.query.filter_by(call_id=call_id).first()
+        if not call_log:
+            return jsonify({'success': False, 'error': 'Call not found'}), 404
+        
+        call_log.call_status = 'answered'
+        call_log.answered_at = get_eat_now()
+        db.session.commit()
+        
+        return jsonify({'success': True})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error answering call: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/reject_call', methods=['POST'])
+@login_required
+def api_communication_reject_call():
+    """Reject an incoming call"""
+    try:
+        data = request.get_json()
+        call_id = data.get('call_id')
+        
+        if not call_id:
+            return jsonify({'success': False, 'error': 'Missing call_id'}), 400
+        
+        call_log = CallLog.query.filter_by(call_id=call_id).first()
+        if not call_log:
+            return jsonify({'success': False, 'error': 'Call not found'}), 404
+        
+        call_log.call_status = 'rejected'
+        call_log.ended_at = get_eat_now()
+        db.session.commit()
+        
+        return jsonify({'success': True})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error rejecting call: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/end_call', methods=['POST'])
+@login_required
+def api_communication_end_call():
+    """End an active call"""
+    try:
+        data = request.get_json()
+        call_id = data.get('call_id')
+        
+        if not call_id:
+            return jsonify({'success': False, 'error': 'Missing call_id'}), 400
+        
+        call_log = CallLog.query.filter_by(call_id=call_id).first()
+        if not call_log:
+            return jsonify({'success': False, 'error': 'Call not found'}), 404
+        
+        call_log.call_status = 'ended'
+        call_log.ended_at = get_eat_now()
+        
+        # Calculate duration if call was answered
+        if call_log.answered_at:
+            duration = (call_log.ended_at - call_log.answered_at).total_seconds()
+            call_log.duration_seconds = int(duration)
+        
+        db.session.commit()
+        
+        return jsonify({'success': True})
+    
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error ending call: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Socket.IO Event Handlers
+from flask_socketio import emit, join_room, leave_room
+
+# Store active socket connections
+active_sockets = {}
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection"""
+    app.logger.info(f'Client connected: {request.sid}')
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnection"""
+    # Update user online status
+    if request.sid in active_sockets:
+        user_id = active_sockets[request.sid]
+        
+        status = UserOnlineStatus.query.filter_by(user_id=user_id).first()
+        if status:
+            status.is_online = False
+            status.last_seen = get_eat_now()
+            status.socket_id = None
+            db.session.commit()
+        
+        # Notify others about status change
+        socketio.emit('user_status_update', {
+            'user_id': user_id,
+            'is_online': False
+        }, skip_sid=request.sid)
+        
+        del active_sockets[request.sid]
+    
+    app.logger.info(f'Client disconnected: {request.sid}')
+
+
+@socketio.on('user_connected')
+def handle_user_connected(data):
+    """Handle user connection with user_id"""
+    user_id = data.get('user_id')
+    if not user_id:
+        return
+    
+    # Store socket connection
+    active_sockets[request.sid] = user_id
+    
+    # Update or create online status
+    status = UserOnlineStatus.query.filter_by(user_id=user_id).first()
+    if not status:
+        status = UserOnlineStatus(user_id=user_id)
+        db.session.add(status)
+    
+    status.is_online = True
+    status.last_seen = get_eat_now()
+    status.socket_id = request.sid
+    db.session.commit()
+    
+    # Notify others about status change
+    socketio.emit('user_status_update', {
+        'user_id': user_id,
+        'is_online': True
+    }, skip_sid=request.sid)
+
+
+@socketio.on('join_conversation')
+def handle_join_conversation(data):
+    """Join a conversation room"""
+    user_id = data.get('user_id')
+    other_user_id = data.get('other_user_id')
+    
+    if not user_id or not other_user_id:
+        return
+    
+    # Create room name (consistent regardless of who joins)
+    room = f"conversation_{min(user_id, other_user_id)}_{max(user_id, other_user_id)}"
+    join_room(room)
+    app.logger.info(f'User {user_id} joined conversation room: {room}')
+
+
+@socketio.on('send_message')
+def handle_send_message(data):
+    """Handle real-time message sending"""
+    message = data.get('message')
+    receiver_id = data.get('receiver_id')
+    
+    if not message or not receiver_id:
+        return
+    
+    # Get receiver's socket
+    receiver_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            receiver_socket = sid
+            break
+    
+    if receiver_socket:
+        # Send to specific user
+        socketio.emit('new_message', {
+            'message': message
+        }, room=receiver_socket)
+
+
+@socketio.on('typing')
+def handle_typing(data):
+    """Handle typing indicator"""
+    receiver_id = data.get('receiver_id')
+    is_typing = data.get('is_typing')
+    user_id = active_sockets.get(request.sid)
+    
+    if not receiver_id or user_id is None:
+        return
+    
+    # Get receiver's socket
+    receiver_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            receiver_socket = sid
+            break
+    
+    if receiver_socket:
+        socketio.emit('typing_status', {
+            'user_id': user_id,
+            'is_typing': is_typing
+        }, room=receiver_socket)
+
+
+@socketio.on('initiate_call')
+def handle_initiate_call(data):
+    """Handle call initiation"""
+    receiver_id = data.get('receiver_id')
+    call_type = data.get('call_type')
+    call_id = data.get('call_id')
+    caller_name = data.get('caller_name')
+    caller_id = active_sockets.get(request.sid)
+    
+    if not receiver_id or not call_type or not call_id:
+        return
+    
+    # Get receiver's socket
+    receiver_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            receiver_socket = sid
+            break
+    
+    if receiver_socket:
+        socketio.emit('incoming_call', {
+            'caller_id': caller_id,
+            'caller_name': caller_name,
+            'call_type': call_type,
+            'call_id': call_id
+        }, room=receiver_socket)
+
+
+@socketio.on('accept_call')
+def handle_accept_call(data):
+    """Handle call acceptance"""
+    call_id = data.get('call_id')
+    receiver_id = data.get('receiver_id')
+    
+    if not call_id or not receiver_id:
+        return
+    
+    # Get caller's socket
+    caller_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            caller_socket = sid
+            break
+    
+    if caller_socket:
+        socketio.emit('call_accepted', {
+            'call_id': call_id
+        }, room=caller_socket)
+
+
+@socketio.on('reject_call')
+def handle_reject_call(data):
+    """Handle call rejection"""
+    call_id = data.get('call_id')
+    receiver_id = data.get('receiver_id')
+    
+    if not call_id or not receiver_id:
+        return
+    
+    # Get caller's socket
+    caller_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            caller_socket = sid
+            break
+    
+    if caller_socket:
+        socketio.emit('call_rejected', {
+            'call_id': call_id
+        }, room=caller_socket)
+
+
+@socketio.on('end_call')
+def handle_end_call(data):
+    """Handle call ending"""
+    call_id = data.get('call_id')
+    receiver_id = data.get('receiver_id')
+    
+    if not call_id or not receiver_id:
+        return
+    
+    # Get other party's socket
+    other_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            other_socket = sid
+            break
+    
+    if other_socket:
+        socketio.emit('call_ended', {
+            'call_id': call_id
+        }, room=other_socket)
+
+
+@socketio.on('webrtc_offer')
+def handle_webrtc_offer(data):
+    """Handle WebRTC offer"""
+    receiver_id = data.get('receiver_id')
+    offer = data.get('offer')
+    call_id = data.get('call_id')
+    caller_id = active_sockets.get(request.sid)
+    
+    if not receiver_id or not offer:
+        return
+    
+    # Get receiver's socket
+    receiver_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            receiver_socket = sid
+            break
+    
+    if receiver_socket:
+        socketio.emit('webrtc_offer', {
+            'caller_id': caller_id,
+            'offer': offer,
+            'call_id': call_id
+        }, room=receiver_socket)
+
+
+@socketio.on('webrtc_answer')
+def handle_webrtc_answer(data):
+    """Handle WebRTC answer"""
+    receiver_id = data.get('receiver_id')
+    answer = data.get('answer')
+    call_id = data.get('call_id')
+    
+    if not receiver_id or not answer:
+        return
+    
+    # Get caller's socket
+    caller_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            caller_socket = sid
+            break
+    
+    if caller_socket:
+        socketio.emit('webrtc_answer', {
+            'answer': answer,
+            'call_id': call_id
+        }, room=caller_socket)
+
+
+@socketio.on('webrtc_ice_candidate')
+def handle_webrtc_ice_candidate(data):
+    """Handle WebRTC ICE candidate"""
+    receiver_id = data.get('receiver_id')
+    candidate = data.get('candidate')
+    call_id = data.get('call_id')
+    
+    if not receiver_id or not candidate:
+        return
+    
+    # Get other party's socket
+    other_socket = None
+    for sid, uid in active_sockets.items():
+        if uid == receiver_id:
+            other_socket = sid
+            break
+    
+    if other_socket:
+        socketio.emit('webrtc_ice_candidate', {
+            'candidate': candidate,
+            'call_id': call_id
+        }, room=other_socket)
+
+
 # =====================
 # SIGNATURE API ROUTES
 # =====================
@@ -31549,8 +32489,6 @@ def api_signature_get(user_id):
 
 if __name__ == '__main__':
 
-    app.run(debug=True, use_reloader=False)
-
     if not os.path.exists('instance'):
         os.makedirs('instance')
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
@@ -31575,12 +32513,12 @@ if __name__ == '__main__':
         # Production - use gunicorn or platform-provided process manager
         app.logger.info("Production mode - ready for gunicorn")
     else:
-        # Development - start Flask dev server
-        app.logger.info("Development mode - starting Flask server")
+        # Development - start Flask server with Socket.IO support
+        app.logger.info("Development mode - starting Flask server with Socket.IO")
 
         host = '0.0.0.0'
         port = int(os.environ.get('PORT', 5000))
 
         app.logger.info(f"Starting server on {host}:{port} (DEBUG={app.config.get('DEBUG', False)})")
         print(f"Starting server on {host}:{port} (DEBUG={app.config.get('DEBUG', False)})")
-        app.run(host=host, port=port, debug=app.config.get('DEBUG', False))
+        socketio.run(app, host=host, port=port, debug=app.config.get('DEBUG', False), allow_unsafe_werkzeug=True)
