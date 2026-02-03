@@ -73,7 +73,7 @@
                                 <div class="service-item">
                                     <input type="checkbox" id="service-{{ service.id }}" name="services" value="{{ service.id }}">
                                     <label for="service-{{ service.id }}">
-                                        {{ service.name }} - ${{ "%.2f"|format(service.price) }}
+                                        {{ service.name }} - KSH {{ "%.2f"|format(service.price) }}
                                     </label>
                                 </div>
                                 {% endfor %}
@@ -87,7 +87,7 @@
                                 <div class="lab-item">
                                     <input type="checkbox" id="test-{{ test.id }}" name="lab_tests" value="{{ test.id }}">
                                     <label for="test-{{ test.id }}">
-                                        {{ test.name }} - ${{ "%.2f"|format(test.price) }}
+                                        {{ test.name }} - KSH {{ "%.2f"|format(test.price) }}
                                     </label>
                                 </div>
                                 {% endfor %}
@@ -101,7 +101,7 @@
                                 <div class="lab-item">
                                     <input type="checkbox" id="imaging-{{ test.id }}" name="imaging_tests" value="{{ test.id }}">
                                     <label for="imaging-{{ test.id }}">
-                                        {{ test.name }} - ${{ "%.2f"|format(test.price) }}
+                                        {{ test.name }} - KSH {{ "%.2f"|format(test.price) }}
                                     </label>
                                 </div>
                                 {% endfor %}
@@ -147,6 +147,18 @@
                                     </div>
                                     <span>Insurance</span>
                                 </button>
+                                <button type="button" class="payment-btn" data-method="card" id="cardPaymentBtn">
+                                    <div class="payment-icon card-icon">
+                                        <i class="fas fa-credit-card"></i>
+                                    </div>
+                                    <span>Card</span>
+                                </button>
+                                <button type="button" class="payment-btn" data-method="paypal" id="paypalPaymentBtn">
+                                    <div class="payment-icon paypal-icon">
+                                        <i class="fab fa-paypal"></i>
+                                    </div>
+                                    <span>PayPal</span>
+                                </button>
                             </div>
                             <input type="hidden" id="payment-method" name="payment_method" value="cash" required>
                         </div>
@@ -164,9 +176,22 @@
                         </div>
                         
                         <div id="insurance-billing-section" style="display: none;" class="form-group">
+                            <div id="insurance-active-hint" class="alert alert-light border" style="display:none;"></div>
                             <label for="insurance-policy-number">Patient Insurance Policy Number</label>
                             <input type="text" id="insurance-policy-number-billing" name="insurance_policy_number" class="form-control" placeholder="Enter patient insurance policy number">
                             <small class="form-text text-muted">Insurance claim will be created for this invoice</small>
+                        </div>
+
+                        <div id="card-billing-section" style="display: none;" class="form-group">
+                            <label for="card-reference-billing">Card Reference (Optional)</label>
+                            <input type="text" id="card-reference-billing" name="card_reference" class="form-control" placeholder="Approval code / last 4 / reference">
+                            <small class="form-text text-muted">Card payments are recorded as completed. Store a reference for audit.</small>
+                        </div>
+
+                        <div id="paypal-billing-section" style="display: none;" class="form-group">
+                            <label for="paypal-reference-billing">PayPal Transaction ID (Optional)</label>
+                            <input type="text" id="paypal-reference-billing" name="paypal_reference" class="form-control" placeholder="PayPal transaction / capture ID">
+                            <small class="form-text text-muted">PayPal payments are recorded as completed. Store a reference for audit.</small>
                         </div>
                         
                         <div class="form-group">
@@ -190,27 +215,27 @@
                     <div class="summary-details">
                         <div class="summary-item">
                             <span class="summary-label">Services:</span>
-                            <span class="summary-value" id="services-total">$0.00</span>
+                            <span class="summary-value" id="services-total">KSH 0.00</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">Lab Tests:</span>
-                            <span class="summary-value" id="labs-total">$0.00</span>
+                            <span class="summary-value" id="labs-total">KSH 0.00</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">Imaging:</span>
-                            <span class="summary-value" id="imaging-total">$0.00</span>
+                            <span class="summary-value" id="imaging-total">KSH 0.00</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">Medications:</span>
-                            <span class="summary-value" id="meds-total">$0.00</span>
+                            <span class="summary-value" id="meds-total">KSH 0.00</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">Ward Stay:</span>
-                            <span class="summary-value" id="ward-total">$0.00</span>
+                            <span class="summary-value" id="ward-total">KSH 0.00</span>
                         </div>
                         <div class="summary-item total">
                             <span class="summary-label">Total Amount:</span>
-                            <span class="summary-value" id="total-amount">$0.00</span>
+                            <span class="summary-value" id="total-amount">KSH 0.00</span>
                         </div>
                     </div>
                 </div>
@@ -297,6 +322,10 @@ function toggleSidebar() {
 
 // Payment Method Button Handlers
 $('.payment-btn').click(function() {
+    if ($(this).prop('disabled')) {
+        alert('Insurance payment is locked until verified for this patient.');
+        return;
+    }
     // Remove active class from all buttons
     $('.payment-btn').removeClass('active');
     
@@ -308,7 +337,7 @@ $('.payment-btn').click(function() {
     $('#payment-method').val(method);
     
     // Hide all payment-specific sections
-    $('#mpesa-collect-section, #insurance-billing-section, #cash-amount-section').hide();
+    $('#mpesa-collect-section, #insurance-billing-section, #cash-amount-section, #card-billing-section, #paypal-billing-section').hide();
     
     // Show relevant section based on method
     if (method === 'mpesa') {
@@ -317,6 +346,10 @@ $('.payment-btn').click(function() {
         $('#insurance-billing-section').slideDown();
     } else if (method === 'cash') {
         $('#cash-amount-section').slideDown();
+    } else if (method === 'card') {
+        $('#card-billing-section').slideDown();
+    } else if (method === 'paypal') {
+        $('#paypal-billing-section').slideDown();
     }
 });
 
@@ -325,7 +358,7 @@ function showMpesaCollectModal(invoiceId, invoiceNumber, amountDue) {
     $('#mpesa-invoice-id').val(invoiceId);
     $('#mpesa-invoice-number').val(invoiceNumber);
     $('#mpesa-invoice-display').text(invoiceNumber);
-    $('#mpesa-amount-display').text('Ksh ' + parseFloat(amountDue).toFixed(2));
+    $('#mpesa-amount-display').text('KSH ' + parseFloat(amountDue).toFixed(2));
     $('#stk-phone').val('');
     $('#verify-mpesa-code').val('');
     $('#verify-phone').val('');
@@ -337,7 +370,7 @@ function showMpesaCollectModal(invoiceId, invoiceNumber, amountDue) {
 $('#stkPushBtn').click(function() {
     const phone = $('#stk-phone').val().trim();
     const invoiceId = $('#mpesa-invoice-id').val();
-    const amount = $('#mpesa-amount-display').text().replace('Ksh ', '').trim();
+    const amount = $('#mpesa-amount-display').text().replace('KSH ', '').trim();
     
     if (!phone) {
         $('#stk-status').html('<div class="alert alert-danger">Phone number is required</div>');
@@ -388,7 +421,7 @@ $('#verifyTillBtn').click(function() {
     const mpesaCode = $('#verify-mpesa-code').val().trim();
     const phone = $('#verify-phone').val().trim();
     const invoiceNumber = $('#mpesa-invoice-number').val();
-    const amount = $('#mpesa-amount-display').text().replace('Ksh ', '').trim();
+    const amount = $('#mpesa-amount-display').text().replace('KSH ', '').trim();
     
     if (!mpesaCode) {
         $('#verify-status').html('<div class="alert alert-danger">M-Pesa code is required</div>');
@@ -469,6 +502,7 @@ document.getElementById('patient-search').addEventListener('input', function(e) 
                             loadPatientPrescriptions(this.getAttribute('data-id'));
                             loadPatientWardStay(this.getAttribute('data-id'));
                             loadRequestedServices(this.getAttribute('data-id'));
+                            loadPatientInsurance(this.getAttribute('data-id'));
                             resultsContainer.innerHTML = '';
                         });
                     });
@@ -485,7 +519,118 @@ document.getElementById('patient-id').addEventListener('change', function() {
     loadPatientPrescriptions(patientId);
     loadPatientWardStay(patientId);
     loadRequestedServices(patientId);
+    loadPatientInsurance(patientId);
 });
+
+function loadPatientInsurance(patientId) {
+    const hint = document.getElementById('insurance-active-hint');
+    hint.style.display = 'none';
+    hint.textContent = '';
+
+    // Default: insurance not selectable until we confirm verified policy
+    try {
+        const insBtn = document.getElementById('insurancePaymentBtn');
+        if (insBtn) {
+            insBtn.disabled = true;
+            insBtn.title = 'Insurance requires verification';
+        }
+    } catch (e) { /* ignore */ }
+
+    fetch(`/api/patient/${patientId}/insurance`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data || !data.success) return;
+            const policy = data.policy;
+            if (!policy) {
+                // Clear only if empty to avoid overriding receptionist manual entry
+                const input = document.getElementById('insurance-policy-number-billing');
+                if (input && !input.value) input.value = '';
+
+                // No policy -> keep insurance disabled
+                try {
+                    const insBtn = document.getElementById('insurancePaymentBtn');
+                    if (insBtn) {
+                        insBtn.disabled = true;
+                        insBtn.title = 'No active insurance policy for this patient';
+                    }
+                } catch (e) { /* ignore */ }
+                return;
+            }
+
+            const providerName = policy.provider_name || 'Insurance';
+            const pn = policy.policy_number || '';
+            const mn = policy.member_number || '';
+
+            const input = document.getElementById('insurance-policy-number-billing');
+            if (input && !input.value && pn) input.value = pn;
+
+            const status = policy.verification_status ? String(policy.verification_status) : '';
+            const verifiedAt = policy.verified_at ? String(policy.verified_at) : '';
+            const coversIp = (policy.covers_inpatient === false) ? 'No' : 'Yes';
+
+            const isVerified = String(status || '').toLowerCase() === 'verified';
+
+            hint.innerHTML = `
+                <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                    <div>
+                        <strong>Active:</strong> ${providerName}<br>
+                        <span class="small text-muted">Policy: ${pn || '—'} | Member: ${mn || '—'} | Covers IP: ${coversIp}</span>
+                        ${status ? `<div class="small text-muted">Status: ${status}${verifiedAt ? ` (${verifiedAt})` : ''}</div>` : ''}
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="verifyInsuranceBtn">Verify Insurance</button>
+                    </div>
+                </div>
+            `;
+            hint.style.display = 'block';
+
+            // Enable Insurance payment only if verified
+            try {
+                const insBtn = document.getElementById('insurancePaymentBtn');
+                if (insBtn) {
+                    insBtn.disabled = !isVerified;
+                    insBtn.title = isVerified ? 'Insurance verified' : 'Insurance not verified';
+                }
+            } catch (e) { /* ignore */ }
+
+            // Wire verify
+            const btn = document.getElementById('verifyInsuranceBtn');
+            if (btn) {
+                if (isVerified) {
+                    btn.disabled = true;
+                    btn.textContent = 'Verified';
+                }
+                btn.addEventListener('click', function() {
+                    btn.disabled = true;
+                    btn.textContent = 'Verifying...';
+                    fetch(`/api/patient/${patientId}/insurance/verify`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
+                        },
+                        body: JSON.stringify({})
+                    })
+                    .then(r => r.json())
+                    .then(resp => {
+                        if (resp && resp.success) {
+                            loadPatientInsurance(patientId);
+                        } else {
+                            alert(resp?.error || 'Failed to verify insurance');
+                        }
+                    })
+                    .catch(() => alert('Failed to verify insurance'))
+                    .finally(() => {
+                        btn.disabled = false;
+                        btn.textContent = 'Verify Insurance';
+                    });
+                });
+            }
+        })
+        .catch(() => {
+            // ignore
+        });
+}
 
 // Load prescriptions when patient is selected
 function loadPatientPrescriptions(patientId) {
@@ -508,8 +653,8 @@ function loadPatientPrescriptions(patientId) {
                                            value="${item.id}" id="item-${item.id}">
                                     <label for="item-${item.id}">
                                         ${item.drug_name} (${item.drug_number}) - 
-                                        ${item.quantity} x $${item.unit_price.toFixed(2)} = 
-                                        $${(item.quantity * item.unit_price).toFixed(2)}
+                                        ${item.quantity} x KSH ${item.unit_price.toFixed(2)} = 
+                                        KSH ${(item.quantity * item.unit_price).toFixed(2)}
                                     </label>
                                 </div>
                             `).join('')}
@@ -594,7 +739,7 @@ function loadPatientWardStay(patientId) {
                 <div class="service-item">
                     <input type="checkbox" id="ward-stay" name="include_ward_stay" value="1" data-amount="${amount.toFixed(2)}">
                     <label for="ward-stay">
-                        ${data.ward_name} - Bed ${data.bed_number}: ${days} day(s) x $${rate.toFixed(2)} = $${amount.toFixed(2)}
+                        ${data.ward_name} - Bed ${data.bed_number}: ${days} day(s) x KSH ${rate.toFixed(2)} = KSH ${amount.toFixed(2)}
                         <small>(${data.start_date} to ${data.end_date})</small>
                     </label>
                 </div>
@@ -616,25 +761,25 @@ document.getElementById('billing-form').addEventListener('change', function() {
     
     // Calculate services total
     document.querySelectorAll('input[name="services"]:checked').forEach(checkbox => {
-        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/\$([\d.]+)/)[1]);
+        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/KSH\s*([\d.]+)/i)[1]);
         servicesTotal += price;
     });
     
     // Calculate lab tests total
     document.querySelectorAll('input[name="lab_tests"]:checked').forEach(checkbox => {
-        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/\$([\d.]+)/)[1]);
+        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/KSH\s*([\d.]+)/i)[1]);
         labsTotal += price;
     });
 
     // Calculate imaging tests total
     document.querySelectorAll('input[name="imaging_tests"]:checked').forEach(checkbox => {
-        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/\$([\d.]+)/)[1]);
+        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/KSH\s*([\d.]+)/i)[1]);
         imagingTotal += price;
     });
     
     // Calculate medications total
     document.querySelectorAll('input[name="prescription_items"]:checked').forEach(checkbox => {
-        const priceText = checkbox.nextElementSibling.textContent.match(/= \$([\d.]+)/)[1];
+        const priceText = checkbox.nextElementSibling.textContent.match(/=\s*KSH\s*([\d.]+)/i)[1];
         medsTotal += parseFloat(priceText);
     });
 
@@ -646,14 +791,14 @@ document.getElementById('billing-form').addEventListener('change', function() {
     }
     
     // Update the summary
-    document.getElementById('services-total').textContent = `$${servicesTotal.toFixed(2)}`;
-    document.getElementById('labs-total').textContent = `$${labsTotal.toFixed(2)}`;
-    document.getElementById('imaging-total').textContent = `$${imagingTotal.toFixed(2)}`;
-    document.getElementById('meds-total').textContent = `$${medsTotal.toFixed(2)}`;
-    document.getElementById('ward-total').textContent = `$${wardTotal.toFixed(2)}`;
+    document.getElementById('services-total').textContent = `KSH ${servicesTotal.toFixed(2)}`;
+    document.getElementById('labs-total').textContent = `KSH ${labsTotal.toFixed(2)}`;
+    document.getElementById('imaging-total').textContent = `KSH ${imagingTotal.toFixed(2)}`;
+    document.getElementById('meds-total').textContent = `KSH ${medsTotal.toFixed(2)}`;
+    document.getElementById('ward-total').textContent = `KSH ${wardTotal.toFixed(2)}`;
     
     const totalAmount = servicesTotal + labsTotal + imagingTotal + medsTotal + wardTotal;
-    document.getElementById('total-amount').textContent = `$${totalAmount.toFixed(2)}`;
+    document.getElementById('total-amount').textContent = `KSH ${totalAmount.toFixed(2)}`;
 });
 </script>
 
@@ -752,6 +897,26 @@ document.getElementById('billing-form').addEventListener('change', function() {
 .payment-btn.active[data-method="insurance"] {
     background: linear-gradient(135deg, #17a2b8 0%, #117a8b 100%);
     border-color: #117a8b;
+}
+
+.card-icon {
+    background: #6f42c1;
+    color: white;
+}
+
+.payment-btn.active[data-method="card"] {
+    background: linear-gradient(135deg, #6f42c1 0%, #4e2a8e 100%);
+    border-color: #4e2a8e;
+}
+
+.paypal-icon {
+    background: #003087;
+    color: white;
+}
+
+.payment-btn.active[data-method="paypal"] {
+    background: linear-gradient(135deg, #003087 0%, #001c64 100%);
+    border-color: #001c64;
 }
 
 .payment-btn span {

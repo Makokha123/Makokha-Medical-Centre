@@ -50,8 +50,8 @@
                         <tr>
                             <td>{{ item.description or item.drug_name or item.service_name or item.lab_test_name or 'Item' }}</td>
                             <td class="text-end">{{ item.quantity or 1 }}</td>
-                            <td class="text-end">{{ "%.2f"|format(item.unit_price or 0) }}</td>
-                            <td class="text-end">{{ "%.2f"|format(item.total_price or 0) }}</td>
+                            <td class="text-end">KSH {{ "%.2f"|format(item.unit_price or 0) }}</td>
+                            <td class="text-end">KSH {{ "%.2f"|format(item.total_price or 0) }}</td>
                         </tr>
                         {% else %}
                         <tr>
@@ -63,20 +63,20 @@
                         {% if sale.payment_method == 'cash' and amount_given is not none %}
                         <tr>
                             <th colspan="3" class="text-end">Total Amount</th>
-                            <th class="text-end">{{ "%.2f"|format(sale.total_amount or 0) }}</th>
+                            <th class="text-end">KSH {{ "%.2f"|format(sale.total_amount or 0) }}</th>
                         </tr>
                         <tr>
                             <th colspan="3" class="text-end">Amount Given</th>
-                            <th class="text-end">{{ "%.2f"|format(amount_given) }}</th>
+                            <th class="text-end">KSH {{ "%.2f"|format(amount_given) }}</th>
                         </tr>
                         <tr>
                             <th colspan="3" class="text-end">Change</th>
-                            <th class="text-end">{{ "%.2f"|format(change) }}</th>
+                            <th class="text-end">KSH {{ "%.2f"|format(change) }}</th>
                         </tr>
                         {% else %}
                         <tr>
                             <th colspan="3" class="text-end">Grand Total</th>
-                            <th class="text-end">{{ "%.2f"|format(sale.total_amount or 0) }}</th>
+                            <th class="text-end">KSH {{ "%.2f"|format(sale.total_amount or 0) }}</th>
                         </tr>
                         {% endif %}
                     </tfoot>

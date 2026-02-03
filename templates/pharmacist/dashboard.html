@@ -1532,7 +1532,6 @@
             async function dispenseControlledRx() {
                 if (!activeControlledPrescriptionId) return;
 
-                const payment_method = document.getElementById('controlled-rx-payment-method-dash').value;
                 try {
                     let prescription_sheet_path = null;
                     const fileInput = document.getElementById('controlled-rx-prescription-sheet-dash');
@@ -1566,7 +1565,6 @@
                         },
                         body: JSON.stringify({
                             controlled_prescription_id: activeControlledPrescriptionId,
-                            payment_method,
                             prescription_sheet_path
                         })
                     });
@@ -1579,10 +1577,7 @@
 
                     controlledRxDetailsModal.hide();
                     await loadControlledPrescriptions();
-                    showSuccessToast(`Controlled dispensed. Sale: ${data.sale_number} (Ksh ${data.total_amount})`);
-                    if (data.sale_id) {
-                        _loadControlledSaleReceiptEmbedded(data.sale_id);
-                    }
+                    showSuccessToast('Controlled prescription dispensed. Send patient to reception for billing.');
                 } catch (e) {
                     showErrorToast('Failed to dispense controlled prescription');
                 }
@@ -3051,17 +3046,10 @@
                     alert('Prescription cart is empty');
                     return;
                 }
-                
-                const paymentMethod = prompt('Enter payment method (cash, card, mobile, insurance):', 'cash');
-                
-                if (!paymentMethod) {
-                    return;
-                }
-                
+
                 const dispenseData = {
                     prescription_id: currentPrescription.id,
                     items: prescriptionCart,
-                    payment_method: paymentMethod,
                     csrf_token: csrfToken
                 };
                 
@@ -3072,16 +3060,12 @@
                     data: JSON.stringify(dispenseData),
                     success: function(response) {
                         if (response.success) {
-                            showSuccessToast('Prescription dispensed successfully');
+                            showSuccessToast('Prescription dispensed. Send patient to reception for billing.');
                             loadPrescriptions(); // Refresh prescriptions list
                             loadDashboardStats(); // Refresh stats
                             prescriptionCartModal.hide();
                             $('#viewPrescriptionModal').modal('hide');
-                            
-                            // Show receipt
-                            currentSale = response;
-                            showReceipt(response.sale_id);
-                            
+
                             // Clear the prescription cart
                             prescriptionCart = [];
                         } else {

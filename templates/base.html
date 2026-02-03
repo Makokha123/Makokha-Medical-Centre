@@ -63,11 +63,13 @@
             top: 0;
             left: 0;
             height: 100vh;
+            height: 100dvh;
             width: var(--sidebar-width);
             background: linear-gradient(180deg, var(--primary-color), var(--primary-dark));
             color: white;
             transition: transform var(--transition-speed) ease;
-            z-index: 1000;
+            /* Must be above .overlay (1040) so touches/scroll work */
+            z-index: 1045;
             overflow-x: hidden;
             box-shadow: var(--shadow);
             transform: translateX(-100%);
@@ -437,6 +439,26 @@
                 z-index: 1050;
             }
 
+            /* Make sidebar scrollable with touch and keep Logout reachable */
+            .sidebar .navbar-collapse {
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                touch-action: pan-y;
+                overscroll-behavior: contain;
+                height: calc(100dvh - var(--header-height));
+            }
+
+            /* On smaller devices, remove the flex spacer gap above the profile/logout block */
+            .sidebar .mt-auto {
+                margin-top: 0 !important;
+            }
+
+            /* Let the whole sidebar (including logout) scroll together */
+            .sidebar-nav {
+                flex: 0 0 auto;
+                overflow: visible;
+            }
+
             .toggle-nav {
                 display: flex !important;
                 z-index: 1060;
@@ -493,18 +515,21 @@
                 margin-top: 0 !important;
             }
 
-
-        /* Landscape phones/tablets: keep sidebar scroll + click reliable */
-        @media (orientation: landscape) and (max-height: 500px) {
-            .sidebar-nav {
-                -webkit-overflow-scrolling: touch;
-                overflow-y: auto;
-            }
-
+            /* Make sidebar content scrollable (including Logout), and enable smooth touch scrolling */
             .sidebar .navbar-collapse {
-                min-height: 0;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                touch-action: pan-y;
+                overscroll-behavior: contain;
+                height: calc(100dvh - var(--header-height));
             }
-        }
+
+            /* Let the whole sidebar (including logout) scroll together */
+            .sidebar-nav {
+                flex: 0 0 auto;
+                overflow: visible;
+            }
+
             /* Stack table on mobile */
             .table-responsive table {
                 display: block;
@@ -548,6 +573,31 @@
 
             .table-responsive td:last-child {
                 border-bottom: none;
+            }
+        }
+
+        /* Landscape phones/tablets: keep sidebar scroll + touch reliable */
+        @media (orientation: landscape) and (max-height: 500px) {
+            .sidebar {
+                height: 100vh;
+                height: 100dvh;
+            }
+
+            .sidebar .navbar-collapse {
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                touch-action: pan-y;
+                overscroll-behavior: contain;
+                height: calc(100dvh - var(--header-height));
+            }
+
+            .sidebar-nav {
+                flex: 0 0 auto;
+                overflow: visible;
+            }
+
+            .sidebar .mt-auto {
+                margin-top: 0 !important;
             }
         }
     </style>

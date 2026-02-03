@@ -1058,7 +1058,12 @@
 
             <!-- Requested Services -->
             <div class="management-section">
-                <h4>Requested Services</h4>
+                <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+                    <h4 style="margin:0;">Requested Services</h4>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.openRequestedServiceModal()">
+                        <i class="fas fa-plus"></i> Add Service
+                    </button>
+                </div>
                 {% if patient_services %}
                 <div class="services-list">
                     {% for service in patient_services %}
@@ -1108,6 +1113,34 @@
                     <p>No services requested yet</p>
                 </div>
                 {% endif %}
+            </div>
+
+            <!-- Add Requested Service Modal (custom modal system) -->
+            <div class="modal" id="requested-service-modal">
+                <div class="modal-content" style="max-width: 760px;">
+                    <div class="modal-header">
+                        <h2><i class="fas fa-concierge-bell"></i> Add Requested Service</h2>
+                        <button class="close-btn" onclick="doctorPatient.closeModal('requested-service')">&times;</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="requested-service-search">Search Service *</label>
+                        <input type="text" id="requested-service-search" placeholder="Type service name..." autocomplete="off" />
+                        <small class="form-help">Searches admin-defined active services.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="requested-service-notes">Notes (optional)</label>
+                        <textarea id="requested-service-notes" rows="3" placeholder="Any special instructions..."></textarea>
+                    </div>
+
+                    <div id="requested-service-results" style="max-height:320px;overflow:auto;"></div>
+                    <div id="requested-service-status" style="margin-top:10px;"></div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn" onclick="doctorPatient.closeModal('requested-service')">Close</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -4439,6 +4472,154 @@ class DoctorPatientManagement {
                 card.style.display = status === 'all' || cardStatus === status ? 'block' : 'none';
             }
         });
+    }
+
+    openRequestedServiceModal() {
+        try {
+            this.openModal('requested-service');
+        } catch (e) {
+            // If openModal is missing for some reason, fall back to showing the element.
+            const el = document.getElementById('requested-service-modal');
+            if (el) el.style.display = 'flex';
+        }
+
+        this._initRequestedServiceModalOnce();
+        const input = document.getElementById('requested-service-search');
+        if (input) {
+            input.value = '';
+            setTimeout(() => input.focus(), 50);
+        }
+
+        const results = document.getElementById('requested-service-results');
+        if (results) results.innerHTML = '';
+        const status = document.getElementById('requested-service-status');
+        if (status) status.innerHTML = '';
+    }
+
+    _initRequestedServiceModalOnce() {
+        if (this._requestedServiceModalReady) return;
+        this._requestedServiceModalReady = true;
+
+        const input = document.getElementById('requested-service-search');
+        const results = document.getElementById('requested-service-results');
+        const status = document.getElementById('requested-service-status');
+
+        if (!input || !results) return;
+
+        let timer = null;
+        input.addEventListener('input', () => {
+            const q = (input.value || '').trim();
+            if (timer) clearTimeout(timer);
+
+            timer = setTimeout(() => {
+                if (!q || q.length < 2) {
+                    results.innerHTML = '';
+                    if (status) status.innerHTML = '';
+                    return;
+                }
+                this._searchServicesForRequest(q);
+            }, 250);
+        });
+    }
+
+    async _searchServicesForRequest(query) {
+        const results = document.getElementById('requested-service-results');
+        const status = document.getElementById('requested-service-status');
+        if (!results) return;
+
+        results.innerHTML = '<div class="alert info">Searching...</div>';
+        if (status) status.innerHTML = '';
+
+        try {
+            const resp = await fetch(`/api/services/search?q=${encodeURIComponent(query)}&limit=25`);
+            const data = await resp.json().catch(() => []);
+            if (!resp.ok) {
+                results.innerHTML = '<div class="alert error">Failed to search services.</div>';
+                return;
+            }
+
+            if (!Array.isArray(data) || data.length === 0) {
+                results.innerHTML = '<div class="alert info">No matching services found.</div>';
+                return;
+            }
+
+            results.innerHTML = data.map(s => {
+                const name = (s && s.name) ? String(s.name) : 'Service';
+                const price = (s && typeof s.price === 'number') ? s.price : Number(s && s.price || 0);
+                const desc = (s && s.description) ? String(s.description) : '';
+                const sid = (s && s.id) ? Number(s.id) : 0;
+                const safeDesc = desc ? `<div style="color:#666;font-size:12px;margin-top:4px;">${this._escapeHtml(desc)}</div>` : '';
+                return `
+                    <div class="service-card" style="margin:8px 0;">
+                        <div class="service-header" style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+                            <strong>${this._escapeHtml(name)}</strong>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <span class="badge" style="background:#eef2ff;color:#273b8a;">KSH ${Number(price || 0).toFixed(2)}</span>
+                                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.addRequestedService(${sid})">Add</button>
+                            </div>
+                        </div>
+                        ${safeDesc}
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            results.innerHTML = '<div class="alert error">Network error while searching.</div>';
+        }
+    }
+
+    _escapeHtml(text) {
+        const s = String(text ?? '');
+        return s
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#039;');
+    }
+
+    async addRequestedService(serviceId) {
+        const status = document.getElementById('requested-service-status');
+        const notesEl = document.getElementById('requested-service-notes');
+        const notes = notesEl ? (notesEl.value || '').trim() : '';
+
+        const csrfToken = this.getCsrfToken();
+        const patientId = this.patientId || Number('{{ patient.id }}');
+
+        if (!patientId) {
+            if (status) status.innerHTML = '<div class="alert error">Patient ID missing; reload the page.</div>';
+            return;
+        }
+        if (!serviceId) {
+            if (status) status.innerHTML = '<div class="alert error">Invalid service selected.</div>';
+            return;
+        }
+
+        if (status) status.innerHTML = '<div class="alert info">Adding service...</div>';
+
+        try {
+            const resp = await fetch(`/api/doctor/patient/${patientId}/requested-services`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                },
+                body: JSON.stringify({
+                    service_id: Number(serviceId),
+                    notes: notes || null,
+                    csrf_token: csrfToken,
+                })
+            });
+
+            const data = await resp.json().catch(() => ({}));
+            if (resp.ok && data && data.success) {
+                if (status) status.innerHTML = '<div class="alert success">Service added. Refreshing...</div>';
+                setTimeout(() => location.reload(), 800);
+                return;
+            }
+            if (status) status.innerHTML = `<div class="alert error">${this._escapeHtml((data && data.error) || 'Failed to add service')}</div>`;
+        } catch (e) {
+            if (status) status.innerHTML = '<div class="alert error">Network error. Please try again.</div>';
+        }
     }
 }
 

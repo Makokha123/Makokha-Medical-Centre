@@ -54,6 +54,12 @@
                                 <small class="text-muted" id="chat-user-status">offline</small>
                             </div>
                             <div class="chat-actions">
+                                <button class="btn btn-sm btn-outline-secondary me-1" id="chat-search-btn" title="Search messages">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary me-2" id="chat-settings-btn" title="Chat settings">
+                                    <i class="bi bi-three-dots-vertical"></i>
+                                </button>
                                 <button class="btn btn-sm btn-outline-primary me-1" id="voice-call-btn" title="Voice Call">
                                     <i class="bi bi-telephone-fill"></i>
                                 </button>
@@ -62,6 +68,17 @@
                                 </button>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Search Bar -->
+                    <div class="chat-search-bar" id="chat-search-bar" style="display: none;">
+                        <div class="d-flex gap-2 align-items-center">
+                            <input type="text" class="form-control form-control-sm" id="chat-search-input" placeholder="Search in this chat...">
+                            <button class="btn btn-sm btn-outline-secondary" id="chat-search-close" title="Close">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                        <div class="small text-muted mt-1" id="chat-search-meta" style="display:none;"></div>
                     </div>
 
                     <!-- Messages Container -->
@@ -77,8 +94,22 @@
                         <span class="typing-text">typing...</span>
                     </div>
 
+                    <!-- Reply Preview -->
+                    <div class="reply-preview" id="reply-preview" style="display: none;">
+                        <div class="reply-preview-content">
+                            <div class="reply-preview-label">Replying to</div>
+                            <div class="reply-preview-text" id="reply-preview-text"></div>
+                        </div>
+                        <button class="btn btn-sm btn-link" id="reply-cancel-btn" title="Cancel reply">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+
                     <!-- Message Input -->
                     <div class="message-input">
+                        <button class="btn btn-outline-secondary" id="emoji-btn" title="Emoji">
+                            <i class="bi bi-emoji-smile"></i>
+                        </button>
                         <input type="text" class="form-control" id="message-input" placeholder="Type a message...">
                         <button class="btn btn-primary" id="send-message-btn">
                             <i class="bi bi-send-fill"></i>
@@ -94,6 +125,22 @@
 <div id="call-modal" class="call-modal" style="display: none;">
     <div class="call-container">
         <div class="call-content">
+            <!-- Outgoing Call -->
+            <div class="outgoing-call" id="outgoing-call" style="display: none;">
+                <div class="caller-info text-center">
+                    <div class="caller-avatar mb-3">
+                        <i class="bi bi-person-circle display-1"></i>
+                    </div>
+                    <h4 id="outgoing-callee-name">User Name</h4>
+                    <p class="text-muted" id="outgoing-call-status">Calling...</p>
+                </div>
+                <div class="call-actions mt-4">
+                    <button class="btn btn-danger btn-lg" id="cancel-call-btn">
+                        <i class="bi bi-telephone-x-fill me-2"></i>Cancel
+                    </button>
+                </div>
+            </div>
+
             <!-- Incoming Call -->
             <div class="incoming-call" id="incoming-call" style="display: none;">
                 <div class="caller-info text-center">
@@ -319,6 +366,12 @@
     flex-shrink: 0;
 }
 
+.chat-search-bar {
+    padding: 10px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #ffffff;
+}
+
 .chat-user-status {
     font-size: 12px;
 }
@@ -375,6 +428,53 @@
     display: flex;
     align-items: center;
     gap: 4px;
+}
+
+.message-edited {
+    font-size: 10px;
+    opacity: 0.75;
+    margin-right: 4px;
+}
+
+.message-star {
+    font-size: 11px;
+    color: #f0ad4e;
+    margin-right: 4px;
+}
+
+.message-reply-preview {
+    border-left: 3px solid rgba(13, 110, 253, 0.7);
+    padding-left: 8px;
+    margin-bottom: 6px;
+    opacity: 0.9;
+}
+
+.message-reply-preview .reply-snippet {
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.message-reactions {
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.reaction-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.06);
+    font-size: 12px;
+}
+
+.message.received .reaction-chip {
+    background: rgba(255, 255, 255, 0.25);
 }
 
 .message.sent .message-time {
@@ -471,6 +571,37 @@
     gap: 10px;
     background: white;
     flex-shrink: 0;
+}
+
+.reply-preview {
+    padding: 10px 15px;
+    border-top: 1px solid #e0e0e0;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.reply-preview-content {
+    flex: 1;
+    min-width: 0;
+    border-left: 3px solid #0d6efd;
+    padding-left: 10px;
+}
+
+.reply-preview-label {
+    font-size: 11px;
+    color: #6c757d;
+    font-weight: 600;
+}
+
+.reply-preview-text {
+    font-size: 13px;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .message-input input {

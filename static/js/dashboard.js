@@ -216,8 +216,7 @@ $(document).ready(function() {
             }),
             success: function(response) {
                 if (response.success) {
-                    // Show receipt
-                    showReceipt(response.sale_id);
+                    alert('Prescription dispensed successfully. Please proceed to reception for billing.');
                     
                     // Clear cart
                     clearCart();

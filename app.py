@@ -691,6 +691,130 @@ class TypingIndicator(db.Model):
         return f'<TypingIndicator conv={self.conversation_id} user={self.user_id}>'
 
 
+class BlockedUser(db.Model):
+    """Tracks user blocks to prevent messaging/calls."""
+    __tablename__ = 'blocked_users'
+
+    id = db.Column(db.Integer, primary_key=True)
+    blocker_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    blocked_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    __table_args__ = (
+        db.UniqueConstraint('blocker_id', 'blocked_id', name='uq_blocked_users_pair'),
+    )
+
+    blocker = db.relationship('User', foreign_keys=[blocker_id], backref='blocks_made')
+    blocked = db.relationship('User', foreign_keys=[blocked_id], backref='blocks_received')
+
+
+class ConversationSettings(db.Model):
+    """Per-user settings for a 1:1 conversation."""
+    __tablename__ = 'conversation_settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    conversation_id = db.Column(db.Integer, db.ForeignKey('conversations.id'), nullable=False)
+    is_muted = db.Column(db.Boolean, default=False)
+    muted_until = db.Column(db.DateTime)
+    is_archived = db.Column(db.Boolean, default=False)
+    is_pinned = db.Column(db.Boolean, default=False)
+    pinned_at = db.Column(db.DateTime)
+    notifications_enabled = db.Column(db.Boolean, default=True)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'conversation_id', name='uq_conversation_settings_user_conv'),
+    )
+
+    user = db.relationship('User', backref='conversation_settings')
+    conversation = db.relationship('Conversation', backref='settings')
+
+
+class MessageEdit(db.Model):
+    """Stores message edit history."""
+    __tablename__ = 'message_edits'
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(36), nullable=False, index=True)
+    editor_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    old_content = db.Column(db.Text, nullable=False)
+    new_content = db.Column(db.Text, nullable=False)
+    edited_at = db.Column(db.DateTime, default=get_eat_now)
+
+    editor = db.relationship('User', backref='message_edits')
+
+
+class MessageReaction(db.Model):
+    """One reaction per user per message (WhatsApp-like)."""
+    __tablename__ = 'message_reactions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(36), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    emoji = db.Column(db.String(32), nullable=False)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+    __table_args__ = (
+        db.UniqueConstraint('message_id', 'user_id', name='uq_message_reaction_user'),
+    )
+
+    user = db.relationship('User', backref='message_reactions')
+
+
+class MessageStar(db.Model):
+    """Per-user starring (favorite) of messages."""
+    __tablename__ = 'message_stars'
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(36), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    starred_at = db.Column(db.DateTime, default=get_eat_now)
+
+    __table_args__ = (
+        db.UniqueConstraint('message_id', 'user_id', name='uq_message_star_user'),
+    )
+
+    user = db.relationship('User', backref='message_stars')
+
+
+class MessageDeletion(db.Model):
+    """Represents a message deleted for everyone."""
+    __tablename__ = 'message_deletions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(36), nullable=False, unique=True, index=True)
+    deleted_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    deleted_at = db.Column(db.DateTime, default=get_eat_now)
+    scope = db.Column(db.String(20), default='everyone')
+
+    deleted_by = db.relationship('User', backref='message_deletions')
+
+
+class MessageReply(db.Model):
+    """Links a message to the message it replies to."""
+    __tablename__ = 'message_replies'
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(36), nullable=False, unique=True, index=True)
+    replied_to_message_id = db.Column(db.String(36), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+
+
+def _is_blocked(user_a_id: int, user_b_id: int) -> bool:
+    """True if either user has blocked the other."""
+    if not user_a_id or not user_b_id:
+        return False
+    try:
+        return (
+            BlockedUser.query.filter_by(blocker_id=user_a_id, blocked_id=user_b_id).first() is not None
+            or BlockedUser.query.filter_by(blocker_id=user_b_id, blocked_id=user_a_id).first() is not None
+        )
+    except Exception:
+        # If the blocked_users table isn't created yet, don't block base functionality.
+        return False
+
+
 class BackupRecord(db.Model):
     __tablename__ = 'backup_records'
 
@@ -5672,6 +5796,68 @@ class InsuranceClaimPayment(db.Model):
 # Model aliases for backwards compatibility
 PatientInsurance = InsurancePolicy
 Claim = InsuranceClaim
+
+
+# Insurance policy metadata helpers (no schema changes).
+# We store structured flags in InsurancePolicy.notes to avoid breaking existing DBs.
+_INS_META_PREFIX = 'INS_META:'
+
+
+def _insurance_meta_from_notes(notes_text: str) -> dict:
+    try:
+        if not notes_text:
+            return {}
+        for line in str(notes_text).splitlines():
+            if line.strip().startswith(_INS_META_PREFIX):
+                raw = line.strip()[len(_INS_META_PREFIX):].strip()
+                return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+    return {}
+
+
+def _insurance_notes_with_meta(existing_notes: str, meta: dict) -> str:
+    try:
+        meta_line = f"{_INS_META_PREFIX} {json.dumps(meta, ensure_ascii=False)}"
+        lines = []
+        if existing_notes:
+            for line in str(existing_notes).splitlines():
+                if line.strip().startswith(_INS_META_PREFIX):
+                    continue
+                lines.append(line)
+        # Keep human notes first, meta last
+        lines = [l for l in lines if str(l).strip()]
+        lines.append(meta_line)
+        return '\n'.join(lines).strip()
+    except Exception:
+        return existing_notes or ''
+
+
+def _insurance_policy_meta(policy: 'InsurancePolicy') -> dict:
+    try:
+        return _insurance_meta_from_notes(getattr(policy, 'notes', None) or '')
+    except Exception:
+        return {}
+
+
+def _insurance_policy_covers_inpatient(policy: 'InsurancePolicy') -> bool:
+    meta = _insurance_policy_meta(policy)
+    # Backward-compat: if unset, assume True so we don't block existing records.
+    return bool(meta.get('covers_inpatient', True))
+
+
+def _insurance_policy_set_covers_inpatient(policy: 'InsurancePolicy', covers: bool):
+    meta = _insurance_policy_meta(policy)
+    meta['covers_inpatient'] = bool(covers)
+    policy.notes = _insurance_notes_with_meta(getattr(policy, 'notes', None) or '', meta)
+
+
+def _insurance_policy_mark_verified(policy: 'InsurancePolicy', user_id: int):
+    meta = _insurance_policy_meta(policy)
+    meta['verified_by'] = int(user_id) if user_id else None
+    meta['verified_at'] = get_eat_now().isoformat() if callable(get_eat_now) else datetime.utcnow().isoformat()
+    meta['verification_status'] = 'verified'
+    policy.notes = _insurance_notes_with_meta(getattr(policy, 'notes', None) or '', meta)
 
 
 # Notification model - create if it doesn't already exist
@@ -21661,7 +21847,9 @@ def pharmacist_controlled_dispense():
     try:
         data = request.get_json() or {}
         prescription_id = data.get('controlled_prescription_id')
-        payment_method = data.get('payment_method', 'cash')
+        # Payment is handled by receptionist billing; pharmacists only dispense.
+        # Keep accepting the field for backward-compatible frontend payloads.
+        _ = data.get('payment_method', None)
         prescription_sheet_path = (data.get('prescription_sheet_path') or data.get('prescription_image_path') or '').strip() or None
 
         if not prescription_id:
@@ -21688,86 +21876,36 @@ def pharmacist_controlled_dispense():
                     'controlled_drug_id': item.controlled_drug.id
                 }), 400
 
-        total_amount = sum(float(item.controlled_drug.selling_price) * int(item.quantity) for item in p.items)
-        sale_number = generate_controlled_sale_number()
-
-        sale = ControlledSale(
-            sale_number=sale_number,
-            patient_id=p.patient_id,
-            user_id=current_user.id,
-            pharmacist_name=f"{current_user.username}",
-            total_amount=total_amount,
-            payment_method=payment_method,
-            status='completed',
-            prescription_image_path=prescription_sheet_path,
-            created_at=get_eat_now()
-        )
-        db.session.add(sale)
-        db.session.flush()
-
-        for idx, item in enumerate(p.items):
+        for item in p.items:
             cd = item.controlled_drug
-            unit_price = float(cd.selling_price)
             qty = int(item.quantity)
-            db.session.add(ControlledSaleItem(
-                sale_id=sale.id,
-                controlled_drug_id=cd.id,
-                controlled_drug_name=cd.name,
-                controlled_drug_specification=cd.specification,
-                individual_sale_number=f"{sale_number}-{idx+1:02d}",
-                description=f"Controlled prescription: {cd.name}",
-                prescription_source='internal',
-                prescription_sheet_path=prescription_sheet_path,
-                quantity=qty,
-                unit_price=unit_price,
-                total_price=unit_price * qty,
-                created_at=get_eat_now()
-            ))
-
             cd.sold_quantity = (cd.sold_quantity or 0) + qty
             db.session.add(cd)
-
             item.status = 'dispensed'
 
         p.status = 'dispensed'
         p.dispensed_by = current_user.id
         p.dispensed_at = get_eat_now()
 
-        # Store a copy of the receipt HTML for audit/reprints and post to ledger before committing
-        receipt_html = None
-        try:
-            db.session.flush()
-            sale_for_receipt = db.session.query(ControlledSale).options(
-                db.joinedload(ControlledSale.user),
-                db.joinedload(ControlledSale.items),
-                db.joinedload(ControlledSale.patient),
-            ).filter(ControlledSale.id == sale.id).first()
-            if sale_for_receipt:
-                receipt_html = render_template('pharmacist/controlled_receipt.html', sale=sale_for_receipt)
-                sale.receipt_html = receipt_html
-                db.session.add(sale)
-        except Exception as e:
-            current_app.logger.error(f"Failed to generate controlled receipt HTML: {str(e)}", exc_info=True)
-
-        _ensure_controlled_sale_transaction(sale, receipt_html=receipt_html)
+        db.session.commit()
 
         try:
             log_audit('dispense_controlled_prescription', 'ControlledPrescription', p.id, None, {
-                'controlled_sale_id': sale.id,
-                'sale_number': sale.sale_number,
-                'total_amount': total_amount,
-                'payment_method': payment_method,
+                'patient_id': p.patient_id,
+                'items_count': len(p.items or []),
+                'prescription_sheet_path': prescription_sheet_path,
+                'note': 'Dispensed only; billing handled by receptionist'
             })
         except Exception:
             pass
 
         return jsonify({
             'success': True,
-            'sale_id': sale.id,
-            'sale_number': sale.sale_number,
-            'total_amount': total_amount,
-            'receipt_url': url_for('pharmacist_controlled_sale_receipt', sale_id=sale.id),
-            'message': 'Controlled prescription dispensed successfully'
+            'sale_id': None,
+            'sale_number': None,
+            'total_amount': 0,
+            'receipt_url': None,
+            'message': 'Controlled prescription dispensed successfully. Please proceed to reception for billing.'
         })
 
     except Exception as e:
@@ -23257,6 +23395,11 @@ def get_prescription_details(prescription_id):
         
         items_data = []
         for item in prescription.items:
+            unit_price = 0
+            try:
+                unit_price = float(item.drug.selling_price or 0) if item.drug else 0
+            except Exception:
+                unit_price = 0
             items_data.append({
                 'id': item.id,
                 'drug_id': item.drug_id,
@@ -23266,6 +23409,7 @@ def get_prescription_details(prescription_id):
                 'frequency': item.frequency or "",
                 'duration': item.duration or "",
                 'quantity': item.quantity,
+                'unit_price': unit_price,
                 'notes': item.notes or "",
                 'drug': {
                     'id': item.drug.id if item.drug else None,
@@ -23316,7 +23460,9 @@ def pharmacist_dispense():
             return jsonify({'error': 'No data provided'}), 400
         
         prescription_id = data.get('prescription_id')
-        payment_method = data.get('payment_method', 'cash')
+        # Payment is handled by receptionist billing; pharmacists only dispense.
+        # Keep accepting the field for backward-compatible frontend payloads.
+        _ = data.get('payment_method', None)
         
         if not prescription_id:
             return jsonify({'error': 'Prescription ID is required'}), 400
@@ -23342,62 +23488,20 @@ def pharmacist_dispense():
                     'drug_id': item.drug.id
                 }), 400
         
-        # Calculate total amount
-        total_amount = sum(item.drug.selling_price * item.quantity for item in prescription.items)
-        
-        # Create sale record
-        sale = Sale(
-            sale_number=generate_sale_number(),
-            patient_id=prescription.patient_id,
-            user_id=current_user.id,
-            total_amount=total_amount,
-            payment_method=payment_method,
-            status='completed'
-        )
-        db.session.add(sale)
-        db.session.flush()  # Get sale ID
-        
-        # Create sale items and update drug inventory
+        # Update drug inventory and mark each prescription item dispensed
         for item in prescription.items:
-            sale_item = SaleItem(
-                sale_id=sale.id,
-                drug_id=item.drug_id,
-                drug_name=item.drug.name,
-                drug_specification=item.drug.specification,
-                description=f"Prescription: {item.drug.name}",
-                quantity=item.quantity,
-                unit_price=item.drug.selling_price,
-                total_price=item.drug.selling_price * item.quantity
-            )
-            db.session.add(sale_item)
-            
-            # Update drug inventory
-            item.drug.sold_quantity += item.quantity
+            try:
+                item.status = 'dispensed'
+            except Exception:
+                pass
+            # Update drug inventory (remaining_quantity is derived from sold_quantity)
+            if item.drug:
+                item.drug.sold_quantity += item.quantity
         
         # Update prescription status
         prescription.status = 'dispensed'
         prescription.dispensed_by = current_user.id
         prescription.dispensed_at = get_eat_now()
-        
-        # Create transaction record
-        transaction = Transaction(
-            transaction_number=generate_transaction_number(),
-            transaction_type='sale',
-            amount=total_amount,
-            user_id=current_user.id,
-            reference_id=sale.id,
-            notes=f"Prescription dispense: {prescription.id}"
-        )
-        _maybe_set_transaction_meta(
-            transaction,
-            reference_table='sales',
-            direction='IN',
-            status='posted',
-            department='pharmacy',
-            category='drug_sale',
-            payment_method=payment_method,
-        )
-        db.session.add(transaction)
         
         db.session.commit()
         
@@ -23408,19 +23512,18 @@ def pharmacist_dispense():
             prescription.id,
             None,
             {
-                'sale_id': sale.id,
-                'sale_number': sale.sale_number,
-                'total_amount': total_amount,
-                'payment_method': payment_method
+                'patient_id': prescription.patient_id,
+                'items_count': len(prescription.items or []),
+                'note': 'Dispensed only; billing handled by receptionist'
             }
         )
         
         return jsonify({
             'success': True,
-            'sale_id': sale.id,
-            'sale_number': sale.sale_number,
-            'total_amount': total_amount,
-            'message': 'Prescription dispensed successfully'
+            'sale_id': None,
+            'sale_number': None,
+            'total_amount': 0,
+            'message': 'Prescription dispensed successfully. Please proceed to reception for billing.'
         })
         
     except Exception as e:
@@ -24563,6 +24666,27 @@ def doctor_create_patient():
     if not name:
         return jsonify({'success': False, 'error': 'Patient name is required'}), 400
 
+    # Optional insurance capture at registration (provider must exist in system)
+    def _parse_bool(value, default=False):
+        try:
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            s = str(value).strip().lower()
+            if s in ('1', 'true', 'yes', 'on'):
+                return True
+            if s in ('0', 'false', 'no', 'off'):
+                return False
+        except Exception:
+            pass
+        return default
+
+    insurance_provider_id = payload.get('insurance_provider_id') or biodata.get('insurance_provider_id') or biodata.get('insuranceProviderId')
+    insurance_policy_number = (payload.get('insurance_policy_number') or biodata.get('insurance_policy_number') or biodata.get('policy_number') or '').strip()
+    insurance_member_number = (payload.get('insurance_member_number') or biodata.get('insurance_member_number') or biodata.get('member_number') or '').strip()
+    insurance_covers_inpatient = _parse_bool(payload.get('insurance_covers_inpatient') or biodata.get('insurance_covers_inpatient'), default=True)
+
     try:
         patient_number = generate_patient_number(patient_type)
 
@@ -24597,6 +24721,42 @@ def doctor_create_patient():
 
         db.session.add(patient)
         db.session.flush()  # Get patient.id without final commit yet
+
+        # Capture insurance at registration (best-effort). Provider must be from admin list.
+        try:
+            if insurance_provider_id and (insurance_policy_number or insurance_member_number):
+                try:
+                    pid = int(insurance_provider_id)
+                except Exception:
+                    pid = None
+                provider = db.session.get(InsuranceProvider, pid) if pid else None
+                if provider:
+                    policy = InsurancePolicy(
+                        patient_id=patient.id,
+                        provider_id=provider.id,
+                        policy_number=insurance_policy_number or None,
+                        member_number=insurance_member_number or None,
+                        active=True,
+                        start_date=date.today(),
+                        notes=f"Captured at registration by Dr. {getattr(current_user, 'full_name', '')}".strip() or None,
+                        created_at=get_eat_now(),
+                    )
+                    _insurance_policy_set_covers_inpatient(policy, bool(insurance_covers_inpatient))
+
+                    # If patient is being created as IP and insurance doesn't cover inpatient, keep it inactive.
+                    if patient_type == 'IP' and not bool(insurance_covers_inpatient):
+                        policy.active = False
+
+                    # Deactivate other active policies if this one is active
+                    if policy.active:
+                        try:
+                            InsurancePolicy.query.filter_by(patient_id=patient.id, active=True).update({'active': False})
+                        except Exception:
+                            pass
+
+                    db.session.add(policy)
+        except Exception:
+            pass
 
         # Optional: create lab requests if provided
         lab_tests = payload.get('labTests') or []
@@ -24709,6 +24869,11 @@ def doctor_new_patient():
             if section == 'biodata':
                 patient_type = request.form.get('patient_type')
                 patient_number = generate_patient_number(patient_type)
+
+                insurance_provider_id = request.form.get('insurance_provider_id', type=int)
+                insurance_policy_number = (request.form.get('insurance_policy_number') or '').strip()
+                insurance_member_number = (request.form.get('insurance_member_number') or '').strip()
+                insurance_covers_inpatient = request.form.get('insurance_covers_inpatient') in ('1', 'true', 'True', 'on', 'yes')
                 
                 patient = Patient(
                     op_number=patient_number if patient_type == 'OP' else None,
@@ -24728,6 +24893,38 @@ def doctor_new_patient():
                     status='active'
                 )
                 db.session.add(patient)
+                db.session.flush()
+
+                # Insurance capture at patient registration (best-effort)
+                try:
+                    if insurance_provider_id and (insurance_policy_number or insurance_member_number):
+                        provider = db.session.get(InsuranceProvider, int(insurance_provider_id))
+                        if provider:
+                            policy = InsurancePolicy(
+                                patient_id=patient.id,
+                                provider_id=provider.id,
+                                policy_number=insurance_policy_number or None,
+                                member_number=insurance_member_number or None,
+                                active=True,
+                                start_date=date.today(),
+                                notes=f"Captured at registration by Dr. {getattr(current_user, 'full_name', '')}".strip() or None,
+                                created_at=get_eat_now(),
+                            )
+                            _insurance_policy_set_covers_inpatient(policy, bool(insurance_covers_inpatient))
+
+                            # If created as IP and doesn't cover inpatient, keep inactive so reception won't use it.
+                            if (patient_type or '').strip().upper() == 'IP' and not bool(insurance_covers_inpatient):
+                                policy.active = False
+
+                            if policy.active:
+                                try:
+                                    InsurancePolicy.query.filter_by(patient_id=patient.id, active=True).update({'active': False})
+                                except Exception:
+                                    pass
+                            db.session.add(policy)
+                except Exception:
+                    pass
+
                 db.session.commit()
                 
                 return jsonify({
@@ -25114,12 +25311,18 @@ def doctor_new_patient():
         preset_patient_type = ''
     lock_patient_type = str(request.args.get('lock_patient_type') or '').strip() in {'1', 'true', 'True', 'yes', 'on'}
     
+    try:
+        insurance_providers = InsuranceProvider.query.order_by(InsuranceProvider.name).all()
+    except Exception:
+        insurance_providers = []
+
     return render_template('doctor/new_patient.html',
         lab_tests=lab_tests,
         imaging_tests=imaging_tests,
         drugs=drugs,
         controlled_drugs=controlled_drugs,
         services=services,
+        insurance_providers=insurance_providers,
         current_date=date.today().strftime('%Y-%m-%d'),
         preset_patient_type=preset_patient_type,
         lock_patient_type=lock_patient_type,
@@ -26335,12 +26538,40 @@ def admit_patient(patient_id):
     if request.method == 'GET':
         # Get all wards
         wards = Ward.query.order_by(Ward.name).all()
-        return render_template('doctor/admit_patient.html', patient=patient, wards=wards)
+        # Insurance capture (optional)
+        try:
+            insurance_providers = InsuranceProvider.query.order_by(InsuranceProvider.name).all()
+        except Exception:
+            insurance_providers = []
+
+        try:
+            active_insurance = (
+                InsurancePolicy.query
+                .filter_by(patient_id=patient.id, active=True)
+                .order_by(InsurancePolicy.created_at.desc())
+                .first()
+            )
+        except Exception:
+            active_insurance = None
+
+        return render_template(
+            'doctor/admit_patient.html',
+            patient=patient,
+            wards=wards,
+            insurance_providers=insurance_providers,
+            active_insurance=active_insurance,
+        )
     
     # POST request - process admission
     try:
         ward_id = request.form.get('ward_id', type=int)
         bed_id = request.form.get('bed_id', type=int)
+
+        # Optional insurance capture at admission
+        insurance_provider_id = request.form.get('insurance_provider_id', type=int)
+        insurance_policy_number = (request.form.get('insurance_policy_number') or '').strip()
+        insurance_member_number = (request.form.get('insurance_member_number') or '').strip()
+        insurance_covers_inpatient = request.form.get('insurance_covers_inpatient') in ('1', 'true', 'True', 'on', 'yes')
         
         if not ward_id or not bed_id:
             flash('Please select both ward and bed', 'error')
@@ -26382,6 +26613,75 @@ def admit_patient(patient_id):
         # Update patient to inpatient
         patient.patient_type = 'IP'
         patient.status = 'active'
+
+        # Identify current active insurance (if any)
+        try:
+            current_active_policy = (
+                InsurancePolicy.query
+                .filter_by(patient_id=patient.id, active=True)
+                .order_by(InsurancePolicy.created_at.desc())
+                .first()
+            )
+        except Exception:
+            current_active_policy = None
+
+        # Save insurance if provided (best-effort; never block admission)
+        created_new_policy = False
+        try:
+            if insurance_provider_id and (insurance_policy_number or insurance_member_number):
+                provider = db.session.get(InsuranceProvider, int(insurance_provider_id))
+                if provider:
+                    existing_active = (
+                        InsurancePolicy.query
+                        .filter_by(patient_id=patient.id, active=True, provider_id=provider.id)
+                        .order_by(InsurancePolicy.created_at.desc())
+                        .first()
+                    )
+
+                    same_as_existing = False
+                    if existing_active:
+                        same_as_existing = (
+                            (existing_active.policy_number or '').strip() == insurance_policy_number
+                            and (existing_active.member_number or '').strip() == insurance_member_number
+                        )
+
+                    if not same_as_existing:
+                        # Deactivate other active policies so billing finds one clear active policy
+                        try:
+                            InsurancePolicy.query.filter_by(patient_id=patient.id, active=True).update({'active': False})
+                        except Exception:
+                            pass
+
+                        new_policy = InsurancePolicy(
+                            patient_id=patient.id,
+                            provider_id=provider.id,
+                            policy_number=insurance_policy_number or None,
+                            member_number=insurance_member_number or None,
+                            active=True,
+                            start_date=date.today(),
+                            notes=(
+                                f"Captured at admission by Dr. {getattr(current_user, 'full_name', '')}".strip()
+                                or None
+                            ),
+                            created_at=get_eat_now(),
+                        )
+                        _insurance_policy_set_covers_inpatient(new_policy, bool(insurance_covers_inpatient))
+                        if not bool(insurance_covers_inpatient):
+                            # If doctor marks it as not covering inpatient, keep it inactive for IP billing.
+                            new_policy.active = False
+                        db.session.add(new_policy)
+                        created_new_policy = bool(new_policy.active)
+        except Exception:
+            # Admission must proceed even if insurance save fails
+            pass
+
+        # If active policy exists but does NOT cover inpatient, disable it on admission unless replaced.
+        try:
+            if current_active_policy and (not _insurance_policy_covers_inpatient(current_active_policy)) and (not created_new_policy):
+                current_active_policy.active = False
+                db.session.add(current_active_policy)
+        except Exception:
+            pass
         
         # Create bed assignment
         bed_assignment = BedAssignment(
@@ -26423,7 +26723,7 @@ def admit_patient(patient_id):
 
 @app.route('/api/wards/<int:ward_id>/beds/available', methods=['GET'])
 @login_required
-def get_available_beds(ward_id):
+def api_get_available_beds_for_ward(ward_id):
     if current_user.role != 'doctor':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -26443,6 +26743,97 @@ def get_available_beds(ward_id):
         'success': True,
         'beds': beds_data
     })
+
+
+@app.route('/api/patient/<int:patient_id>/insurance', methods=['GET'])
+@login_required
+def api_get_patient_insurance(patient_id):
+    """Return active insurance policy for a patient (best-effort)."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('doctor', 'receptionist', 'admin'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+    # Enforce ward/department access rules where applicable
+    try:
+        if user_role == 'doctor' and (not can_user_access_patient(current_user, patient)):
+            return jsonify({'success': False, 'error': 'You do not have access to this patient'}), 403
+    except Exception:
+        pass
+
+    try:
+        policy = (
+            InsurancePolicy.query
+            .filter_by(patient_id=patient.id, active=True)
+            .order_by(InsurancePolicy.created_at.desc())
+            .first()
+        )
+    except Exception:
+        policy = None
+
+    if not policy:
+        return jsonify({'success': True, 'policy': None})
+
+    provider = None
+    try:
+        provider = db.session.get(InsuranceProvider, policy.provider_id)
+    except Exception:
+        provider = None
+
+    meta = _insurance_policy_meta(policy)
+    return jsonify({
+        'success': True,
+        'policy': {
+            'id': policy.id,
+            'provider_id': policy.provider_id,
+            'provider_name': (provider.name if provider else None),
+            'policy_number': policy.policy_number,
+            'member_number': policy.member_number,
+            'active': bool(policy.active),
+            'covers_inpatient': bool(meta.get('covers_inpatient', True)),
+            'verification_status': meta.get('verification_status'),
+            'verified_by': meta.get('verified_by'),
+            'verified_at': meta.get('verified_at'),
+        }
+    })
+
+
+@app.route('/api/patient/<int:patient_id>/insurance/verify', methods=['POST'])
+@login_required
+def api_verify_patient_insurance(patient_id):
+    """Receptionist/admin verifies the active insurance policy (best-effort)."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'admin'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+    try:
+        policy = (
+            InsurancePolicy.query
+            .filter_by(patient_id=patient.id, active=True)
+            .order_by(InsurancePolicy.created_at.desc())
+            .first()
+        )
+    except Exception:
+        policy = None
+
+    if not policy:
+        return jsonify({'success': False, 'error': 'No active insurance policy for this patient'}), 400
+
+    try:
+        _insurance_policy_mark_verified(policy, current_user.id)
+        db.session.add(policy)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Insurance verified'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/doctor/patient/<int:patient_id>/notify-nurse/<int:notification_id>')
@@ -28421,9 +28812,9 @@ def receptionist_patient_actions(patient_id):
 @app.route('/receptionist/billing', methods=['POST'])
 @login_required
 def create_bill():
-    # Allow both receptionist and pharmacist to access
     user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
+    # Receptionist (and admin) handles billing; pharmacists only dispense.
+    if user_role not in ('receptionist', 'admin'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
 
@@ -28443,21 +28834,29 @@ def create_bill():
         lab_ids = _coerce_int_list(data.get('labs', []))
         imaging_ids = _coerce_int_list(data.get('imaging_tests', []))
         prescription_item_ids = _coerce_int_list(data.get('prescription_items', []))
+        controlled_prescription_item_ids = _coerce_int_list(data.get('controlled_prescription_items', []))
         include_ward_stay = bool(data.get('include_ward_stay'))
         payment_method = data.get('payment_method', 'cash')
         amount_given = data.get('amount_given', None)  # Amount client gave (for cash payments)
         notes = data.get('notes')
+        insurance_policy_number = str(data.get('insurance_policy_number') or '').strip()
+        card_reference = str(data.get('card_reference') or '').strip()
+        paypal_reference = str(data.get('paypal_reference') or '').strip()
     else:
         patient_id = request.form.get('patient_id')
         service_ids = _coerce_int_list(request.form.getlist('services'))
         lab_ids = _coerce_int_list(request.form.getlist('lab_tests'))
         imaging_ids = _coerce_int_list(request.form.getlist('imaging_tests'))
         prescription_item_ids = _coerce_int_list(request.form.getlist('prescription_items'))
+        controlled_prescription_item_ids = _coerce_int_list(request.form.getlist('controlled_prescription_items'))
         include_ward_stay = request.form.get('include_ward_stay') in ('1', 'true', 'True', 'on', 'yes')
         payment_method = request.form.get('payment_method', 'cash')
         amount_given_str = request.form.get('amount_given', None)
         amount_given = float(amount_given_str) if amount_given_str else None
         notes = request.form.get('notes')
+        insurance_policy_number = (request.form.get('insurance_policy_number') or '').strip()
+        card_reference = (request.form.get('card_reference') or '').strip()
+        paypal_reference = (request.form.get('paypal_reference') or '').strip()
     
     patient = Patient.query.get(patient_id)
     if not patient:
@@ -28466,7 +28865,53 @@ def create_bill():
         flash('Patient not found', 'danger')
         return redirect(url_for('receptionist_billing'))
     
+    # Enforce insurance verification (server-side)
+    if str(payment_method or '').strip().lower() == 'insurance':
+        try:
+            policy = (
+                InsurancePolicy.query
+                .filter_by(patient_id=patient.id, active=True)
+                .order_by(InsurancePolicy.created_at.desc())
+                .first()
+            )
+        except Exception:
+            policy = None
+
+        if not policy:
+            msg = 'No active insurance policy for this patient. Please verify insurance or use another payment method.'
+            if request.is_json:
+                return jsonify({'error': msg}), 400
+            flash(msg, 'danger')
+            return redirect(url_for('receptionist_billing'))
+
+        try:
+            meta = _insurance_policy_meta(policy)
+            if (meta.get('verification_status') or '').strip().lower() != 'verified':
+                msg = 'Insurance is not verified. Please verify the patient insurance before billing with Insurance.'
+                if request.is_json:
+                    return jsonify({'error': msg}), 400
+                flash(msg, 'danger')
+                return redirect(url_for('receptionist_billing'))
+        except Exception:
+            msg = 'Insurance verification status unavailable. Please verify the patient insurance before billing with Insurance.'
+            if request.is_json:
+                return jsonify({'error': msg}), 400
+            flash(msg, 'danger')
+            return redirect(url_for('receptionist_billing'))
+
     try:
+        # Compose a safe note string (stored in Sale.notes and Transaction.notes)
+        note_parts = []
+        if notes:
+            note_parts.append(str(notes).strip())
+        if payment_method == 'insurance' and insurance_policy_number:
+            note_parts.append(f"Insurance policy: {insurance_policy_number}")
+        if payment_method == 'card' and card_reference:
+            note_parts.append(f"Card ref: {card_reference}")
+        if payment_method == 'paypal' and paypal_reference:
+            note_parts.append(f"PayPal ref: {paypal_reference}")
+        combined_notes = ' | '.join([p for p in note_parts if p]) or None
+
         # Create sale
         sale = Sale(
             sale_number=generate_sale_number(),
@@ -28474,7 +28919,8 @@ def create_bill():
             user_id=current_user.id,
             total_amount=0,  # Will be calculated
             payment_method=payment_method,
-            status='completed'
+            status='completed',
+            notes=combined_notes,
         )
         db.session.add(sale)
         db.session.flush()  # To get the sale ID
@@ -28482,6 +28928,12 @@ def create_bill():
         total_amount = 0
 
         billed_service_ids: list[int] = []
+
+        def _lab_key(test_id: int) -> str:
+            return f"LABTEST-{int(test_id)}"
+
+        def _img_key(test_id: int) -> str:
+            return f"IMGTEST-{int(test_id)}"
         
         # Add services
         for service_id in service_ids:
@@ -28510,9 +28962,26 @@ def create_bill():
                     .filter(PatientService.service_id.in_(billed_service_ids))
                     .filter(or_(PatientService.status.is_(None), PatientService.status == 'requested'))
                     .filter(PatientService.billed_sale_id.is_(None))
+                    .order_by(PatientService.created_at.asc())
                     .all()
                 )
+
+                # Only mark one PatientService row per billed service checkbox.
+                req_by_service: dict[int, list[PatientService]] = {}
                 for req in pending_requests:
+                    try:
+                        sid = int(getattr(req, 'service_id', None) or 0)
+                    except Exception:
+                        sid = 0
+                    if not sid:
+                        continue
+                    req_by_service.setdefault(sid, []).append(req)
+
+                for sid in billed_service_ids:
+                    rows = req_by_service.get(int(sid)) or []
+                    if not rows:
+                        continue
+                    req = rows.pop(0)
                     req.status = 'billed'
                     req.billed_sale_id = sale.id
                     req.billed_by = current_user.id
@@ -28521,36 +28990,82 @@ def create_bill():
             pass
         
         # Add lab tests
+        try:
+            lab_keys = [_lab_key(lid) for lid in (lab_ids or [])]
+            already_billed_lab_keys: set[str] = set()
+            if lab_keys:
+                rows = (
+                    db.session.query(SaleItem.individual_sale_number)
+                    .join(Sale, SaleItem.sale_id == Sale.id)
+                    .filter(Sale.patient_id == patient.id)
+                    .filter(SaleItem.individual_sale_number.in_(lab_keys))
+                    .all()
+                )
+                already_billed_lab_keys = {r[0] for r in rows if r and r[0]}
+        except Exception:
+            already_billed_lab_keys = set()
+
         for lab_id in lab_ids:
             lab = LabTest.query.get(lab_id)
-            if lab:
-                sale_item = SaleItem(
-                    sale_id=sale.id,
-                    lab_test_id=lab.id,
-                    description=lab.name,
-                    quantity=1,
-                    unit_price=lab.price,
-                    total_price=lab.price
-                )
-                db.session.add(sale_item)
-                total_amount += lab.price
+            if not lab:
+                continue
+            try:
+                lab_key = _lab_key(lab.id)
+            except Exception:
+                lab_key = None
+            if lab_key and lab_key in already_billed_lab_keys:
+                continue
+            sale_item = SaleItem(
+                sale_id=sale.id,
+                lab_test_id=lab.id,
+                description=lab.name,
+                individual_sale_number=lab_key,
+                quantity=1,
+                unit_price=lab.price,
+                total_price=lab.price
+            )
+            db.session.add(sale_item)
+            total_amount += lab.price
 
         # Add imaging tests (stored as description-only items to avoid schema changes)
+        try:
+            img_keys = [_img_key(iid) for iid in (imaging_ids or [])]
+            already_billed_img_keys: set[str] = set()
+            if img_keys:
+                rows = (
+                    db.session.query(SaleItem.individual_sale_number)
+                    .join(Sale, SaleItem.sale_id == Sale.id)
+                    .filter(Sale.patient_id == patient.id)
+                    .filter(SaleItem.individual_sale_number.in_(img_keys))
+                    .all()
+                )
+                already_billed_img_keys = {r[0] for r in rows if r and r[0]}
+        except Exception:
+            already_billed_img_keys = set()
+
         for imaging_id in imaging_ids:
             imaging_test = ImagingTest.query.get(imaging_id)
-            if imaging_test and imaging_test.is_active:
-                kwargs = {
-                    'sale_id': sale.id,
-                    'description': f"Imaging: {imaging_test.name}",
-                    'quantity': 1,
-                    'unit_price': imaging_test.price,
-                    'total_price': imaging_test.price,
-                }
-                if _sale_item_supports_imaging_test_id():
-                    kwargs['imaging_test_id'] = imaging_test.id
-                sale_item = SaleItem(**kwargs)
-                db.session.add(sale_item)
-                total_amount += imaging_test.price
+            if not imaging_test or not imaging_test.is_active:
+                continue
+            try:
+                img_key = _img_key(imaging_test.id)
+            except Exception:
+                img_key = None
+            if img_key and img_key in already_billed_img_keys:
+                continue
+            kwargs = {
+                'sale_id': sale.id,
+                'description': f"Imaging: {imaging_test.name}",
+                'individual_sale_number': img_key,
+                'quantity': 1,
+                'unit_price': imaging_test.price,
+                'total_price': imaging_test.price,
+            }
+            if _sale_item_supports_imaging_test_id():
+                kwargs['imaging_test_id'] = imaging_test.id
+            sale_item = SaleItem(**kwargs)
+            db.session.add(sale_item)
+            total_amount += imaging_test.price
 
         # Add ward stay (auto-updating daily based on assignment and last billed period)
         if include_ward_stay:
@@ -28604,7 +29119,13 @@ def create_bill():
                 # Ward stay is optional; do not break core billing flow.
                 pass
         
-        # Add dispensed prescriptions (respect selection if provided)
+        # Add dispensed prescriptions (incremental: avoid re-billing the same PrescriptionItem)
+        def _rx_key(item_id: int) -> str:
+            return f"RXITEM-{int(item_id)}"
+
+        def _crx_key(item_id: int) -> str:
+            return f"CRXITEM-{int(item_id)}"
+
         if prescription_item_ids:
             selected_items = (
                 db.session.query(PrescriptionItem)
@@ -28616,13 +29137,42 @@ def create_bill():
         else:
             selected_items = []
 
+        # Preload already-billed RX item keys for this patient.
+        try:
+            keys_to_check: list[str] = []
+            if selected_items:
+                keys_to_check = [_rx_key(i.id) for i in selected_items if getattr(i, 'id', None)]
+            else:
+                # We'll compute keys later for the fallback path.
+                keys_to_check = []
+
+            already_billed_rx_keys: set[str] = set()
+            if keys_to_check:
+                rows = (
+                    db.session.query(SaleItem.individual_sale_number)
+                    .join(Sale, SaleItem.sale_id == Sale.id)
+                    .filter(Sale.patient_id == patient.id)
+                    .filter(SaleItem.individual_sale_number.in_(keys_to_check))
+                    .all()
+                )
+                already_billed_rx_keys = {r[0] for r in rows if r and r[0]}
+        except Exception:
+            already_billed_rx_keys = set()
+
         if selected_items:
             for item in selected_items:
                 if item.status == 'dispensed' and item.drug:
+                    try:
+                        rx_key = _rx_key(item.id)
+                    except Exception:
+                        rx_key = None
+                    if rx_key and rx_key in already_billed_rx_keys:
+                        continue
                     sale_item = SaleItem(
                         sale_id=sale.id,
                         drug_id=item.drug.id,
                         description=f"{item.drug.name} - {item.dosage}",
+                        individual_sale_number=rx_key,
                         quantity=item.quantity,
                         unit_price=item.drug.selling_price,
                         total_price=item.drug.selling_price * item.quantity
@@ -28634,16 +29184,97 @@ def create_bill():
             for prescription in prescriptions:
                 for item in prescription.items:
                     if item.status == 'dispensed' and item.drug:
+                        try:
+                            rx_key = _rx_key(item.id)
+                        except Exception:
+                            rx_key = None
+                        if rx_key:
+                            # Check if already billed (query per-item; still safe for typical volumes)
+                            try:
+                                exists = (
+                                    db.session.query(SaleItem.id)
+                                    .join(Sale, SaleItem.sale_id == Sale.id)
+                                    .filter(Sale.patient_id == patient.id)
+                                    .filter(SaleItem.individual_sale_number == rx_key)
+                                    .first()
+                                )
+                                if exists:
+                                    continue
+                            except Exception:
+                                pass
                         sale_item = SaleItem(
                             sale_id=sale.id,
                             drug_id=item.drug.id,
                             description=f"{item.drug.name} - {item.dosage}",
+                            individual_sale_number=rx_key,
                             quantity=item.quantity,
                             unit_price=item.drug.selling_price,
                             total_price=item.drug.selling_price * item.quantity
                         )
                         db.session.add(sale_item)
                         total_amount += item.drug.selling_price * item.quantity
+
+        # Add dispensed controlled prescriptions (incremental: avoid re-billing the same ControlledPrescriptionItem)
+        # Note: SaleItem has no controlled_drug_id column; we bill as a description-only item.
+        if controlled_prescription_item_ids:
+            selected_citems = (
+                db.session.query(ControlledPrescriptionItem)
+                .join(ControlledPrescription, ControlledPrescriptionItem.controlled_prescription_id == ControlledPrescription.id)
+                .filter(ControlledPrescription.patient_id == patient.id)
+                .filter(ControlledPrescriptionItem.id.in_(controlled_prescription_item_ids))
+                .all()
+            )
+        else:
+            selected_citems = []
+
+        def _add_controlled_item(ci: 'ControlledPrescriptionItem'):
+            nonlocal total_amount
+            if getattr(ci, 'status', None) != 'dispensed':
+                return
+            drug = getattr(ci, 'controlled_drug', None)
+            if not drug:
+                return
+            try:
+                key = _crx_key(ci.id)
+            except Exception:
+                key = None
+            if key:
+                try:
+                    exists = (
+                        db.session.query(SaleItem.id)
+                        .join(Sale, SaleItem.sale_id == Sale.id)
+                        .filter(Sale.patient_id == patient.id)
+                        .filter(SaleItem.individual_sale_number == key)
+                        .first()
+                    )
+                    if exists:
+                        return
+                except Exception:
+                    pass
+
+            unit_price = float(getattr(drug, 'selling_price', 0) or 0)
+            qty = int(getattr(ci, 'quantity', 0) or 0)
+            if qty <= 0 or unit_price <= 0:
+                return
+            sale_item = SaleItem(
+                sale_id=sale.id,
+                description=f"Controlled: {drug.name} - {getattr(ci, 'dosage', '') or ''}".strip(),
+                individual_sale_number=key,
+                quantity=qty,
+                unit_price=unit_price,
+                total_price=unit_price * qty,
+            )
+            db.session.add(sale_item)
+            total_amount += unit_price * qty
+
+        if selected_citems:
+            for ci in selected_citems:
+                _add_controlled_item(ci)
+        else:
+            cprescriptions = ControlledPrescription.query.filter_by(patient_id=patient.id, status='dispensed').all()
+            for cp in cprescriptions:
+                for ci in (cp.items or []):
+                    _add_controlled_item(ci)
         
         # Update sale total
         sale.total_amount = total_amount
@@ -28661,7 +29292,7 @@ def create_bill():
             amount=total_amount,
             user_id=current_user.id,
             reference_id=sale.id,
-            notes=notes,
+            notes=combined_notes,
         )
         _maybe_set_transaction_meta(
             transaction,
@@ -28709,9 +29340,8 @@ def create_bill():
 @app.route('/receptionist/sale/<int:sale_id>/receipt')
 @login_required
 def receptionist_receipt(sale_id):
-    # Allow both receptionist and pharmacist to access
     user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
+    if user_role not in ('receptionist', 'admin'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
@@ -29409,6 +30039,84 @@ def api_patient_requested_services(patient_id: int):
     except Exception:
         # Never break UI; return empty.
         return jsonify([])
+
+
+@app.route('/api/services/search')
+@login_required
+def api_services_search():
+    q = (request.args.get('q') or '').strip()
+    limit = request.args.get('limit', 20, type=int)
+    limit = max(1, min(int(limit or 20), 50))
+
+    query = Service.query.filter_by(is_active=True)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(Service.name.ilike(like), Service.description.ilike(like)))
+
+    rows = query.order_by(Service.name).limit(limit).all()
+    return jsonify([
+        {
+            'id': s.id,
+            'name': s.name,
+            'price': float(s.price or 0),
+            'description': s.description,
+        }
+        for s in rows
+    ])
+
+
+@app.route('/api/doctor/patient/<int:patient_id>/requested-services', methods=['POST'])
+@login_required
+def api_doctor_add_requested_service(patient_id: int):
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('doctor', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    data = request.get_json(silent=True) if request.is_json else None
+    if isinstance(data, dict):
+        service_id = data.get('service_id')
+        notes = (data.get('notes') or '').strip() or None
+    else:
+        service_id = request.form.get('service_id')
+        notes = (request.form.get('notes') or '').strip() or None
+
+    try:
+        service_id_int = int(service_id)
+    except Exception:
+        return jsonify({'error': 'Invalid service'}), 400
+
+    service = Service.query.get(service_id_int)
+    if not service or not getattr(service, 'is_active', True):
+        return jsonify({'error': 'Service not found'}), 404
+
+    row = PatientService(
+        patient_id=patient.id,
+        service_id=service.id,
+        notes=notes,
+        status='requested',
+        requested_by=current_user.id,
+    )
+
+    try:
+        db.session.add(row)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'api_doctor_add_requested_service failed: {str(e)}', exc_info=True)
+        return jsonify({'error': 'Server error'}), 500
+
+    return jsonify({
+        'success': True,
+        'patient_service_id': row.id,
+        'service_id': row.service_id,
+        'service_name': service.name,
+        'status': row.status or 'requested',
+        'created_at': row.created_at.isoformat() if getattr(row, 'created_at', None) else None,
+    }), 201
 
 
 @app.route('/api/patient/<int:patient_id>/prescriptions')
@@ -31844,13 +32552,45 @@ def api_communication_users():
             # Get online status
             status = UserOnlineStatus.query.filter_by(user_id=user.id).first()
             is_online = status.is_online if status else False
+            last_seen = status.last_seen.isoformat() if (status and status.last_seen) else None
+
+            # Conversation settings + blocks (safe fallback if tables not created yet)
+            settings = None
+            blocked_by_me = False
+            blocked_me = False
+            try:
+                conversation = Conversation.query.filter(
+                    or_(
+                        and_(Conversation.user1_id == current_user.id, Conversation.user2_id == user.id),
+                        and_(Conversation.user1_id == user.id, Conversation.user2_id == current_user.id)
+                    )
+                ).first()
+
+                if conversation:
+                    settings = ConversationSettings.query.filter_by(
+                        user_id=current_user.id,
+                        conversation_id=conversation.id
+                    ).first()
+
+                blocked_by_me = BlockedUser.query.filter_by(blocker_id=current_user.id, blocked_id=user.id).first() is not None
+                blocked_me = BlockedUser.query.filter_by(blocker_id=user.id, blocked_id=current_user.id).first() is not None
+            except Exception:
+                settings = None
+                blocked_by_me = False
+                blocked_me = False
             
             users_data.append({
                 'id': user.id,
                 'username': user.username,
                 'role': user.role,
                 'is_online': is_online,
-                'unread_count': unread_count
+                'last_seen': last_seen,
+                'unread_count': unread_count,
+                'is_archived': bool(settings.is_archived) if settings else False,
+                'is_pinned': bool(settings.is_pinned) if settings else False,
+                'is_muted': bool(settings.is_muted) if settings else False,
+                'blocked_by_me': blocked_by_me,
+                'blocked_me': blocked_me
             })
         
         return jsonify({'success': True, 'users': users_data})
@@ -31884,18 +32624,95 @@ def api_communication_conversation(other_user_id):
         
         # Get messages
         messages = Message.query.filter_by(conversation_id=conversation.id).order_by(Message.created_at).all()
-        
+
         messages_data = []
-        for msg in messages:
-            messages_data.append({
-                'message_id': msg.message_id,
-                'sender_id': msg.sender_id,
-                'recipient_id': msg.recipient_id,
-                'content': msg.content,
-                'is_delivered': msg.is_delivered,
-                'is_read': msg.is_read,
-                'created_at': msg.created_at.isoformat()
-            })
+        try:
+            message_ids = [m.message_id for m in messages]
+
+            deletions = set(
+                d.message_id for d in MessageDeletion.query.filter(MessageDeletion.message_id.in_(message_ids)).all()
+            ) if message_ids else set()
+
+            edit_counts = {}
+            if message_ids:
+                for mid, cnt in (
+                    db.session.query(MessageEdit.message_id, db.func.count(MessageEdit.id))
+                    .filter(MessageEdit.message_id.in_(message_ids))
+                    .group_by(MessageEdit.message_id)
+                    .all()
+                ):
+                    edit_counts[mid] = int(cnt)
+
+            starred = set(
+                s.message_id for s in MessageStar.query.filter(
+                    MessageStar.user_id == current_user.id,
+                    MessageStar.message_id.in_(message_ids)
+                ).all()
+            ) if message_ids else set()
+
+            reply_map = {}
+            if message_ids:
+                for r in MessageReply.query.filter(MessageReply.message_id.in_(message_ids)).all():
+                    reply_map[r.message_id] = r.replied_to_message_id
+
+            replied_to_ids = list({v for v in reply_map.values() if v})
+            replied_to_lookup = {}
+            if replied_to_ids:
+                for m in Message.query.filter(Message.message_id.in_(replied_to_ids)).all():
+                    replied_to_lookup[m.message_id] = {
+                        'message_id': m.message_id,
+                        'sender_id': m.sender_id,
+                        'content': (m.content or '')[:280]
+                    }
+
+            reactions_map = {}
+            my_reaction_map = {}
+            if message_ids:
+                for r in MessageReaction.query.filter(MessageReaction.message_id.in_(message_ids)).all():
+                    reactions_map.setdefault(r.message_id, {})
+                    reactions_map[r.message_id][r.emoji] = reactions_map[r.message_id].get(r.emoji, 0) + 1
+                    if r.user_id == current_user.id:
+                        my_reaction_map[r.message_id] = r.emoji
+
+            for msg in messages:
+                is_deleted = msg.message_id in deletions
+                emoji_counts = reactions_map.get(msg.message_id, {})
+                reactions_list = [{'emoji': e, 'count': c} for (e, c) in emoji_counts.items()]
+
+                messages_data.append({
+                    'message_id': msg.message_id,
+                    'sender_id': msg.sender_id,
+                    'recipient_id': msg.recipient_id,
+                    'content': '' if is_deleted else msg.content,
+                    'is_deleted': is_deleted,
+                    'is_delivered': msg.is_delivered,
+                    'is_read': msg.is_read,
+                    'is_edited': bool(edit_counts.get(msg.message_id, 0)),
+                    'edit_count': int(edit_counts.get(msg.message_id, 0) or 0),
+                    'is_starred': msg.message_id in starred,
+                    'replied_to': replied_to_lookup.get(reply_map.get(msg.message_id)),
+                    'reactions': reactions_list,
+                    'my_reaction': my_reaction_map.get(msg.message_id),
+                    'created_at': msg.created_at.isoformat()
+                })
+        except Exception:
+            for msg in messages:
+                messages_data.append({
+                    'message_id': msg.message_id,
+                    'sender_id': msg.sender_id,
+                    'recipient_id': msg.recipient_id,
+                    'content': msg.content,
+                    'is_deleted': False,
+                    'is_delivered': msg.is_delivered,
+                    'is_read': msg.is_read,
+                    'is_edited': False,
+                    'edit_count': 0,
+                    'is_starred': False,
+                    'replied_to': None,
+                    'reactions': [],
+                    'my_reaction': None,
+                    'created_at': msg.created_at.isoformat()
+                })
         
         return jsonify({
             'success': True,
@@ -31919,9 +32736,13 @@ def api_communication_send_message():
         data = request.get_json()
         receiver_id = data.get('receiver_id')
         content = data.get('content')
+        reply_to_message_id = data.get('reply_to_message_id')
         
         if not receiver_id or not content:
             return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+        if _is_blocked(current_user.id, receiver_id):
+            return jsonify({'success': False, 'error': 'Messaging is blocked between these users'}), 403
         
         # Find or create conversation
         conversation = Conversation.query.filter(
@@ -31946,7 +32767,24 @@ def api_communication_send_message():
             recipient_id=receiver_id,
             content=content
         )
+        # Ensure message_id exists before we create dependent rows (e.g., replies).
+        # SQLAlchemy Column defaults may not populate until flush/insert.
+        if not getattr(message, 'message_id', None):
+            message.message_id = str(uuid.uuid4())
+
         db.session.add(message)
+        db.session.flush()
+
+        replied_to_payload = None
+        if reply_to_message_id:
+            replied_to = Message.query.filter_by(message_id=reply_to_message_id, conversation_id=conversation.id).first()
+            if replied_to and message.message_id:
+                db.session.add(MessageReply(message_id=message.message_id, replied_to_message_id=reply_to_message_id))
+                replied_to_payload = {
+                    'message_id': replied_to.message_id,
+                    'sender_id': replied_to.sender_id,
+                    'content': (replied_to.content or '')[:280]
+                }
         
         # Update conversation last message time
         conversation.last_message_at = get_eat_now()
@@ -31960,8 +32798,15 @@ def api_communication_send_message():
                 'sender_id': message.sender_id,
                 'recipient_id': message.recipient_id,
                 'content': message.content,
+                'is_deleted': False,
                 'is_delivered': message.is_delivered,
                 'is_read': message.is_read,
+                'is_edited': False,
+                'edit_count': 0,
+                'is_starred': False,
+                'replied_to': replied_to_payload,
+                'reactions': [],
+                'my_reaction': None,
                 'created_at': message.created_at.isoformat()
             }
         })
@@ -32033,6 +32878,301 @@ def api_communication_unread_count():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/communication/search', methods=['GET'])
+@login_required
+def api_communication_search():
+    """Search messages in a 1:1 conversation."""
+    try:
+        q = (request.args.get('q') or '').strip()
+        other_user_id = request.args.get('other_user_id', type=int)
+
+        if not q or not other_user_id:
+            return jsonify({'success': False, 'error': 'Missing q or other_user_id'}), 400
+
+        conversation = Conversation.query.filter(
+            or_(
+                and_(Conversation.user1_id == current_user.id, Conversation.user2_id == other_user_id),
+                and_(Conversation.user1_id == other_user_id, Conversation.user2_id == current_user.id)
+            )
+        ).first()
+
+        if not conversation:
+            return jsonify({'success': True, 'messages': []})
+
+        base_q = Message.query.filter_by(conversation_id=conversation.id)
+        base_q = base_q.filter(Message.content.ilike(f"%{q}%"))
+        base_q = base_q.order_by(Message.created_at.desc()).limit(50)
+        results = base_q.all()
+
+        deletions = set(
+            d.message_id for d in MessageDeletion.query.filter(
+                MessageDeletion.message_id.in_([m.message_id for m in results])
+            ).all()
+        ) if results else set()
+
+        payload = []
+        for m in results:
+            if m.message_id in deletions:
+                continue
+            payload.append({
+                'message_id': m.message_id,
+                'sender_id': m.sender_id,
+                'recipient_id': m.recipient_id,
+                'content': m.content,
+                'created_at': m.created_at.isoformat(),
+            })
+
+        return jsonify({'success': True, 'messages': payload})
+    except Exception as e:
+        app.logger.error(f"Error searching messages: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/message/<string:message_id>/edit', methods=['POST'])
+@login_required
+def api_communication_edit_message(message_id: str):
+    """Edit a message (sender only) and store history."""
+    try:
+        data = request.get_json() or {}
+        new_content = (data.get('content') or '').strip()
+        if not new_content:
+            return jsonify({'success': False, 'error': 'Missing content'}), 400
+
+        msg = Message.query.filter_by(message_id=message_id).first()
+        if not msg:
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+
+        if msg.sender_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Not allowed'}), 403
+
+        if MessageDeletion.query.filter_by(message_id=message_id).first():
+            return jsonify({'success': False, 'error': 'Message is deleted'}), 400
+
+        old = msg.content or ''
+        if old == new_content:
+            return jsonify({'success': True, 'message': {'message_id': msg.message_id, 'content': msg.content, 'is_edited': True}})
+
+        db.session.add(MessageEdit(
+            message_id=msg.message_id,
+            editor_id=current_user.id,
+            old_content=old,
+            new_content=new_content
+        ))
+        msg.content = new_content
+        db.session.commit()
+
+        return jsonify({'success': True, 'message': {'message_id': msg.message_id, 'content': msg.content, 'is_edited': True}})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error editing message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/message/<string:message_id>/delete', methods=['POST'])
+@login_required
+def api_communication_delete_message(message_id: str):
+    """Delete a message for everyone (sender only)."""
+    try:
+        msg = Message.query.filter_by(message_id=message_id).first()
+        if not msg:
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+
+        if msg.sender_id != current_user.id:
+            return jsonify({'success': False, 'error': 'Not allowed'}), 403
+
+        existing = MessageDeletion.query.filter_by(message_id=message_id).first()
+        if existing:
+            return jsonify({'success': True, 'deleted': True})
+
+        db.session.add(MessageDeletion(
+            message_id=message_id,
+            deleted_by_user_id=current_user.id,
+            scope='everyone'
+        ))
+        db.session.commit()
+        return jsonify({'success': True, 'deleted': True})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/message/<string:message_id>/react', methods=['POST'])
+@login_required
+def api_communication_react_message(message_id: str):
+    """Set/clear a reaction for the current user on a message."""
+    try:
+        data = request.get_json() or {}
+        emoji = (data.get('emoji') or '').strip()
+        if not emoji:
+            return jsonify({'success': False, 'error': 'Missing emoji'}), 400
+
+        msg = Message.query.filter_by(message_id=message_id).first()
+        if not msg:
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+
+        # Ensure participant
+        if current_user.id not in (msg.sender_id, msg.recipient_id):
+            return jsonify({'success': False, 'error': 'Not allowed'}), 403
+
+        existing = MessageReaction.query.filter_by(message_id=message_id, user_id=current_user.id).first()
+        if existing and existing.emoji == emoji:
+            db.session.delete(existing)
+            db.session.commit()
+            return jsonify({'success': True, 'my_reaction': None})
+
+        if existing:
+            existing.emoji = emoji
+        else:
+            db.session.add(MessageReaction(message_id=message_id, user_id=current_user.id, emoji=emoji))
+
+        db.session.commit()
+        return jsonify({'success': True, 'my_reaction': emoji})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error reacting to message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/message/<string:message_id>/star', methods=['POST'])
+@login_required
+def api_communication_star_message(message_id: str):
+    """Toggle star (favorite) for the current user on a message."""
+    try:
+        msg = Message.query.filter_by(message_id=message_id).first()
+        if not msg:
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+
+        if current_user.id not in (msg.sender_id, msg.recipient_id):
+            return jsonify({'success': False, 'error': 'Not allowed'}), 403
+
+        existing = MessageStar.query.filter_by(message_id=message_id, user_id=current_user.id).first()
+        if existing:
+            db.session.delete(existing)
+            db.session.commit()
+            return jsonify({'success': True, 'is_starred': False})
+
+        db.session.add(MessageStar(message_id=message_id, user_id=current_user.id))
+        db.session.commit()
+        return jsonify({'success': True, 'is_starred': True})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error starring message: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/user/<int:user_id>/block', methods=['POST'])
+@login_required
+def api_communication_block_user(user_id: int):
+    """Toggle block/unblock for a user."""
+    try:
+        if user_id == current_user.id:
+            return jsonify({'success': False, 'error': 'Cannot block yourself'}), 400
+
+        target = User.query.get(user_id)
+        if not target or not getattr(target, 'is_active', True):
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+
+        existing = BlockedUser.query.filter_by(blocker_id=current_user.id, blocked_id=user_id).first()
+        if existing:
+            db.session.delete(existing)
+            db.session.commit()
+            return jsonify({'success': True, 'blocked': False})
+
+        db.session.add(BlockedUser(blocker_id=current_user.id, blocked_id=user_id))
+        db.session.commit()
+        return jsonify({'success': True, 'blocked': True})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error toggling block: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/conversation/<int:other_user_id>/settings', methods=['POST'])
+@login_required
+def api_communication_conversation_settings(other_user_id: int):
+    """Update conversation settings for current user (mute/archive/pin)."""
+    try:
+        data = request.get_json() or {}
+
+        conversation = Conversation.query.filter(
+            or_(
+                and_(Conversation.user1_id == current_user.id, Conversation.user2_id == other_user_id),
+                and_(Conversation.user1_id == other_user_id, Conversation.user2_id == current_user.id)
+            )
+        ).first()
+
+        if not conversation:
+            conversation = Conversation(user1_id=current_user.id, user2_id=other_user_id)
+            db.session.add(conversation)
+            db.session.flush()
+
+        settings = ConversationSettings.query.filter_by(user_id=current_user.id, conversation_id=conversation.id).first()
+        if not settings:
+            settings = ConversationSettings(user_id=current_user.id, conversation_id=conversation.id)
+            db.session.add(settings)
+
+        if 'is_muted' in data:
+            settings.is_muted = bool(data.get('is_muted'))
+        if 'is_archived' in data:
+            settings.is_archived = bool(data.get('is_archived'))
+        if 'is_pinned' in data:
+            settings.is_pinned = bool(data.get('is_pinned'))
+            settings.pinned_at = get_eat_now() if settings.is_pinned else None
+
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'settings': {
+                'is_muted': bool(settings.is_muted),
+                'is_archived': bool(settings.is_archived),
+                'is_pinned': bool(settings.is_pinned),
+            }
+        })
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error updating conversation settings: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/calls/history', methods=['GET'])
+@login_required
+def api_communication_calls_history():
+    """Get call history for current user."""
+    try:
+        rows = (
+            CallLog.query.filter(
+                or_(CallLog.caller_id == current_user.id, CallLog.receiver_id == current_user.id)
+            )
+            .order_by(CallLog.started_at.desc())
+            .limit(100)
+            .all()
+        )
+
+        payload = []
+        for c in rows:
+            other_user_id = c.receiver_id if c.caller_id == current_user.id else c.caller_id
+            other_user = User.query.get(other_user_id)
+            payload.append({
+                'call_id': c.call_id,
+                'call_type': c.call_type,
+                'call_status': c.call_status,
+                'started_at': c.started_at.isoformat() if c.started_at else None,
+                'answered_at': c.answered_at.isoformat() if c.answered_at else None,
+                'ended_at': c.ended_at.isoformat() if c.ended_at else None,
+                'duration_seconds': int(c.duration_seconds or 0),
+                'other_user_id': other_user_id,
+                'other_user_name': getattr(other_user, 'username', None) if other_user else None,
+                'direction': 'outgoing' if c.caller_id == current_user.id else 'incoming',
+            })
+
+        return jsonify({'success': True, 'calls': payload})
+    except Exception as e:
+        app.logger.error(f"Error fetching call history: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/communication/initiate_call', methods=['POST'])
 @login_required
 def api_communication_initiate_call():
@@ -32044,6 +33184,9 @@ def api_communication_initiate_call():
         
         if not receiver_id or not call_type:
             return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+        if _is_blocked(current_user.id, receiver_id):
+            return jsonify({'success': False, 'error': 'Calling is blocked between these users'}), 403
         
         # Create call log
         call_log = CallLog(
@@ -32153,6 +33296,36 @@ def api_communication_end_call():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/communication/ice_servers', methods=['GET'])
+@login_required
+def api_communication_ice_servers():
+    """Return ICE server configuration for WebRTC (STUN + optional TURN).
+
+    Note: TURN credentials must be sent to the browser to function.
+    """
+    try:
+        ice_servers = [
+            {'urls': 'stun:stun.l.google.com:19302'},
+            {'urls': 'stun:stun1.l.google.com:19302'},
+        ]
+
+        turn_url = os.getenv('TURN_SERVER_URL')
+        turn_username = os.getenv('TURN_USERNAME')
+        turn_credential = os.getenv('TURN_CREDENTIAL')
+
+        if turn_url and turn_username and turn_credential:
+            ice_servers.append({
+                'urls': turn_url,
+                'username': turn_username,
+                'credential': turn_credential,
+            })
+
+        return jsonify({'success': True, 'ice_servers': ice_servers})
+    except Exception as e:
+        app.logger.error(f"Error building ICE servers config: {str(e)}")
+        return jsonify({'success': False, 'error': str(e), 'ice_servers': []}), 500
+
+
 # Socket.IO Event Handlers
 from flask_socketio import emit, join_room, leave_room
 
@@ -32182,7 +33355,8 @@ def handle_disconnect():
         # Notify others about status change
         socketio.emit('user_status_update', {
             'user_id': user_id,
-            'is_online': False
+            'is_online': False,
+            'last_seen': status.last_seen.isoformat() if (status and status.last_seen) else None
         }, skip_sid=request.sid)
         
         del active_sockets[request.sid]
@@ -32214,7 +33388,8 @@ def handle_user_connected(data):
     # Notify others about status change
     socketio.emit('user_status_update', {
         'user_id': user_id,
-        'is_online': True
+        'is_online': True,
+        'last_seen': status.last_seen.isoformat() if (status and status.last_seen) else None
     }, skip_sid=request.sid)
 
 

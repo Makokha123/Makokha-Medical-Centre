@@ -71,11 +71,11 @@
                     <div class="widget-body">
                         <div class="widget-item">
                             <span class="widget-label">Today's Sales:</span>
-                            <span class="widget-value">${{ "%.2f"|format(today_sales) }}</span>
+                            <span class="widget-value">KSH {{ "%.2f"|format(today_sales) }}</span>
                         </div>
                         <div class="widget-item">
                             <span class="widget-label">Outstanding Bills:</span>
-                            <span class="widget-value">${{ "%.2f"|format(outstanding_bills) }}</span>
+                            <span class="widget-value">KSH {{ "%.2f"|format(outstanding_bills) }}</span>
                         </div>
                     </div>
                 </div>
@@ -159,7 +159,7 @@
                                     Walk-in Customer
                                 {% endif %}
                             </td>
-                            <td>${{ "%.2f"|format(sale.total_amount) }}</td>
+                            <td>KSH {{ "%.2f"|format(sale.total_amount) }}</td>
                             <td>{{ sale.payment_method|capitalize if sale.payment_method else 'Cash' }}</td>
                             <td>
                                 <span class="status-badge completed">

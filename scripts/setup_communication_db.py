@@ -51,6 +51,16 @@ def setup_communication_database():
             
             # Conversation settings indexes
             "CREATE INDEX IF NOT EXISTS idx_conversation_settings_user ON conversation_settings(user_id, conversation_id)",
+
+            # Advanced message feature indexes
+            "CREATE INDEX IF NOT EXISTS idx_message_edits_message ON message_edits(message_id, edited_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)",
+            "CREATE INDEX IF NOT EXISTS idx_message_reactions_user ON message_reactions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_message_stars_user ON message_stars(user_id, starred_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_message_stars_message ON message_stars(message_id)",
+            "CREATE INDEX IF NOT EXISTS idx_message_deletions_message ON message_deletions(message_id)",
+            "CREATE INDEX IF NOT EXISTS idx_message_replies_message ON message_replies(message_id)",
+            "CREATE INDEX IF NOT EXISTS idx_message_replies_target ON message_replies(replied_to_message_id)",
         ]
         
         for idx_sql in indexes:

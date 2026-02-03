@@ -20,6 +20,20 @@ class CommunicationSystem {
         this.callDurationInterval = null;
         this.typingTimeout = null;
         this.eatTimezone = 'Africa/Nairobi'; // EAT timezone
+
+        // Audio (ringtones) + WebRTC configuration
+        this._audioContext = null;
+        this._toneStopFn = null;
+        this._iceServersCache = null;
+        this._callRole = null; // 'caller' | 'callee'
+
+        // Messaging UX state
+        this._messageCache = new Map();
+        this._replyToMessageId = null;
+        this._isChatBlocked = false;
+        this._emojiPickerEl = null;
+        this._messageActionsEl = null;
+        this._chatSettingsEl = null;
         
         this.init();
     }
@@ -45,6 +59,32 @@ class CommunicationSystem {
         
         // Request notification permission
         this.requestNotificationPermission();
+
+        // Prepare audio context on first user gesture (autoplay policies)
+        this.armAudioOnFirstGesture();
+    }
+
+    armAudioOnFirstGesture() {
+        const enable = () => {
+            try {
+                if (!this._audioContext) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtx) this._audioContext = new AudioCtx();
+                }
+                if (this._audioContext && this._audioContext.state === 'suspended') {
+                    this._audioContext.resume().catch(() => {});
+                }
+            } catch (_) {
+                // no-op
+            }
+            document.removeEventListener('click', enable, true);
+            document.removeEventListener('touchstart', enable, true);
+            document.removeEventListener('keydown', enable, true);
+        };
+
+        document.addEventListener('click', enable, true);
+        document.addEventListener('touchstart', enable, true);
+        document.addEventListener('keydown', enable, true);
     }
 
     getCurrentUserId() {
@@ -204,6 +244,11 @@ class CommunicationSystem {
         if (endCallBtn) {
             endCallBtn.addEventListener('click', () => this.endCall());
         }
+
+        const cancelCallBtn = document.getElementById('cancel-call-btn');
+        if (cancelCallBtn) {
+            cancelCallBtn.addEventListener('click', () => this.endCall());
+        }
         
         if (muteBtn) {
             muteBtn.addEventListener('click', () => this.toggleMute());
@@ -211,6 +256,55 @@ class CommunicationSystem {
         
         if (toggleVideoBtn) {
             toggleVideoBtn.addEventListener('click', () => this.toggleVideo());
+        }
+
+        const emojiBtn = document.getElementById('emoji-btn');
+        if (emojiBtn) {
+            emojiBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleEmojiPicker(emojiBtn);
+            });
+        }
+
+        const replyCancelBtn = document.getElementById('reply-cancel-btn');
+        if (replyCancelBtn) {
+            replyCancelBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.clearReply();
+            });
+        }
+
+        const chatSearchBtn = document.getElementById('chat-search-btn');
+        const chatSearchClose = document.getElementById('chat-search-close');
+        if (chatSearchBtn) {
+            chatSearchBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleChatSearch(true);
+            });
+        }
+        if (chatSearchClose) {
+            chatSearchClose.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleChatSearch(false);
+            });
+        }
+
+        const chatSearchInput = document.getElementById('chat-search-input');
+        if (chatSearchInput) {
+            let searchTimer = null;
+            chatSearchInput.addEventListener('input', () => {
+                if (!this.activeChatUserId) return;
+                if (searchTimer) clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => this.searchMessages(chatSearchInput.value), 300);
+            });
+        }
+
+        const chatSettingsBtn = document.getElementById('chat-settings-btn');
+        if (chatSettingsBtn) {
+            chatSettingsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleChatSettings(chatSettingsBtn);
+            });
         }
 
         // Mobile responsive handlers
@@ -330,20 +424,34 @@ class CommunicationSystem {
             return;
         }
         
-        users.forEach(user => {
+        const sortedUsers = [...users].sort((a, b) => {
+            const ap = a.is_pinned ? 1 : 0;
+            const bp = b.is_pinned ? 1 : 0;
+            if (ap !== bp) return bp - ap;
+            const au = a.unread_count || 0;
+            const bu = b.unread_count || 0;
+            if (au !== bu) return bu - au;
+            return String(a.username || '').localeCompare(String(b.username || ''));
+        });
+
+        sortedUsers.forEach(user => {
             const userItem = document.createElement('div');
             userItem.className = 'user-item';
             userItem.dataset.userId = user.id;
             
             const onlineBadge = user.is_online ? '<span class="online-badge"></span>' : '';
             
+            const pinBadge = user.is_pinned ? '<span class="badge bg-warning text-dark ms-2">Pinned</span>' : '';
+            const archivedBadge = user.is_archived ? '<span class="badge bg-secondary ms-2">Archived</span>' : '';
+            const blockedBadge = (user.blocked_by_me || user.blocked_me) ? '<span class="badge bg-danger ms-2">Blocked</span>' : '';
+
             userItem.innerHTML = `
                 <div class="user-avatar">
                     <i class="bi bi-person-circle"></i>
                     ${onlineBadge}
                 </div>
                 <div class="user-info">
-                    <div class="user-name">${this.escapeHtml(user.username)}</div>
+                    <div class="user-name">${this.escapeHtml(user.username)}${pinBadge}${archivedBadge}${blockedBadge}</div>
                     <div class="user-role">${this.escapeHtml(user.role)}</div>
                 </div>
                 ${user.unread_count > 0 ? `<span class="unread-badge">${user.unread_count}</span>` : ''}
@@ -373,6 +481,8 @@ class CommunicationSystem {
     async openChat(user) {
         this.activeChatUserId = user.id;
         this.currentUser = user;
+        this._isChatBlocked = !!(user.blocked_by_me || user.blocked_me);
+        this.clearReply();
         
         // Hide users list on mobile
         this.hideUsersList();
@@ -387,8 +497,20 @@ class CommunicationSystem {
         // Update chat header
         document.getElementById('chat-user-name').textContent = user.username;
         const statusElement = document.getElementById('chat-user-status');
-        statusElement.textContent = user.is_online ? 'online' : 'offline';
-        statusElement.className = user.is_online ? 'text-success' : 'text-muted';
+        if (statusElement) {
+            if (user.is_online) {
+                statusElement.textContent = 'online';
+                statusElement.className = 'text-success';
+            } else if (user.last_seen) {
+                statusElement.textContent = `last seen ${this.formatDateTimeEAT(user.last_seen)}`;
+                statusElement.className = 'text-muted';
+            } else {
+                statusElement.textContent = 'offline';
+                statusElement.className = 'text-muted';
+            }
+        }
+
+        this.applyChatBlockedUI();
         
         // Mark user item as active
         document.querySelectorAll('.user-item').forEach(item => {
@@ -451,6 +573,10 @@ class CommunicationSystem {
     appendMessage(message, scrollToBottom = true) {
         const messagesContainer = document.getElementById('messages-container');
         if (!messagesContainer) return;
+
+        if (message && message.message_id) {
+            this._messageCache.set(message.message_id, message);
+        }
         
         const isSent = message.sender_id === this.currentUserId;
         const messageDiv = document.createElement('div');
@@ -475,15 +601,37 @@ class CommunicationSystem {
             }
         }
         
+        const deletedText = '<em class="text-muted">This message was deleted</em>';
+        const repliedTo = message.replied_to ? `
+            <div class="message-reply-preview">
+                <div class="reply-snippet">${this.escapeHtml(message.replied_to.content || '')}</div>
+            </div>
+        ` : '';
+
+        const reactionsHtml = (message.reactions && message.reactions.length) ? `
+            <div class="message-reactions">
+                ${message.reactions.map(r => `<span class="reaction-chip">${this.escapeHtml(r.emoji)} ${r.count}</span>`).join('')}
+            </div>
+        ` : '';
+
+        const editedLabel = message.is_edited ? '<span class="message-edited">edited</span>' : '';
+        const starLabel = message.is_starred ? '<i class="bi bi-star-fill message-star" title="Starred"></i>' : '';
+
         messageDiv.innerHTML = `
             <div class="message-bubble">
-                <div class="message-content">${this.escapeHtml(message.content)}</div>
+                ${repliedTo}
+                <div class="message-content">${message.is_deleted ? deletedText : this.escapeHtml(message.content)}</div>
+                ${reactionsHtml}
                 <div class="message-time">
+                    ${editedLabel}
+                    ${starLabel}
                     ${time}
                     ${tickMarks}
                 </div>
             </div>
         `;
+
+        this.attachMessageInteractionHandlers(messageDiv);
         
         messagesContainer.appendChild(messageDiv);
         
@@ -498,6 +646,10 @@ class CommunicationSystem {
         
         const content = messageInput.value.trim();
         if (!content || !this.activeChatUserId) return;
+        if (this._isChatBlocked) {
+            this.showError('You cannot message this user (blocked).');
+            return;
+        }
         
         try {
             const response = await fetch('/api/communication/send_message', {
@@ -508,7 +660,8 @@ class CommunicationSystem {
                 },
                 body: JSON.stringify({
                     receiver_id: this.activeChatUserId,
-                    content: content
+                    content: content,
+                    reply_to_message_id: this._replyToMessageId
                 })
             });
             
@@ -520,6 +673,14 @@ class CommunicationSystem {
             
             // Clear input
             messageInput.value = '';
+
+            // Clear reply state
+            this.clearReply();
+
+            // Append immediately for sender
+            if (data && data.message) {
+                this.appendMessage(data.message);
+            }
             
             // Emit socket event for real-time delivery
             this.socket.emit('send_message', {
@@ -634,11 +795,6 @@ class CommunicationSystem {
         }
     }
 
-    handleMessageRead(data) {
-        // Update UI to show message as read
-        console.log('Message read:', data);
-    }
-
     handleUserStatusUpdate(data) {
         // Update user status in the list
         const userItem = document.querySelector(`.user-item[data-user-id="${data.user_id}"]`);
@@ -661,9 +817,531 @@ class CommunicationSystem {
         if (this.activeChatUserId === data.user_id) {
             const statusElement = document.getElementById('chat-user-status');
             if (statusElement) {
-                statusElement.textContent = data.is_online ? 'online' : 'offline';
-                statusElement.className = data.is_online ? 'text-success' : 'text-muted';
+                if (data.is_online) {
+                    statusElement.textContent = 'online';
+                    statusElement.className = 'text-success';
+                } else if (data.last_seen) {
+                    statusElement.textContent = `last seen ${this.formatDateTimeEAT(data.last_seen)}`;
+                    statusElement.className = 'text-muted';
+                } else {
+                    statusElement.textContent = 'offline';
+                    statusElement.className = 'text-muted';
+                }
             }
+        }
+    }
+
+    applyChatBlockedUI() {
+        const messageInput = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-message-btn');
+        const voiceBtn = document.getElementById('voice-call-btn');
+        const videoBtn = document.getElementById('video-call-btn');
+
+        if (messageInput) messageInput.disabled = this._isChatBlocked;
+        if (sendBtn) sendBtn.disabled = this._isChatBlocked;
+        if (voiceBtn) voiceBtn.disabled = this._isChatBlocked;
+        if (videoBtn) videoBtn.disabled = this._isChatBlocked;
+
+        if (messageInput) {
+            messageInput.placeholder = this._isChatBlocked ? 'Messaging disabled (blocked)' : 'Type a message...';
+        }
+    }
+
+    attachMessageInteractionHandlers(messageDiv) {
+        const messageId = messageDiv.dataset.messageId;
+        if (!messageId) return;
+
+        // Desktop: right-click
+        messageDiv.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.openMessageActions(messageId, e.clientX, e.clientY);
+        });
+
+        // Desktop: double click
+        messageDiv.addEventListener('dblclick', (e) => {
+            this.openMessageActions(messageId, e.clientX, e.clientY);
+        });
+
+        // Mobile/tablet: long press
+        let pressTimer = null;
+        messageDiv.addEventListener('touchstart', (e) => {
+            if (!e.touches || !e.touches[0]) return;
+            const t = e.touches[0];
+            pressTimer = setTimeout(() => {
+                this.openMessageActions(messageId, t.clientX, t.clientY);
+            }, 500);
+        }, { passive: true });
+        messageDiv.addEventListener('touchend', () => {
+            if (pressTimer) clearTimeout(pressTimer);
+        });
+        messageDiv.addEventListener('touchmove', () => {
+            if (pressTimer) clearTimeout(pressTimer);
+        });
+    }
+
+    openMessageActions(messageId, x, y) {
+        const message = this._messageCache.get(messageId);
+        if (!message) return;
+        if (message.is_deleted) return;
+
+        if (!this._messageActionsEl) {
+            const el = document.createElement('div');
+            el.id = 'message-actions-popover';
+            el.style.position = 'fixed';
+            el.style.zIndex = '10001';
+            el.style.minWidth = '220px';
+            el.style.background = '#fff';
+            el.style.border = '1px solid rgba(0,0,0,0.12)';
+            el.style.borderRadius = '10px';
+            el.style.boxShadow = '0 8px 24px rgba(0,0,0,0.18)';
+            el.style.padding = '10px';
+            el.style.display = 'none';
+            document.body.appendChild(el);
+            this._messageActionsEl = el;
+
+            document.addEventListener('click', (e) => {
+                if (this._messageActionsEl && this._messageActionsEl.style.display === 'block') {
+                    if (!this._messageActionsEl.contains(e.target)) {
+                        this._messageActionsEl.style.display = 'none';
+                    }
+                }
+            });
+        }
+
+        const isSent = message.sender_id === this.currentUserId;
+        const buttons = [];
+
+        buttons.push({ label: 'Reply', action: () => this.setReplyTo(message) });
+        buttons.push({ label: message.is_starred ? 'Unstar' : 'Star', action: () => this.toggleStar(messageId) });
+
+        if (isSent) {
+            buttons.push({ label: 'Edit', action: () => this.editMessage(messageId) });
+            buttons.push({ label: 'Delete', action: () => this.deleteMessage(messageId) });
+        }
+
+        const emojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+        this._messageActionsEl.innerHTML = `
+            <div style="font-weight:600; font-size:13px; margin-bottom:8px;">Message</div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">
+                ${emojis.map(e => `<button type="button" class="btn btn-sm btn-outline-secondary" data-emoji="${this.escapeHtml(e)}">${this.escapeHtml(e)}</button>`).join('')}
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+                ${buttons.map((b, idx) => `<button type="button" class="btn btn-sm btn-light text-start" data-action-idx="${idx}">${this.escapeHtml(b.label)}</button>`).join('')}
+            </div>
+        `;
+
+        // Bind emoji buttons
+        this._messageActionsEl.querySelectorAll('button[data-emoji]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const emoji = e.currentTarget.getAttribute('data-emoji');
+                this.reactToMessage(messageId, emoji);
+                this._messageActionsEl.style.display = 'none';
+            });
+        });
+
+        // Bind action buttons
+        this._messageActionsEl.querySelectorAll('button[data-action-idx]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const idx = parseInt(e.currentTarget.getAttribute('data-action-idx'));
+                const b = buttons[idx];
+                if (b && b.action) b.action();
+                this._messageActionsEl.style.display = 'none';
+            });
+        });
+
+        const margin = 8;
+        const w = 240;
+        const h = 220;
+        const left = Math.max(margin, Math.min(x, window.innerWidth - w - margin));
+        const top = Math.max(margin, Math.min(y, window.innerHeight - h - margin));
+        this._messageActionsEl.style.left = `${left}px`;
+        this._messageActionsEl.style.top = `${top}px`;
+        this._messageActionsEl.style.display = 'block';
+    }
+
+    setReplyTo(message) {
+        this._replyToMessageId = message.message_id;
+        const preview = document.getElementById('reply-preview');
+        const text = document.getElementById('reply-preview-text');
+        if (preview && text) {
+            text.textContent = (message.content || '').slice(0, 160);
+            preview.style.display = 'flex';
+        }
+    }
+
+    clearReply() {
+        this._replyToMessageId = null;
+        const preview = document.getElementById('reply-preview');
+        if (preview) preview.style.display = 'none';
+    }
+
+    async editMessage(messageId) {
+        const msg = this._messageCache.get(messageId);
+        if (!msg) return;
+        const next = prompt('Edit message:', msg.content || '');
+        if (next === null) return;
+
+        try {
+            const response = await fetch(`/api/communication/message/${messageId}/edit`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                body: JSON.stringify({ content: next })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Failed to edit message');
+            }
+
+            msg.content = data.message.content;
+            msg.is_edited = true;
+            this._messageCache.set(messageId, msg);
+            this.updateMessageElement(messageId);
+        } catch (e) {
+            console.error('Edit message failed:', e);
+            this.showError('Failed to edit message');
+        }
+    }
+
+    async deleteMessage(messageId) {
+        if (!confirm('Delete this message for everyone?')) return;
+        try {
+            const response = await fetch(`/api/communication/message/${messageId}/delete`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': this.getCSRFToken() }
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Failed to delete message');
+            }
+            const msg = this._messageCache.get(messageId);
+            if (msg) {
+                msg.is_deleted = true;
+                msg.content = '';
+                this._messageCache.set(messageId, msg);
+                this.updateMessageElement(messageId);
+            }
+        } catch (e) {
+            console.error('Delete message failed:', e);
+            this.showError('Failed to delete message');
+        }
+    }
+
+    async reactToMessage(messageId, emoji) {
+        try {
+            const response = await fetch(`/api/communication/message/${messageId}/react`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                body: JSON.stringify({ emoji })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Failed to react');
+            }
+
+            // Optimistic local update: bump count for emoji (single-user view)
+            const msg = this._messageCache.get(messageId);
+            if (msg) {
+                msg.my_reaction = data.my_reaction;
+                // Force refresh by reloading conversation for accurate counts
+                await this.loadConversation(this.activeChatUserId);
+            }
+        } catch (e) {
+            console.error('React failed:', e);
+        }
+    }
+
+    async toggleStar(messageId) {
+        try {
+            const response = await fetch(`/api/communication/message/${messageId}/star`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': this.getCSRFToken() }
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Failed to star');
+            }
+
+            const msg = this._messageCache.get(messageId);
+            if (msg) {
+                msg.is_starred = !!data.is_starred;
+                this._messageCache.set(messageId, msg);
+                this.updateMessageElement(messageId);
+            }
+        } catch (e) {
+            console.error('Star failed:', e);
+        }
+    }
+
+    updateMessageElement(messageId) {
+        const el = document.querySelector(`[data-message-id="${messageId}"]`);
+        const msg = this._messageCache.get(messageId);
+        if (!el || !msg) return;
+
+        // Re-render using the same logic as appendMessage
+        const isSent = msg.sender_id === this.currentUserId;
+        el.className = `message ${isSent ? 'sent' : 'received'}`;
+
+        const time = this.formatTimeEAT(msg.created_at);
+        let tickMarks = '';
+        if (isSent) {
+            if (msg.is_read) tickMarks = '<span class="message-ticks read"><i class="bi bi-check-all"></i></span>';
+            else if (msg.is_delivered) tickMarks = '<span class="message-ticks delivered"><i class="bi bi-check-all"></i></span>';
+            else tickMarks = '<span class="message-ticks sent"><i class="bi bi-check"></i></span>';
+        }
+
+        const deletedText = '<em class="text-muted">This message was deleted</em>';
+        const repliedTo = msg.replied_to ? `
+            <div class="message-reply-preview">
+                <div class="reply-snippet">${this.escapeHtml(msg.replied_to.content || '')}</div>
+            </div>
+        ` : '';
+
+        const reactionsHtml = (msg.reactions && msg.reactions.length) ? `
+            <div class="message-reactions">
+                ${msg.reactions.map(r => `<span class="reaction-chip">${this.escapeHtml(r.emoji)} ${r.count}</span>`).join('')}
+            </div>
+        ` : '';
+
+        const editedLabel = msg.is_edited ? '<span class="message-edited">edited</span>' : '';
+        const starLabel = msg.is_starred ? '<i class="bi bi-star-fill message-star" title="Starred"></i>' : '';
+
+        el.innerHTML = `
+            <div class="message-bubble">
+                ${repliedTo}
+                <div class="message-content">${msg.is_deleted ? deletedText : this.escapeHtml(msg.content)}</div>
+                ${reactionsHtml}
+                <div class="message-time">
+                    ${editedLabel}
+                    ${starLabel}
+                    ${time}
+                    ${tickMarks}
+                </div>
+            </div>
+        `;
+
+        this.attachMessageInteractionHandlers(el);
+    }
+
+    toggleEmojiPicker(anchorEl) {
+        if (!this._emojiPickerEl) {
+            const el = document.createElement('div');
+            el.id = 'emoji-picker';
+            el.style.position = 'fixed';
+            el.style.zIndex = '10001';
+            el.style.background = '#fff';
+            el.style.border = '1px solid rgba(0,0,0,0.12)';
+            el.style.borderRadius = '12px';
+            el.style.boxShadow = '0 8px 24px rgba(0,0,0,0.18)';
+            el.style.padding = '10px';
+            el.style.display = 'none';
+            el.style.maxWidth = '260px';
+            document.body.appendChild(el);
+            this._emojiPickerEl = el;
+
+            document.addEventListener('click', (e) => {
+                if (this._emojiPickerEl && this._emojiPickerEl.style.display === 'block') {
+                    if (!this._emojiPickerEl.contains(e.target) && e.target !== anchorEl) {
+                        this._emojiPickerEl.style.display = 'none';
+                    }
+                }
+            });
+        }
+
+        if (this._emojiPickerEl.style.display === 'block') {
+            this._emojiPickerEl.style.display = 'none';
+            return;
+        }
+
+        const emojis = ['😀','😁','😂','🤣','😊','😍','😘','😎','😢','😡','👍','👎','🙏','🎉','❤️','🔥'];
+        this._emojiPickerEl.innerHTML = `
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                ${emojis.map(e => `<button type="button" class="btn btn-sm btn-light" data-emoji="${this.escapeHtml(e)}">${this.escapeHtml(e)}</button>`).join('')}
+            </div>
+        `;
+        this._emojiPickerEl.querySelectorAll('button[data-emoji]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const emoji = e.currentTarget.getAttribute('data-emoji');
+                const input = document.getElementById('message-input');
+                if (input) {
+                    input.value = `${input.value || ''}${emoji}`;
+                    input.focus();
+                }
+                this._emojiPickerEl.style.display = 'none';
+            });
+        });
+
+        const rect = anchorEl.getBoundingClientRect();
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - 280));
+        const top = Math.max(8, rect.top - 170);
+        this._emojiPickerEl.style.left = `${left}px`;
+        this._emojiPickerEl.style.top = `${top}px`;
+        this._emojiPickerEl.style.display = 'block';
+    }
+
+    toggleChatSearch(show) {
+        const bar = document.getElementById('chat-search-bar');
+        const input = document.getElementById('chat-search-input');
+        const meta = document.getElementById('chat-search-meta');
+        if (!bar) return;
+
+        if (show) {
+            bar.style.display = 'block';
+            if (meta) meta.style.display = 'none';
+            if (input) {
+                input.value = '';
+                input.focus();
+            }
+        } else {
+            bar.style.display = 'none';
+        }
+    }
+
+    async searchMessages(query) {
+        const meta = document.getElementById('chat-search-meta');
+        if (!query || !query.trim()) {
+            if (meta) meta.style.display = 'none';
+            return;
+        }
+        try {
+            const response = await fetch(`/api/communication/search?q=${encodeURIComponent(query)}&other_user_id=${this.activeChatUserId}`, {
+                headers: { 'X-CSRFToken': this.getCSRFToken() }
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'Search failed');
+            }
+            if (meta) {
+                meta.style.display = 'block';
+                meta.textContent = `${data.messages.length} result(s)`;
+            }
+        } catch (e) {
+            console.error('Search failed:', e);
+        }
+    }
+
+    toggleChatSettings(anchorEl) {
+        if (!this.activeChatUserId || !this.currentUser) return;
+        if (!this._chatSettingsEl) {
+            const el = document.createElement('div');
+            el.id = 'chat-settings-popover';
+            el.style.position = 'fixed';
+            el.style.zIndex = '10001';
+            el.style.minWidth = '220px';
+            el.style.background = '#fff';
+            el.style.border = '1px solid rgba(0,0,0,0.12)';
+            el.style.borderRadius = '10px';
+            el.style.boxShadow = '0 8px 24px rgba(0,0,0,0.18)';
+            el.style.padding = '10px';
+            el.style.display = 'none';
+            document.body.appendChild(el);
+            this._chatSettingsEl = el;
+
+            document.addEventListener('click', (e) => {
+                if (this._chatSettingsEl && this._chatSettingsEl.style.display === 'block') {
+                    if (!this._chatSettingsEl.contains(e.target) && e.target !== anchorEl) {
+                        this._chatSettingsEl.style.display = 'none';
+                    }
+                }
+            });
+        }
+
+        if (this._chatSettingsEl.style.display === 'block') {
+            this._chatSettingsEl.style.display = 'none';
+            return;
+        }
+
+        const user = this.currentUser;
+        const isMuted = !!user.is_muted;
+        const isPinned = !!user.is_pinned;
+        const isArchived = !!user.is_archived;
+        const blockedByMe = !!user.blocked_by_me;
+
+        this._chatSettingsEl.innerHTML = `
+            <div style="font-weight:600; font-size:13px; margin-bottom:8px;">Chat Settings</div>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+                <button type="button" class="btn btn-sm btn-light text-start" data-setting="mute">${isMuted ? 'Unmute' : 'Mute'}</button>
+                <button type="button" class="btn btn-sm btn-light text-start" data-setting="pin">${isPinned ? 'Unpin' : 'Pin'}</button>
+                <button type="button" class="btn btn-sm btn-light text-start" data-setting="archive">${isArchived ? 'Unarchive' : 'Archive'}</button>
+                <button type="button" class="btn btn-sm btn-danger text-start" data-setting="block">${blockedByMe ? 'Unblock user' : 'Block user'}</button>
+            </div>
+        `;
+
+        this._chatSettingsEl.querySelectorAll('button[data-setting]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const key = e.currentTarget.getAttribute('data-setting');
+                this._chatSettingsEl.style.display = 'none';
+
+                if (key === 'block') {
+                    await this.toggleBlockUser();
+                } else {
+                    await this.updateConversationSettings(key);
+                }
+            });
+        });
+
+        const rect = anchorEl.getBoundingClientRect();
+        const left = Math.max(8, Math.min(rect.left - 160, window.innerWidth - 260));
+        const top = Math.max(8, rect.bottom + 8);
+        this._chatSettingsEl.style.left = `${left}px`;
+        this._chatSettingsEl.style.top = `${top}px`;
+        this._chatSettingsEl.style.display = 'block';
+    }
+
+    async updateConversationSettings(key) {
+        const user = this.currentUser;
+        if (!user) return;
+
+        const patch = {};
+        if (key === 'mute') patch.is_muted = !user.is_muted;
+        if (key === 'pin') patch.is_pinned = !user.is_pinned;
+        if (key === 'archive') patch.is_archived = !user.is_archived;
+
+        try {
+            const response = await fetch(`/api/communication/conversation/${user.id}/settings`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                body: JSON.stringify(patch)
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || 'Failed');
+
+            user.is_muted = data.settings.is_muted;
+            user.is_pinned = data.settings.is_pinned;
+            user.is_archived = data.settings.is_archived;
+            this.currentUser = user;
+            await this.loadUsers();
+        } catch (e) {
+            console.error('Update settings failed:', e);
+        }
+    }
+
+    async toggleBlockUser() {
+        const user = this.currentUser;
+        if (!user) return;
+        try {
+            const response = await fetch(`/api/communication/user/${user.id}/block`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': this.getCSRFToken() }
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || 'Failed');
+            user.blocked_by_me = data.blocked;
+            this.currentUser = user;
+            this._isChatBlocked = !!(user.blocked_by_me || user.blocked_me);
+            this.applyChatBlockedUI();
+            await this.loadUsers();
+        } catch (e) {
+            console.error('Block toggle failed:', e);
         }
     }
 
@@ -719,6 +1397,7 @@ class CommunicationSystem {
         if (!this.activeChatUserId) return;
         
         this.callType = type;
+        this._callRole = 'caller';
         
         try {
             // Request media permissions
@@ -759,6 +1438,7 @@ class CommunicationSystem {
             
             // Show call UI (waiting for answer)
             this.showCallUI(type, 'outgoing');
+            this.playOutgoingTone();
             
         } catch (error) {
             console.error('Error initiating call:', error);
@@ -770,6 +1450,14 @@ class CommunicationSystem {
         this.callId = data.call_id;
         this.callType = data.call_type;
         this.activeChatUserId = data.caller_id;
+        this._callRole = 'callee';
+
+        // Ensure we have a currentUser context for call UI
+        this.currentUser = {
+            id: data.caller_id,
+            username: data.caller_name || 'Unknown',
+            is_online: true
+        };
         
         // Show incoming call UI
         const callModal = document.getElementById('call-modal');
@@ -790,6 +1478,7 @@ class CommunicationSystem {
 
     async acceptCall() {
         try {
+            this.stopAllTones();
             // Request media permissions
             const constraints = {
                 audio: true,
@@ -816,8 +1505,8 @@ class CommunicationSystem {
                 receiver_id: this.activeChatUserId
             });
             
-            // Setup WebRTC connection
-            await this.setupWebRTCConnection();
+            // Setup peer connection (callee waits for offer)
+            await this.ensurePeerConnection();
             
             // Show active call UI
             this.showCallUI(this.callType, 'active');
@@ -830,6 +1519,7 @@ class CommunicationSystem {
 
     async rejectCall() {
         try {
+            this.stopAllTones();
             await fetch('/api/communication/reject_call', {
                 method: 'POST',
                 headers: {
@@ -847,6 +1537,7 @@ class CommunicationSystem {
             });
             
             this.hideCallUI();
+            this.cleanupCall();
             
         } catch (error) {
             console.error('Error rejecting call:', error);
@@ -855,6 +1546,7 @@ class CommunicationSystem {
 
     async endCall() {
         try {
+            this.stopAllTones();
             await fetch('/api/communication/end_call', {
                 method: 'POST',
                 headers: {
@@ -879,48 +1571,68 @@ class CommunicationSystem {
     }
 
     handleCallAccepted(data) {
-        // Setup WebRTC connection
-        this.setupWebRTCConnection();
+        this.stopAllTones();
+        // Caller starts WebRTC offer after callee accepts
+        this.startCallerWebRTC();
         this.showCallUI(this.callType, 'active');
     }
 
     handleCallRejected(data) {
+        this.stopAllTones();
         this.showError('Call was rejected');
         this.cleanupCall();
     }
 
     handleCallEnded(data) {
+        this.stopAllTones();
         this.cleanupCall();
     }
 
-    async setupWebRTCConnection() {
-        // ICE servers configuration (STUN/TURN servers)
-        const configuration = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        };
-        
+    async fetchIceServers() {
+        if (this._iceServersCache) return this._iceServersCache;
+        try {
+            const response = await fetch('/api/communication/ice_servers', {
+                headers: { 'X-CSRFToken': this.getCSRFToken() }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data && Array.isArray(data.ice_servers) && data.ice_servers.length) {
+                    this._iceServersCache = data.ice_servers;
+                    return this._iceServersCache;
+                }
+            }
+        } catch (e) {
+            // fall back
+        }
+        this._iceServersCache = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ];
+        return this._iceServersCache;
+    }
+
+    async ensurePeerConnection() {
+        if (this.peerConnection) return;
+
+        const iceServers = await this.fetchIceServers();
+        const configuration = { iceServers };
+
         this.peerConnection = new RTCPeerConnection(configuration);
-        
-        // Add local stream to peer connection
-        this.localStream.getTracks().forEach(track => {
-            this.peerConnection.addTrack(track, this.localStream);
-        });
-        
-        // Handle remote stream
+
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => {
+                this.peerConnection.addTrack(track, this.localStream);
+            });
+        }
+
         this.peerConnection.ontrack = (event) => {
             if (event.streams && event.streams[0]) {
                 this.remoteStream = event.streams[0];
                 const remoteVideo = document.getElementById('remote-video');
-                if (remoteVideo) {
-                    remoteVideo.srcObject = this.remoteStream;
-                }
+                if (remoteVideo) remoteVideo.srcObject = this.remoteStream;
             }
         };
-        
-        // Handle ICE candidates
+
         this.peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
                 this.socket.emit('webrtc_ice_candidate', {
@@ -930,34 +1642,52 @@ class CommunicationSystem {
                 });
             }
         };
-        
-        // Create and send offer
-        const offer = await this.peerConnection.createOffer();
-        await this.peerConnection.setLocalDescription(offer);
-        
-        this.socket.emit('webrtc_offer', {
-            offer: offer,
-            receiver_id: this.activeChatUserId,
-            call_id: this.callId
-        });
+    }
+
+    async startCallerWebRTC() {
+        try {
+            this._callRole = 'caller';
+            await this.ensurePeerConnection();
+            if (!this.peerConnection) return;
+
+            const offer = await this.peerConnection.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: this.callType === 'video'
+            });
+            await this.peerConnection.setLocalDescription(offer);
+
+            this.socket.emit('webrtc_offer', {
+                offer,
+                receiver_id: this.activeChatUserId,
+                call_id: this.callId
+            });
+        } catch (e) {
+            console.error('Error starting caller WebRTC:', e);
+            this.showError('WebRTC failed to start. Please try again.');
+        }
     }
 
     async handleWebRTCOffer(data) {
-        // Create peer connection if not exists
-        if (!this.peerConnection) {
-            await this.setupWebRTCConnection();
+        try {
+            // Callee receives offer, creates answer
+            if (!this.peerConnection) {
+                await this.ensurePeerConnection();
+            }
+            if (!this.peerConnection) return;
+
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+
+            const answer = await this.peerConnection.createAnswer();
+            await this.peerConnection.setLocalDescription(answer);
+
+            this.socket.emit('webrtc_answer', {
+                answer,
+                receiver_id: data.caller_id,
+                call_id: data.call_id || this.callId
+            });
+        } catch (e) {
+            console.error('Error handling WebRTC offer:', e);
         }
-        
-        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-        
-        const answer = await this.peerConnection.createAnswer();
-        await this.peerConnection.setLocalDescription(answer);
-        
-        this.socket.emit('webrtc_answer', {
-            answer: answer,
-            receiver_id: data.caller_id,
-            call_id: this.callId
-        });
     }
 
     async handleWebRTCAnswer(data) {
@@ -978,6 +1708,7 @@ class CommunicationSystem {
 
     showCallUI(type, status) {
         const callModal = document.getElementById('call-modal');
+        const outgoingCall = document.getElementById('outgoing-call');
         const incomingCall = document.getElementById('incoming-call');
         const activeCall = document.getElementById('active-call');
         const videoContainer = document.getElementById('video-container');
@@ -987,9 +1718,22 @@ class CommunicationSystem {
         if (!callModal || !activeCall) return;
         
         callModal.style.display = 'flex';
+
+        // Reset sections
+        if (outgoingCall) outgoingCall.style.display = 'none';
+        if (incomingCall) incomingCall.style.display = 'none';
+        activeCall.style.display = 'none';
         
+        if (status === 'outgoing') {
+            if (outgoingCall) outgoingCall.style.display = 'block';
+            const calleeName = document.getElementById('outgoing-callee-name');
+            const outgoingStatus = document.getElementById('outgoing-call-status');
+            if (calleeName) calleeName.textContent = this.currentUser?.username || 'User';
+            if (outgoingStatus) outgoingStatus.textContent = type === 'video' ? 'Calling (video)...' : 'Calling...';
+            return;
+        }
+
         if (status === 'active') {
-            if (incomingCall) incomingCall.style.display = 'none';
             activeCall.style.display = 'block';
             
             if (type === 'video') {
@@ -1075,6 +1819,7 @@ class CommunicationSystem {
     }
 
     cleanupCall() {
+        this.stopAllTones();
         // Stop all tracks
         if (this.localStream) {
             this.localStream.getTracks().forEach(track => track.stop());
@@ -1104,13 +1849,94 @@ class CommunicationSystem {
         // Reset call state
         this.callId = null;
         this.callType = null;
+        this._callRole = null;
         this.isMuted = false;
         this.isVideoEnabled = true;
     }
 
     playRingtone() {
-        // Optional: Play ringtone sound
-        // You can implement this with HTML5 Audio API
+        this.stopAllTones();
+        this._toneStopFn = this.startBeepPattern({
+            frequency: 440,
+            onMs: 700,
+            offMs: 1300,
+            gain: 0.08
+        });
+    }
+
+    playOutgoingTone() {
+        this.stopAllTones();
+        this._toneStopFn = this.startBeepPattern({
+            frequency: 480,
+            onMs: 180,
+            offMs: 180,
+            gain: 0.05
+        });
+    }
+
+    stopAllTones() {
+        if (this._toneStopFn) {
+            try { this._toneStopFn(); } catch (_) {}
+            this._toneStopFn = null;
+        }
+    }
+
+    startBeepPattern({ frequency, onMs, offMs, gain }) {
+        if (!this._audioContext) return () => {};
+
+        let stopped = false;
+        let osc = null;
+        let g = null;
+        let timer = null;
+
+        const startOsc = () => {
+            if (stopped) return;
+            try {
+                osc = this._audioContext.createOscillator();
+                g = this._audioContext.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = frequency;
+                g.gain.value = gain;
+                osc.connect(g);
+                g.connect(this._audioContext.destination);
+                osc.start();
+                timer = setTimeout(stopOsc, onMs);
+            } catch (_) {
+                // no-op
+            }
+        };
+
+        const stopOsc = () => {
+            if (stopped) return;
+            try {
+                if (osc) {
+                    osc.stop();
+                    osc.disconnect();
+                    osc = null;
+                }
+                if (g) {
+                    g.disconnect();
+                    g = null;
+                }
+            } catch (_) {
+                // no-op
+            }
+            timer = setTimeout(startOsc, offMs);
+        };
+
+        startOsc();
+
+        return () => {
+            stopped = true;
+            if (timer) clearTimeout(timer);
+            try {
+                if (osc) {
+                    osc.stop();
+                    osc.disconnect();
+                }
+                if (g) g.disconnect();
+            } catch (_) {}
+        };
     }
 
     requestNotificationPermission() {
