@@ -79,10 +79,6 @@
 
                     <!-- Message Input -->
                     <div class="message-input">
-                        <button class="btn btn-sm btn-outline-secondary" id="attach-file-btn" title="Attach file">
-                            <i class="bi bi-paperclip"></i>
-                        </button>
-                        <input type="file" id="file-input" style="display: none" accept="*/*">
                         <input type="text" class="form-control" id="message-input" placeholder="Type a message...">
                         <button class="btn btn-primary" id="send-message-btn">
                             <i class="bi bi-send-fill"></i>
@@ -92,51 +88,6 @@
             </div>
         </div>
     </div>
-</div>
-
-<!-- Search Panel (Hidden by default) -->
-<div id="search-panel" class="search-panel" style="display: none; position: fixed; top: 10%; right: 5%; 
-     width: 300px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
-     padding: 20px; z-index: 1002;">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0">Search Messages</h6>
-        <button class="btn btn-sm btn-link" onclick="document.getElementById('search-panel').style.display='none'">
-            <i class="bi bi-x-lg"></i>
-        </button>
-    </div>
-    <input type="text" class="form-control mb-3" id="message-search" placeholder="Search messages...">
-    <div id="search-results" style="max-height: 300px; overflow-y: auto;"></div>
-</div>
-
-<!-- Groups Panel (Hidden by default) -->
-<div id="groups-panel" class="groups-panel" style="display: none; position: fixed; top: 10%; left: 5%; 
-     width: 350px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
-     padding: 20px; z-index: 1002;">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0">Group Chats</h6>
-        <div>
-            <button class="btn btn-sm btn-primary me-2" onclick="showCreateGroupModal()">
-                <i class="bi bi-plus"></i> New Group
-            </button>
-            <button class="btn btn-sm btn-link" onclick="document.getElementById('groups-panel').style.display='none'">
-                <i class="bi bi-x-lg"></i>
-            </button>
-        </div>
-    </div>
-    <div id="groups-list" style="max-height: 400px; overflow-y: auto;"></div>
-</div>
-
-<!-- Call History Panel (Hidden by default) -->
-<div id="call-history-panel" class="call-history-panel" style="display: none; position: fixed; top: 10%; right: 5%; 
-     width: 350px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
-     padding: 20px; z-index: 1002;">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0">Call History</h6>
-        <button class="btn btn-sm btn-link" onclick="document.getElementById('call-history-panel').style.display='none'">
-            <i class="bi bi-x-lg"></i>
-        </button>
-    </div>
-    <div id="call-history-list" style="max-height: 400px; overflow-y: auto;"></div>
 </div>
 
 <!-- Call Modal -->
@@ -188,9 +139,6 @@
                 <div class="call-controls">
                     <button class="btn btn-secondary" id="mute-btn" title="Mute">
                         <i class="bi bi-mic-fill"></i>
-                    </button>
-                    <button class="btn btn-secondary" id="screen-share-btn" style="display: none;" title="Share Screen">
-                        <i class="bi bi-display"></i>
                     </button>
                     <button class="btn btn-danger" id="end-call-btn" title="End Call">
                         <i class="bi bi-telephone-x-fill"></i>
@@ -408,14 +356,15 @@
 }
 
 .message.sent .message-bubble {
-    background: #0d6efd;
-    color: white;
+    background: white;
+    color: #333;
     border-bottom-right-radius: 4px;
+    border: 1px solid #e0e0e0;
 }
 
 .message.received .message-bubble {
-    background: white;
-    color: #333;
+    background: #0d6efd;
+    color: white;
     border-bottom-left-radius: 4px;
 }
 
@@ -446,24 +395,24 @@
 }
 
 .message-ticks.sent {
-    color: rgba(255, 255, 255, 0.6);
+    color: rgba(0, 0, 0, 0.5);
 }
 
 .message-ticks.delivered {
-    color: rgba(255, 255, 255, 0.6);
+    color: rgba(0, 0, 0, 0.5);
 }
 
 .message-ticks.read {
-    color: #4fc3f7;
+    color: #0d6efd;
 }
 
 .message.sent .message-bubble .message-ticks.sent,
 .message.sent .message-bubble .message-ticks.delivered {
-    color: rgba(255, 255, 255, 0.7);
+    color: rgba(0, 0, 0, 0.5);
 }
 
 .message.sent .message-bubble .message-ticks.read {
-    color: #4fc3f7;
+    color: #0d6efd;
 }
     text-align: left;
 }
@@ -994,91 +943,4 @@
         transition: none !important;
     }
 }
-
-/* Message highlight animation for search */
-.highlight-message {
-    animation: highlightPulse 2s ease-in-out;
-}
-
-@keyframes highlightPulse {
-    0%, 100% { background-color: transparent; }
-    50% { background-color: rgba(255, 235, 59, 0.4); }
-}
-
-/* Emoji picker styles */
-.emoji-picker-dropdown {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    max-width: 250px;
-}
-
-.emoji-picker-dropdown button {
-    font-size: 24px;
-    width: 40px;
-    height: 40px;
-    padding: 0;
-    border: none !important;
-}
-
-.emoji-picker-dropdown button:hover {
-    transform: scale(1.2);
-    background-color: #f0f0f0 !important;
-}
-
-/* Message actions menu */
-.message-actions {
-    opacity: 0;
-    transition: opacity 0.2s;
-}
-
-.message:hover .message-actions {
-    opacity: 1;
-}
-
-/* Search result styles */
-.search-result-item {
-    cursor: pointer;
-    transition: background-color 0.2s;
-}
-
-.search-result-item:hover {
-    background-color: #f5f5f5;
-}
-
-/* Group item styles */
-.group-item {
-    cursor: pointer;
-    transition: background-color 0.2s;
-}
-
-.group-item:hover {
-    background-color: #f5f5f5;
-}
-
-.group-avatar {
-    width: 40px;
-    height: 40px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-}
-
-/* Call history item styles */
-.call-item {
-    transition: background-color 0.2s;
-}
-
-.call-item:hover {
-    background-color: #f5f5f5;
-}
-
-/* Loader styles */
-.cursor-pointer {
-    cursor: pointer;
-}
-
 </style>
