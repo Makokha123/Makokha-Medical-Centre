@@ -1,41 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<div class="dashboard-container">
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Clinic Logo">
-            <h3>Receptionist Panel</h3>
-        </div>
-        <ul class="sidebar-menu">
-            <li><a href="{{ url_for('receptionist_dashboard') }}"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-            <li><a href="{{ url_for('receptionist_patients') }}" class="active"><i class="fas fa-procedures"></i> Patients</a></li>
-            <li><a href="{{ url_for('receptionist_billing') }}"><i class="fas fa-cash-register"></i> Billing</a></li>
-            <li><a href="#"><i class="fas fa-calendar-alt"></i> Appointments</a></li>
-            <li><a href="#"><i class="fas fa-file-invoice"></i> Invoices</a></li>
-        </ul>
-    </div>
-
-    <div class="main-content">
-        <div class="top-bar">
-            <button class="sidebar-toggle" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
-            <div class="user-info">
-                <span>{{ current_user.username }}</span>
-                <div class="dropdown">
-                    <button class="dropbtn"><i class="fas fa-user-circle"></i></button>
-                    <div class="dropdown-content">
-                        <a href="#"><i class="fas fa-user"></i> Profile</a>
-                        <form id="logout-form" action="{{ url_for('logout') }}" method="POST" style="display: none;">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                        </form>
-                        <a href="#" onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><i class="fas fa-sign-out-alt"></i> Logout</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="content">
+<div class="content">
             <div class="d-flex align-items-center justify-content-between mb-3">
                 <h2 class="mb-0">Patient Details</h2>
                 <div>
@@ -135,14 +101,5 @@
                 </div>
             </div>
 
-        </div>
-    </div>
 </div>
-
-<script>
-function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.classList.toggle('collapsed');
-}
-</script>
 {% endblock %}

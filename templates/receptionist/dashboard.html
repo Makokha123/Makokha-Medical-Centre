@@ -1,45 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<!-- Add this to the head section of all your base templates -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<div class="dashboard-container">
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Clinic Logo">
-            <h3>Receptionist Panel</h3>
-        </div>
-        <ul class="sidebar-menu">
-            <li><a href="{{ url_for('receptionist_dashboard') }}" class="active"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-            <li><a href="{{ url_for('receptionist_patients') }}"><i class="fas fa-procedures"></i> Patients</a></li>
-            <li><a href="{{ url_for('receptionist_billing') }}"><i class="fas fa-cash-register"></i> Billing</a></li>
-            <li><a href="#"><i class="fas fa-calendar-alt"></i> Appointments</a></li>
-            <li><a href="#"><i class="fas fa-file-invoice"></i> Invoices</a></li>
-        </ul>
-    </div>
-    
-    <div class="main-content">
-        <div class="top-bar">
-            <button class="sidebar-toggle" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
-            <div class="user-info">
-                <a href="{{ url_for('pharmacist_dashboard') }}" class="btn btn-sm btn-primary" style="margin-right: 15px;" title="Back to Pharmacist Dashboard">
-                    <i class="fas fa-pills"></i> Back to Pharmacist
-                </a>
-                <span>{{ current_user.username }}</span>
-                <div class="dropdown">
-                    <button class="dropbtn"><i class="fas fa-user-circle"></i></button>
-                    <div class="dropdown-content">
-                        <a href="#"><i class="fas fa-user"></i> Profile</a>
-                        <form id="logout-form" action="{{ url_for('logout') }}" method="POST" style="display: none;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-</form>
-<a href="#" onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><i class="fas fa-sign-out-alt"></i> Logout</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="content">
+<div class="content">
             <h2>Receptionist Dashboard</h2>
             
             <div class="dashboard-widgets">
@@ -138,45 +100,46 @@
             
             <div class="recent-transactions">
                 <h3><i class="fas fa-history"></i> Recent Transactions</h3>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Patient</th>
-                            <th>Amount</th>
-                            <th>Payment Method</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for sale in recent_sales %}
-                        <tr>
-                            <td>{{ sale.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                            <td>
-                                {% if sale.patient %}
-                                    {{ decrypt_data(sale.patient.name) }}
-                                {% else %}
-                                    Walk-in Customer
-                                {% endif %}
-                            </td>
-                            <td>KSH {{ "%.2f"|format(sale.total_amount) }}</td>
-                            <td>{{ sale.payment_method|capitalize if sale.payment_method else 'Cash' }}</td>
-                            <td>
-                                <span class="status-badge completed">
-                                    Completed
-                                </span>
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="5" class="text-center">No recent transactions</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+                <div class="table-container">
+                    <table class="simple-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Patient</th>
+                                <th>Amount</th>
+                                <th>Payment Method</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sale in recent_sales %}
+                            <tr>
+                                <td>{{ sale.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>
+                                    {% if sale.patient %}
+                                        {{ decrypt_data(sale.patient.name) }}
+                                    {% else %}
+                                        Walk-in Customer
+                                    {% endif %}
+                                </td>
+                                <td>KSH {{ "%.2f"|format(sale.total_amount) }}</td>
+                                <td>{{ sale.payment_method|capitalize if sale.payment_method else 'Cash' }}</td>
+                                <td>
+                                    <span class="status-badge completed">
+                                        Completed
+                                    </span>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center">No recent transactions</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
-    </div>
 </div>
 
 <!-- DataTables and other JS libraries -->
@@ -186,10 +149,4 @@
 <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
 
 
-<script>
-function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.classList.toggle('collapsed');
-}
-</script>
 {% endblock %}

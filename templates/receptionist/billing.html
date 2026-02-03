@@ -1,42 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<!-- Add this to the head section of all your base templates -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<div class="dashboard-container">
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Clinic Logo">
-            <h3>Receptionist Panel</h3>
-        </div>
-        <ul class="sidebar-menu">
-            <li><a href="{{ url_for('receptionist_dashboard') }}"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-            <li><a href="{{ url_for('receptionist_patients') }}"><i class="fas fa-procedures"></i> Patients</a></li>
-            <li><a href="{{ url_for('receptionist_billing') }}" class="active"><i class="fas fa-cash-register"></i> Billing</a></li>
-            <li><a href="#"><i class="fas fa-calendar-alt"></i> Appointments</a></li>
-            <li><a href="#"><i class="fas fa-file-invoice"></i> Invoices</a></li>
-        </ul>
-    </div>
-    
-    <div class="main-content">
-        <div class="top-bar">
-            <button class="sidebar-toggle" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
-            <div class="user-info">
-                <span>{{ current_user.username }}</span>
-                <div class="dropdown">
-                    <button class="dropbtn"><i class="fas fa-user-circle"></i></button>
-                    <div class="dropdown-content">
-                        <a href="#"><i class="fas fa-user"></i> Profile</a>
-                        <form id="logout-form" action="{{ url_for('logout') }}" method="POST" style="display: none;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-</form>
-<a href="#" onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><i class="fas fa-sign-out-alt"></i> Logout</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="content">
+<div class="content">
             <h2>Billing Management</h2>
             
             <div class="billing-container">
@@ -67,44 +32,29 @@
                         </div>
                         
                         <div class="form-group">
-                            <label>Services</label>
-                            <div class="service-list">
-                                {% for service in services %}
-                                <div class="service-item">
-                                    <input type="checkbox" id="service-{{ service.id }}" name="services" value="{{ service.id }}">
-                                    <label for="service-{{ service.id }}">
-                                        {{ service.name }} - KSH {{ "%.2f"|format(service.price) }}
-                                    </label>
+                            <label>Services <small class="text-muted">(Auto-populated from patient records)</small></label>
+                            <div class="service-list" id="service-list">
+                                <div class="alert alert-info">
+                                    Select a patient to view completed services
                                 </div>
-                                {% endfor %}
                             </div>
                         </div>
                         
                         <div class="form-group">
-                            <label>Lab Tests</label>
-                            <div class="lab-list">
-                                {% for test in lab_tests %}
-                                <div class="lab-item">
-                                    <input type="checkbox" id="test-{{ test.id }}" name="lab_tests" value="{{ test.id }}">
-                                    <label for="test-{{ test.id }}">
-                                        {{ test.name }} - KSH {{ "%.2f"|format(test.price) }}
-                                    </label>
+                            <label>Lab Tests <small class="text-muted">(Auto-populated - Completed tests only)</small></label>
+                            <div class="lab-list" id="lab-list">
+                                <div class="alert alert-info">
+                                    Select a patient to view completed lab tests
                                 </div>
-                                {% endfor %}
                             </div>
                         </div>
 
                         <div class="form-group">
-                            <label>Imaging Tests</label>
-                            <div class="lab-list">
-                                {% for test in imaging_tests %}
-                                <div class="lab-item">
-                                    <input type="checkbox" id="imaging-{{ test.id }}" name="imaging_tests" value="{{ test.id }}">
-                                    <label for="imaging-{{ test.id }}">
-                                        {{ test.name }} - KSH {{ "%.2f"|format(test.price) }}
-                                    </label>
+                            <label>Imaging Tests <small class="text-muted">(Auto-populated - Completed imaging only)</small></label>
+                            <div class="imaging-list" id="imaging-list">
+                                <div class="alert alert-info">
+                                    Select a patient to view completed imaging tests
                                 </div>
-                                {% endfor %}
                             </div>
                         </div>
 
@@ -116,11 +66,11 @@
                         </div>
                         
                         <div class="form-group">
-                            <label>Prescriptions</label>
+                            <label>Prescriptions <small class="text-muted">(Auto-populated - Dispensed drugs only)</small></label>
                             <div class="prescription-list" id="prescription-list">
                                 <!-- Prescriptions will be loaded via AJAX when patient is selected -->
                                 <div class="alert alert-info">
-                                    Select a patient to view their prescriptions
+                                    Select a patient to view their dispensed prescriptions
                                 </div>
                             </div>
                         </div>
@@ -131,7 +81,7 @@
                             <div class="payment-buttons">
                                 <button type="button" class="payment-btn" data-method="mpesa" id="mpesaPaymentBtn">
                                     <div class="payment-icon mpesa-icon">
-                                        <i class="fas fa-mobile-alt"></i>
+                                        <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\'fas fa-mobile-alt\'></i>';">
                                     </div>
                                     <span>M-Pesa</span>
                                 </button>
@@ -242,7 +192,6 @@
             </div>
         </div>
     </div>
-</div>
 
 <!-- M-Pesa Collection Modal -->
 <div class="modal fade" id="mpesaCollectModal" tabindex="-1" role="dialog">
@@ -303,8 +252,7 @@
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
+
 </div>
 
 <!-- DataTables and other JS libraries -->
@@ -315,11 +263,6 @@
 
 
 <script>
-function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.classList.toggle('collapsed');
-}
-
 // Payment Method Button Handlers
 $('.payment-btn').click(function() {
     if ($(this).prop('disabled')) {
@@ -498,11 +441,9 @@ document.getElementById('patient-search').addEventListener('input', function(e) 
                     // Add event listeners to select buttons
                     document.querySelectorAll('.select-patient').forEach(button => {
                         button.addEventListener('click', function() {
-                            document.getElementById('patient-id').value = this.getAttribute('data-id');
-                            loadPatientPrescriptions(this.getAttribute('data-id'));
-                            loadPatientWardStay(this.getAttribute('data-id'));
-                            loadRequestedServices(this.getAttribute('data-id'));
-                            loadPatientInsurance(this.getAttribute('data-id'));
+                            const patientId = this.getAttribute('data-id');
+                            document.getElementById('patient-id').value = patientId;
+                            loadPatientDetails(patientId);
                             resultsContainer.innerHTML = '';
                         });
                     });
@@ -516,11 +457,76 @@ document.getElementById('patient-search').addEventListener('input', function(e) 
 document.getElementById('patient-id').addEventListener('change', function() {
     const patientId = this.value;
     if (!patientId) return;
-    loadPatientPrescriptions(patientId);
-    loadPatientWardStay(patientId);
-    loadRequestedServices(patientId);
-    loadPatientInsurance(patientId);
+    loadPatientDetails(patientId);
 });
+
+// Store current patient data
+let currentPatientData = null;
+
+// Load patient details first to determine patient type
+function loadPatientDetails(patientId) {
+    fetch(`/api/patients/${patientId}`)
+        .then(response => response.json())
+        .then(patient => {
+            currentPatientData = patient;
+            
+            // Load all patient data
+            loadPatientPrescriptions(patientId);
+            loadCompletedServices(patientId);
+            loadCompletedLabs(patientId);
+            loadCompletedImaging(patientId);
+            loadPatientInsurance(patientId);
+            
+            // Only load ward stay if patient is INPATIENT (has IP number)
+            const isInpatient = patient.ip_number && patient.ip_number.trim() !== '';
+            const wardContainer = document.getElementById('ward-stay-container');
+            
+            if (isInpatient) {
+                wardContainer.parentElement.style.display = 'block';
+                loadPatientWardStay(patientId);
+            } else {
+                // Hide ward stay for outpatients
+                wardContainer.parentElement.style.display = 'none';
+                wardContainer.innerHTML = '';
+                clearAutoHiddenInputs('include_ward_stay');
+                document.getElementById('billing-form').dispatchEvent(new Event('change'));
+            }
+        })
+        .catch(error => {
+            console.error('Failed to load patient details:', error);
+            // Fallback: load everything anyway
+            loadPatientPrescriptions(patientId);
+            loadPatientWardStay(patientId);
+            loadCompletedServices(patientId);
+            loadCompletedLabs(patientId);
+            loadCompletedImaging(patientId);
+            loadPatientInsurance(patientId);
+        });
+}
+
+function clearAutoHiddenInputs(name) {
+    document.querySelectorAll(`input[type="hidden"][data-auto-hidden="1"][data-auto-name="${name}"]`).forEach(el => el.remove());
+}
+
+function addAutoHiddenInput(name, value) {
+    const form = document.getElementById('billing-form');
+    if (!form) return;
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    input.setAttribute('data-auto-hidden', '1');
+    input.setAttribute('data-auto-name', name);
+    form.appendChild(input);
+}
+
+function resetAutoCheckboxes(name) {
+    document.querySelectorAll(`input[name="${name}"]`).forEach(cb => {
+        cb.checked = false;
+        cb.disabled = true;
+    });
+    clearAutoHiddenInputs(name);
+}
 
 function loadPatientInsurance(patientId) {
     const hint = document.getElementById('insurance-active-hint');
@@ -632,76 +638,223 @@ function loadPatientInsurance(patientId) {
         });
 }
 
-// Load prescriptions when patient is selected
+// Load prescriptions when patient is selected - AUTO-POPULATE ONLY DISPENSED
 function loadPatientPrescriptions(patientId) {
     fetch(`/api/patient/${patientId}/prescriptions`)
         .then(response => response.json())
         .then(data => {
             const container = document.getElementById('prescription-list');
             container.innerHTML = '';
+            clearAutoHiddenInputs('prescription_items');
             
             if (data.length > 0) {
+                let foundDispensed = false;
                 data.forEach(prescription => {
-                    const prescriptionElement = document.createElement('div');
-                    prescriptionElement.className = 'prescription-item';
-                    prescriptionElement.innerHTML = `
-                        <h4>Prescription #${prescription.id}</h4>
-                        <div class="prescription-items">
-                            ${prescription.items.map(item => `
-                                <div class="prescription-line">
-                                    <input type="checkbox" name="prescription_items" 
-                                           value="${item.id}" id="item-${item.id}">
-                                    <label for="item-${item.id}">
-                                        ${item.drug_name} (${item.drug_number}) - 
-                                        ${item.quantity} x KSH ${item.unit_price.toFixed(2)} = 
-                                        KSH ${(item.quantity * item.unit_price).toFixed(2)}
-                                    </label>
-                                </div>
-                            `).join('')}
-                        </div>
-                    `;
-                    container.appendChild(prescriptionElement);
+                    // Only show dispensed items
+                    const dispensedItems = prescription.items.filter(item => 
+                        item.status === 'dispensed' || item.dispensed === true
+                    );
+                    
+                    if (dispensedItems.length > 0) {
+                        foundDispensed = true;
+                        const prescriptionElement = document.createElement('div');
+                        prescriptionElement.className = 'prescription-item';
+                        prescriptionElement.innerHTML = `
+                            <h4>Prescription #${prescription.id}</h4>
+                            <div class="prescription-items">
+                                ${dispensedItems.map(item => {
+                                    // Auto-add hidden input for each dispensed item
+                                    addAutoHiddenInput('prescription_items', item.id);
+                                    return `
+                                        <div class="prescription-line">
+                                            <i class="fas fa-check-circle text-success"></i>
+                                            <span>
+                                                ${item.drug_name} (${item.drug_number}) - 
+                                                ${item.quantity} x KSH ${item.unit_price.toFixed(2)} = 
+                                                KSH ${(item.quantity * item.unit_price).toFixed(2)}
+                                                <span class="badge badge-success">Dispensed</span>
+                                            </span>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        `;
+                        container.appendChild(prescriptionElement);
+                    }
                 });
+                
+                if (!foundDispensed) {
+                    container.innerHTML = '<div class="alert alert-info">No dispensed prescriptions found for this patient</div>';
+                }
             } else {
                 container.innerHTML = '<div class="alert alert-info">No prescriptions found for this patient</div>';
             }
+            document.getElementById('billing-form').dispatchEvent(new Event('change'));
+        })
+        .catch(() => {
+            const container = document.getElementById('prescription-list');
+            container.innerHTML = '<div class="alert alert-warning">Failed to load prescriptions</div>';
         });
 }
 
-// Load doctor-requested services (unbilled) and auto-check them in the Services list
-function loadRequestedServices(patientId) {
-    // Reset service selections when changing patient to avoid cross-patient carry-over.
-    document.querySelectorAll('input[name="services"]').forEach(cb => {
-        cb.checked = false;
-        cb.removeAttribute('data-requested');
-    });
+// Load completed services (unbilled) and auto-add them - NO CHECKBOXES
+function loadCompletedServices(patientId) {
+    clearAutoHiddenInputs('services');
+    
+    const container = document.getElementById('service-list');
+    container.innerHTML = '<div class="alert alert-info">Loading services...</div>';
 
-    fetch(`/api/patient/${patientId}/requested-services`)
+    fetch(`/api/patient/${patientId}/completed-services`)
         .then(response => {
             if (!response.ok) return [];
             return response.json();
         })
         .then(data => {
-            if (!Array.isArray(data) || data.length === 0) {
-                document.getElementById('billing-form').dispatchEvent(new Event('change'));
-                return;
+            container.innerHTML = '';
+            
+            if (Array.isArray(data) && data.length > 0) {
+                const serviceList = document.createElement('div');
+                serviceList.className = 'service-items-list';
+                
+                data.forEach(row => {
+                    const sid = row && (row.service_id || row.id);
+                    const serviceName = row.service_name || row.name || 'Unknown Service';
+                    const servicePrice = row.price || 0;
+                    
+                    if (!sid) return;
+                    
+                    // Auto-add hidden input
+                    addAutoHiddenInput('services', sid);
+                    
+                    // Display as text with icon
+                    const serviceItem = document.createElement('div');
+                    serviceItem.className = 'service-display-item';
+                    serviceItem.innerHTML = `
+                        <i class="fas fa-check-circle text-success"></i>
+                        <span>
+                            ${serviceName} - KSH ${servicePrice.toFixed(2)}
+                            <span class="badge badge-info">Completed</span>
+                        </span>
+                    `;
+                    serviceList.appendChild(serviceItem);
+                });
+                
+                container.appendChild(serviceList);
+            } else {
+                container.innerHTML = '<div class="alert alert-info">No completed services found for this patient</div>';
             }
 
-            data.forEach(row => {
-                const sid = row && row.service_id;
-                if (!sid) return;
-                const checkbox = document.querySelector(`input[name="services"][value="${sid}"]`);
-                if (checkbox) {
-                    checkbox.checked = true;
-                    checkbox.setAttribute('data-requested', '1');
-                }
-            });
-
-            // Recompute totals after auto-checking
             document.getElementById('billing-form').dispatchEvent(new Event('change'));
         })
         .catch(() => {
-            // Ignore; requested services are optional
+            container.innerHTML = '<div class="alert alert-warning">Failed to load services</div>';
+        });
+}
+
+
+function loadCompletedLabs(patientId) {
+    clearAutoHiddenInputs('lab_tests');
+    
+    const container = document.getElementById('lab-list');
+    container.innerHTML = '<div class="alert alert-info">Loading lab tests...</div>';
+
+    fetch(`/api/patient/${patientId}/completed-labs`)
+        .then(response => {
+            if (!response.ok) return [];
+            return response.json();
+        })
+        .then(data => {
+            container.innerHTML = '';
+            
+            if (Array.isArray(data) && data.length > 0) {
+                const labList = document.createElement('div');
+                labList.className = 'lab-items-list';
+                
+                data.forEach(row => {
+                    const lid = row && (row.lab_test_id || row.id);
+                    const labName = row.test_name || row.name || 'Unknown Test';
+                    const labPrice = row.price || 0;
+                    
+                    if (!lid) return;
+                    
+                    // Auto-add hidden input
+                    addAutoHiddenInput('lab_tests', lid);
+                    
+                    // Display as text with icon
+                    const labItem = document.createElement('div');
+                    labItem.className = 'lab-display-item';
+                    labItem.innerHTML = `
+                        <i class="fas fa-check-circle text-success"></i>
+                        <span>
+                            ${labName} - KSH ${labPrice.toFixed(2)}
+                            <span class="badge badge-success">Complete</span>
+                        </span>
+                    `;
+                    labList.appendChild(labItem);
+                });
+                
+                container.appendChild(labList);
+            } else {
+                container.innerHTML = '<div class="alert alert-info">No completed lab tests found for this patient</div>';
+            }
+
+            document.getElementById('billing-form').dispatchEvent(new Event('change'));
+        })
+        .catch(() => {
+            container.innerHTML = '<div class="alert alert-warning">Failed to load lab tests</div>';
+        });
+}
+
+function loadCompletedImaging(patientId) {
+    clearAutoHiddenInputs('imaging_tests');
+    
+    const container = document.getElementById('imaging-list');
+    container.innerHTML = '<div class="alert alert-info">Loading imaging tests...</div>';
+
+    fetch(`/api/patient/${patientId}/completed-imaging`)
+        .then(response => {
+            if (!response.ok) return [];
+            return response.json();
+        })
+        .then(data => {
+            container.innerHTML = '';
+            
+            if (Array.isArray(data) && data.length > 0) {
+                const imagingList = document.createElement('div');
+                imagingList.className = 'imaging-items-list';
+                
+                data.forEach(row => {
+                    const iid = row && (row.imaging_test_id || row.id);
+                    const imagingName = row.test_name || row.name || 'Unknown Imaging';
+                    const imagingPrice = row.price || 0;
+                    
+                    if (!iid) return;
+                    
+                    // Auto-add hidden input
+                    addAutoHiddenInput('imaging_tests', iid);
+                    
+                    // Display as text with icon
+                    const imagingItem = document.createElement('div');
+                    imagingItem.className = 'imaging-display-item';
+                    imagingItem.innerHTML = `
+                        <i class="fas fa-check-circle text-success"></i>
+                        <span>
+                            ${imagingName} - KSH ${imagingPrice.toFixed(2)}
+                            <span class="badge badge-primary">Done</span>
+                        </span>
+                    `;
+                    imagingList.appendChild(imagingItem);
+                });
+                
+                container.appendChild(imagingList);
+            } else {
+                container.innerHTML = '<div class="alert alert-info">No completed imaging tests found for this patient</div>';
+            }
+
+            document.getElementById('billing-form').dispatchEvent(new Event('change'));
+        })
+        .catch(() => {
+            container.innerHTML = '<div class="alert alert-warning">Failed to load imaging tests</div>';
         });
 }
 
@@ -709,6 +862,7 @@ function loadPatientWardStay(patientId) {
     const container = document.getElementById('ward-stay-container');
     container.className = 'alert alert-info';
     container.textContent = 'Loading ward stay charges...';
+    clearAutoHiddenInputs('include_ward_stay');
 
     fetch(`/api/patient/${patientId}/ward-stay-preview`)
         .then(response => response.json())
@@ -721,6 +875,7 @@ function loadPatientWardStay(patientId) {
             if (!data || !data.assigned) {
                 container.className = 'alert alert-info';
                 container.textContent = 'No occupied bed assigned for this patient.';
+                document.getElementById('billing-form').dispatchEvent(new Event('change'));
                 return;
             }
 
@@ -731,19 +886,25 @@ function loadPatientWardStay(patientId) {
             if (amount <= 0 || days <= 0 || rate <= 0) {
                 container.className = 'alert alert-warning';
                 container.innerHTML = `Ward stay detected (${data.ward_name} - Bed ${data.bed_number}), but daily rate is 0 or nothing is due.`;
+                document.getElementById('billing-form').dispatchEvent(new Event('change'));
                 return;
             }
 
-            container.className = '';
+            container.className = 'ward-stay-display';
             container.innerHTML = `
-                <div class="service-item">
-                    <input type="checkbox" id="ward-stay" name="include_ward_stay" value="1" data-amount="${amount.toFixed(2)}">
-                    <label for="ward-stay">
+                <div class="ward-display-item">
+                    <i class="fas fa-check-circle text-success"></i>
+                    <span>
                         ${data.ward_name} - Bed ${data.bed_number}: ${days} day(s) x KSH ${rate.toFixed(2)} = KSH ${amount.toFixed(2)}
-                        <small>(${data.start_date} to ${data.end_date})</small>
-                    </label>
+                        <br><small class="text-muted">(${data.start_date} to ${data.end_date})</small>
+                        <span class="badge badge-warning">Ward Stay</span>
+                    </span>
                 </div>
             `;
+            container.setAttribute('data-amount', amount.toFixed(2));
+            clearAutoHiddenInputs('include_ward_stay');
+            addAutoHiddenInput('include_ward_stay', '1');
+            document.getElementById('billing-form').dispatchEvent(new Event('change'));
         })
         .catch(() => {
             container.className = 'alert alert-danger';
@@ -751,7 +912,7 @@ function loadPatientWardStay(patientId) {
         });
 }
 
-// Calculate totals when items are selected
+// Calculate totals when items are selected - UPDATED FOR AUTO-POPULATED ITEMS
 document.getElementById('billing-form').addEventListener('change', function() {
     let servicesTotal = 0;
     let labsTotal = 0;
@@ -759,34 +920,43 @@ document.getElementById('billing-form').addEventListener('change', function() {
     let medsTotal = 0;
     let wardTotal = 0;
     
-    // Calculate services total
-    document.querySelectorAll('input[name="services"]:checked').forEach(checkbox => {
-        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/KSH\s*([\d.]+)/i)[1]);
-        servicesTotal += price;
+    // Calculate services total from hidden inputs
+    document.querySelectorAll('input[type="hidden"][data-auto-name="services"]').forEach(input => {
+        const serviceItem = document.querySelector(`.service-display-item`);
+        if (serviceItem) {
+            const priceMatch = serviceItem.textContent.match(/KSH\s*([\d.]+)/);
+            if (priceMatch) servicesTotal += parseFloat(priceMatch[1]);
+        }
     });
     
-    // Calculate lab tests total
-    document.querySelectorAll('input[name="lab_tests"]:checked').forEach(checkbox => {
-        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/KSH\s*([\d.]+)/i)[1]);
-        labsTotal += price;
-    });
-
-    // Calculate imaging tests total
-    document.querySelectorAll('input[name="imaging_tests"]:checked').forEach(checkbox => {
-        const price = parseFloat(checkbox.nextElementSibling.textContent.match(/KSH\s*([\d.]+)/i)[1]);
-        imagingTotal += price;
+    // Better approach: parse from displayed items
+    document.querySelectorAll('.service-display-item').forEach(item => {
+        const priceMatch = item.textContent.match(/KSH\s*([\d.]+)/);
+        if (priceMatch) servicesTotal += parseFloat(priceMatch[1]);
     });
     
-    // Calculate medications total
-    document.querySelectorAll('input[name="prescription_items"]:checked').forEach(checkbox => {
-        const priceText = checkbox.nextElementSibling.textContent.match(/=\s*KSH\s*([\d.]+)/i)[1];
-        medsTotal += parseFloat(priceText);
+    // Calculate lab tests total from displayed items
+    document.querySelectorAll('.lab-display-item').forEach(item => {
+        const priceMatch = item.textContent.match(/KSH\s*([\d.]+)/);
+        if (priceMatch) labsTotal += parseFloat(priceMatch[1]);
     });
 
-    // Calculate ward stay total
-    const wardCheckbox = document.getElementById('ward-stay');
-    if (wardCheckbox && wardCheckbox.checked) {
-        const amt = parseFloat(wardCheckbox.dataset.amount || '0');
+    // Calculate imaging tests total from displayed items
+    document.querySelectorAll('.imaging-display-item').forEach(item => {
+        const priceMatch = item.textContent.match(/KSH\s*([\d.]+)/);
+        if (priceMatch) imagingTotal += parseFloat(priceMatch[1]);
+    });
+    
+    // Calculate medications total from displayed prescription lines
+    document.querySelectorAll('.prescription-line').forEach(line => {
+        const priceMatch = line.textContent.match(/=\s*KSH\s*([\d.]+)/);
+        if (priceMatch) medsTotal += parseFloat(priceMatch[1]);
+    });
+
+    // Calculate ward stay total from container data attribute
+    const wardContainer = document.getElementById('ward-stay-container');
+    if (wardContainer && wardContainer.hasAttribute('data-amount')) {
+        const amt = parseFloat(wardContainer.getAttribute('data-amount') || '0');
         if (!Number.isNaN(amt)) wardTotal += amt;
     }
     
@@ -803,7 +973,7 @@ document.getElementById('billing-form').addEventListener('change', function() {
 </script>
 
 <style>
-/* Payment Method Button Styles */
+/* Payment Method Button Styles - Updated to match pharmacist design */
 .payment-method-section {
     margin: 20px 0;
     padding: 20px;
@@ -842,8 +1012,8 @@ document.getElementById('billing-form').addEventListener('change', function() {
 }
 
 .payment-btn:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
     border-color: #007bff;
 }
 
@@ -851,7 +1021,7 @@ document.getElementById('billing-form').addEventListener('change', function() {
     background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
     border-color: #0056b3;
     color: white;
-    box-shadow: 0 6px 15px rgba(0,123,255,0.4);
+    box-shadow: 0 4px 12px rgba(0,123,255,0.3);
 }
 
 .payment-btn.active .payment-icon {
@@ -859,19 +1029,25 @@ document.getElementById('billing-form').addEventListener('change', function() {
 }
 
 .payment-icon {
-    width: 60px;
-    height: 60px;
+    width: 50px;
+    height: 50px;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 50%;
-    font-size: 28px;
+    font-size: 24px;
     transition: all 0.3s ease;
 }
 
 .mpesa-icon {
     background: #00a651;
     color: white;
+}
+
+.mpesa-icon img {
+    height: 30px;
+    width: auto;
+    object-fit: contain;
 }
 
 .payment-btn.active[data-method="mpesa"] {
@@ -921,19 +1097,162 @@ document.getElementById('billing-form').addEventListener('change', function() {
 
 .payment-btn span {
     font-weight: 600;
-    font-size: 15px;
+    font-size: 14px;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .payment-buttons {
-        flex-direction: column;
-        gap: 12px;
+/* Tablet responsive - bigger icons */
+@media (min-width: 768px) and (max-width: 1024px) {
+    .payment-icon {
+        width: 60px;
+        height: 60px;
+        font-size: 28px;
+    }
+    
+    .mpesa-icon img {
+        height: 36px;
+    }
+    
+    .payment-btn span {
+        font-size: 15px;
+    }
+}
+
+/* Desktop responsive - biggest icons */
+@media (min-width: 1025px) {
+    .payment-icon {
+        width: 70px;
+        height: 70px;
+        font-size: 32px;
+    }
+    
+    .mpesa-icon img {
+        height: 40px;
     }
     
     .payment-btn {
-        width: 100%;
-        min-width: auto;
+        padding: 25px 20px;
+    }
+    
+    .payment-btn span {
+        font-size: 16px;
+    }
+}
+
+/* Auto-populated item display styles */
+.service-items-list,
+.lab-items-list,
+.imaging-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.service-display-item,
+.lab-display-item,
+.imaging-display-item,
+.ward-display-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    background: white;
+    border: 1px solid #e3e6ea;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.service-display-item:hover,
+.lab-display-item:hover,
+.imaging-display-item:hover,
+.ward-display-item:hover {
+    border-color: #007bff;
+    box-shadow: 0 2px 4px rgba(0,123,255,0.1);
+}
+
+.service-display-item i,
+.lab-display-item i,
+.imaging-display-item i,
+.ward-display-item i {
+    font-size: 18px;
+    margin-top: 2px;
+}
+
+.service-display-item span,
+.lab-display-item span,
+.imaging-display-item span,
+.ward-display-item span {
+    flex: 1;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.service-display-item .badge,
+.lab-display-item .badge,
+.imaging-display-item .badge,
+.ward-display-item .badge {
+    margin-left: 8px;
+    font-size: 11px;
+    padding: 3px 8px;
+}
+
+.ward-stay-display {
+    padding: 0;
+    margin: 0;
+}
+
+.prescription-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    background: white;
+    border: 1px solid #e3e6ea;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    transition: all 0.2s ease;
+}
+
+.prescription-line:hover {
+    border-color: #28a745;
+    box-shadow: 0 2px 4px rgba(40,167,69,0.1);
+}
+
+.prescription-line i {
+    font-size: 18px;
+    margin-top: 2px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 767px) {
+    .payment-buttons {
+        display: flex;
+        flex-direction: row;
+        overflow-x: auto;
+        gap: 10px;
+        padding-bottom: 10px;
+    }
+    
+    .payment-btn {
+        flex-shrink: 0;
+        min-width: 100px;
+        padding: 15px 10px;
+    }
+    
+    .payment-icon {
+        width: 40px;
+        height: 40px;
+        font-size: 20px;
+    }
+    
+    .mpesa-icon img {
+        height: 24px;
+    }
+    
+    .payment-btn span {
+        font-size: 12px;
     }
 }
 </style>

@@ -313,11 +313,21 @@ class CommunicationSystem {
 
     setupMobileHandlers() {
         // Add back button functionality for mobile
+        const backToUsersBtn = document.getElementById('back-to-users');
+        if (backToUsersBtn) {
+            backToUsersBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.showUsersList();
+            });
+        }
+
         const chatHeader = document.querySelector('.chat-header');
         if (chatHeader && window.innerWidth <= 767) {
             chatHeader.style.cursor = 'pointer';
             chatHeader.addEventListener('click', (e) => {
                 if (e.target.closest('.chat-actions')) return;
+                if (e.target.closest('#back-to-users')) return;
                 this.showUsersList();
             });
         }
@@ -886,15 +896,10 @@ class CommunicationSystem {
 
         if (!this._messageActionsEl) {
             const el = document.createElement('div');
+            el.className = 'message-actions-popover';
             el.id = 'message-actions-popover';
             el.style.position = 'fixed';
             el.style.zIndex = '10001';
-            el.style.minWidth = '220px';
-            el.style.background = '#fff';
-            el.style.border = '1px solid rgba(0,0,0,0.12)';
-            el.style.borderRadius = '10px';
-            el.style.boxShadow = '0 8px 24px rgba(0,0,0,0.18)';
-            el.style.padding = '10px';
             el.style.display = 'none';
             document.body.appendChild(el);
             this._messageActionsEl = el;
@@ -911,28 +916,31 @@ class CommunicationSystem {
         const isSent = message.sender_id === this.currentUserId;
         const buttons = [];
 
-        buttons.push({ label: 'Reply', action: () => this.setReplyTo(message) });
-        buttons.push({ label: message.is_starred ? 'Unstar' : 'Star', action: () => this.toggleStar(messageId) });
+        buttons.push({ label: 'Reply', icon: 'bi-reply', action: () => this.setReplyTo(message) });
+        buttons.push({ label: message.is_starred ? 'Unstar' : 'Star', icon: message.is_starred ? 'bi-star-fill' : 'bi-star', action: () => this.toggleStar(messageId) });
 
         if (isSent) {
-            buttons.push({ label: 'Edit', action: () => this.editMessage(messageId) });
-            buttons.push({ label: 'Delete', action: () => this.deleteMessage(messageId) });
+            buttons.push({ label: 'Edit', icon: 'bi-pencil', action: () => this.editMessage(messageId) });
+            buttons.push({ label: 'Delete', icon: 'bi-trash', action: () => this.deleteMessage(messageId) });
         }
 
-        const emojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+        const quickReactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
         this._messageActionsEl.innerHTML = `
-            <div style="font-weight:600; font-size:13px; margin-bottom:8px;">Message</div>
-            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">
-                ${emojis.map(e => `<button type="button" class="btn btn-sm btn-outline-secondary" data-emoji="${this.escapeHtml(e)}">${this.escapeHtml(e)}</button>`).join('')}
+            <div class="quick-reactions">
+                ${quickReactions.map(e => `<button type="button" class="quick-reaction-btn" data-emoji="${this.escapeHtml(e)}">${this.escapeHtml(e)}</button>`).join('')}
             </div>
-            <div style="display:flex; flex-direction:column; gap:6px;">
-                ${buttons.map((b, idx) => `<button type="button" class="btn btn-sm btn-light text-start" data-action-idx="${idx}">${this.escapeHtml(b.label)}</button>`).join('')}
+            <div>
+                ${buttons.map((b, idx) => `
+                    <button type="button" class="btn" data-action-idx="${idx}">
+                        <i class="bi ${b.icon}"></i>${this.escapeHtml(b.label)}
+                    </button>
+                `).join('')}
             </div>
         `;
 
         // Bind emoji buttons
-        this._messageActionsEl.querySelectorAll('button[data-emoji]').forEach(btn => {
+        this._messageActionsEl.querySelectorAll('.quick-reaction-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const emoji = e.currentTarget.getAttribute('data-emoji');
                 this.reactToMessage(messageId, emoji);
@@ -1159,14 +1167,85 @@ class CommunicationSystem {
             return;
         }
 
-        const emojis = ['😀','😁','😂','🤣','😊','😍','😘','😎','😢','😡','👍','👎','🙏','🎉','❤️','🔥'];
+        const emojis = [
+            // Smileys & Emotion
+            '😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙',
+            '😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥',
+            '😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥳','😎','🤓',
+            '🧐','😕','😟','🙁','☹️','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣',
+            '😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾',
+            '🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾',
+            
+            // Hearts & Love
+            '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟',
+            
+            // Hand Gestures
+            '👋','🤚','🖐️','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👍',
+            '👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✍️','💅','🤳',
+            
+            // Body & People
+            '💪','🦾','🦿','🦵','🦶','👂','🦻','👃','🧠','🦷','🦴','👀','👁️','👅','👄','💋',
+            
+            // Nature & Animals
+            '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐔','🐧',
+            '🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🦟','🦗',
+            
+            // Food & Drink
+            '🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑',
+            '🥦','🥬','🥒','🌶️','🫑','🌽','🥕','🫒','🧄','🧅','🥔','🍠','🥐','🥯','🍞','🥖','🥨','🧀','🥚','🍳',
+            '🧈','🥞','🧇','🥓','🥩','🍗','🍖','🦴','🌭','🍔','🍟','🍕','🫓','🥪','🥙','🧆','🌮','🌯','🫔','🥗',
+            '🍿','🧈','🧂','🥫','🍱','🍘','🍙','🍚','🍛','🍜','🍝','🍠','🍢','🍣','🍤','🍥','🥮','🍡','🥟','🥠',
+            '🥡','🦀','🦞','🦐','🦑','🦪','🍦','🍧','🍨','🍩','🍪','🎂','🍰','🧁','🥧','🍫','🍬','🍭','🍮','🍯',
+            '🍼','🥛','☕','🫖','🍵','🍶','🍾','🍷','🍸','🍹','🍺','🍻','🥂','🥃','🥤','🧋','🧃','🧉','🧊',
+            
+            // Activities & Sports
+            '⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🥅','⛳','🪁',
+            '🏹','🎣','🤿','🥊','🥋','🎽','🛹','🛼','🛷','⛸️','🥌','🎿','⛷️','🏂','🪂','🏋️','🤼','🤸','🤺','⛹️',
+            '🤾','🏌️','🏇','🧘','🏊','🤽','🚣','🧗','🚴','🚵','🎪','🎭','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🎷',
+            '🎺','🎸','🪕','🎻','🎲','♟️','🎯','🎳','🎮','🎰','🧩',
+            
+            // Travel & Places
+            '🚗','🚕','🚙','🚌','🚎','🏎️','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🦯','🦽','🦼','🛴','🚲','🛵',
+            '🏍️','🛺','🚨','🚔','🚍','🚘','🚖','🚡','🚠','🚟','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇',
+            '🚊','🚉','✈️','🛫','🛬','🛩️','💺','🛰️','🚁','🛸','🚀','🛶','⛵','🚤','🛥️','🛳️','⛴️','🚢','⚓','⛽',
+            '🚧','🚦','🚥','🚏','🗺️','🗿','🗽','🗼','🏰','🏯','🏟️','🎡','🎢','🎠','⛲','⛱️','🏖️','🏝️','🏜️','🌋',
+            '⛰️','🏔️','🗻','🏕️','⛺','🏠','🏡','🏘️','🏚️','🏗️','🏭','🏢','🏬','🏣','🏤','🏥','🏦','🏨','🏪','🏫',
+            
+            // Objects
+            '⌚','📱','📲','💻','⌨️','🖥️','🖨️','🖱️','🖲️','🕹️','🗜️','💾','💿','📀','📼','📷','📸','📹','🎥','📽️',
+            '🎞️','📞','☎️','📟','📠','📺','📻','🎙️','🎚️','🎛️','🧭','⏱️','⏲️','⏰','🕰️','⌛','⏳','📡','🔋','🔌',
+            '💡','🔦','🕯️','🪔','🧯','🛢️','💸','💵','💴','💶','💷','💰','💳','💎','⚖️','🪜','🧰','🪛','🔧','🔨',
+            '⚒️','🛠️','⛏️','🪚','🔩','⚙️','🪤','🧱','⛓️','🧲','🔫','💣','🧨','🪓','🔪','🗡️','⚔️','🛡️','🚬','⚰️',
+            '⚱️','🏺','🔮','📿','🧿','💈','⚗️','🔭','🔬','🕳️','🩹','🩺','💊','💉','🩸','🧬','🦠','🧫','🧪','🌡️',
+            '🧹','🧺','🧻','🚽','🚰','🚿','🛁','🛀','🧼','🪒','🧽','🧴','🛎️','🔑','🗝️','🚪','🪑','🛋️','🛏️','🛌',
+            '🧸','🖼️','🛍️','🛒','🎁','🎈','🎏','🎀','🎊','🎉','🎎','🏮','🎐','🧧','✉️','📩','📨','📧','💌','📥',
+            '📤','📦','🏷️','📪','📫','📬','📭','📮','📯','📜','📃','📄','📑','🧾','📊','📈','📉','🗒️','🗓️','📆',
+            '📅','🗑️','📇','🗃️','🗳️','🗄️','📋','📁','📂','🗂️','🗞️','📰','📓','📔','📒','📕','📗','📘','📙','📚',
+            
+            // Symbols & Flags
+            '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️',
+            '✝️','☪️','🕉️','☸️','✡️','🔯','🕎','☯️','☦️','🛐','⛎','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑',
+            '♒','♓','🆔','⚛️','🉑','☢️','☣️','📴','📳','🈶','🈚','🈸','🈺','🈷️','✴️','🆚','💮','🉐','㊙️','㊗️',
+            '🈴','🈵','🈹','🈲','🅰️','🅱️','🆎','🆑','🅾️','🆘','❌','⭕','🛑','⛔','📛','🚫','💯','💢','♨️','🚷',
+            '🚯','🚳','🚱','🔞','📵','🚭','❗','❕','❓','❔','‼️','⁉️','🔅','🔆','〽️','⚠️','🚸','🔱','⚜️','🔰',
+            '♻️','✅','🈯','💹','❇️','✳️','❎','🌐','💠','Ⓜ️','🌀','💤','🏧','🚾','♿','🅿️','🈳','🈂️','🛂','🛃',
+            '🛄','🛅','🚹','🚺','🚼','🚻','🚮','🎦','📶','🈁','🔣','ℹ️','🔤','🔡','🔠','🆖','🆗','🆙','🆒','🆕',
+            '🆓','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔢','#️⃣','*️⃣','⏏️','▶️','⏸️','⏯️','⏹️','⏺️',
+            '⏭️','⏮️','⏩','⏪','⏫','⏬','◀️','🔼','🔽','➡️','⬅️','⬆️','⬇️','↗️','↘️','↙️','↖️','↕️','↔️','↪️',
+            '↩️','⤴️','⤵️','🔀','🔁','🔂','🔄','🔃','🎵','🎶','➕','➖','➗','✖️','♾️','💲','💱','™️','©️','®️',
+            '〰️','➰','➿','🔚','🔙','🔛','🔝','🔜','✔️','☑️','🔘','🔴','🟠','🟡','🟢','🔵','🟣','⚫','⚪','🟤',
+            '🔺','🔻','🔸','🔹','🔶','🔷','🔳','🔲','▪️','▫️','◾','◽','◼️','◻️','🟥','🟧','🟨','🟩','🟦','🟪',
+            '⬛','⬜','🟫','🔈','🔇','🔉','🔊','🔔','🔕','📣','📢','💬','💭','🗯️','♠️','♣️','♥️','♦️','🃏','🎴',
+            '🀄','🕐','🕑','🕒','🕓','🕔','🕕','🕖','🕗','🕘','🕙','🕚','🕛','🕜','🕝','🕞','🕟','🕠','🕡','🕢',
+            '🕣','🕤','🕥','🕦','🕧'
+        ];
         this._emojiPickerEl.innerHTML = `
-            <div style="display:flex; flex-wrap:wrap; gap:6px;">
-                ${emojis.map(e => `<button type="button" class="btn btn-sm btn-light" data-emoji="${this.escapeHtml(e)}">${this.escapeHtml(e)}</button>`).join('')}
+            <div class="emoji-grid">
+                ${emojis.map(e => `<span class="emoji-item" data-emoji="${this.escapeHtml(e)}">${this.escapeHtml(e)}</span>`).join('')}
             </div>
         `;
-        this._emojiPickerEl.querySelectorAll('button[data-emoji]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+        this._emojiPickerEl.querySelectorAll('.emoji-item').forEach(item => {
+            item.addEventListener('click', (e) => {
                 const emoji = e.currentTarget.getAttribute('data-emoji');
                 const input = document.getElementById('message-input');
                 if (input) {

@@ -220,7 +220,7 @@ ratelimit_storage_uri = os.getenv('REDIS_URL') or os.getenv('RATELIMIT_STORAGE_U
 
 if not ratelimit_storage_uri:
     ratelimit_storage_uri = 'memory://'
-    if os.getenv('FLASK_ENV') == 'production':
+    if os.getenv('FLASK_ENV') == 'production' and not app.config.get('DEBUG'):
         app.logger.warning(
             'Rate limiting is using in-memory storage, which is not suitable for production with multiple workers. '
             'Please configure a REDIS_URL or RATELIMIT_STORAGE_URI for persistent storage.'
@@ -275,7 +275,8 @@ def get_database_uri():
         )
 
     database_url = _normalize_database_url(database_url_raw)
-    app.logger.info(f"Using database: {_safe_db_url_for_logging(database_url)}")
+    if not app.config.get('DEBUG', True):  # Default to True during early init
+        app.logger.info(f"Using database: {_safe_db_url_for_logging(database_url)}")
     return database_url
 app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -474,17 +475,19 @@ _resend_config = ResendConfig(
 
 is_valid, error_msg = _resend_config.validate()
 if is_valid:
-    app.logger.info("Email config: Using Resend API")
-    # Warn about test domain limitations
-    if 'onboarding@resend.dev' in _resend_from.lower() or 'resend.dev' in _resend_from.lower():
-        app.logger.warning(
-            "⚠ IMPORTANT: Using Resend test domain (onboarding@resend.dev). "
-            "Emails will ONLY be sent to verified email addresses in your Resend dashboard. "
-            "To send to ANY email address, add and verify your own domain in Resend: "
-            "https://resend.com/domains"
-        )
+    if not app.config.get('DEBUG'):
+        app.logger.info("Email config: Using Resend API")
+        # Warn about test domain limitations
+        if 'onboarding@resend.dev' in _resend_from.lower() or 'resend.dev' in _resend_from.lower():
+            app.logger.warning(
+                "⚠ IMPORTANT: Using Resend test domain (onboarding@resend.dev). "
+                "Emails will ONLY be sent to verified email addresses in your Resend dashboard. "
+                "To send to ANY email address, add and verify your own domain in Resend: "
+                "https://resend.com/domains"
+            )
 else:
-    app.logger.warning(f"⚠ Email config: Resend not configured: {error_msg}. Emails will not send.")
+    if not app.config.get('DEBUG'):
+        app.logger.warning(f"⚠ Email config: Resend not configured: {error_msg}. Emails will not send.")
 
 _email_sender = ResendEmailSender(_resend_config)
 
@@ -16654,8 +16657,8 @@ def _send_admin_monthly_financial_report(*, year: int, month: int) -> None:
         except Exception:
             pass
 
-# Initialize scheduler (skip in fast dev mode)
-if not app.config.get('FAST_DEV'):
+# Initialize scheduler (skip in fast dev mode or debug mode)
+if not app.config.get('FAST_DEV') and not app.config.get('DEBUG'):
     if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         scheduler = BackgroundScheduler()
         _scheduler_apply_backup_jobs(scheduler)
@@ -16671,6 +16674,8 @@ if not app.config.get('FAST_DEV'):
             coalesce=True,
         )
         scheduler.start()
+elif app.config.get('DEBUG'):
+    app.logger.info('DEBUG mode: background schedulers disabled for faster startup.')
 else:
     app.logger.warning('FAST_DEV enabled: background schedulers disabled for faster startup.')
 
@@ -28960,7 +28965,14 @@ def create_bill():
                     PatientService.query
                     .filter(PatientService.patient_id == patient.id)
                     .filter(PatientService.service_id.in_(billed_service_ids))
-                    .filter(or_(PatientService.status.is_(None), PatientService.status == 'requested'))
+                    .filter(
+                        or_(
+                            PatientService.status.is_(None),
+                            PatientService.status == 'requested',
+                            PatientService.status == 'completed',
+                            PatientService.status == 'done',
+                        )
+                    )
                     .filter(PatientService.billed_sale_id.is_(None))
                     .order_by(PatientService.created_at.asc())
                     .all()
@@ -30041,6 +30053,88 @@ def api_patient_requested_services(patient_id: int):
         return jsonify([])
 
 
+@app.route('/api/patient/<int:patient_id>/completed-services')
+@login_required
+def api_patient_completed_services(patient_id: int):
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    try:
+        rows = (
+            PatientService.query
+            .filter(PatientService.patient_id == patient.id)
+            .filter(PatientService.status.in_(['completed', 'done']))
+            .filter(PatientService.billed_sale_id.is_(None))
+            .order_by(PatientService.created_at.desc())
+            .all()
+        )
+        return jsonify([
+            {
+                'patient_service_id': r.id,
+                'service_id': r.service_id,
+                'service_name': (r.service.name if getattr(r, 'service', None) else None),
+                'status': r.status or 'completed',
+                'created_at': r.created_at.isoformat() if getattr(r, 'created_at', None) else None,
+            }
+            for r in rows
+        ])
+    except Exception:
+        return jsonify([])
+
+
+@app.route('/api/drugs/search')
+@login_required
+def api_drugs_search():
+    q = (request.args.get('q') or '').strip()
+    limit = request.args.get('limit', 25, type=int)
+    limit = max(1, min(int(limit or 25), 100))
+
+    query = Drug.query.filter(Drug.remaining_quantity > 0)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(Drug.name.ilike(like), Drug.generic_name.ilike(like)))
+
+    rows = query.order_by(Drug.name).limit(limit).all()
+    return jsonify([
+        {
+            'id': d.id,
+            'name': d.name,
+            'generic_name': d.generic_name,
+            'remaining_quantity': int(d.remaining_quantity or 0),
+        }
+        for d in rows
+    ])
+
+
+@app.route('/api/controlled-drugs/search')
+@login_required
+def api_controlled_drugs_search():
+    q = (request.args.get('q') or '').strip()
+    limit = request.args.get('limit', 25, type=int)
+    limit = max(1, min(int(limit or 25), 100))
+
+    query = ControlledDrug.query.filter(ControlledDrug.remaining_quantity > 0)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(ControlledDrug.name.ilike(like), ControlledDrug.generic_name.ilike(like)))
+
+    rows = query.order_by(ControlledDrug.name).limit(limit).all()
+    return jsonify([
+        {
+            'id': d.id,
+            'name': d.name,
+            'generic_name': d.generic_name,
+            'remaining_quantity': int(d.remaining_quantity or 0),
+        }
+        for d in rows
+    ])
+
+
 @app.route('/api/services/search')
 @login_required
 def api_services_search():
@@ -30159,6 +30253,101 @@ def api_patient_prescriptions(patient_id: int):
             payload.append({'id': prescription.id, 'items': items_payload})
 
     return jsonify(payload)
+
+
+@app.route('/api/patient/<int:patient_id>/completed-labs')
+@login_required
+def api_patient_completed_labs(patient_id: int):
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    try:
+        lab_ids = {int(l.test_id) for l in (patient.labs or []) if getattr(l, 'test_id', None)}
+    except Exception:
+        lab_ids = set()
+
+    if not lab_ids:
+        return jsonify([])
+
+    try:
+        lab_keys = [f"LABTEST-{int(lid)}" for lid in lab_ids]
+        rows = (
+            db.session.query(SaleItem.individual_sale_number)
+            .join(Sale, SaleItem.sale_id == Sale.id)
+            .filter(Sale.patient_id == patient.id)
+            .filter(SaleItem.individual_sale_number.in_(lab_keys))
+            .all()
+        )
+        already_billed = {r[0] for r in rows if r and r[0]}
+    except Exception:
+        already_billed = set()
+
+    out = []
+    for lab in LabTest.query.filter(LabTest.id.in_(lab_ids)).order_by(LabTest.name).all():
+        key = f"LABTEST-{int(lab.id)}"
+        if key in already_billed:
+            continue
+        out.append({
+            'lab_test_id': lab.id,
+            'name': lab.name,
+            'price': float(lab.price or 0),
+        })
+
+    return jsonify(out)
+
+
+@app.route('/api/patient/<int:patient_id>/completed-imaging')
+@login_required
+def api_patient_completed_imaging(patient_id: int):
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    try:
+        imaging_ids = {
+            int(r.test_id) for r in (patient.imaging_requests or [])
+            if getattr(r, 'status', None) == 'completed' and getattr(r, 'test_id', None)
+        }
+    except Exception:
+        imaging_ids = set()
+
+    if not imaging_ids:
+        return jsonify([])
+
+    try:
+        img_keys = [f"IMGTEST-{int(iid)}" for iid in imaging_ids]
+        rows = (
+            db.session.query(SaleItem.individual_sale_number)
+            .join(Sale, SaleItem.sale_id == Sale.id)
+            .filter(Sale.patient_id == patient.id)
+            .filter(SaleItem.individual_sale_number.in_(img_keys))
+            .all()
+        )
+        already_billed = {r[0] for r in rows if r and r[0]}
+    except Exception:
+        already_billed = set()
+
+    out = []
+    for img in ImagingTest.query.filter(ImagingTest.id.in_(imaging_ids)).order_by(ImagingTest.name).all():
+        key = f"IMGTEST-{int(img.id)}"
+        if key in already_billed:
+            continue
+        out.append({
+            'imaging_test_id': img.id,
+            'name': img.name,
+            'price': float(img.price or 0),
+        })
+
+    return jsonify(out)
 
 
 @app.route('/api/patient/<int:patient_id>/ward-stay-preview')
@@ -30295,6 +30484,11 @@ def initialize_database():
                 os.makedirs(os.path.join(app.root_path, 'instance'), exist_ok=True)
             except Exception:
                 pass
+
+            # Skip detailed database checks in debug mode for faster startup
+            if app.config.get('DEBUG'):
+                db.create_all()
+                return
 
             # Create only missing tables (db.create_all is idempotent).
             from sqlalchemy import inspect as sa_inspect
@@ -33805,6 +33999,15 @@ if __name__ == '__main__':
         os.makedirs(app.config['BACKUP_FOLDER'])
 
     # Ensure DB and tables exist before serving any requests.
+    if app.config.get('DEBUG'):
+        print("=" * 60)
+        print("🚀 DEBUG MODE: Fast startup enabled")
+        print("   - Skipping detailed database checks")
+        print("   - Skipping background schedulers")
+        print("   - Skipping email configuration warnings")
+        print("   - Skipping API key validation")
+        print("=" * 60)
+    
     initialize_database()
 
     # Initialize login manager

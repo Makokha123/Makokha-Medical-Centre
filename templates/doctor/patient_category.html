@@ -26,79 +26,111 @@
   <div class="card shadow-sm">
     <div class="card-body">
       {% if patients and patients|length %}
-        <div class="table-responsive">
-          <table class="table table-hover align-middle mb-0">
+        <div class="table-container">
+          <table class="simple-table">
             <thead>
               <tr>
-                <th>Patient</th>
-                <th>OP/IP</th>
+                <th>Patient ID</th>
+                <th>Name</th>
+                <th>Age</th>
+                <th>Gender</th>
+                <th>Last Visit</th>
                 <th>Status</th>
-                <th>Updated</th>
-                <th class="text-end">Actions</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {% for p in patients %}
                 <tr>
                   <td>
-                    <div class="fw-semibold">{{ p.full_name }}</div>
-                    <div class="text-muted small">{{ p.gender or '-' }}{% if p.age is not none %} · {{ p.age }} yrs{% endif %}</div>
-                  </td>
-                  <td>
                     {% if p.ip_number %}
-                      <span class="badge bg-warning text-dark">IP {{ p.ip_number }}</span>
+                      <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <span>{{ p.ip_number }}</span>
+                        {% if p.discharge_state == 'pending' %}
+                          <span class="badge bg-warning text-dark">Pending</span>
+                        {% elif p.discharge_state == 'discharged' %}
+                          <span class="badge bg-success">Discharged</span>
+                        {% endif %}
+                      </div>
                     {% elif p.op_number %}
-                      <span class="badge bg-info text-dark">OP {{ p.op_number }}</span>
+                      <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <span>{{ p.op_number }}</span>
+                        {% if p.discharge_state == 'pending' %}
+                          <span class="badge bg-warning text-dark">Pending</span>
+                        {% elif p.discharge_state == 'discharged' %}
+                          <span class="badge bg-success">Discharged</span>
+                        {% endif %}
+                      </div>
                     {% else %}
                       <span class="text-muted">-</span>
                     {% endif %}
                   </td>
+                  <td>{{ p.full_name }}</td>
+                  <td>{{ p.age if p.age is not none else 'N/A' }}</td>
+                  <td>{{ p.gender or 'N/A' }}</td>
+                  <td>{{ p.updated_at.strftime('%Y-%m-%d') if p.updated_at else 'N/A' }}</td>
                   <td>
-                    <span class="badge bg-secondary">{{ p.status }}</span>
-                    {% if p.discharge_state %}
-                      <span class="badge bg-light text-dark border">{{ p.discharge_state }}</span>
-                    {% endif %}
+                    <span class="status-badge {{ 'in-stock' if p.status == 'active' else 'low-stock' }}">{{ p.status }}</span>
                   </td>
-                  <td class="text-muted small">
-                    {{ p.updated_at.strftime('%Y-%m-%d %H:%M') if p.updated_at else '-' }}
-                  </td>
-                  <td class="text-end">
-                    <div class="d-flex justify-content-end gap-2 flex-wrap">
+                  <td>
+                    <div class="action-btns">
                       {% if category in ['outpatients', 'inpatients'] %}
-                        <div class="btn-group">
-                          <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="btn btn-sm btn-primary">View</a>
-                          {% if category == 'outpatients' %}
-                            <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ p.id }}')">Complete</button>
-                            <button class="btn btn-sm btn-warning" onclick="admitPatient('{{ p.id }}')">Admit</button>
+                        <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="action-btn btn-primary" title="View">
+                          <i class="fas fa-eye"></i>
+                        </a>
+                        {% if category == 'outpatients' %}
+                          <button class="action-btn btn-success" onclick="completeTreatment('{{ p.id }}')" title="Complete">
+                            <i class="fas fa-check"></i>
+                          </button>
+                          <button class="action-btn btn-warning" onclick="admitPatient('{{ p.id }}')" title="Admit">
+                            <i class="fas fa-hospital"></i>
+                          </button>
+                        {% else %}
+                          {% if p.discharge_state == 'pending' %}
+                            <button class="action-btn btn-secondary" disabled title="Pending discharge">
+                              <i class="fas fa-clock"></i>
+                            </button>
                           {% else %}
-                            {% if p.discharge_state == 'pending' %}
-                              <button class="btn btn-sm btn-secondary" disabled>Pending discharge</button>
-                            {% else %}
-                              <button class="btn btn-sm btn-warning" onclick="completeTreatment('{{ p.id }}')">Request Discharge</button>
-                            {% endif %}
+                            <button class="action-btn btn-warning" onclick="completeTreatment('{{ p.id }}')" title="Request Discharge">
+                              <i class="fas fa-sign-out-alt"></i>
+                            </button>
                           {% endif %}
-                          <button class="btn btn-sm btn-info" onclick="viewSections('{{ p.id }}')">Sections</button>
-                          <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ p.id }}')">Delete</button>
-                        </div>
+                        {% endif %}
+                        <button class="action-btn btn-info" onclick="viewSections('{{ p.id }}')" title="Sections">
+                          <i class="fas fa-folder-open"></i>
+                        </button>
+                        <button class="action-btn btn-danger" onclick="confirmDelete('{{ p.id }}')" title="Delete">
+                          <i class="fas fa-trash"></i>
+                        </button>
 
                       {% elif category in ['old_outpatients', 'old_inpatients'] %}
-                        <div class="btn-group">
-                          <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="btn btn-sm btn-primary">View</a>
-                          <button class="btn btn-sm btn-warning" onclick="readmitPatient('{{ p.id }}')">Readmit</button>
-                          <button class="btn btn-sm btn-info" onclick="viewSections('{{ p.id }}')">Sections</button>
-                        </div>
+                        <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="action-btn btn-primary" title="View">
+                          <i class="fas fa-eye"></i>
+                        </a>
+                        <button class="action-btn btn-warning" onclick="readmitPatient('{{ p.id }}')" title="Readmit">
+                          <i class="fas fa-user-plus"></i>
+                        </button>
+                        <button class="action-btn btn-info" onclick="viewSections('{{ p.id }}')" title="Sections">
+                          <i class="fas fa-folder-open"></i>
+                        </button>
 
                       {% elif category == 'discharged' %}
-                        <div class="btn-group">
-                          <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="btn btn-sm btn-primary">View</a>
-                          <button class="btn btn-sm btn-info" onclick="viewSections('{{ p.id }}')">Sections</button>
-                          <form method="POST" action="{{ url_for('doctor_confirm_discharge', patient_id=p.id) }}" class="d-inline" onsubmit="return confirm('Confirm discharge? This will complete the inpatient record.');">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button class="btn btn-sm btn-success" type="submit">Confirm Discharge</button>
-                          </form>
-                        </div>
+                        <a href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" class="action-btn btn-primary" title="View">
+                          <i class="fas fa-eye"></i>
+                        </a>
+                        <button class="action-btn btn-info" onclick="viewSections('{{ p.id }}')" title="Sections">
+                          <i class="fas fa-folder-open"></i>
+                        </button>
+                        <form method="POST" action="{{ url_for('doctor_confirm_discharge', patient_id=p.id) }}" class="d-inline" onsubmit="return confirm('Confirm discharge? This will complete the inpatient record.');">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                          <button class="action-btn btn-success" type="submit" title="Confirm Discharge">
+                            <i class="fas fa-check-circle"></i>
+                          </button>
+                        </form>
                       {% else %}
-                        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('doctor_patient_details', patient_id=p.id) }}">Open</a>
+                        <a class="action-btn btn-primary" href="{{ url_for('doctor_patient_details', patient_id=p.id) }}" title="Open">
+                          <i class="fas fa-folder-open"></i>
+                        </a>
                       {% endif %}
                     </div>
                   </td>
@@ -241,4 +273,262 @@ function readmitPatient(patientId) {
   .catch(() => alert('Error readmitting patient'));
 }
 </script>
+
+<style>
+:root {
+    --primary: #4361ee;
+    --secondary: #6c757d;
+    --success: #28a745;
+    --danger: #dc3545;
+    --warning: #ffc107;
+    --info: #17a2b8;
+    --white: #ffffff;
+    --gray-200: #e9ecef;
+    --gray-300: #dee2e6;
+    --gray-600: #6c757d;
+    --gray-800: #343a40;
+    --border-radius: 8px;
+    --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --transition: all 0.3s ease;
+}
+
+/* Table Container - Modern Card Style */
+.table-container {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 70vh;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 24px;
+}
+
+/* Simple Table Styles */
+.simple-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--white);
+    margin: 0;
+    font-size: 14px;
+}
+
+.simple-table thead {
+    background: #0d6efd;
+    color: white;
+}
+
+/* Sticky header for all patient tables */
+.simple-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: #0d6efd;
+    padding: 12px 14px;
+    text-align: left;
+    font-weight: 600;
+    border: 2px solid #0d6efd;
+    white-space: nowrap;
+}
+
+.simple-table td {
+    padding: 10px 14px;
+    border: 1px solid var(--gray-300);
+}
+
+.simple-table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.simple-table tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+.simple-table tbody tr:last-child td {
+    border-bottom: 2px solid var(--gray-300);
+}
+
+/* Action Buttons Container */
+.action-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: center;
+}
+
+/* Action Button Styles */
+.action-btn {
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    color: white;
+    text-decoration: none;
+}
+
+.action-btn i {
+    font-size: 12px;
+}
+
+.action-btn:hover {
+    transform: scale(1.05);
+    text-decoration: none;
+    color: white;
+}
+
+.action-btn.btn-primary {
+    background: #4361ee;
+}
+
+.action-btn.btn-primary:hover {
+    background: #3651d3;
+}
+
+.action-btn.btn-success {
+    background: #28a745;
+}
+
+.action-btn.btn-success:hover {
+    background: #218838;
+}
+
+.action-btn.btn-warning {
+    background: #ffc107;
+    color: #212529;
+}
+
+.action-btn.btn-warning:hover {
+    background: #e0a800;
+    color: #212529;
+}
+
+.action-btn.btn-danger {
+    background: #dc3545;
+}
+
+.action-btn.btn-danger:hover {
+    background: #c82333;
+}
+
+.action-btn.btn-info {
+    background: #17a2b8;
+}
+
+.action-btn.btn-info:hover {
+    background: #138496;
+}
+
+.action-btn.btn-secondary {
+    background: #6c757d;
+}
+
+.action-btn.btn-secondary:hover {
+    background: #5a6268;
+}
+
+.action-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+/* Status Badges */
+.badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.status-badge {
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-block;
+    white-space: nowrap;
+}
+
+.status-badge.in-stock {
+    background: #e6f4ea;
+    color: #137333;
+}
+
+.status-badge.low-stock {
+    background: #fef7e0;
+    color: #b06000;
+}
+
+/* Responsive Design */
+@media (min-width: 481px) and (max-width: 767px) {
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .simple-table {
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+    
+    .action-btn {
+        width: 26px;
+        height: 26px;
+        padding: 4px 6px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
+    }
+}
+
+@media (min-width: 320px) and (max-width: 480px) {
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        max-height: 60vh;
+    }
+    
+    .simple-table {
+        min-width: 800px;
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+    
+    .action-btn {
+        padding: 4px 8px;
+        min-width: 28px;
+        height: 28px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
+    }
+    
+    .badge {
+        font-size: 10px;
+        padding: 2px 6px;
+    }
+}
+</style>
 {% endblock %}

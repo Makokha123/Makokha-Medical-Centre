@@ -1827,7 +1827,7 @@
 
 <!-- Prescription Modal -->
 <div class="modal" id="prescription-modal">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width: 900px;">
         <div class="modal-header">
             <h2>Create New Prescription</h2>
             <button class="close-btn" onclick="doctorPatient.closeModal('prescription')">&times;</button>
@@ -1837,74 +1837,33 @@
             <input type="hidden" name="patient_id" value="{{ patient.id }}">
             
             <div class="form-section">
-                <h3>Prescription Items</h3>
+                <h3>Add Prescription Items</h3>
+                
+                <!-- Drug Search Section -->
+                <div class="form-group">
+                    <label>Prescription Type</label>
+                    <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;">
+                        <input type="checkbox" id="prescription-controlled-toggle" onchange="doctorPatient.togglePrescriptionSearchType(this)">
+                        <span class="checkmark"></span>
+                        Controlled Drug
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label for="prescription-drug-search">Search Drug *</label>
+                    <input type="text" id="prescription-drug-search" placeholder="Type drug name..." autocomplete="off" />
+                    <small class="form-help">Search for drugs or controlled drugs with available stock.</small>
+                </div>
+                
+                <div id="prescription-drug-results" style="max-height:280px;overflow:auto;margin-bottom:15px;"></div>
+                
+                <!-- Selected Prescription Items -->
                 <div id="prescription-items-container">
-                    <div class="prescription-item-form">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Prescription Type</label>
-                                <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;">
-                                    <input type="checkbox" class="controlled-toggle" onchange="doctorPatient.toggleControlledItem(this)">
-                                    <span class="checkmark"></span>
-                                    Controlled Drug
-                                </label>
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Drug *</label>
-                                <select name="drug_id" class="drug-select" required onchange="doctorPatient.validateDrugStock(this)">
-                                    <option value="">Select Drug</option>
-                                    {% for drug in drugs %}
-                                    <option value="{{ drug.id }}" data-stock="{{ drug.remaining_quantity }}">
-                                        {{ drug.name }} ({{ drug.remaining_quantity }} left)
-                                    </option>
-                                    {% endfor %}
-                                </select>
-                                <select name="controlled_drug_id" class="drug-select" style="display:none;" onchange="doctorPatient.validateDrugStock(this)">
-                                    <option value="">Select Controlled Drug</option>
-                                    {% for cdrug in controlled_drugs %}
-                                    <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">
-                                        {{ cdrug.name }} ({{ cdrug.remaining_quantity }} left)
-                                    </option>
-                                    {% endfor %}
-                                </select>
-                                <div class="stock-warning" id="stock-warning-0"></div>
-                                <button type="button" class="btn btn-outline btn-sm dosage-btn" onclick="doctorPatient.openDosageLookup(this)">
-                                    <i class="fas fa-info-circle"></i> View Dosage
-                                </button>
-                            </div>
-                            <div class="form-group">
-                                <label>Quantity *</label>
-                                <input type="number" name="quantity" min="1" placeholder="Qty" required onchange="doctorPatient.validateQuantity(this)">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Dosage *</label>
-                                <input type="text" name="dosage" placeholder="e.g., 500mg" required>
-                            </div>
-                            <div class="form-group">
-                                <label>Frequency *</label>
-                                <input type="text" name="frequency" placeholder="e.g., TDS" required>
-                            </div>
-                            <div class="form-group">
-                                <label>Duration *</label>
-                                <input type="text" name="duration" placeholder="e.g., 5 days" required>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label>Notes</label>
-                            <input type="text" name="notes" placeholder="Additional instructions">
-                        </div>
-                        <button type="button" class="btn btn-danger remove-prescription-item" onclick="doctorPatient.removePrescriptionItem(this)" style="display: none;">
-                            <i class="fas fa-trash"></i> Remove
-                        </button>
+                    <h4 style="margin-top: 20px;">Selected Items</h4>
+                    <div id="prescription-selected-items">
+                        <p class="text-muted">No items added yet. Search and select drugs above.</p>
                     </div>
                 </div>
-                <button type="button" class="btn btn-outline" onclick="doctorPatient.addPrescriptionItem()">
-                    <i class="fas fa-plus"></i> Add Another Drug
-                </button>
             </div>
 
             <div class="form-actions">
@@ -3670,18 +3629,24 @@ class DoctorPatientManagement {
     openPrescriptionModal() {
         this.openModal('prescription');
         this.resetPrescriptionForm();
+        this._initPrescriptionSearchOnce();
+        
+        // Focus on search input
+        setTimeout(() => {
+            const input = document.getElementById('prescription-drug-search');
+            if (input) input.focus();
+        }, 100);
     }
 
     openControlledPrescriptionModal() {
         this.openPrescriptionModal();
         setTimeout(() => {
-            const firstRow = document.querySelector('#prescription-items-container .prescription-item-form');
-            const toggle = firstRow ? firstRow.querySelector('.controlled-toggle') : null;
+            const toggle = document.getElementById('prescription-controlled-toggle');
             if (toggle) {
                 toggle.checked = true;
-                this.toggleControlledItem(toggle);
+                this.togglePrescriptionSearchType(toggle);
             }
-        }, 0);
+        }, 150);
     }
 
     openLabRequestModal() {
@@ -3968,167 +3933,206 @@ class DoctorPatientManagement {
     }
 
     // Prescription Management
-    addPrescriptionItem() {
-        const container = document.getElementById('prescription-items-container');
-        this.prescriptionItemCount++;
+    resetPrescriptionForm() {
+        // Clear selected items
+        this.selectedPrescriptionItems = [];
+        const selectedContainer = document.getElementById('prescription-selected-items');
+        if (selectedContainer) {
+            selectedContainer.innerHTML = '<p class="text-muted">No items added yet. Search and select drugs above.</p>';
+        }
         
-        const newItem = document.createElement('div');
-        newItem.className = 'prescription-item-form';
-        newItem.innerHTML = `
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Prescription Type</label>
-                    <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;">
-                        <input type="checkbox" class="controlled-toggle" onchange="doctorPatient.toggleControlledItem(this)">
-                        <span class="checkmark"></span>
-                        Controlled Drug
-                    </label>
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Drug *</label>
-                    <select name="drug_id" class="drug-select" required onchange="doctorPatient.validateDrugStock(this)">
-                        <option value="">Select Drug</option>
-                        {% for drug in drugs %}
-                        <option value="{{ drug.id }}" data-stock="{{ drug.remaining_quantity }}">
-                            {{ drug.name }} ({{ drug.remaining_quantity }} left)
-                        </option>
-                        {% endfor %}
-                    </select>
-                    <select name="controlled_drug_id" class="drug-select" style="display:none;" onchange="doctorPatient.validateDrugStock(this)">
-                        <option value="">Select Controlled Drug</option>
-                        {% for cdrug in controlled_drugs %}
-                        <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">
-                            {{ cdrug.name }} ({{ cdrug.remaining_quantity }} left)
-                        </option>
-                        {% endfor %}
-                    </select>
-                    <div class="stock-warning" id="stock-warning-${this.prescriptionItemCount}"></div>
-                    <button type="button" class="btn btn-outline btn-sm dosage-btn" onclick="doctorPatient.openDosageLookup(this)">
-                        <i class="fas fa-info-circle"></i> View Dosage
-                    </button>
-                </div>
-                <div class="form-group">
-                    <label>Quantity *</label>
-                    <input type="number" name="quantity" min="1" placeholder="Qty" required onchange="doctorPatient.validateQuantity(this)">
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Dosage *</label>
-                    <input type="text" name="dosage" placeholder="e.g., 500mg" required>
-                </div>
-                <div class="form-group">
-                    <label>Frequency *</label>
-                    <input type="text" name="frequency" placeholder="e.g., TDS" required>
-                </div>
-                <div class="form-group">
-                    <label>Duration *</label>
-                    <input type="text" name="duration" placeholder="e.g., 5 days" required>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Notes</label>
-                <input type="text" name="notes" placeholder="Additional instructions">
-            </div>
-            <button type="button" class="btn btn-danger remove-prescription-item" onclick="doctorPatient.removePrescriptionItem(this)">
-                <i class="fas fa-trash"></i> Remove
-            </button>
-        `;
+        // Clear search input and results
+        const searchInput = document.getElementById('prescription-drug-search');
+        const resultsContainer = document.getElementById('prescription-drug-results');
+        if (searchInput) searchInput.value = '';
+        if (resultsContainer) resultsContainer.innerHTML = '';
+        
+        // Reset controlled toggle
+        const toggle = document.getElementById('prescription-controlled-toggle');
+        if (toggle) toggle.checked = false;
+    }
 
-        container.appendChild(newItem);
-        
-        // Show remove buttons on all items since we now have multiple
-        document.querySelectorAll('.remove-prescription-item').forEach(btn => {
-            btn.style.display = 'block';
+    _initPrescriptionSearchOnce() {
+        if (this._prescriptionSearchReady) return;
+        this._prescriptionSearchReady = true;
+        this.selectedPrescriptionItems = this.selectedPrescriptionItems || [];
+
+        const input = document.getElementById('prescription-drug-search');
+        const results = document.getElementById('prescription-drug-results');
+
+        if (!input || !results) return;
+
+        let timer = null;
+        input.addEventListener('input', () => {
+            const q = (input.value || '').trim();
+            if (timer) clearTimeout(timer);
+
+            timer = setTimeout(() => {
+                if (!q || q.length < 2) {
+                    results.innerHTML = '';
+                    return;
+                }
+                this._searchDrugsForPrescription(q);
+            }, 250);
         });
     }
 
-    removePrescriptionItem(button) {
-        const item = button.closest('.prescription-item-form');
-        const items = document.querySelectorAll('.prescription-item-form');
-        
-        if (items.length > 1) {
-            item.remove();
-            
-            // Hide remove button if only one item remains
-            if (items.length === 2) { // 2 because we're about to remove one
-                document.querySelectorAll('.remove-prescription-item').forEach(btn => {
-                    btn.style.display = 'none';
-                });
-            }
+    togglePrescriptionSearchType(checkbox) {
+        // Just trigger a new search if there's text in the search box
+        const input = document.getElementById('prescription-drug-search');
+        if (input && input.value.trim().length >= 2) {
+            this._searchDrugsForPrescription(input.value.trim());
         }
     }
 
-    resetPrescriptionForm() {
-        const container = document.getElementById('prescription-items-container');
-        this.prescriptionItemCount = 1;
-        
-        container.innerHTML = `
-            <div class="prescription-item-form">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Prescription Type</label>
-                        <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;">
-                            <input type="checkbox" class="controlled-toggle" onchange="doctorPatient.toggleControlledItem(this)">
-                            <span class="checkmark"></span>
-                            Controlled Drug
-                        </label>
+    async _searchDrugsForPrescription(query) {
+        const results = document.getElementById('prescription-drug-results');
+        if (!results) return;
+
+        const toggle = document.getElementById('prescription-controlled-toggle');
+        const isControlled = toggle && toggle.checked;
+        const endpoint = isControlled ? '/api/controlled-drugs/search' : '/api/drugs/search';
+
+        results.innerHTML = '<div class="alert info">Searching...</div>';
+
+        try {
+            const resp = await fetch(`${endpoint}?q=${encodeURIComponent(query)}&limit=30`);
+            const data = await resp.json().catch(() => []);
+            
+            if (!resp.ok) {
+                results.innerHTML = '<div class="alert error">Failed to search drugs.</div>';
+                return;
+            }
+
+            if (!Array.isArray(data) || data.length === 0) {
+                results.innerHTML = '<div class="alert info">No matching drugs found.</div>';
+                return;
+            }
+
+            results.innerHTML = data.map(d => {
+                const name = (d && d.name) ? String(d.name) : 'Drug';
+                const stock = (d && typeof d.remaining_quantity === 'number') ? d.remaining_quantity : 0;
+                const genericName = (d && d.generic_name) ? String(d.generic_name) : '';
+                const did = (d && d.id) ? Number(d.id) : 0;
+                const genericInfo = genericName ? `<div style="color:#666;font-size:12px;margin-top:2px;">${this._escapeHtml(genericName)}</div>` : '';
+                
+                return `
+                    <div class="drug-card" style="margin:8px 0;padding:10px;border:1px solid #ddd;border-radius:5px;">
+                        <div class="drug-header" style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+                            <div>
+                                <strong>${this._escapeHtml(name)}</strong>
+                                ${genericInfo}
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <span class="badge" style="background:#eef2ff;color:#273b8a;">${Number(stock || 0)} in stock</span>
+                                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.addDrugToPrescription(${did}, '${this._escapeHtml(name)}', ${stock}, ${isControlled})">Add</button>
+                            </div>
+                        </div>
                     </div>
+                `;
+            }).join('');
+        } catch (e) {
+            results.innerHTML = '<div class="alert error">Network error while searching.</div>';
+        }
+    }
+
+    addDrugToPrescription(drugId, drugName, stock, isControlled) {
+        // Check if already added
+        const exists = this.selectedPrescriptionItems.find(item => 
+            item.drugId === drugId && item.isControlled === isControlled
+        );
+        if (exists) {
+            this.showAlert('This drug is already added to the prescription', 'warning');
+            return;
+        }
+
+        const itemId = `presc-item-${Date.now()}-${drugId}`;
+        const item = {
+            id: itemId,
+            drugId: drugId,
+            drugName: drugName,
+            stock: stock,
+            isControlled: isControlled,
+            quantity: 1,
+            dosage: '',
+            frequency: '',
+            duration: '',
+            notes: ''
+        };
+
+        this.selectedPrescriptionItems.push(item);
+        this._renderPrescriptionItems();
+    }
+
+    _renderPrescriptionItems() {
+        const container = document.getElementById('prescription-selected-items');
+        if (!container) return;
+
+        if (this.selectedPrescriptionItems.length === 0) {
+            container.innerHTML = '<p class="text-muted">No items added yet. Search and select drugs above.</p>';
+            return;
+        }
+
+        container.innerHTML = this.selectedPrescriptionItems.map(item => `
+            <div class="prescription-item-card" id="${item.id}" style="border:1px solid #ddd;padding:15px;margin:10px 0;border-radius:5px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <strong>${this._escapeHtml(item.drugName)}</strong>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="doctorPatient.removePrescriptionItem('${item.id}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
                 </div>
                 <div class="form-row">
-                    <div class="form-group">
-                        <label>Drug *</label>
-                        <select name="drug_id" class="drug-select" required onchange="doctorPatient.validateDrugStock(this)">
-                            <option value="">Select Drug</option>
-                            {% for drug in drugs %}
-                            <option value="{{ drug.id }}" data-stock="{{ drug.remaining_quantity }}">
-                                {{ drug.name }} ({{ drug.remaining_quantity }} left)
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <select name="controlled_drug_id" class="drug-select" style="display:none;" onchange="doctorPatient.validateDrugStock(this)">
-                            <option value="">Select Controlled Drug</option>
-                            {% for cdrug in controlled_drugs %}
-                            <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">
-                                {{ cdrug.name }} ({{ cdrug.remaining_quantity }} left)
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <div class="stock-warning" id="stock-warning-1"></div>
-                        <button type="button" class="btn btn-outline btn-sm dosage-btn" onclick="doctorPatient.openDosageLookup(this)">
-                            <i class="fas fa-info-circle"></i> View Dosage
-                        </button>
+                    <div class="form-group" style="flex:1;margin-right:10px;">
+                        <label>Quantity * (Stock: ${item.stock})</label>
+                        <input type="number" class="form-control" data-item-id="${item.id}" data-field="quantity" 
+                               value="${item.quantity}" min="1" max="${item.stock}" required 
+                               onchange="doctorPatient.updatePrescriptionItemField(this)">
                     </div>
-                    <div class="form-group">
-                        <label>Quantity *</label>
-                        <input type="number" name="quantity" min="1" placeholder="Qty" required onchange="doctorPatient.validateQuantity(this)">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
+                    <div class="form-group" style="flex:1;margin-right:10px;">
                         <label>Dosage *</label>
-                        <input type="text" name="dosage" placeholder="e.g., 500mg" required>
+                        <input type="text" class="form-control" data-item-id="${item.id}" data-field="dosage" 
+                               value="${this._escapeHtml(item.dosage)}" placeholder="e.g., 500mg" required
+                               onchange="doctorPatient.updatePrescriptionItemField(this)">
                     </div>
-                    <div class="form-group">
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1;margin-right:10px;">
                         <label>Frequency *</label>
-                        <input type="text" name="frequency" placeholder="e.g., TDS" required>
+                        <input type="text" class="form-control" data-item-id="${item.id}" data-field="frequency" 
+                               value="${this._escapeHtml(item.frequency)}" placeholder="e.g., TDS" required
+                               onchange="doctorPatient.updatePrescriptionItemField(this)">
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" style="flex:1;margin-right:10px;">
                         <label>Duration *</label>
-                        <input type="text" name="duration" placeholder="e.g., 5 days" required>
+                        <input type="text" class="form-control" data-item-id="${item.id}" data-field="duration" 
+                               value="${this._escapeHtml(item.duration)}" placeholder="e.g., 5 days" required
+                               onchange="doctorPatient.updatePrescriptionItemField(this)">
                     </div>
                 </div>
                 <div class="form-group">
                     <label>Notes</label>
-                    <input type="text" name="notes" placeholder="Additional instructions">
+                    <input type="text" class="form-control" data-item-id="${item.id}" data-field="notes" 
+                           value="${this._escapeHtml(item.notes)}" placeholder="Additional instructions"
+                           onchange="doctorPatient.updatePrescriptionItemField(this)">
                 </div>
-                <button type="button" class="btn btn-danger remove-prescription-item" onclick="doctorPatient.removePrescriptionItem(this)" style="display: none;">
-                    <i class="fas fa-trash"></i> Remove
-                </button>
             </div>
-        `;
+        `).join('');
+    }
+
+    updatePrescriptionItemField(input) {
+        const itemId = input.dataset.itemId;
+        const field = input.dataset.field;
+        const value = input.value;
+
+        const item = this.selectedPrescriptionItems.find(i => i.id === itemId);
+        if (item) {
+            item[field] = value;
+        }
+    }
+
+    removePrescriptionItem(itemId) {
+        this.selectedPrescriptionItems = this.selectedPrescriptionItems.filter(i => i.id !== itemId);
+        this._renderPrescriptionItems();
     }
 
     async openDosageLookup(buttonElement) {
@@ -4225,78 +4229,6 @@ class DoctorPatientManagement {
         }
     }
 
-      validateDrugStock(selectElement) {
-          const selectedOption = selectElement.options[selectElement.selectedIndex];
-          const stock = parseInt(selectedOption.getAttribute('data-stock')) || 0;
-          const row = selectElement.closest('.prescription-item-form') || selectElement.closest('.form-row');
-          const quantityInput = row ? row.querySelector('input[name="quantity"]') : null;
-          const warningElement = (selectElement.closest('.form-group') || row)?.querySelector('.stock-warning');
-        
-        if (quantityInput) {
-            quantityInput.setAttribute('max', stock);
-            
-            if (stock < 10) {
-                warningElement.textContent = `Low stock: Only ${stock} remaining`;
-                warningElement.style.display = 'block';
-            } else {
-                warningElement.style.display = 'none';
-            }
-            
-            if (parseInt(quantityInput.value) > stock) {
-                quantityInput.value = stock;
-                this.showAlert(`Quantity adjusted to available stock (${stock})`, 'warning');
-            }
-        }
-    }
-
-    toggleControlledItem(checkboxEl) {
-        const row = checkboxEl.closest('.prescription-item-form');
-        if (!row) return;
-
-        const isControlled = checkboxEl.checked;
-        const normalSelect = row.querySelector('select[name="drug_id"]');
-        const controlledSelect = row.querySelector('select[name="controlled_drug_id"]');
-        const dosageBtn = row.querySelector('.dosage-btn');
-        const warningElement = row.querySelector('.stock-warning');
-        const quantityInput = row.querySelector('input[name="quantity"]');
-
-        if (warningElement) {
-            warningElement.textContent = '';
-            warningElement.style.display = 'none';
-        }
-        if (quantityInput) {
-            quantityInput.removeAttribute('max');
-        }
-
-        if (normalSelect) {
-            normalSelect.style.display = isControlled ? 'none' : '';
-            normalSelect.required = !isControlled;
-            if (isControlled) normalSelect.value = '';
-        }
-        if (controlledSelect) {
-            controlledSelect.style.display = isControlled ? '' : 'none';
-            controlledSelect.required = isControlled;
-            if (!isControlled) controlledSelect.value = '';
-        }
-        if (dosageBtn) {
-            dosageBtn.style.display = isControlled ? 'none' : '';
-        }
-    }
-
-    validateQuantity(inputElement) {
-        const max = parseInt(inputElement.getAttribute('max')) || 9999;
-        const value = parseInt(inputElement.value) || 0;
-        
-        if (value > max) {
-            inputElement.value = max;
-            this.showAlert(`Quantity cannot exceed available stock (${max})`, 'warning');
-        }
-        
-        if (value < 1) {
-            inputElement.value = 1;
-        }
-    }
-
     async completePrescription() {
         const form = document.getElementById('prescription-form');
         const csrfToken = (form.querySelector('input[name="csrf_token"]') || {}).value || this.getCsrfToken();
@@ -4308,78 +4240,63 @@ class DoctorPatientManagement {
             return;
         }
 
-        const container = document.getElementById('prescription-items-container');
-        const rows = container ? container.querySelectorAll('.prescription-item-form') : [];
-        const prescriptions = [];
-
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            const isControlled = !!(row.querySelector('.controlled-toggle') || {}).checked;
-            const drugId = (row.querySelector('select[name="drug_id"]') || {}).value;
-            const controlledDrugId = (row.querySelector('select[name="controlled_drug_id"]') || {}).value;
-            const quantityRaw = (row.querySelector('input[name="quantity"]') || {}).value;
-            const dosage = (row.querySelector('input[name="dosage"]') || {}).value;
-            const frequency = (row.querySelector('input[name="frequency"]') || {}).value;
-            const duration = (row.querySelector('input[name="duration"]') || {}).value;
-            const notes = (row.querySelector('input[name="notes"]') || {}).value;
-
-            if (isControlled) {
-                if (!controlledDrugId) {
-                    this.showAlert(`Please select a controlled drug for item ${i + 1}`, 'error');
-                    const select = row.querySelector('select[name="controlled_drug_id"]');
-                    if (select) select.focus();
-                    return;
-                }
-            } else {
-                if (!drugId) {
-                    this.showAlert(`Please select a drug for item ${i + 1}`, 'error');
-                    const select = row.querySelector('select[name="drug_id"]');
-                    if (select) select.focus();
-                    return;
-                }
-            }
-
-            const quantity = Number(quantityRaw);
-            if (!Number.isFinite(quantity) || quantity <= 0) {
-                this.showAlert(`Please enter a valid quantity for item ${i + 1}`, 'error');
-                const qty = row.querySelector('input[name="quantity"]');
-                if (qty) qty.focus();
-                return;
-            }
-
-            if (!dosage || !frequency || !duration) {
-                this.showAlert(`Please fill dosage, frequency, and duration for item ${i + 1}`, 'error');
-                return;
-            }
-
-            if (isControlled) {
-                prescriptions.push({
-                    is_controlled: true,
-                    controlled_drug_id: Number(controlledDrugId),
-                    quantity,
-                    dosage,
-                    frequency,
-                    duration,
-                    notes,
-                });
-            } else {
-                prescriptions.push({
-                    drug_id: Number(drugId),
-                    quantity,
-                    dosage,
-                    frequency,
-                    duration,
-                    notes,
-                });
-            }
-        }
-
-        if (!prescriptions.length) {
-            this.showAlert('No prescription items to save.', 'error');
+        if (!this.selectedPrescriptionItems || this.selectedPrescriptionItems.length === 0) {
+            this.showAlert('Please add at least one drug to the prescription.', 'error');
             return;
         }
 
+        // Validate all items
+        for (let i = 0; i < this.selectedPrescriptionItems.length; i++) {
+            const item = this.selectedPrescriptionItems[i];
+            
+            if (!item.quantity || item.quantity <= 0) {
+                this.showAlert(`Please enter a valid quantity for ${item.drugName}`, 'error');
+                return;
+            }
+            if (!item.dosage || !item.dosage.trim()) {
+                this.showAlert(`Please enter dosage for ${item.drugName}`, 'error');
+                return;
+            }
+            if (!item.frequency || !item.frequency.trim()) {
+                this.showAlert(`Please enter frequency for ${item.drugName}`, 'error');
+                return;
+            }
+            if (!item.duration || !item.duration.trim()) {
+                this.showAlert(`Please enter duration for ${item.drugName}`, 'error');
+                return;
+            }
+            if (item.quantity > item.stock) {
+                this.showAlert(`Quantity for ${item.drugName} exceeds available stock (${item.stock})`, 'error');
+                return;
+            }
+        }
+
+        const prescriptions = this.selectedPrescriptionItems.map(item => {
+            if (item.isControlled) {
+                return {
+                    is_controlled: true,
+                    controlled_drug_id: Number(item.drugId),
+                    quantity: Number(item.quantity),
+                    dosage: item.dosage.trim(),
+                    frequency: item.frequency.trim(),
+                    duration: item.duration.trim(),
+                    notes: item.notes ? item.notes.trim() : '',
+                };
+            } else {
+                return {
+                    drug_id: Number(item.drugId),
+                    quantity: Number(item.quantity),
+                    dosage: item.dosage.trim(),
+                    frequency: item.frequency.trim(),
+                    duration: item.duration.trim(),
+                    notes: item.notes ? item.notes.trim() : '',
+                };
+            }
+        });
+
         const submitBtn = form.querySelector('.btn-success');
+        const originalBtnText = submitBtn.innerHTML;
+        
         try {
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
             submitBtn.disabled = true;
@@ -4410,18 +4327,9 @@ class DoctorPatientManagement {
         } catch (error) {
             this.showAlert('Network error occurred. Please try again.', 'error');
         } finally {
-            submitBtn.innerHTML = '<i class="fas fa-check-circle"></i> Complete Prescription';
+            submitBtn.innerHTML = originalBtnText;
             submitBtn.disabled = false;
         }
-    }
-
-    async openDosageLookup(buttonElement) {
-        if (typeof window.showAlert === 'function') {
-            this.showAlert(message, type);
-            return;
-        }
-        // Fallback to native alert only if global helper is unavailable
-        window.alert(message);
     }
 
     // Form validation helpers

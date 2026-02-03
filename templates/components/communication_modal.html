@@ -46,25 +46,28 @@
                     <!-- Chat Header -->
                     <div class="chat-header">
                         <div class="d-flex align-items-center">
+                            <button class="btn btn-sm btn-link back-to-users d-md-none" id="back-to-users-btn" title="Back">
+                                <i class="bi bi-arrow-left"></i>
+                            </button>
                             <div class="user-avatar me-2" id="chat-user-avatar">
                                 <i class="bi bi-person-circle"></i>
                             </div>
                             <div class="flex-grow-1">
-                                <h6 class="mb-0" id="chat-user-name">User Name</h6>
-                                <small class="text-muted" id="chat-user-status">offline</small>
+                                <h6 class="mb-0 chat-user-name-header" id="chat-user-name">User Name</h6>
+                                <small class="text-muted chat-user-status-text" id="chat-user-status">offline</small>
                             </div>
                             <div class="chat-actions">
-                                <button class="btn btn-sm btn-outline-secondary me-1" id="chat-search-btn" title="Search messages">
+                                <button class="btn btn-sm btn-outline-secondary chat-action-btn" id="chat-search-btn" title="Search messages">
                                     <i class="bi bi-search"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-secondary me-2" id="chat-settings-btn" title="Chat settings">
-                                    <i class="bi bi-three-dots-vertical"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-primary me-1" id="voice-call-btn" title="Voice Call">
+                                <button class="btn btn-sm btn-outline-primary chat-action-btn" id="voice-call-btn" title="Voice Call">
                                     <i class="bi bi-telephone-fill"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-primary" id="video-call-btn" title="Video Call">
+                                <button class="btn btn-sm btn-outline-primary chat-action-btn" id="video-call-btn" title="Video Call">
                                     <i class="bi bi-camera-video-fill"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary chat-action-btn" id="chat-settings-btn" title="Chat settings">
+                                    <i class="bi bi-three-dots-vertical"></i>
                                 </button>
                             </div>
                         </div>
@@ -107,11 +110,11 @@
 
                     <!-- Message Input -->
                     <div class="message-input">
-                        <button class="btn btn-outline-secondary" id="emoji-btn" title="Emoji">
+                        <button class="btn btn-outline-secondary emoji-picker-btn" id="emoji-btn" title="Emoji">
                             <i class="bi bi-emoji-smile"></i>
                         </button>
-                        <input type="text" class="form-control" id="message-input" placeholder="Type a message...">
-                        <button class="btn btn-primary" id="send-message-btn">
+                        <input type="text" class="form-control message-input-field" id="message-input" placeholder="Type a message..." autocomplete="off" autocorrect="off" autocapitalize="sentences">
+                        <button class="btn btn-primary send-message-btn" id="send-message-btn">
                             <i class="bi bi-send-fill"></i>
                         </button>
                     </div>
@@ -709,7 +712,16 @@
 
 /* Responsive Design for All Screen Sizes */
 
-/* Extra Small Phones (320px - 480px) */
+/* Back button hidden by default */
+.back-to-users {
+    display: none !important;
+    padding: 0;
+    margin-right: 8px;
+    font-size: 20px;
+    color: #333;
+}
+
+/* Extra Small Phones (320px - 480px) - MOBILE FIRST */
 @media (max-width: 480px) {
     .communication-modal {
         width: 100% !important;
@@ -724,12 +736,12 @@
     }
 
     .communication-header {
-        padding: 12px 15px;
+        padding: 10px 12px;
         cursor: default;
     }
 
     .communication-header h5 {
-        font-size: 16px;
+        font-size: 15px;
     }
 
     .users-sidebar {
@@ -750,53 +762,215 @@
         position: relative;
     }
 
+    /* Show back button on mobile */
+    .back-to-users {
+        display: inline-flex !important;
+    }
+
+    /* User list optimizations */
+    .user-item {
+        padding: 10px 12px;
+    }
+
     .user-avatar {
-        width: 38px;
-        height: 38px;
+        width: 40px;
+        height: 40px;
         font-size: 20px;
+        flex-shrink: 0;
     }
 
     .user-name {
         font-size: 13px;
+        line-height: 1.3;
     }
 
     .user-role {
         font-size: 11px;
     }
 
-    .chat-header {
-        padding: 12px 15px;
-    }
-
-    .chat-header h6 {
-        font-size: 14px;
-    }
-
-    .messages-container {
-        padding: 15px 10px;
-    }
-
-    .message-bubble {
-        max-width: 75%;
-        padding: 8px 12px;
-        font-size: 14px;
-    }
-
-    .message-time {
+    .unread-badge {
+        padding: 2px 6px;
         font-size: 10px;
     }
 
-    .message-input {
-        padding: 10px 12px;
-        gap: 8px;
+    /* Chat header - SINGLE ROW layout with reduced sizes */
+    .chat-header {
+        padding: 8px 10px;
     }
 
-    .message-input input {
-        font-size: 14px;
+    .chat-header .user-avatar {
+        width: 36px;
+        height: 36px;
+        font-size: 18px;
+        margin-right: 8px !important;
     }
 
-    .message-input .btn {
+    .chat-user-name-header {
+        font-size: 13px !important;
+        line-height: 1.2;
+        font-weight: 600;
+    }
+
+    .chat-user-status-text {
+        font-size: 10px !important;
+        display: block;
+        line-height: 1.1;
+        margin-top: 2px;
+    }
+
+    /* Chat action buttons - reduced size, single row */
+    .chat-actions {
+        display: flex;
+        gap: 4px;
+        flex-shrink: 0;
+        align-items: center;
+    }
+
+    .chat-action-btn {
+        padding: 4px 6px !important;
+        font-size: 13px !important;
+        min-width: 28px;
+        height: 28px;
+        border-radius: 6px;
+    }
+
+    .chat-action-btn i {
+        font-size: 13px;
+    }
+
+    /* Messages container */
+    .messages-container {
+        padding: 12px 8px;
+        padding-bottom: 60px; /* Extra space to ensure last message visible while typing */
+    }
+
+    .message-bubble {
+        max-width: 80%;
+        padding: 8px 11px;
+        font-size: 13px;
+        line-height: 1.4;
+    }
+
+    .message-time {
+        font-size: 9px;
+        margin-top: 3px;
+    }
+
+    .message-ticks {
+        font-size: 11px;
+    }
+
+    .message-edited {
+        font-size: 9px;
+    }
+
+    .message-star {
+        font-size: 10px;
+    }
+
+    .message-reply-preview {
+        margin-bottom: 4px;
+        padding-left: 6px;
+    }
+
+    .message-reply-preview .reply-snippet {
+        font-size: 11px;
+    }
+
+    .reaction-chip {
+        padding: 2px 6px;
+        font-size: 11px;
+        gap: 3px;
+    }
+
+    /* Typing indicator - reduced */
+    .typing-indicator {
+        padding: 6px 12px;
+    }
+
+    .typing-dots span {
+        width: 5px;
+        height: 5px;
+    }
+
+    .typing-text {
+        font-size: 11px;
+    }
+
+    /* Reply preview */
+    .reply-preview {
         padding: 8px 12px;
+    }
+
+    .reply-preview-label {
+        font-size: 10px;
+    }
+
+    .reply-preview-text {
+        font-size: 12px;
+    }
+
+    /* Message Input - OPTIMIZED for mobile typing */
+    .message-input {
+        padding: 8px 10px;
+        gap: 6px;
+        background: white;
+        position: sticky;
+        bottom: 0;
+        z-index: 10;
+    }
+
+    /* Emoji picker button - reduced */
+    .emoji-picker-btn {
+        padding: 6px 8px !important;
+        font-size: 16px !important;
+        min-width: 36px;
+        height: 36px;
+        flex-shrink: 0;
+        border-radius: 8px;
+    }
+
+    /* Message input field - increased length, prevent rotation */
+    .message-input-field {
+        flex: 1;
+        font-size: 14px !important; /* Prevent zoom on iOS */
+        padding: 8px 10px;
+        min-height: 36px;
+        border-radius: 18px;
+        /* Prevent text rotation */
+        writing-mode: horizontal-tb !important;
+        text-orientation: mixed !important;
+        direction: ltr !important;
+        unicode-bidi: normal !important;
+    }
+
+    /* Send button - reduced */
+    .send-message-btn {
+        padding: 6px 10px !important;
+        font-size: 15px !important;
+        min-width: 36px;
+        height: 36px;
+        flex-shrink: 0;
+        border-radius: 50%;
+    }
+
+    .send-message-btn i {
+        font-size: 15px;
+    }
+
+    /* Search bar - reduced */
+    .chat-search-bar {
+        padding: 8px 12px;
+    }
+
+    .chat-search-bar input {
+        font-size: 13px;
+        padding: 6px 10px;
+    }
+
+    .chat-search-bar .btn {
+        padding: 4px 8px;
+        font-size: 12px;
     }
 
     /* Call Modal for Small Phones */
@@ -812,48 +986,34 @@
     }
 
     .caller-avatar {
-        font-size: 60px;
+        font-size: 50px;
     }
 
     .call-actions .btn {
-        padding: 12px 20px;
-        font-size: 14px;
+        padding: 10px 18px;
+        font-size: 13px;
     }
 
     .local-video {
         width: 90px;
         height: 70px;
-        bottom: 15px;
-        right: 15px;
+        bottom: 12px;
+        right: 12px;
     }
 
     .call-controls {
-        padding: 20px 15px;
-        gap: 15px;
+        padding: 18px 12px;
+        gap: 12px;
     }
 
     .call-controls .btn {
-        width: 50px;
-        height: 50px;
-        font-size: 20px;
-    }
-
-    .chat-actions .btn {
-        padding: 6px 10px;
-        font-size: 14px;
-    }
-
-    /* Back button for mobile navigation */
-    .chat-header::before {
-        content: '‹';
-        font-size: 28px;
-        margin-right: 10px;
-        cursor: pointer;
-        display: none;
+        width: 48px;
+        height: 48px;
+        font-size: 18px;
     }
 }
 
-/* Small to Medium Phones (481px - 767px) */
+/* Small to Medium Phones (481px - 767px) - TABLET PORTRAIT */
 @media (min-width: 481px) and (max-width: 767px) {
     .communication-modal {
         width: 100% !important;
@@ -869,6 +1029,7 @@
 
     .communication-header {
         cursor: default;
+        padding: 12px 15px;
     }
 
     .users-sidebar {
@@ -888,19 +1049,98 @@
         width: 100%;
     }
 
-    .message-bubble {
-        max-width: 70%;
+    /* Show back button */
+    .back-to-users {
+        display: inline-flex !important;
     }
 
+    /* Chat header - reduced sizes */
+    .chat-header {
+        padding: 10px 15px;
+    }
+
+    .chat-header .user-avatar {
+        width: 38px;
+        height: 38px;
+        font-size: 19px;
+    }
+
+    .chat-user-name-header {
+        font-size: 14px !important;
+        font-weight: 600;
+    }
+
+    .chat-user-status-text {
+        font-size: 11px !important;
+    }
+
+    /* Chat action buttons */
+    .chat-action-btn {
+        padding: 5px 8px !important;
+        font-size: 14px !important;
+        min-width: 32px;
+        height: 32px;
+    }
+
+    .chat-actions {
+        gap: 5px;
+    }
+
+    /* Messages */
+    .messages-container {
+        padding: 15px 12px;
+    }
+
+    .message-bubble {
+        max-width: 75%;
+        padding: 9px 12px;
+        font-size: 13.5px;
+    }
+
+    .message-time {
+        font-size: 10px;
+    }
+
+    /* Message input */
+    .message-input {
+        padding: 10px 12px;
+        gap: 8px;
+    }
+
+    .emoji-picker-btn {
+        padding: 7px 9px !important;
+        font-size: 17px !important;
+        min-width: 38px;
+        height: 38px;
+    }
+
+    .message-input-field {
+        font-size: 14px !important;
+        padding: 9px 12px;
+        min-height: 38px;
+        /* Prevent text rotation */
+        writing-mode: horizontal-tb !important;
+        text-orientation: mixed !important;
+        direction: ltr !important;
+    }
+
+    .send-message-btn {
+        padding: 7px 11px !important;
+        font-size: 16px !important;
+        min-width: 38px;
+        height: 38px;
+    }
+
+    /* Call elements */
     .local-video {
-        width: 120px;
-        height: 90px;
+        width: 110px;
+        height: 85px;
     }
 
     .call-controls .btn {
-        width: 55px;
-        height: 55px;
-        font-size: 22px;
+        width: 52px;
+        height: 52px;
+        font-size: 20px;
     }
 }
 
@@ -1072,6 +1312,203 @@
     .typing-dots span {
         animation: none !important;
         transition: none !important;
+    }
+}
+
+/* ========== Emoji Picker Styles ========== */
+#emoji-picker {
+    position: absolute;
+    bottom: 60px;
+    right: 10px;
+    background: white;
+    border: 1px solid var(--secondary-color);
+    border-radius: 12px;
+    padding: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    display: none;
+    z-index: 1000;
+    max-width: 320px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+#emoji-picker.show {
+    display: block;
+}
+
+.emoji-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+    gap: 6px;
+}
+
+.emoji-item {
+    font-size: 22px;
+    cursor: pointer;
+    padding: 6px;
+    text-align: center;
+    border-radius: 6px;
+    transition: background-color 0.2s;
+    user-select: none;
+}
+
+.emoji-item:hover {
+    background-color: var(--hover-color);
+    transform: scale(1.15);
+}
+
+/* Mobile emoji picker adjustments */
+@media (max-width: 480px) {
+    #emoji-picker {
+        bottom: 50px;
+        right: 5px;
+        left: 5px;
+        max-width: 100%;
+        padding: 10px;
+        max-height: 260px;
+    }
+
+    .emoji-grid {
+        grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
+        gap: 4px;
+    }
+
+    .emoji-item {
+        font-size: 20px;
+        padding: 5px;
+    }
+}
+
+/* Tablet emoji picker */
+@media (min-width: 481px) and (max-width: 767px) {
+    #emoji-picker {
+        bottom: 55px;
+        max-width: 340px;
+        max-height: 280px;
+    }
+
+    .emoji-grid {
+        grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+        gap: 5px;
+    }
+
+    .emoji-item {
+        font-size: 21px;
+    }
+}
+
+/* ========== Message Actions Popover ========== */
+.message-actions-popover {
+    position: absolute;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1001;
+    min-width: 180px;
+    overflow: hidden;
+}
+
+.message-actions-popover .btn {
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: white;
+    padding: 10px 14px;
+    font-size: 14px;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background-color 0.2s;
+}
+
+.message-actions-popover .btn:last-child {
+    border-bottom: none;
+}
+
+.message-actions-popover .btn:hover {
+    background-color: var(--hover-color);
+}
+
+.message-actions-popover .btn i {
+    margin-right: 10px;
+    width: 16px;
+    text-align: center;
+}
+
+/* Quick reactions row */
+.quick-reactions {
+    padding: 8px 10px;
+    display: flex;
+    justify-content: space-around;
+    border-bottom: 1px solid #e9ecef;
+    background: #fafafa;
+}
+
+.quick-reaction-btn {
+    font-size: 20px;
+    padding: 4px 8px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.quick-reaction-btn:hover {
+    background: white;
+    transform: scale(1.2);
+}
+
+/* Mobile message actions - reduced sizes */
+@media (max-width: 480px) {
+    .message-actions-popover {
+        min-width: 160px;
+        border-radius: 10px;
+    }
+
+    .message-actions-popover .btn {
+        padding: 8px 11px;
+        font-size: 12px;
+    }
+
+    .message-actions-popover .btn i {
+        margin-right: 8px;
+        width: 14px;
+        font-size: 12px;
+    }
+
+    .quick-reactions {
+        padding: 6px 8px;
+    }
+
+    .quick-reaction-btn {
+        font-size: 17px;
+        padding: 3px 6px;
+    }
+}
+
+/* Tablet message actions */
+@media (min-width: 481px) and (max-width: 767px) {
+    .message-actions-popover {
+        min-width: 170px;
+    }
+
+    .message-actions-popover .btn {
+        padding: 9px 12px;
+        font-size: 13px;
+    }
+
+    .message-actions-popover .btn i {
+        margin-right: 9px;
+        width: 15px;
+    }
+
+    .quick-reactions {
+        padding: 7px 9px;
+    }
+
+    .quick-reaction-btn {
+        font-size: 18px;
+        padding: 3px 7px;
     }
 }
 </style>

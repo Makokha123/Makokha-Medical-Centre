@@ -280,6 +280,15 @@
             display: block;
         }
 
+        /* Floating back button for pharmacist-in-reception */
+        .floating-back-btn {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1062;
+            box-shadow: var(--shadow);
+        }
+
         /* Card Styling */
         .card {
             border-radius: var(--radius);
@@ -307,6 +316,150 @@
     background: white;
     margin-bottom: 1.5rem;
     width: 100%; /* responsive */
+}
+
+/* Reception tables (Admin Drugs style) */
+.reception-table-container {
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 70vh;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 24px;
+}
+
+.reception-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    margin: 0;
+    font-size: 14px;
+}
+
+.reception-table thead {
+    background: #0d6efd;
+    color: white;
+}
+
+.reception-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: #0d6efd;
+}
+
+.reception-table th {
+    padding: 12px 14px;
+    text-align: left;
+    font-weight: 600;
+    border: 2px solid #0d6efd;
+    white-space: nowrap;
+}
+
+.reception-table td {
+    padding: 10px 12px;
+    border: 1px solid #dee2e6;
+}
+
+.reception-table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.reception-table tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+.reception-action-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: center;
+}
+
+.reception-action-btn {
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    color: white;
+    text-decoration: none;
+}
+
+.reception-action-btn i {
+    font-size: 12px;
+}
+
+.reception-action-btn:hover {
+    transform: scale(1.05);
+}
+
+.reception-action-btn.btn-primary {
+    background: #4361ee;
+}
+
+.reception-action-btn.btn-primary:hover {
+    background: #3651d3;
+}
+
+.reception-action-btn.btn-success {
+    background: #28a745;
+}
+
+.reception-action-btn.btn-success:hover {
+    background: #218838;
+}
+
+@media (min-width: 481px) and (max-width: 767px) {
+    .reception-table {
+        font-size: 12px;
+    }
+
+    .reception-table th,
+    .reception-table td {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+
+    .reception-action-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 11px;
+    }
+
+    .reception-action-btn i {
+        font-size: 11px;
+    }
+}
+
+@media (min-width: 320px) and (max-width: 480px) {
+    .reception-table {
+        font-size: 12px;
+    }
+
+    .reception-table th,
+    .reception-table td {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+
+    .reception-action-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 11px;
+    }
+
+    .reception-action-btn i {
+        font-size: 11px;
+    }
 }
 
 /* Responsive Table */
@@ -600,7 +753,7 @@
                 margin-top: 0 !important;
             }
         }
-    </style>
+    </style>123
     
     {% block extra_css %}{% endblock %}
     <!-- jQuery 3.7.1 with correct SRI and robust fallback -->
@@ -642,13 +795,16 @@
 </head>
 <body>
     {% set is_embed = request.args.get('embed') %}
+    {% set user_role = current_user.role|lower if current_user.is_authenticated and current_user.role else '' %}
+    {% set is_pharmacist = user_role == 'pharmacist' %}
+    {% set is_reception_context = request.path.startswith('/receptionist') %}
     {% if is_embed %}
         <style>
             body { padding-top: 0 !important; background: #fff; }
         </style>
     {% endif %}
 
-    {% if not is_embed %}
+    {% if not is_embed and (not is_pharmacist or is_reception_context) %}
     <!-- PC Hamburger Toggle (Green with white background) -->
     <button class="pc-toggle-nav" id="pcToggleNav">
         <i class="fas fa-bars"></i>
@@ -849,7 +1005,7 @@
                                 <span class="nav-text">Lab Requests</span>
                             </a>
                         </div>
-                    {% elif current_user.role == 'receptionist' %}
+                    {% elif user_role == 'receptionist' or (user_role == 'pharmacist' and is_reception_context) %}
                         <!-- Receptionist Navigation -->
                         <div class="nav-item">
                             <a href="{{ url_for('receptionist_dashboard') }}" class="nav-link">
@@ -908,6 +1064,12 @@
 
     <!-- Overlay for mobile -->
     <div class="overlay" id="overlay"></div>
+    {% endif %}
+
+    {% if not is_embed and is_pharmacist and is_reception_context %}
+    <a href="{{ url_for('pharmacist_dashboard') }}" class="floating-back-btn btn btn-primary" title="Back to Pharmacist Dashboard">
+        <i class="fas fa-pills me-1"></i><span class="d-none d-sm-inline">Back to Pharmacist</span>
+    </a>
     {% endif %}
 
     <!-- Main Content -->
@@ -1059,7 +1221,7 @@
     
 
     <!-- Enhanced Sidebar Behavior -->
-    {% if not is_embed %}
+    {% if not is_embed and (not is_pharmacist or is_reception_context) %}
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         const sidebar = document.getElementById('sidebar');

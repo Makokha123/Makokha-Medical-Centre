@@ -26,9 +26,9 @@
         </div>
 
         <h5 class="mt-2">Outpatients (OP)</h5>
-        <div class="table-responsive">
-            <table class="table table-striped table-hover" id="activeOutpatientsTable">
-                <thead class="thead-light">
+        <div class="table-container">
+            <table class="simple-table" id="activeOutpatientsTable">
+                <thead>
                     <tr>
                         <th>Patient ID</th>
                         <th>Name</th>
@@ -57,15 +57,22 @@
                         <td>{{ patient.gender or 'N/A' }}</td>
                         <td>{{ patient.updated_at|eat_time('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
                         <td>
-                            <div class="btn-group">
-                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
-                                <button class="btn btn-sm btn-success" onclick="completeTreatment('{{ patient.id }}')">Complete</button>
-                                <button class="btn btn-sm btn-warning" onclick="admitPatient('{{ patient.id }}')">Admit</button>
-                                <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
-                                <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
-                            </div>
-                            <div class="small text-muted mt-1">
-                                Clinical note: {{ (patient.chief_complaint or patient.ai_diagnosis or '—')|replace('\n', ' ')|truncate(90, True, '…') }}
+                            <div class="action-btns">
+                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="action-btn btn-primary" title="View">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                                <button class="action-btn btn-success" onclick="completeTreatment('{{ patient.id }}')" title="Complete">
+                                    <i class="fas fa-check"></i>
+                                </button>
+                                <button class="action-btn btn-warning" onclick="admitPatient('{{ patient.id }}')" title="Admit">
+                                    <i class="fas fa-hospital"></i>
+                                </button>
+                                <button class="action-btn btn-info" onclick="viewSections('{{ patient.id }}')" title="Sections">
+                                    <i class="fas fa-folder-open"></i>
+                                </button>
+                                <button class="action-btn btn-danger" onclick="confirmDelete('{{ patient.id }}')" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
                             </div>
                         </td>
                     </tr>
@@ -78,9 +85,9 @@
         </div>
 
         <h5 class="mt-4">Inpatients (IP)</h5>
-        <div class="table-responsive">
-            <table class="table table-striped table-hover" id="activeInpatientsTable">
-                <thead class="thead-light">
+        <div class="table-container">
+            <table class="simple-table" id="activeInpatientsTable">
+                <thead>
                     <tr>
                         <th>Patient ID</th>
                         <th>Name</th>
@@ -109,18 +116,25 @@
                         <td>{{ patient.gender or 'N/A' }}</td>
                         <td>{{ patient.updated_at|eat_time('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
                         <td>
-                            <div class="btn-group">
-                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
+                            <div class="action-btns">
+                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="action-btn btn-primary" title="View">
+                                    <i class="fas fa-eye"></i>
+                                </a>
                                 {% if patient.discharge_state == 'pending' %}
-                                    <button class="btn btn-sm btn-secondary" disabled>Pending discharge</button>
+                                    <button class="action-btn btn-secondary" disabled title="Pending discharge">
+                                        <i class="fas fa-clock"></i>
+                                    </button>
                                 {% else %}
-                                    <button class="btn btn-sm btn-warning" onclick="completeTreatment('{{ patient.id }}')">Request Discharge</button>
+                                    <button class="action-btn btn-warning" onclick="completeTreatment('{{ patient.id }}')" title="Request Discharge">
+                                        <i class="fas fa-sign-out-alt"></i>
+                                    </button>
                                 {% endif %}
-                                <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
-                                <button class="btn btn-sm btn-danger" onclick="confirmDelete('{{ patient.id }}')">Delete</button>
-                            </div>
-                            <div class="small text-muted mt-1">
-                                Clinical note: {{ (patient.chief_complaint or patient.ai_diagnosis or '—')|replace('\n', ' ')|truncate(90, True, '…') }}
+                                <button class="action-btn btn-info" onclick="viewSections('{{ patient.id }}')" title="Sections">
+                                    <i class="fas fa-folder-open"></i>
+                                </button>
+                                <button class="action-btn btn-danger" onclick="confirmDelete('{{ patient.id }}')" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
                             </div>
                         </td>
                     </tr>
@@ -140,9 +154,9 @@
         </div>
 
         <h5 class="mt-2">Outpatients (OP)</h5>
-        <div class="table-responsive">
-            <table class="table table-striped table-hover" id="oldOutpatientsTable">
-                <thead class="thead-light">
+        <div class="table-container">
+            <table class="simple-table" id="oldOutpatientsTable">
+                <thead>
                     <tr>
                         <th>Patient ID</th>
                         <th>Name</th>
@@ -171,13 +185,16 @@
                         <td>{{ patient.gender or 'N/A' }}</td>
                         <td>{{ patient.updated_at.strftime('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
                         <td>
-                            <div class="btn-group">
-                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
-                                <button class="btn btn-sm btn-warning" onclick="readmitPatient('{{ patient.id }}')">Readmit</button>
-                                <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
-                            </div>
-                            <div class="small text-muted mt-1">
-                                Clinical note: {{ (patient.chief_complaint or patient.ai_diagnosis or '—')|replace('\n', ' ')|truncate(90, True, '…') }}
+                            <div class="action-btns">
+                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="action-btn btn-primary" title="View">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                                <button class="action-btn btn-warning" onclick="readmitPatient('{{ patient.id }}')" title="Readmit">
+                                    <i class="fas fa-user-plus"></i>
+                                </button>
+                                <button class="action-btn btn-info" onclick="viewSections('{{ patient.id }}')" title="Sections">
+                                    <i class="fas fa-folder-open"></i>
+                                </button>
                             </div>
                         </td>
                     </tr>
@@ -190,9 +207,9 @@
         </div>
 
         <h5 class="mt-4">Inpatients (IP)</h5>
-        <div class="table-responsive">
-            <table class="table table-striped table-hover" id="oldInpatientsTable">
-                <thead class="thead-light">
+        <div class="table-container">
+            <table class="simple-table" id="oldInpatientsTable">
+                <thead>
                     <tr>
                         <th>Patient ID</th>
                         <th>Name</th>
@@ -221,13 +238,16 @@
                         <td>{{ patient.gender or 'N/A' }}</td>
                         <td>{{ patient.updated_at.strftime('%Y-%m-%d') if patient.updated_at else 'N/A' }}</td>
                         <td>
-                            <div class="btn-group">
-                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="btn btn-sm btn-primary">View</a>
-                                <button class="btn btn-sm btn-warning" onclick="readmitPatient('{{ patient.id }}')">Readmit</button>
-                                <button class="btn btn-sm btn-info" onclick="viewSections('{{ patient.id }}')">Sections</button>
-                            </div>
-                            <div class="small text-muted mt-1">
-                                Clinical note: {{ (patient.chief_complaint or patient.ai_diagnosis or '—')|replace('\n', ' ')|truncate(90, True, '…') }}
+                            <div class="action-btns">
+                                <a href="{{ url_for('doctor_patient_details', patient_id=patient.id) }}" class="action-btn btn-primary" title="View">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                                <button class="action-btn btn-warning" onclick="readmitPatient('{{ patient.id }}')" title="Readmit">
+                                    <i class="fas fa-user-plus"></i>
+                                </button>
+                                <button class="action-btn btn-info" onclick="viewSections('{{ patient.id }}')" title="Sections">
+                                    <i class="fas fa-folder-open"></i>
+                                </button>
                             </div>
                         </td>
                     </tr>
@@ -411,9 +431,260 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <style>
-.tab-btn { padding: 10px 15px; border: none; border-bottom: 3px solid transparent; background: none; cursor: pointer; }
-.tab-btn.active { border-bottom: 3px solid #007bff; color: #007bff; font-weight: bold; }
-.tab-content { display: none; }
-.tab-content.active { display: block; }
+:root {
+    --primary: #4361ee;
+    --secondary: #6c757d;
+    --success: #28a745;
+    --danger: #dc3545;
+    --warning: #ffc107;
+    --info: #17a2b8;
+    --white: #ffffff;
+    --gray-200: #e9ecef;
+    --gray-300: #dee2e6;
+    --gray-600: #6c757d;
+    --gray-800: #343a40;
+    --border-radius: 8px;
+    --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --transition: all 0.3s ease;
+}
+
+.tab-btn { 
+    padding: 10px 15px; 
+    border: none; 
+    border-bottom: 3px solid transparent; 
+    background: none; 
+    cursor: pointer; 
+}
+.tab-btn.active { 
+    border-bottom: 3px solid #007bff; 
+    color: #007bff; 
+    font-weight: bold; 
+}
+.tab-content { 
+    display: none; 
+}
+.tab-content.active { 
+    display: block; 
+}
+
+/* Table Container - Modern Card Style */
+.table-container {
+    background: var(--white);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 70vh;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 24px;
+}
+
+/* Simple Table Styles */
+.simple-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--white);
+    margin: 0;
+    font-size: 14px;
+}
+
+.simple-table thead {
+    background: #0d6efd;
+    color: white;
+}
+
+/* Sticky header for all patient tables */
+.simple-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: #0d6efd;
+    padding: 12px 14px;
+    text-align: left;
+    font-weight: 600;
+    border: 2px solid #0d6efd;
+    white-space: nowrap;
+}
+
+.simple-table td {
+    padding: 10px 14px;
+    border: 1px solid var(--gray-300);
+}
+
+.simple-table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.simple-table tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+.simple-table tbody tr:last-child td {
+    border-bottom: 2px solid var(--gray-300);
+}
+
+/* Action Buttons Container */
+.action-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+    align-items: center;
+}
+
+/* Action Button Styles */
+.action-btn {
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    color: white;
+    text-decoration: none;
+}
+
+.action-btn i {
+    font-size: 12px;
+}
+
+.action-btn:hover {
+    transform: scale(1.05);
+    text-decoration: none;
+    color: white;
+}
+
+.action-btn.btn-primary {
+    background: #4361ee;
+}
+
+.action-btn.btn-primary:hover {
+    background: #3651d3;
+}
+
+.action-btn.btn-success {
+    background: #28a745;
+}
+
+.action-btn.btn-success:hover {
+    background: #218838;
+}
+
+.action-btn.btn-warning {
+    background: #ffc107;
+    color: #212529;
+}
+
+.action-btn.btn-warning:hover {
+    background: #e0a800;
+    color: #212529;
+}
+
+.action-btn.btn-danger {
+    background: #dc3545;
+}
+
+.action-btn.btn-danger:hover {
+    background: #c82333;
+}
+
+.action-btn.btn-info {
+    background: #17a2b8;
+}
+
+.action-btn.btn-info:hover {
+    background: #138496;
+}
+
+.action-btn.btn-secondary {
+    background: #6c757d;
+}
+
+.action-btn.btn-secondary:hover {
+    background: #5a6268;
+}
+
+.action-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+/* Status Badges */
+.badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* Responsive Design */
+@media (min-width: 481px) and (max-width: 767px) {
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .simple-table {
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+    
+    .action-btn {
+        width: 26px;
+        height: 26px;
+        padding: 4px 6px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
+    }
+}
+
+@media (min-width: 320px) and (max-width: 480px) {
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        max-height: 60vh;
+    }
+    
+    .simple-table {
+        min-width: 800px;
+        font-size: 12px;
+    }
+    
+    .simple-table th,
+    .simple-table td {
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+    
+    .action-btn {
+        padding: 4px 8px;
+        min-width: 28px;
+        height: 28px;
+        font-size: 11px;
+    }
+    
+    .action-btn i {
+        font-size: 11px;
+    }
+    
+    .badge {
+        font-size: 10px;
+        padding: 2px 6px;
+    }
+}
 </style>
 {% endblock %}
