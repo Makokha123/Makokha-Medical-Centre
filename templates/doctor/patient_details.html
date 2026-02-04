@@ -1614,7 +1614,7 @@
 
 <!-- Edit Management Modal -->
 <div class="modal" id="management-modal">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width: 1000px;">
         <div class="modal-header">
             <h2>Update Management Plan</h2>
             <button class="close-btn" onclick="doctorPatient.closeModal('management')">&times;</button>
@@ -1639,22 +1639,92 @@
             </div>
 
             <div class="form-section">
-                <h3>Services</h3>
-                <div class="form-group">
-                    <label>Request Services</label>
-                    <div class="services-checkbox">
-                        {% for service in services %}
-                        <label class="checkbox-label">
-                            <input type="checkbox" name="service_id" value="{{ service.id }}">
-                            <span class="checkmark"></span>
-                            {{ service.name }}
-                        </label>
-                        {% endfor %}
+                <h3>Prescriptions</h3>
+                <div id="management-prescription-items">
+                    <div class="prescription-item form-row" style="display:grid;grid-template-columns:auto 3fr 1fr 2fr 2fr 2fr 2fr auto;gap:10px;align-items:end;margin-bottom:10px;">
+                        <div class="form-group" style="margin:0;">
+                            <div class="form-check" style="margin-top:30px;">
+                                <input class="form-check-input management-controlled-toggle" type="checkbox">
+                                <label class="form-check-label" style="font-size: 0.85rem;">Controlled</label>
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:0.9rem;margin-bottom:5px;">Drug</label>
+                            <select class="form-control management-drug-select" name="drug_id" style="font-size:0.9rem;">
+                                <option value="">Select Drug</option>
+                                {% for drug in drugs %}
+                                    <option value="{{ drug.id }}" data-stock="{{ drug.remaining_quantity }}">{{ drug.name }} ({{ drug.remaining_quantity }} in stock)</option>
+                                {% endfor %}
+                            </select>
+                            <select class="form-control management-controlled-drug-select" name="controlled_drug_id" style="display:none;font-size:0.9rem;">
+                                <option value="">Select Controlled Drug</option>
+                                {% for cdrug in controlled_drugs %}
+                                    <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">{{ cdrug.name }} ({{ cdrug.remaining_quantity }} in stock)</option>
+                                {% endfor %}
+                            </select>
+                            <button type="button" class="btn btn-sm btn-outline-info mt-1 management-view-dosage-btn" style="font-size:0.75rem;padding:2px 8px;">
+                                <i class="fas fa-info-circle"></i> Dosage
+                            </button>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:0.9rem;margin-bottom:5px;">Qty</label>
+                            <input type="number" class="form-control" name="quantity" placeholder="Qty" min="1" style="font-size:0.9rem;">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:0.9rem;margin-bottom:5px;">Dosage</label>
+                            <input type="text" class="form-control" name="dosage" placeholder="e.g., 500mg" style="font-size:0.9rem;">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:0.9rem;margin-bottom:5px;">Frequency</label>
+                            <input type="text" class="form-control" name="frequency" placeholder="e.g., TDS" style="font-size:0.9rem;">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:0.9rem;margin-bottom:5px;">Duration</label>
+                            <input type="text" class="form-control" name="duration" placeholder="e.g., 5 days" style="font-size:0.9rem;">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:0.9rem;margin-bottom:5px;">Notes</label>
+                            <input type="text" class="form-control" name="prescription_notes" placeholder="Notes" style="font-size:0.9rem;">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <button type="button" class="btn btn-sm btn-danger management-remove-prescription" title="Remove" style="margin-top:30px;">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
+                <button type="button" class="btn btn-sm btn-secondary" id="management-add-prescription">
+                    <i class="fas fa-plus"></i> Add Another Medication
+                </button>
+                
+                <div class="mt-3">
+                    <button type="button" class="btn btn-success" id="management-complete-prescription">
+                        <i class="fas fa-check-circle"></i> Complete Prescription
+                    </button>
+                    <div id="management-prescription-feedback" class="mt-2" style="display: none;"></div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>Services</h3>
+                <div class="form-group">
+                    <label for="management-service-search">Search Service</label>
+                    <input type="text" id="management-service-search" class="form-control" placeholder="Type service name..." autocomplete="off">
+                    <small class="form-help">Search for services to add to this management plan.</small>
+                </div>
+                
+                <div id="management-service-results" style="max-height:200px;overflow:auto;margin-bottom:15px;"></div>
+                
+                <div id="management-selected-services-container">
+                    <h5 style="margin-top: 15px;font-size:1rem;">Selected Services</h5>
+                    <div id="management-selected-services">
+                        <p class="text-muted" style="font-size:0.9rem;">No services added yet. Search and select services above.</p>
+                    </div>
+                </div>
+                
                 <div class="form-group">
                     <label>Service Notes</label>
-                    <textarea name="service_notes" rows="2" placeholder="Special instructions for services..."></textarea>
+                    <textarea id="management-service-notes-input" name="service_notes" rows="2" placeholder="Special instructions for services..."></textarea>
                 </div>
             </div>
 
@@ -3174,6 +3244,25 @@ class DoctorPatientManagement {
         // Add form submission handlers
         document.querySelectorAll('form').forEach(form => {
             form.addEventListener('submit', (e) => {
+                // Special handling for management form
+                if (form.id === 'management-form') {
+                    // Remove any existing service_id hidden inputs
+                    form.querySelectorAll('input[name="service_id"]').forEach(input => {
+                        if (input.type === 'hidden') input.remove();
+                    });
+                    
+                    // Add hidden inputs for selected services from the new search-based system
+                    if (this.managementSelectedServices && this.managementSelectedServices.length > 0) {
+                        this.managementSelectedServices.forEach(service => {
+                            const hiddenInput = document.createElement('input');
+                            hiddenInput.type = 'hidden';
+                            hiddenInput.name = 'service_id';
+                            hiddenInput.value = service.id;
+                            form.appendChild(hiddenInput);
+                        });
+                    }
+                }
+                
                 // Add loading state
                 const submitBtn = form.querySelector('button[type="submit"]');
                 if (submitBtn) {
@@ -3624,6 +3713,25 @@ class DoctorPatientManagement {
 
     openManagementModal() {
         this.openModal('management');
+        this.initManagementModalFeatures();
+        
+        // Reset selected services
+        this.managementSelectedServices = [];
+        this._renderManagementSelectedServices();
+        
+        // Clear search inputs
+        const serviceSearch = document.getElementById('management-service-search');
+        if (serviceSearch) serviceSearch.value = '';
+        
+        const serviceResults = document.getElementById('management-service-results');
+        if (serviceResults) serviceResults.innerHTML = '';
+        
+        // Clear prescription feedback
+        const feedback = document.getElementById('management-prescription-feedback');
+        if (feedback) {
+            feedback.innerHTML = '';
+            feedback.style.display = 'none';
+        }
     }
 
     openPrescriptionModal() {
@@ -4528,6 +4636,361 @@ class DoctorPatientManagement {
         } catch (e) {
             if (status) status.innerHTML = '<div class="alert error">Network error. Please try again.</div>';
         }
+    }
+
+    // ==================== Management Modal Functions ====================
+    
+    initManagementModalFeatures() {
+        // Already initialized if flag is set
+        if (this._managementFeaturesInitialized) return;
+        this._managementFeaturesInitialized = true;
+
+        // Initialize arrays for management modal
+        this.managementSelectedServices = [];
+
+        // Service search functionality
+        const serviceSearchInput = document.getElementById('management-service-search');
+        if (serviceSearchInput) {
+            let timer = null;
+            serviceSearchInput.addEventListener('input', () => {
+                const q = (serviceSearchInput.value || '').trim();
+                if (timer) clearTimeout(timer);
+
+                timer = setTimeout(() => {
+                    if (!q || q.length < 2) {
+                        const results = document.getElementById('management-service-results');
+                        if (results) results.innerHTML = '';
+                        return;
+                    }
+                    this._searchServicesForManagement(q);
+                }, 250);
+            });
+        }
+
+        // Add prescription item button
+        const addPrescriptionBtn = document.getElementById('management-add-prescription');
+        if (addPrescriptionBtn) {
+            addPrescriptionBtn.addEventListener('click', () => this.managementAddPrescriptionItem());
+        }
+
+        // Remove prescription item
+        $(document).on('click', '.management-remove-prescription', function() {
+            const prescriptionItems = $('#management-prescription-items .prescription-item');
+            if (prescriptionItems.length > 1) {
+                $(this).closest('.prescription-item').remove();
+            } else {
+                alert('You must keep at least one prescription row. Clear the fields instead of removing.');
+            }
+        });
+
+        // Drug stock validation
+        $(document).on('change', '.management-drug-select, .management-controlled-drug-select', function() {
+            const selectedOption = $(this).find('option:selected');
+            const stock = selectedOption.data('stock');
+            const quantityInput = $(this).closest('.prescription-item').find('input[name="quantity"]');
+            
+            if (stock !== undefined) {
+                quantityInput.attr('max', stock);
+                if (parseInt(quantityInput.val()) > parseInt(stock)) {
+                    alert('Quantity exceeds available stock');
+                    quantityInput.val('');
+                }
+            }
+        });
+
+        // Controlled toggle
+        $(document).on('change', '.management-controlled-toggle', function() {
+            const row = $(this).closest('.prescription-item');
+            const isControlled = $(this).is(':checked');
+            const normalSelect = row.find('select[name="drug_id"]');
+            const controlledSelect = row.find('select[name="controlled_drug_id"]');
+
+            if (isControlled) {
+                normalSelect.val('');
+                normalSelect.hide();
+                controlledSelect.show();
+            } else {
+                controlledSelect.val('');
+                controlledSelect.hide();
+                normalSelect.show();
+            }
+        });
+
+        // View dosage button
+        $(document).on('click', '.management-view-dosage-btn', function() {
+            const row = $(this).closest('.prescription-item');
+            const isControlled = row.find('.management-controlled-toggle').is(':checked');
+            const drugId = isControlled ? row.find('select[name="controlled_drug_id"]').val() : row.find('select[name="drug_id"]').val();
+
+            if (!drugId) {
+                alert('Please select a drug first.');
+                return;
+            }
+
+            const url = isControlled ? `/doctor/controlled-drugs/${drugId}/dosage` : `/doctor/drugs/${drugId}/dosage`;
+            $('#dosageSourceText').text('');
+            $('#dosageContent').html('<div class="text-muted">Loading...</div>');
+            $('#dosage-modal').css('display', 'flex');
+
+            $.get(url)
+                .done(function(data) {
+                    const src = data.source === 'db' ? 'Database' : (data.source === 'index' ? 'Dosage index book' : 'Not available');
+                    $('#dosageSourceText').text(`Source: ${src}`);
+                    
+                    const rows = (label, value) => value ? `<div><strong>${label}:</strong> ${value}</div>` : '';
+                    const d = data.dosage || {};
+                    const html = `
+                        ${rows('Indication', d.indication)}
+                        ${rows('Contraindication', d.contraindication)}
+                        ${rows('Interaction', d.interaction)}
+                        ${rows('Side Effects', d.side_effects)}
+                        <hr/>
+                        ${rows('Dosage (Pediatrics)', d.dosage_peds)}
+                        ${rows('Dosage (Adults)', d.dosage_adults)}
+                        ${rows('Dosage (Geriatrics)', d.dosage_geriatrics)}
+                        <hr/>
+                        ${rows('Important Notes', d.important_notes)}
+                    `;
+                    $('#dosageContent').html(html);
+                })
+                .fail(function() {
+                    $('#dosageContent').html('<div class="text-danger">Failed to load dosage information.</div>');
+                });
+        });
+
+        // Complete prescription button
+        const completePrescriptionBtn = document.getElementById('management-complete-prescription');
+        if (completePrescriptionBtn) {
+            completePrescriptionBtn.addEventListener('click', () => this.managementCompletePrescription());
+        }
+    }
+
+    managementAddPrescriptionItem() {
+        const container = document.getElementById('management-prescription-items');
+        if (!container) return;
+
+        const firstItem = container.querySelector('.prescription-item');
+        if (!firstItem) return;
+
+        const newItem = firstItem.cloneNode(true);
+        
+        // Clear all inputs and selects
+        newItem.querySelectorAll('input').forEach(input => {
+            if (input.type === 'checkbox') {
+                input.checked = false;
+            } else {
+                input.value = '';
+            }
+        });
+        newItem.querySelectorAll('select').forEach(select => {
+            select.value = '';
+        });
+        
+        // Reset visibility
+        const normalSelect = newItem.querySelector('.management-drug-select');
+        const controlledSelect = newItem.querySelector('.management-controlled-drug-select');
+        if (normalSelect) normalSelect.style.display = '';
+        if (controlledSelect) controlledSelect.style.display = 'none';
+        
+        container.appendChild(newItem);
+    }
+
+    async managementCompletePrescription() {
+        const patientId = this.patientId || Number('{{ patient.id }}');
+        if (!patientId) {
+            alert('Patient ID missing; reload the page.');
+            return;
+        }
+
+        // Gather prescription data
+        const prescriptions = [];
+        const prescriptionItems = document.querySelectorAll('#management-prescription-items .prescription-item');
+        
+        prescriptionItems.forEach(item => {
+            const isControlled = item.querySelector('.management-controlled-toggle').checked;
+            const drugId = item.querySelector('select[name="drug_id"]').value;
+            const controlledDrugId = item.querySelector('select[name="controlled_drug_id"]').value;
+            const quantity = item.querySelector('input[name="quantity"]').value;
+            const dosage = item.querySelector('input[name="dosage"]').value;
+            const frequency = item.querySelector('input[name="frequency"]').value;
+            const duration = item.querySelector('input[name="duration"]').value;
+            const notes = item.querySelector('input[name="prescription_notes"]').value;
+
+            if (quantity && dosage && frequency && duration) {
+                if (isControlled && controlledDrugId) {
+                    prescriptions.push({
+                        is_controlled: true,
+                        controlled_drug_id: controlledDrugId,
+                        quantity: quantity,
+                        dosage: dosage,
+                        frequency: frequency,
+                        duration: duration,
+                        notes: notes
+                    });
+                } else if (!isControlled && drugId) {
+                    prescriptions.push({
+                        drug_id: drugId,
+                        quantity: quantity,
+                        dosage: dosage,
+                        frequency: frequency,
+                        duration: duration,
+                        notes: notes
+                    });
+                }
+            }
+        });
+
+        if (prescriptions.length === 0) {
+            alert('No valid prescriptions to save. Please add at least one medication with all required fields.');
+            return;
+        }
+
+        const feedbackEl = document.getElementById('management-prescription-feedback');
+        const completeBtn = document.getElementById('management-complete-prescription');
+        
+        if (feedbackEl) {
+            feedbackEl.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"></div> Saving prescription...';
+            feedbackEl.style.display = 'block';
+        }
+        if (completeBtn) completeBtn.disabled = true;
+
+        try {
+            const response = await fetch('/doctor/patient/complete_prescription', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken(),
+                },
+                body: JSON.stringify({
+                    patient_id: patientId,
+                    prescriptions: prescriptions,
+                    csrf_token: this.getCsrfToken()
+                })
+            });
+
+            const result = await response.json().catch(() => ({}));
+
+            if (response.ok && result && result.success) {
+                if (feedbackEl) {
+                    feedbackEl.innerHTML = '<div class="alert alert-success">Prescription saved successfully! You can continue adding more prescriptions.</div>';
+                }
+                if (completeBtn) completeBtn.disabled = false;
+                
+                // Clear the form after successful save
+                document.querySelectorAll('#management-prescription-items .prescription-item').forEach((item, index) => {
+                    if (index === 0) {
+                        // Keep first row, just clear it
+                        item.querySelectorAll('input').forEach(input => {
+                            if (input.type === 'checkbox') input.checked = false;
+                            else input.value = '';
+                        });
+                        item.querySelectorAll('select').forEach(select => select.value = '');
+                    } else {
+                        // Remove additional rows
+                        item.remove();
+                    }
+                });
+            } else {
+                if (feedbackEl) {
+                    feedbackEl.innerHTML = '<div class="alert alert-danger">Error: ' + ((result && result.error) || 'Failed to save prescription') + '</div>';
+                }
+                if (completeBtn) completeBtn.disabled = false;
+            }
+        } catch (error) {
+            if (feedbackEl) {
+                feedbackEl.innerHTML = '<div class="alert alert-danger">Error: Failed to connect to server</div>';
+            }
+            if (completeBtn) completeBtn.disabled = false;
+        }
+    }
+
+    async _searchServicesForManagement(query) {
+        const results = document.getElementById('management-service-results');
+        if (!results) return;
+
+        results.innerHTML = '<div class="alert info">Searching...</div>';
+
+        try {
+            const resp = await fetch(`/api/services/search?q=${encodeURIComponent(query)}&limit=25`);
+            const data = await resp.json().catch(() => []);
+            
+            if (!resp.ok) {
+                results.innerHTML = '<div class="alert error">Failed to search services.</div>';
+                return;
+            }
+
+            if (!Array.isArray(data) || data.length === 0) {
+                results.innerHTML = '<div class="alert info">No matching services found.</div>';
+                return;
+            }
+
+            results.innerHTML = data.map(s => {
+                const name = (s && s.name) ? String(s.name) : 'Service';
+                const price = (s && typeof s.price === 'number') ? s.price : Number(s && s.price || 0);
+                const desc = (s && s.description) ? String(s.description) : '';
+                const sid = (s && s.id) ? Number(s.id) : 0;
+                const safeDesc = desc ? `<div style="color:#666;font-size:12px;margin-top:4px;">${this._escapeHtml(desc)}</div>` : '';
+                
+                return `
+                    <div class="service-card" style="margin:8px 0;padding:10px;border:1px solid #ddd;border-radius:5px;">
+                        <div class="service-header" style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+                            <strong>${this._escapeHtml(name)}</strong>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <span class="badge" style="background:#eef2ff;color:#273b8a;padding:4px 8px;border-radius:4px;">KSH ${Number(price || 0).toFixed(2)}</span>
+                                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.managementAddService(${sid}, '${this._escapeHtml(name).replace(/'/g, "\\'")}', ${price})">Add</button>
+                            </div>
+                        </div>
+                        ${safeDesc}
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            results.innerHTML = '<div class="alert error">Network error while searching.</div>';
+        }
+    }
+
+    managementAddService(serviceId, serviceName, servicePrice) {
+        // Check if already added
+        const exists = this.managementSelectedServices.find(s => s.id === serviceId);
+        if (exists) {
+            alert('This service is already added');
+            return;
+        }
+
+        this.managementSelectedServices.push({
+            id: serviceId,
+            name: serviceName,
+            price: servicePrice
+        });
+
+        this._renderManagementSelectedServices();
+    }
+
+    managementRemoveService(serviceId) {
+        this.managementSelectedServices = this.managementSelectedServices.filter(s => s.id !== serviceId);
+        this._renderManagementSelectedServices();
+    }
+
+    _renderManagementSelectedServices() {
+        const container = document.getElementById('management-selected-services');
+        if (!container) return;
+
+        if (this.managementSelectedServices.length === 0) {
+            container.innerHTML = '<p class="text-muted" style="font-size:0.9rem;">No services added yet. Search and select services above.</p>';
+            return;
+        }
+
+        container.innerHTML = this.managementSelectedServices.map(s => `
+            <div class="service-item" style="display:flex;justify-content:space-between;align-items:center;padding:8px;margin:5px 0;background:#f8f9fa;border-radius:4px;">
+                <div>
+                    <strong>${this._escapeHtml(s.name)}</strong>
+                    <span style="color:#666;font-size:0.9rem;margin-left:10px;">KSH ${Number(s.price || 0).toFixed(2)}</span>
+                </div>
+                <button type="button" class="btn btn-danger btn-sm" onclick="doctorPatient.managementRemoveService(${s.id})">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `).join('');
     }
 }
 
