@@ -1012,6 +1012,13 @@
                             {% endfor %}
                         </select>
                         <textarea class="form-control mt-2" name="service_notes" placeholder="Notes for services" rows="2"></textarea>
+
+                        <div class="mt-2" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <button type="button" class="btn btn-success btn-sm" id="complete-services">
+                                <i class="fas fa-check-circle"></i> Complete Services
+                            </button>
+                            <div id="services-feedback" class="small" style="display:none;"></div>
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -1038,40 +1045,38 @@
                 {% endif %}
             {% endfor %}
 
-            {% if has_done_service %}
-                <div class="history-timeline history-scroll">
-                    {% for ps in patient_services %}
-                        {% if ps.status in ['done', 'completed'] %}
-                        <div class="history-entry">
-                            <div class="history-header">
-                                <span class="history-date">
-                                    {% if ps.completed_at %}{{ ps.completed_at.strftime('%Y-%m-%d %H:%M') }}
-                                    {% elif ps.updated_at %}{{ ps.updated_at.strftime('%Y-%m-%d %H:%M') }}
-                                    {% elif ps.created_at %}{{ ps.created_at.strftime('%Y-%m-%d %H:%M') }}
-                                    {% else %}N/A{% endif %}
-                                </span>
-                                <span class="history-author">
-                                    {% if ps.performer %}{{ ps.performer.username }}
-                                    {% elif ps.completer %}{{ ps.completer.username }}
-                                    {% elif ps.biller %}{{ ps.biller.username }}
-                                    {% elif ps.requester %}{{ ps.requester.username }}
-                                    {% else %}N/A{% endif %}
-                                </span>
-                            </div>
-                            <div class="history-details">
-                                <div class="detail-row"><strong>{{ ps.service.name if ps.service else 'Service' }}</strong></div>
-                                {% if ps.notes %}<div class="detail-row text-muted">{{ ps.notes }}</div>{% endif %}
-                            </div>
+            <div id="services-done-timeline" class="history-timeline history-scroll" {% if not has_done_service %}style="display:none;"{% endif %}>
+                {% for ps in patient_services %}
+                    {% if ps.status in ['done', 'completed'] %}
+                    <div class="history-entry">
+                        <div class="history-header">
+                            <span class="history-date">
+                                {% if ps.completed_at %}{{ ps.completed_at.strftime('%Y-%m-%d %H:%M') }}
+                                {% elif ps.updated_at %}{{ ps.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                                {% elif ps.created_at %}{{ ps.created_at.strftime('%Y-%m-%d %H:%M') }}
+                                {% else %}N/A{% endif %}
+                            </span>
+                            <span class="history-author">
+                                {% if ps.performer %}{{ ps.performer.username }}
+                                {% elif ps.completer %}{{ ps.completer.username }}
+                                {% elif ps.biller %}{{ ps.biller.username }}
+                                {% elif ps.requester %}{{ ps.requester.username }}
+                                {% else %}N/A{% endif %}
+                            </span>
                         </div>
-                        {% endif %}
-                    {% endfor %}
-                </div>
-            {% else %}
-                <div class="empty-state">
-                    <i class="fas fa-concierge-bell"></i>
-                    <p>No completed services yet</p>
-                </div>
-            {% endif %}
+                        <div class="history-details">
+                            <div class="detail-row"><strong>{{ ps.service.name if ps.service else 'Service' }}</strong></div>
+                            {% if ps.notes %}<div class="detail-row text-muted">{{ ps.notes }}</div>{% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+
+            <div id="services-done-empty" class="empty-state" {% if has_done_service %}style="display:none;"{% endif %}>
+                <i class="fas fa-concierge-bell"></i>
+                <p>No completed services yet</p>
+            </div>
         </div>
 
         <!-- Prescribed Drugs (all together, text only) -->
@@ -2479,6 +2484,17 @@
     margin-bottom: 8px;
 }
 
+.prescription-item.form-row.compact-rx {
+    flex-wrap: nowrap;
+    align-items: flex-end;
+}
+
+@media (max-width: 576px) {
+    .prescription-item.form-row.compact-rx {
+        flex-wrap: wrap;
+    }
+}
+
 .prescription-item.compact-rx .form-group {
     margin-bottom: 0;
 }
@@ -2487,6 +2503,38 @@
     height: 32px;
     padding: 4px 8px;
     font-size: 0.85rem;
+}
+
+.prescription-item.compact-rx .form-check {
+    margin: 0;
+}
+
+.prescription-item.compact-rx .form-check-input {
+    width: 12px;
+    height: 12px;
+    margin-top: 0;
+}
+
+.prescription-item.compact-rx .form-check-label {
+    font-size: 0.72rem;
+    line-height: 1;
+}
+
+.prescription-item.compact-rx .select2-container {
+    min-width: 0;
+}
+
+.prescription-item.compact-rx .select2-container--default .select2-selection--single {
+    height: 32px;
+}
+
+.prescription-item.compact-rx .select2-container--default .select2-selection--single .select2-selection__rendered {
+    line-height: 30px;
+    font-size: 0.85rem;
+}
+
+.prescription-item.compact-rx .select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 30px;
 }
 
 .prescription-item.compact-rx .btn.btn-sm {
@@ -5346,6 +5394,125 @@ document.addEventListener('DOMContentLoaded', function() {
                 mmcHideSelect2Select(controlledSelect);
                 mmcShowSelect2Select(normalSelect);
             }
+        });
+
+        // Complete Services (Management tab)
+        window.jQuery('#complete-services').on('click', function() {
+            const patientId = mmcGetPatientIdForManagement();
+            if (!patientId) {
+                alert('Patient not found.');
+                return;
+            }
+
+            function mmcEsc(v) {
+                try {
+                    return window.jQuery('<div/>').text(v === null || v === undefined ? '' : String(v)).html();
+                } catch (e) {
+                    return '';
+                }
+            }
+
+            function mmcFmtIso(iso) {
+                if (!iso) return 'N/A';
+                try {
+                    const d = new Date(iso);
+                    if (isNaN(d.getTime())) return String(iso);
+                    const pad = (n) => String(n).padStart(2, '0');
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                } catch (e) {
+                    return String(iso);
+                }
+            }
+
+            function mmcRenderServicesDone(rows) {
+                const $timeline = window.jQuery('#services-done-timeline');
+                const $empty = window.jQuery('#services-done-empty');
+
+                if (!Array.isArray(rows) || rows.length === 0) {
+                    $timeline.hide().empty();
+                    $empty.show();
+                    return;
+                }
+
+                let html = '';
+                for (const r of rows) {
+                    const dateIso = r.completed_at || r.updated_at || r.created_at;
+                    const author = r.performed_by_name || r.completed_by_name || r.billed_by_name || r.requested_by_name || 'N/A';
+                    const serviceName = r.service_name || 'Service';
+                    const notes = (r.notes || '').trim();
+
+                    html += `
+                        <div class="history-entry">
+                            <div class="history-header">
+                                <span class="history-date">${mmcEsc(mmcFmtIso(dateIso))}</span>
+                                <span class="history-author">${mmcEsc(author)}</span>
+                            </div>
+                            <div class="history-details">
+                                <div class="detail-row"><strong>${mmcEsc(serviceName)}</strong></div>
+                                ${notes ? `<div class="detail-row text-muted">${mmcEsc(notes)}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                $timeline.html(html).show();
+                $empty.hide();
+            }
+
+            function mmcRefreshServicesDone() {
+                window.jQuery.getJSON(`/doctor/api/patient/${patientId}/services-done`)
+                    .done(function(rows) {
+                        mmcRenderServicesDone(rows);
+                    })
+                    .fail(function() {
+                        // If refresh fails, keep existing UI as-is.
+                    });
+            }
+
+            const serviceIds = window.jQuery('#management_service_id').val() || [];
+            const notes = String(window.jQuery('textarea[name="service_notes"]').val() || '').trim();
+
+            if (!serviceIds.length) {
+                alert('Please select at least one service.');
+                return;
+            }
+
+            if (!confirm('Mark the selected services as completed?')) {
+                return;
+            }
+
+            const $feedback = window.jQuery('#services-feedback');
+            $feedback.hide().removeClass('text-danger text-success').text('');
+
+            window.jQuery.ajax({
+                url: '/doctor/complete_services',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    patient_id: patientId,
+                    service_ids: serviceIds,
+                    notes: notes,
+                }),
+                success: function(resp) {
+                    if (resp && resp.success) {
+                        $feedback.addClass('text-success').text(resp.message || 'Services completed.').show();
+                        try { window.jQuery('#management_service_id').val(null).trigger('change'); } catch (e) { /* ignore */ }
+                        try { window.jQuery('textarea[name="service_notes"]').val(''); } catch (e) { /* ignore */ }
+
+                        mmcRefreshServicesDone();
+                    } else {
+                        $feedback.addClass('text-danger').text((resp && resp.error) ? resp.error : 'Failed to complete services.').show();
+                    }
+                },
+                error: function(xhr) {
+                    let msg = 'Failed to complete services.';
+                    try {
+                        const r = xhr.responseJSON;
+                        if (r && r.error) msg = r.error;
+                    } catch (e) { /* ignore */ }
+                    $feedback.addClass('text-danger').text(msg).show();
+                }
+            });
         });
 
         function mmcRenderDosageBody(data) {

@@ -661,6 +661,13 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
                         {% endfor %}
                     </select>
                     <textarea class="form-control mt-2" name="service_notes" placeholder="Notes for services" rows="2"></textarea>
+
+                    <div class="mt-2" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <button type="button" class="btn btn-success btn-sm" id="complete-services">
+                            <i class="fas fa-check-circle"></i> Complete Services
+                        </button>
+                        <div id="services-feedback" class="small" style="display:none;"></div>
+                    </div>
                 </div>
                 
                 <div class="form-group">
@@ -1137,6 +1144,58 @@ $(document).ready(function() {
             error: function(xhr) {
                 $('#prescription-feedback').html('<div class="alert alert-danger">Error: ' + (xhr.responseJSON?.error || 'Failed to connect to server') + '</div>');
                 $('#complete-prescription').prop('disabled', false);
+            }
+        });
+    });
+
+    // Handle Complete Services button
+    $('#complete-services').click(function() {
+        const patientId = $('#patient_id').val();
+        if (!patientId) {
+            alert('Please save patient biodata first');
+            return;
+        }
+
+        const serviceIds = $('#service_id').val() || [];
+        const notes = String($('textarea[name="service_notes"]').val() || '').trim();
+
+        if (!serviceIds.length) {
+            alert('Please select at least one service.');
+            return;
+        }
+
+        if (!confirm('Mark the selected services as completed?')) {
+            return;
+        }
+
+        const $feedback = $('#services-feedback');
+        $feedback.hide().removeClass('text-danger text-success').text('');
+
+        $.ajax({
+            url: '/doctor/complete_services',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                patient_id: patientId,
+                service_ids: serviceIds,
+                notes: notes
+            }),
+            success: function(resp) {
+                if (resp && resp.success) {
+                    $feedback.addClass('text-success').text(resp.message || 'Services completed.').show();
+                    try { $('#service_id').val(null).trigger('change'); } catch (e) { /* ignore */ }
+                    try { $('textarea[name="service_notes"]').val(''); } catch (e) { /* ignore */ }
+                } else {
+                    $feedback.addClass('text-danger').text((resp && resp.error) ? resp.error : 'Failed to complete services.').show();
+                }
+            },
+            error: function(xhr) {
+                let msg = 'Failed to complete services.';
+                try {
+                    const r = xhr.responseJSON;
+                    if (r && r.error) msg = r.error;
+                } catch (e) { /* ignore */ }
+                $feedback.addClass('text-danger').text(msg).show();
             }
         });
     });
@@ -2306,6 +2365,66 @@ $(document).ready(function() {
 
 .select2-container--default .select2-selection--single .select2-selection__arrow {
     height: 36px;
+}
+
+/* Compact prescription entry rows */
+.prescription-item.form-row.compact-rx {
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    margin-bottom: 8px;
+}
+
+@media (max-width: 576px) {
+    .prescription-item.form-row.compact-rx {
+        flex-wrap: wrap;
+    }
+}
+
+.prescription-item.compact-rx .form-group {
+    margin-bottom: 0;
+}
+
+.prescription-item.compact-rx .form-control {
+    height: 32px;
+    padding: 4px 8px;
+    font-size: 0.85rem;
+}
+
+.prescription-item.compact-rx .btn.btn-sm {
+    padding: 4px 8px;
+    font-size: 0.82rem;
+}
+
+.prescription-item.compact-rx .form-check {
+    margin: 0;
+}
+
+.prescription-item.compact-rx .form-check-input {
+    width: 12px;
+    height: 12px;
+    margin-top: 0;
+}
+
+.prescription-item.compact-rx .form-check-label {
+    font-size: 0.72rem;
+    line-height: 1;
+}
+
+.prescription-item.compact-rx .select2-container {
+    min-width: 0;
+}
+
+.prescription-item.compact-rx .select2-container--default .select2-selection--single {
+    height: 32px;
+}
+
+.prescription-item.compact-rx .select2-container--default .select2-selection--single .select2-selection__rendered {
+    line-height: 30px;
+    font-size: 0.85rem;
+}
+
+.prescription-item.compact-rx .select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 30px;
 }
 
 /* Alert Styling */

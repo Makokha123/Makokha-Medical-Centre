@@ -23508,6 +23508,87 @@ def doctor_complete_prescription():
         current_app.logger.error(f"Error completing prescription: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/doctor/complete_services', methods=['POST'])
+@login_required
+def doctor_complete_services():
+    """Doctor completes selected services (records them as done for billing)."""
+    if current_user.role != 'doctor':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    try:
+        data = request.get_json(silent=True) or {}
+        patient_id = data.get('patient_id')
+        service_ids = data.get('service_ids') or []
+        notes = (data.get('notes') or data.get('service_notes') or '').strip() or None
+
+        try:
+            patient_id_int = int(patient_id)
+        except Exception:
+            patient_id_int = None
+
+        if not patient_id_int or not isinstance(service_ids, list) or len(service_ids) == 0:
+            return jsonify({'success': False, 'error': 'Missing required data'}), 400
+
+        patient = db.session.get(Patient, patient_id_int)
+        if not patient:
+            return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+        now = get_eat_now()
+        created = []
+        for sid in service_ids:
+            try:
+                sid_int = int(sid)
+            except Exception:
+                continue
+
+            service = db.session.get(Service, sid_int)
+            if not service:
+                continue
+
+            patient_service = PatientService(
+                patient_id=patient.id,
+                service_id=service.id,
+                status='done',
+                requested_by=current_user.id,
+                performed_by=current_user.id,
+                completed_by=current_user.id,
+                completed_at=now,
+                notes=notes,
+            )
+            db.session.add(patient_service)
+            created.append(patient_service)
+
+        if not created:
+            return jsonify({'success': False, 'error': 'No valid services selected'}), 400
+
+        db.session.commit()
+
+        try:
+            log_audit(
+                'complete_services',
+                'PatientService',
+                created[0].id if created else None,
+                None,
+                {
+                    'patient_id': patient.id,
+                    'doctor_id': current_user.id,
+                    'services_count': len(created),
+                },
+            )
+        except Exception:
+            pass
+
+        return jsonify({
+            'success': True,
+            'count': len(created),
+            'message': f"Completed {len(created)} service(s)"
+        })
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error completing services: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/pharmacist/prescription/<int:prescription_id>')
 @login_required
 def get_prescription_details(prescription_id):
@@ -27890,31 +27971,9 @@ def doctor_patient_details(patient_id):
                 # Prescriptions are created via /doctor/patient/complete_prescription from the
                 # Management tab "Complete Prescription" button. Do not create prescriptions
                 # on Management plan save to avoid duplicates.
-                
-                # Handle services
-                service_ids = request.form.getlist('service_id')
-                service_notes = request.form.get('service_notes', '')
 
-                for service_id in service_ids:
-                    try:
-                        service_id_int = int(service_id)
-                    except Exception:
-                        continue
-                    service = db.session.get(Service, service_id_int)
-                    if not service:
-                        continue
-                    patient_service = PatientService(
-                        patient_id=patient.id,
-                        service_id=service.id,
-                        # In Management tab, selecting a service means it is done/completed on save.
-                        status='done',
-                        requested_by=current_user.id,
-                        performed_by=current_user.id,
-                        completed_by=current_user.id,
-                        completed_at=get_eat_now(),
-                        notes=(service_notes or '').strip() or None,
-                    )
-                    db.session.add(patient_service)
+                # Services are completed via /doctor/complete_services from the
+                # Management tab "Complete Services" button.
                 
                 db.session.commit()
                 flash('Management plan updated successfully!', 'success')
@@ -30564,6 +30623,56 @@ def api_doctor_add_requested_service(patient_id: int):
         'status': row.status or 'requested',
         'created_at': row.created_at.isoformat() if getattr(row, 'created_at', None) else None,
     }), 201
+
+
+@app.route('/doctor/api/patient/<int:patient_id>/services-done', methods=['GET'])
+@login_required
+def doctor_api_patient_services_done(patient_id: int):
+    """Doctor-only: fetch services marked done/completed for patient_details live refresh."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('doctor', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    try:
+        rows = (
+            PatientService.query
+            .filter(PatientService.patient_id == patient.id)
+            .filter(PatientService.status.in_(['completed', 'done']))
+            .order_by(
+                PatientService.completed_at.desc().nullslast(),
+                PatientService.updated_at.desc().nullslast(),
+                PatientService.created_at.desc().nullslast(),
+                PatientService.id.desc(),
+            )
+            .all()
+        )
+
+        payload = []
+        for r in rows:
+            service = getattr(r, 'service', None)
+            payload.append({
+                'patient_service_id': r.id,
+                'service_id': r.service_id,
+                'service_name': (service.name if service else None),
+                'notes': getattr(r, 'notes', None),
+                'status': r.status or 'done',
+                'billed_sale_id': getattr(r, 'billed_sale_id', None),
+                'completed_at': r.completed_at.isoformat() if getattr(r, 'completed_at', None) else None,
+                'updated_at': r.updated_at.isoformat() if getattr(r, 'updated_at', None) else None,
+                'created_at': r.created_at.isoformat() if getattr(r, 'created_at', None) else None,
+                'performed_by_name': (getattr(getattr(r, 'performer', None), 'username', None)),
+                'completed_by_name': (getattr(getattr(r, 'completer', None), 'username', None)),
+                'billed_by_name': (getattr(getattr(r, 'biller', None), 'username', None)),
+                'requested_by_name': (getattr(getattr(r, 'requester', None), 'username', None)),
+            })
+
+        return jsonify(payload)
+    except Exception:
+        return jsonify([])
 
 
 @app.route('/api/patient/<int:patient_id>/prescriptions')
