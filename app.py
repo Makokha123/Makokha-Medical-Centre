@@ -113,6 +113,19 @@ import html as html_lib
 from utils.encrypted_type import EncryptedType
 from utils.stamp_signature import generate_rubber_stamp, generate_digital_signature
 
+import base64
+from io import BytesIO
+
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas as rl_canvas
+    _REPORTLAB_AVAILABLE = True
+except Exception:
+    _REPORTLAB_AVAILABLE = False
+
 from typing import Optional
 
 # Load environment variables from .env for local/dev runs (debugger, python app.py).
@@ -30357,6 +30370,334 @@ def api_patients():
         'age': patient.age,
         'gender': patient.gender
     } for patient in patients])
+
+
+@app.route('/api/patients/<int:patient_id>')
+@login_required
+def api_patient_details(patient_id: int):
+    """Patient details endpoint used by billing/search UIs.
+
+    Additive endpoint (was referenced by existing JS but missing in some builds).
+    """
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    # Best-effort decrypt name (handles mixed plaintext/encrypted data)
+    try:
+        name = patient.get_decrypted_name
+    except Exception:
+        try:
+            name = Config.decrypt_data_static(patient.name)
+        except Exception:
+            name = str(patient.name or '')
+
+    phone = str(patient.phone or '').strip()
+
+    return jsonify({
+        'id': patient.id,
+        'op_number': patient.op_number,
+        'ip_number': patient.ip_number,
+        'name': name,
+        'age': patient.age,
+        'gender': patient.gender,
+        'phone': phone,
+        'status': patient.status,
+        'patient_type': 'inpatient' if (patient.ip_number and str(patient.ip_number).strip()) else 'outpatient',
+    })
+
+
+@app.route('/api/receptionist/bills')
+@login_required
+def api_receptionist_bills():
+    """List recent bills for the receptionist billing history table."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'admin', 'pharmacist'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    limit = request.args.get('limit', 50, type=int)
+    limit = max(1, min(int(limit or 50), 200))
+    patient_type = (request.args.get('patient_type') or 'all').strip().lower()
+
+    q = (
+        db.session.query(Sale)
+        .options(db.joinedload(Sale.patient), db.joinedload(Sale.user))
+        .order_by(Sale.created_at.desc())
+    )
+
+    # Patient type filter uses presence of IP number (same semantics as existing UI)
+    if patient_type == 'inpatient':
+        q = q.join(Patient, Sale.patient_id == Patient.id).filter(Patient.ip_number.isnot(None)).filter(Patient.ip_number != '')
+    elif patient_type == 'outpatient':
+        q = q.join(Patient, Sale.patient_id == Patient.id).filter(or_(Patient.ip_number.is_(None), Patient.ip_number == ''))
+
+    rows = q.limit(limit).all()
+
+    out = []
+    for sale in rows:
+        patient = getattr(sale, 'patient', None)
+        try:
+            patient_name = patient.get_decrypted_name if patient else ''
+        except Exception:
+            patient_name = ''
+
+        out.append({
+            'sale_id': sale.id,
+            'sale_number': sale.sale_number,
+            'total_amount': float(sale.total_amount or 0),
+            'payment_method': sale.payment_method,
+            'created_at': sale.created_at.isoformat() if getattr(sale, 'created_at', None) else None,
+            'served_by': getattr(getattr(sale, 'user', None), 'username', None),
+            'patient': {
+                'id': getattr(patient, 'id', None),
+                'name': patient_name,
+                'op_number': getattr(patient, 'op_number', None),
+                'ip_number': getattr(patient, 'ip_number', None),
+                'age': getattr(patient, 'age', None),
+                'gender': getattr(patient, 'gender', None),
+            },
+            'receipt_url': url_for('receptionist_receipt', sale_id=sale.id),
+            'pdf_url': url_for('api_sale_receipt_pdf', sale_id=sale.id),
+        })
+
+    return jsonify(out)
+
+
+@app.route('/api/sales/<int:sale_id>/receipt.pdf')
+@login_required
+def api_sale_receipt_pdf(sale_id: int):
+    """Generate a stamped/signed PDF receipt for a sale.
+
+    This is used by the receptionist billing UI for Print/Share flows.
+    """
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if not _REPORTLAB_AVAILABLE:
+        return jsonify({'error': 'PDF generator not available (missing reportlab).'}), 501
+
+    sale = (
+        db.session.query(Sale)
+        .options(
+            db.joinedload(Sale.items),
+            db.joinedload(Sale.patient),
+            db.joinedload(Sale.user),
+        )
+        .filter(Sale.id == sale_id)
+        .first()
+    )
+    if not sale:
+        return jsonify({'error': 'Sale not found'}), 404
+
+    # Non-admins can only generate PDFs for bills they created.
+    if user_role != 'admin' and getattr(sale, 'user_id', None) != current_user.id:
+        return jsonify({'error': 'Forbidden'}), 403
+
+    patient = getattr(sale, 'patient', None)
+    patient_name = ''
+    if patient:
+        try:
+            patient_name = patient.get_decrypted_name
+        except Exception:
+            try:
+                patient_name = Config.decrypt_data_static(patient.name)
+            except Exception:
+                patient_name = str(patient.name or '')
+
+    served_by = getattr(getattr(sale, 'user', None), 'username', None) or 'Reception'
+    created_at = getattr(sale, 'created_at', None)
+    created_str = created_at.strftime('%Y-%m-%d %H:%M') if created_at else ''
+
+    # Categorize items
+    items = list(getattr(sale, 'items', None) or [])
+
+    def _is_ward(desc: str) -> bool:
+        return (desc or '').lower().startswith('ward stay:')
+
+    def _is_imaging(item: 'SaleItem') -> bool:
+        if getattr(item, 'imaging_test_id', None):
+            return True
+        return (getattr(item, 'description', '') or '').lower().startswith('imaging:')
+
+    def _is_controlled(desc: str) -> bool:
+        return (desc or '').lower().startswith('controlled:')
+
+    services = [i for i in items if getattr(i, 'service_id', None)]
+    labs = [i for i in items if getattr(i, 'lab_test_id', None)]
+    imaging = [i for i in items if _is_imaging(i)]
+    drugs = [i for i in items if getattr(i, 'drug_id', None) and not _is_controlled(getattr(i, 'description', ''))]
+    controlled = [i for i in items if _is_controlled(getattr(i, 'description', ''))]
+    ward = [i for i in items if _is_ward(getattr(i, 'description', ''))]
+
+    # Signature: prefer an admin signature if available, else current user
+    signature_data_uri = None
+    try:
+        admin_user = User.query.filter(func.lower(User.role) == 'admin').order_by(User.id.asc()).first()
+    except Exception:
+        admin_user = None
+
+    try:
+        if admin_user:
+            sig = DrawnSignature.query.filter_by(user_id=admin_user.id, is_active=True).first()
+            signature_data_uri = getattr(sig, 'signature_data', None) if sig else None
+        if not signature_data_uri:
+            sig = DrawnSignature.query.filter_by(user_id=current_user.id, is_active=True).first()
+            signature_data_uri = getattr(sig, 'signature_data', None) if sig else None
+    except Exception:
+        signature_data_uri = None
+
+    signature_bytes = None
+    if signature_data_uri and isinstance(signature_data_uri, str) and 'base64,' in signature_data_uri:
+        try:
+            signature_bytes = base64.b64decode(signature_data_uri.split('base64,', 1)[1])
+        except Exception:
+            signature_bytes = None
+
+    # Create PDF
+    buf = BytesIO()
+    page_w, page_h = (80 * mm, 260 * mm)
+    c = rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
+
+    y = page_h - 10 * mm
+
+    # Logo
+    try:
+        logo_path = os.path.join(app.root_path, 'static', 'images', 'logo.png')
+        if os.path.exists(logo_path):
+            c.drawImage(logo_path, (page_w - 18 * mm) / 2, y - 18 * mm, width=18 * mm, height=18 * mm, preserveAspectRatio=True, mask='auto')
+            y -= 20 * mm
+    except Exception:
+        pass
+
+    # Header
+    c.setFont('Helvetica-Bold', 10)
+    c.drawCentredString(page_w / 2, y, 'MAKOKHA MEDICAL CENTRE')
+    y -= 5 * mm
+    c.setFont('Helvetica', 7)
+    c.drawCentredString(page_w / 2, y, 'OFFICIAL RECEIPT')
+    y -= 4 * mm
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(0.5)
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 4 * mm
+
+    def _kv(label: str, value: str):
+        nonlocal y
+        c.setFont('Helvetica-Bold', 7)
+        c.drawString(5 * mm, y, f'{label}:')
+        c.setFont('Helvetica', 7)
+        c.drawRightString(page_w - 5 * mm, y, (value or '')[:60])
+        y -= 4 * mm
+
+    _kv('Sale', sale.sale_number)
+    _kv('Date', created_str)
+    _kv('Served By', served_by)
+    if patient:
+        _kv('Patient', patient_name)
+        age = str(getattr(patient, 'age', '') or '')
+        gender = str(getattr(patient, 'gender', '') or '')
+        _kv('Age/Sex', f'{age} / {gender}'.strip(' /'))
+        if getattr(patient, 'ip_number', None):
+            _kv('IP No', str(patient.ip_number))
+        if getattr(patient, 'op_number', None):
+            _kv('OP No', str(patient.op_number))
+
+    y -= 1 * mm
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 4 * mm
+
+    def _draw_section(title: str, rows: list['SaleItem']):
+        nonlocal y
+        if not rows:
+            return
+
+        c.setFont('Helvetica-Bold', 8)
+        c.drawString(5 * mm, y, title)
+        y -= 4 * mm
+
+        c.setFont('Helvetica', 7)
+        for it in rows:
+            desc = (getattr(it, 'description', '') or '').strip()
+            qty = int(getattr(it, 'quantity', 1) or 1)
+            unit = float(getattr(it, 'unit_price', 0) or 0)
+            total = float(getattr(it, 'total_price', 0) or (unit * qty))
+            line = f"{desc}"[:44]
+            c.drawString(5 * mm, y, line)
+            y -= 3.5 * mm
+            c.setFont('Helvetica', 6.5)
+            c.drawString(7 * mm, y, f"{qty} x {unit:,.2f}")
+            c.drawRightString(page_w - 5 * mm, y, f"{total:,.2f}")
+            y -= 4 * mm
+            c.setFont('Helvetica', 7)
+            if y < 55 * mm:
+                c.showPage()
+                y = page_h - 10 * mm
+
+        y -= 1 * mm
+
+    _draw_section('Services Done', services)
+    _draw_section('Lab (Completed)', labs)
+    _draw_section('Imaging (Completed)', imaging)
+    _draw_section('Dispensed Drugs', drugs)
+    _draw_section('Controlled Drugs', controlled)
+    _draw_section('Ward Stay', ward)
+
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 5 * mm
+    c.setFont('Helvetica-Bold', 9)
+    c.drawString(5 * mm, y, 'TOTAL')
+    c.drawRightString(page_w - 5 * mm, y, f"KSh {float(sale.total_amount or 0):,.2f}")
+    y -= 6 * mm
+    c.setFont('Helvetica', 7)
+    c.drawString(5 * mm, y, f"Payment: {(sale.payment_method or '').upper()}")
+    y -= 6 * mm
+
+    # Rubber-stamp (drawn, no external SVG deps)
+    stamp_w = page_w - 10 * mm
+    stamp_h = 22 * mm
+    stamp_x = 5 * mm
+    stamp_y = max(12 * mm, y - stamp_h)
+    c.setStrokeColor(colors.HexColor('#2e3192'))
+    c.setLineWidth(1.2)
+    c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
+    c.setFont('Helvetica-Bold', 7)
+    c.setFillColor(colors.HexColor('#2e3192'))
+    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, 'MAKOKHA MEDICAL CENTRE')
+    c.setFillColor(colors.HexColor('#dc143c'))
+    c.setFont('Helvetica-Bold', 8)
+    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
+    c.setFillColor(colors.HexColor('#2e3192'))
+    c.setFont('Helvetica', 6.5)
+    c.drawCentredString(page_w / 2, stamp_y + 4 * mm, 'Tel: 0741 256 531 / 0713 580 997')
+    c.setFillColor(colors.black)
+    y = stamp_y - 6 * mm
+
+    # Signature
+    if signature_bytes:
+        try:
+            img = ImageReader(BytesIO(signature_bytes))
+            sig_w = 35 * mm
+            sig_h = 14 * mm
+            c.drawImage(img, 5 * mm, max(5 * mm, y - sig_h), width=sig_w, height=sig_h, preserveAspectRatio=True, mask='auto')
+            c.setFont('Helvetica', 6.5)
+            c.drawString(5 * mm, max(5 * mm, y - sig_h) - 3 * mm, 'Signed')
+        except Exception:
+            pass
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+
+    pdf_bytes = buf.getvalue()
+    filename = f"receipt-{sale.sale_number}.pdf"
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
+        headers={
+            'Content-Disposition': f'attachment; filename={filename}'
+        },
+    )
 
 @app.route('/api/notifications_list')
 @login_required

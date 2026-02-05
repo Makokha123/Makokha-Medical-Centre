@@ -1,6 +1,715 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set legacy = request.args.get('legacy') %}
+{% if not legacy %}
+
+<meta name="csrf-token" content="{{ csrf_token() }}">
+
+<div class="content" id="rxBillingApp">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <div>
+            <h2 class="mb-0">Reception Billing</h2>
+            <small class="text-muted">Select patient → Generate bill → Print or Share (PDF)</small>
+        </div>
+        <div class="text-right">
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('receptionist_billing') }}?legacy=1">Legacy UI</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Patient selector -->
+        <div class="col-lg-4 mb-3">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h6 class="mb-3"><i class="fas fa-users"></i> Patients</h6>
+
+                    <div class="form-group">
+                        <label class="mb-1">Patient Type</label>
+                        <select class="form-control" id="patientType">
+                            <option value="all">All</option>
+                            <option value="inpatient">Inpatient</option>
+                            <option value="outpatient">Outpatient</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="mb-1">Search</label>
+                        <input class="form-control" id="patientSearch" placeholder="Search by name / OP / IP">
+                        <small class="text-muted">Tip: start typing to narrow results.</small>
+                    </div>
+
+                    <div id="patientList" class="list-group" style="max-height: 420px; overflow:auto;">
+                        <div class="text-muted small">Loading patients…</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Billing / Receipt -->
+        <div class="col-lg-8 mb-3">
+            <div class="card shadow-sm mb-3">
+                <div class="card-body">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <h6 class="mb-0"><i class="fas fa-file-invoice"></i> Bill</h6>
+                        <div>
+                            <span class="badge badge-info" id="patientBadge" style="display:none;"></span>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div id="selectedPatient" class="mb-3">
+                        <div class="alert alert-info mb-0">Select a patient to begin.</div>
+                    </div>
+
+                    <div id="billOptions" style="display:none;">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label class="mb-1">Payment Method</label>
+                                    <div class="d-flex" style="gap:10px; flex-wrap:wrap;">
+                                        <button type="button" class="btn btn-outline-primary payment-btn" data-method="mpesa">
+                                            <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" style="height:18px;"> M-Pesa
+                                        </button>
+                                        <button type="button" class="btn btn-outline-success payment-btn active" data-method="cash">
+                                            <img src="{{ url_for('static', filename='images/cash-logo.png') }}" alt="Cash" style="height:18px;"> Cash
+                                        </button>
+                                        <button type="button" class="btn btn-outline-secondary payment-btn" data-method="card">
+                                            <i class="fas fa-credit-card"></i> Card
+                                        </button>
+                                        <button type="button" class="btn btn-outline-info payment-btn" data-method="insurance">
+                                            <img src="{{ url_for('static', filename='images/insurance-logo.png') }}" alt="Insurance" style="height:18px;"> Insurance
+                                        </button>
+                                        <button type="button" class="btn btn-outline-dark payment-btn" data-method="paypal">
+                                            <img src="{{ url_for('static', filename='images/paypal-logo.png') }}" alt="PayPal" style="height:18px;"> PayPal
+                                        </button>
+                                    </div>
+                                    <input type="hidden" id="paymentMethod" value="cash">
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div id="cashFields" class="form-group">
+                                    <label class="mb-1">Amount Given (Cash)</label>
+                                    <input type="number" min="0" step="0.01" class="form-control" id="amountGiven" placeholder="Enter amount given">
+                                    <small class="text-muted">Change will be calculated on receipt.</small>
+                                </div>
+                                <div id="insuranceFields" class="form-group" style="display:none;">
+                                    <label class="mb-1">Insurance Policy Number</label>
+                                    <input class="form-control" id="insurancePolicyNumber" placeholder="Policy number">
+                                </div>
+                                <div id="cardFields" class="form-group" style="display:none;">
+                                    <label class="mb-1">Card Reference</label>
+                                    <input class="form-control" id="cardReference" placeholder="Card ref">
+                                </div>
+                                <div id="paypalFields" class="form-group" style="display:none;">
+                                    <label class="mb-1">PayPal Reference</label>
+                                    <input class="form-control" id="paypalReference" placeholder="PayPal ref">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="custom-control custom-checkbox" id="wardStayToggleWrap" style="display:none;">
+                                    <input type="checkbox" class="custom-control-input" id="includeWardStay" checked>
+                                    <label class="custom-control-label" for="includeWardStay">Include ward stay (Inpatient only)</label>
+                                </div>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button type="button" class="btn btn-primary" id="generateBillBtn">
+                                    <i class="fas fa-receipt"></i> Generate Bill
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="billStatus" class="mt-3" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm" id="receiptCard" style="display:none;">
+                <div class="card-body">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h6 class="mb-0"><i class="fas fa-print"></i> Receipt</h6>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="printBtn"><i class="fas fa-print"></i> Print</button>
+                            <button type="button" class="btn btn-sm btn-success" id="shareBtn"><i class="fab fa-whatsapp"></i> Share via WhatsApp (PDF)</button>
+                            <a class="btn btn-sm btn-outline-primary" id="viewReceiptLink" target="_blank" style="display:none;"><i class="fas fa-external-link-alt"></i> Open</a>
+                        </div>
+                    </div>
+
+                    <div id="receiptPreview" class="receipt-preview"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bills history -->
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <h6 class="mb-0"><i class="fas fa-history"></i> Created Bills</h6>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshBillsBtn"><i class="fas fa-sync"></i> Refresh</button>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Sale #</th>
+                            <th>Patient</th>
+                            <th>IP/OP</th>
+                            <th>Amount</th>
+                            <th>Method</th>
+                            <th>Time</th>
+                            <th style="width: 260px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="billsTable">
+                        <tr><td colspan="7" class="text-muted">Loading…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Receipt look */
+.receipt-preview {
+    background: #fff;
+    border: 1px dashed #ddd;
+    border-radius: 8px;
+    padding: 14px;
+    max-width: 520px;
+    margin: 0 auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    color: #111;
+}
+.receipt-preview .r-center { text-align:center; }
+.receipt-preview .r-small { font-size: 12px; color:#333; }
+.receipt-preview .r-muted { color:#666; }
+.receipt-preview hr { border:0; border-top:1px dashed #ccc; margin:10px 0; }
+.receipt-preview table { width:100%; font-size:12px; }
+.receipt-preview td, .receipt-preview th { padding:4px 0; vertical-align: top; }
+.receipt-preview .r-right { text-align:right; }
+.receipt-preview .r-title { font-weight:700; letter-spacing: 0.3px; }
+
+@media print {
+    body * { visibility: hidden !important; }
+    #receiptCard, #receiptCard * { visibility: visible !important; }
+    #receiptCard { position: absolute; left: 0; top: 0; width: 100%; }
+    #receiptCard .btn { display: none !important; }
+    #viewReceiptLink { display:none !important; }
+}
+</style>
+
+<script>
+(function() {
+    const csrfToken = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+    const userRole = '{{ (current_user.role|string)|lower }}';
+    const canCreateBills = (userRole === 'receptionist' || userRole === 'admin');
+
+    let selectedPatient = null;
+    let lastGenerated = null; // { sale_id, sale_number, totals, sections }
+
+    const elPatientType = document.getElementById('patientType');
+    const elPatientSearch = document.getElementById('patientSearch');
+    const elPatientList = document.getElementById('patientList');
+    const elSelectedPatient = document.getElementById('selectedPatient');
+    const elPatientBadge = document.getElementById('patientBadge');
+    const elBillOptions = document.getElementById('billOptions');
+    const elGenerateBillBtn = document.getElementById('generateBillBtn');
+    const elBillStatus = document.getElementById('billStatus');
+    const elReceiptCard = document.getElementById('receiptCard');
+    const elReceiptPreview = document.getElementById('receiptPreview');
+    const elPrintBtn = document.getElementById('printBtn');
+    const elShareBtn = document.getElementById('shareBtn');
+    const elViewReceiptLink = document.getElementById('viewReceiptLink');
+    const elBillsTable = document.getElementById('billsTable');
+    const elRefreshBillsBtn = document.getElementById('refreshBillsBtn');
+
+    const elPaymentMethod = document.getElementById('paymentMethod');
+    const elAmountGiven = document.getElementById('amountGiven');
+    const elInsurancePolicyNumber = document.getElementById('insurancePolicyNumber');
+    const elCardReference = document.getElementById('cardReference');
+    const elPaypalReference = document.getElementById('paypalReference');
+    const elWardStayToggleWrap = document.getElementById('wardStayToggleWrap');
+    const elIncludeWardStay = document.getElementById('includeWardStay');
+
+    const elCashFields = document.getElementById('cashFields');
+    const elInsuranceFields = document.getElementById('insuranceFields');
+    const elCardFields = document.getElementById('cardFields');
+    const elPaypalFields = document.getElementById('paypalFields');
+
+    function fmtMoney(n) {
+        const v = Number(n || 0);
+        return 'KSh ' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function safe(s) {
+        return (s === null || s === undefined) ? '' : String(s);
+    }
+
+    async function fetchJson(url, options) {
+        const res = await fetch(url, options);
+        const ct = res.headers.get('content-type') || '';
+        const isJson = ct.includes('application/json');
+        const data = isJson ? await res.json() : await res.text();
+        if (!res.ok) {
+            const msg = (isJson && data && data.error) ? data.error : (res.status + ' ' + res.statusText);
+            throw new Error(msg);
+        }
+        return data;
+    }
+
+    function patientTypeOf(p) {
+        return (p && p.ip_number && String(p.ip_number).trim() !== '') ? 'inpatient' : 'outpatient';
+    }
+
+    function matchesType(p) {
+        const t = elPatientType.value;
+        if (t === 'all') return true;
+        return patientTypeOf(p) === t;
+    }
+
+    function renderPatients(patients) {
+        elPatientList.innerHTML = '';
+        if (!patients || !patients.length) {
+            elPatientList.innerHTML = '<div class="text-muted small">No patients found.</div>';
+            return;
+        }
+        patients.filter(matchesType).forEach(p => {
+            const type = patientTypeOf(p);
+            const badge = type === 'inpatient' ? 'badge-warning' : 'badge-success';
+            const num = p.ip_number || p.op_number || '';
+            const a = document.createElement('button');
+            a.type = 'button';
+            a.className = 'list-group-item list-group-item-action';
+            a.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="font-weight-bold">${safe(p.name)}</div>
+                        <div class="small text-muted">${safe(num)} · Age: ${safe(p.age || 'N/A')} · ${safe(p.gender || 'N/A')}</div>
+                    </div>
+                    <span class="badge ${badge}">${type === 'inpatient' ? 'IP' : 'OP'}</span>
+                </div>
+            `;
+            a.addEventListener('click', () => selectPatient(p.id));
+            elPatientList.appendChild(a);
+        });
+    }
+
+    let searchTimer = null;
+    async function loadPatients() {
+        const q = (elPatientSearch.value || '').trim();
+        const limit = q ? 50 : 200;
+        const url = `/api/patients?search=${encodeURIComponent(q)}&limit=${limit}`;
+        const patients = await fetchJson(url);
+        renderPatients(patients);
+    }
+
+    async function selectPatient(patientId) {
+        elSelectedPatient.innerHTML = '<div class="text-muted">Loading patient…</div>';
+        elReceiptCard.style.display = 'none';
+        lastGenerated = null;
+
+        const p = await fetchJson(`/api/patients/${patientId}`);
+        selectedPatient = p;
+
+        const type = patientTypeOf(p);
+        elPatientBadge.style.display = 'inline-block';
+        elPatientBadge.className = 'badge ' + (type === 'inpatient' ? 'badge-warning' : 'badge-success');
+        elPatientBadge.textContent = type === 'inpatient' ? 'INPATIENT' : 'OUTPATIENT';
+
+        const num = (p.ip_number && String(p.ip_number).trim() !== '') ? p.ip_number : p.op_number;
+        elSelectedPatient.innerHTML = `
+            <div class="border rounded p-2">
+                <div class="font-weight-bold">${safe(p.name)}</div>
+                <div class="small text-muted">${safe(num || '')}</div>
+                <div class="small">Age: ${safe(p.age || 'N/A')} · Sex: ${safe(p.gender || 'N/A')}</div>
+                <div class="small">Phone: ${safe(p.phone || 'N/A')}</div>
+            </div>
+        `;
+
+        // Ward stay toggle only for inpatients
+        if (type === 'inpatient') {
+            elWardStayToggleWrap.style.display = 'block';
+            elIncludeWardStay.checked = true;
+        } else {
+            elWardStayToggleWrap.style.display = 'none';
+            elIncludeWardStay.checked = false;
+        }
+
+        elBillOptions.style.display = 'block';
+        if (!canCreateBills) {
+            elGenerateBillBtn.disabled = true;
+            elGenerateBillBtn.title = 'Only Receptionist/Admin can create bills.';
+        } else {
+            elGenerateBillBtn.disabled = false;
+            elGenerateBillBtn.title = '';
+        }
+    }
+
+    function setStatus(kind, msg) {
+        elBillStatus.style.display = 'block';
+        const cls = kind === 'error' ? 'alert-danger' : (kind === 'success' ? 'alert-success' : 'alert-info');
+        elBillStatus.className = 'alert ' + cls;
+        elBillStatus.textContent = msg;
+    }
+
+    function setPaymentMethod(method) {
+        elPaymentMethod.value = method;
+        document.querySelectorAll('.payment-btn').forEach(b => {
+            b.classList.toggle('active', b.getAttribute('data-method') === method);
+        });
+        elCashFields.style.display = (method === 'cash') ? 'block' : 'none';
+        elInsuranceFields.style.display = (method === 'insurance') ? 'block' : 'none';
+        elCardFields.style.display = (method === 'card') ? 'block' : 'none';
+        elPaypalFields.style.display = (method === 'paypal') ? 'block' : 'none';
+    }
+
+    async function collectBillable(patientId) {
+        const type = patientTypeOf(selectedPatient);
+        const [services, labs, imaging, prescriptions, controlled] = await Promise.all([
+            fetchJson(`/api/patient/${patientId}/completed-services`),
+            fetchJson(`/api/patient/${patientId}/completed-labs`),
+            fetchJson(`/api/patient/${patientId}/completed-imaging`),
+            fetchJson(`/api/patient/${patientId}/prescriptions`),
+            fetchJson(`/api/patient/${patientId}/controlled-prescriptions`),
+        ]);
+
+        let wardPreview = null;
+        if (type === 'inpatient') {
+            try {
+                wardPreview = await fetchJson(`/api/patient/${patientId}/ward-stay-preview`);
+            } catch (e) {
+                wardPreview = null;
+            }
+        }
+
+        const rxItems = [];
+        (prescriptions || []).forEach(pr => {
+            (pr.items || []).forEach(it => rxItems.push(it));
+        });
+        const crxItems = [];
+        (controlled || []).forEach(pr => {
+            (pr.items || []).forEach(it => crxItems.push(it));
+        });
+
+        return { services, labs, imaging, rxItems, crxItems, wardPreview };
+    }
+
+    function buildReceiptPreview(meta) {
+        const p = selectedPatient;
+        const type = patientTypeOf(p);
+        const num = type === 'inpatient' ? p.ip_number : p.op_number;
+
+        const nowStr = new Date().toLocaleString();
+        const servedBy = '{{ current_user.username if current_user.is_authenticated else "" }}';
+
+        function section(title, rows, renderRow) {
+            if (!rows || rows.length === 0) return '';
+            return `
+                <div class="r-title">${title}</div>
+                <table>
+                    <tbody>
+                        ${rows.map(renderRow).join('')}
+                    </tbody>
+                </table>
+                <hr>
+            `;
+        }
+
+        const servicesHtml = section('Services Done', meta.services, (r) => {
+            const price = Number(r.price || r.service_price || 0);
+            return `<tr><td>${safe(r.service_name || 'Service')}</td><td class="r-right">${fmtMoney(price)}</td></tr>`;
+        });
+        const labsHtml = section('Lab (Completed)', meta.labs, (r) => {
+            const price = Number(r.price || 0);
+            return `<tr><td>${safe(r.name || 'Lab')}</td><td class="r-right">${fmtMoney(price)}</td></tr>`;
+        });
+        const imagingHtml = section('Imaging (Completed)', meta.imaging, (r) => {
+            const price = Number(r.price || 0);
+            return `<tr><td>${safe(r.name || 'Imaging')}</td><td class="r-right">${fmtMoney(price)}</td></tr>`;
+        });
+        const drugsHtml = section('Dispensed Drugs', meta.rxItems, (r) => {
+            const qty = Number(r.quantity || 0);
+            const unit = Number(r.unit_price || 0);
+            const total = Number(r.total_price || (qty * unit));
+            return `<tr><td>${safe(r.drug_name || 'Drug')} <span class="r-muted">(${qty} x ${unit.toFixed(2)})</span></td><td class="r-right">${fmtMoney(total)}</td></tr>`;
+        });
+        const cdrugsHtml = section('Controlled Drugs', meta.crxItems, (r) => {
+            const qty = Number(r.quantity || 0);
+            const unit = Number(r.unit_price || 0);
+            const total = Number(r.total_price || (qty * unit));
+            return `<tr><td>${safe(r.drug_name || 'Controlled')} <span class="r-muted">(${qty} x ${unit.toFixed(2)})</span></td><td class="r-right">${fmtMoney(total)}</td></tr>`;
+        });
+
+        let wardHtml = '';
+        if (type === 'inpatient' && meta.wardPreview && meta.wardPreview.assigned && elIncludeWardStay.checked) {
+            const w = meta.wardPreview;
+            const amount = Number(w.amount || 0);
+            wardHtml = `
+                <div class="r-title">Ward Stay</div>
+                <table>
+                    <tbody>
+                        <tr>
+                            <td>${safe(w.ward_name)} - Bed ${safe(w.bed_number)}<br><span class="r-muted">${safe(w.start_date)} to ${safe(w.end_date)} (${safe(w.days)} day(s))</span></td>
+                            <td class="r-right">${fmtMoney(amount)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <hr>
+            `;
+        }
+
+        const total = Number(meta.total || 0);
+        const pm = safe(elPaymentMethod.value).toUpperCase();
+
+        const stampHtml = `
+            <div class="r-center" style="margin-top:10px;">{{ generate_rubber_stamp(size=160) }}</div>
+        `;
+
+        return `
+            <div class="r-center">
+                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" style="height:48px;">
+                <div class="r-title" style="margin-top:6px;">MAKOKHA MEDICAL CENTRE</div>
+                <div class="r-small r-muted">Receipt / Bill</div>
+            </div>
+            <hr>
+            <div class="r-small">
+                <div><b>Served by:</b> ${safe(servedBy || 'Reception')}</div>
+                <div><b>Time:</b> ${nowStr}</div>
+                ${lastGenerated && lastGenerated.sale_number ? `<div><b>Sale #:</b> ${safe(lastGenerated.sale_number)}</div>` : ''}
+            </div>
+            <hr>
+            <div class="r-small">
+                <div><b>Patient:</b> ${safe(p.name)}</div>
+                <div><b>Age/Sex:</b> ${safe(p.age || 'N/A')} / ${safe(p.gender || 'N/A')}</div>
+                <div><b>${type === 'inpatient' ? 'IP' : 'OP'} No:</b> ${safe(num || '')}</div>
+            </div>
+            <hr>
+            ${servicesHtml}
+            ${labsHtml}
+            ${imagingHtml}
+            ${drugsHtml}
+            ${cdrugsHtml}
+            ${wardHtml}
+            <div class="r-title">Summary</div>
+            <table>
+                <tbody>
+                    <tr><td>Total</td><td class="r-right"><b>${fmtMoney(total)}</b></td></tr>
+                    <tr><td>Payment</td><td class="r-right">${pm}</td></tr>
+                </tbody>
+            </table>
+            ${stampHtml}
+        `;
+    }
+
+    async function generateBill() {
+        if (!selectedPatient) {
+            setStatus('error', 'Select a patient first.');
+            return;
+        }
+        if (!canCreateBills) {
+            setStatus('error', 'Unauthorized: only Receptionist/Admin can create bills.');
+            return;
+        }
+
+        setStatus('info', 'Collecting completed items…');
+        elGenerateBillBtn.disabled = true;
+
+        try {
+            const data = await collectBillable(selectedPatient.id);
+
+            const serviceIds = (data.services || []).map(r => r.service_id).filter(Boolean);
+            const labIds = (data.labs || []).map(r => r.lab_test_id).filter(Boolean);
+            const imagingIds = (data.imaging || []).map(r => r.imaging_test_id).filter(Boolean);
+            const rxItemIds = (data.rxItems || []).map(r => r.id).filter(Boolean);
+            const crxItemIds = (data.crxItems || []).map(r => r.id).filter(Boolean);
+
+            const inpatient = patientTypeOf(selectedPatient) === 'inpatient';
+            const includeWard = inpatient && elIncludeWardStay.checked && data.wardPreview && data.wardPreview.assigned && Number(data.wardPreview.amount || 0) > 0;
+
+            const total =
+                (data.services || []).reduce((a, r) => a + Number(r.price || r.service_price || 0), 0) +
+                (data.labs || []).reduce((a, r) => a + Number(r.price || 0), 0) +
+                (data.imaging || []).reduce((a, r) => a + Number(r.price || 0), 0) +
+                (data.rxItems || []).reduce((a, r) => a + Number(r.total_price || 0), 0) +
+                (data.crxItems || []).reduce((a, r) => a + Number(r.total_price || 0), 0) +
+                (includeWard ? Number(data.wardPreview.amount || 0) : 0);
+
+            if (total <= 0) {
+                setStatus('error', 'No billable items found for this patient.');
+                elGenerateBillBtn.disabled = false;
+                return;
+            }
+
+            setStatus('info', 'Creating bill…');
+
+            const paymentMethod = elPaymentMethod.value;
+            const payload = {
+                patient_id: selectedPatient.id,
+                services: serviceIds,
+                labs: labIds,
+                imaging_tests: imagingIds,
+                prescription_items: rxItemIds,
+                controlled_prescription_items: crxItemIds,
+                include_ward_stay: includeWard,
+                payment_method: paymentMethod,
+            };
+            if (paymentMethod === 'cash') {
+                const amt = (elAmountGiven.value || '').trim();
+                if (amt) payload.amount_given = Number(amt);
+            }
+            if (paymentMethod === 'insurance') {
+                payload.insurance_policy_number = (elInsurancePolicyNumber.value || '').trim();
+            }
+            if (paymentMethod === 'card') {
+                payload.card_reference = (elCardReference.value || '').trim();
+            }
+            if (paymentMethod === 'paypal') {
+                payload.paypal_reference = (elPaypalReference.value || '').trim();
+            }
+
+            const created = await fetchJson('{{ url_for('create_bill') }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                },
+                body: JSON.stringify(payload)
+            });
+
+            lastGenerated = {
+                sale_id: created.sale_id,
+                sale_number: created.sale_number,
+                services: data.services,
+                labs: data.labs,
+                imaging: data.imaging,
+                rxItems: data.rxItems,
+                crxItems: data.crxItems,
+                wardPreview: data.wardPreview,
+                total: Number(created.total_amount || total)
+            };
+
+            elReceiptCard.style.display = 'block';
+            elReceiptPreview.innerHTML = buildReceiptPreview(lastGenerated);
+            elViewReceiptLink.style.display = 'inline-flex';
+            elViewReceiptLink.href = `/receptionist/sale/${created.sale_id}/receipt`;
+
+            setStatus('success', 'Bill created successfully.');
+            await loadBills();
+        } catch (e) {
+            console.error(e);
+            setStatus('error', e.message || 'Failed to generate bill');
+        } finally {
+            elGenerateBillBtn.disabled = !canCreateBills;
+        }
+    }
+
+    async function loadBills() {
+        try {
+            const rows = await fetchJson('/api/receptionist/bills?limit=60');
+            elBillsTable.innerHTML = '';
+            if (!rows || rows.length === 0) {
+                elBillsTable.innerHTML = '<tr><td colspan="7" class="text-muted">No bills yet.</td></tr>';
+                return;
+            }
+            rows.forEach(r => {
+                const p = r.patient || {};
+                const num = (p.ip_number && String(p.ip_number).trim() !== '') ? p.ip_number : (p.op_number || '');
+                const created = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${safe(r.sale_number || r.sale_id)}</td>
+                    <td>${safe(p.name || '')}</td>
+                    <td>${safe(num)}</td>
+                    <td>${fmtMoney(r.total_amount || 0)}</td>
+                    <td>${safe((r.payment_method || '')).toUpperCase()}</td>
+                    <td>${safe(created)}</td>
+                    <td>
+                        <a class="btn btn-sm btn-outline-primary" target="_blank" href="${safe(r.receipt_url)}">View</a>
+                        <button class="btn btn-sm btn-outline-secondary" data-action="print" data-receipt="${safe(r.receipt_url)}">Print</button>
+                        <button class="btn btn-sm btn-success" data-action="share" data-pdf="${safe(r.pdf_url)}" ${canCreateBills ? '' : 'disabled'}>Share PDF</button>
+                    </td>
+                `;
+                tr.querySelector('[data-action="print"]').addEventListener('click', () => window.open(r.receipt_url, '_blank'));
+                const shareBtn = tr.querySelector('[data-action="share"]');
+                shareBtn.addEventListener('click', () => sharePdfFromUrl(r.pdf_url, r.sale_number));
+                elBillsTable.appendChild(tr);
+            });
+        } catch (e) {
+            elBillsTable.innerHTML = `<tr><td colspan="7" class="text-danger">Failed to load bills: ${safe(e.message)}</td></tr>`;
+        }
+    }
+
+    async function sharePdfFromUrl(pdfUrl, saleNumber) {
+        if (!pdfUrl) return;
+        try {
+            const res = await fetch(pdfUrl);
+            if (!res.ok) throw new Error('Failed to fetch PDF');
+            const blob = await res.blob();
+            const file = new File([blob], `Receipt-${saleNumber || 'bill'}.pdf`, { type: 'application/pdf' });
+
+            if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                    title: 'Receipt PDF',
+                    text: 'Makokha Medical Centre receipt',
+                    files: [file]
+                });
+                return;
+            }
+
+            // Fallback: download
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Receipt-${saleNumber || 'bill'}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setStatus('info', 'PDF downloaded. You can attach it in WhatsApp.');
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        } catch (e) {
+            setStatus('error', e.message || 'Failed to share PDF');
+        }
+    }
+
+    // Events
+    document.querySelectorAll('.payment-btn').forEach(btn => {
+        btn.addEventListener('click', () => setPaymentMethod(btn.getAttribute('data-method')));
+    });
+    setPaymentMethod('cash');
+
+    elPatientType.addEventListener('change', () => loadPatients().catch(console.error));
+    elPatientSearch.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => loadPatients().catch(console.error), 250);
+    });
+    elGenerateBillBtn.addEventListener('click', () => generateBill());
+    elPrintBtn.addEventListener('click', () => window.print());
+    elShareBtn.addEventListener('click', () => {
+        if (!lastGenerated || !lastGenerated.sale_id) {
+            setStatus('error', 'Generate a bill first.');
+            return;
+        }
+        sharePdfFromUrl(`/api/sales/${lastGenerated.sale_id}/receipt.pdf`, lastGenerated.sale_number);
+    });
+    elRefreshBillsBtn.addEventListener('click', () => loadBills());
+
+    // Init
+    loadPatients().catch(err => {
+        elPatientList.innerHTML = `<div class="text-danger small">Failed to load patients: ${safe(err.message)}</div>`;
+    });
+    loadBills();
+})();
+</script>
+
+{% else %}
 <div class="content">
             <h2>Billing Management</h2>
             
@@ -1273,4 +1982,5 @@ document.getElementById('billing-form').addEventListener('change', function() {
 }
 </style>
 
+{% endif %}
 {% endblock %}
