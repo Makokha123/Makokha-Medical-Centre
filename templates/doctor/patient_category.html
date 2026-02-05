@@ -65,7 +65,7 @@
                       <span class="text-muted">-</span>
                     {% endif %}
                   </td>
-                  <td>{{ p.full_name }}</td>
+                  <td>{{ p.decrypted_name or 'N/A' }}</td>
                   <td>{{ p.age if p.age is not none else 'N/A' }}</td>
                   <td>{{ p.gender or 'N/A' }}</td>
                   <td>{{ p.updated_at.strftime('%Y-%m-%d') if p.updated_at else 'N/A' }}</td>

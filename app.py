@@ -3196,6 +3196,20 @@ class Patient(db.Model):
         
         return "\n".join(summary) if summary else "No AI recommendations available"
 
+
+class PatientNumberCounter(db.Model):
+    """Atomic counters for OP/IP patient numbers.
+
+    This avoids collisions when multiple staff create patients concurrently.
+    """
+
+    __tablename__ = 'patient_number_counters'
+
+    # Use kind as primary key so we can row-lock a single record per type.
+    kind = db.Column(db.String(2), primary_key=True)  # 'OP' | 'IP'
+    last_value = db.Column(db.Integer, nullable=False, default=0)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
     
 class PatientReviewSystem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -6542,20 +6556,126 @@ def success_response(data=None, status=200):
     return jsonify(payload), status
 
 # Utility functions
-def generate_patient_number(patient_type):
-    prefix = 'OP' if patient_type == 'OP' else 'IP'
-    last_patient = Patient.query.filter(
-        Patient.op_number.isnot(None) if patient_type == 'OP' else Patient.ip_number.isnot(None)
-    ).order_by(Patient.id.desc()).first()
-    
-    if last_patient:
-        last_number = last_patient.op_number if patient_type == 'OP' else last_patient.ip_number
-        last_seq = int(last_number.split('MNC')[-1])
-        new_seq = last_seq + 1
+def _normalize_patient_type(patient_type: str | None) -> str:
+    pt = (patient_type or '').strip().upper()
+    return pt if pt in {'OP', 'IP'} else 'OP'
+
+
+def _extract_mnc_suffix_int(number_value: str | None) -> int | None:
+    """Extract integer suffix after 'MNC' from legacy or current formats.
+
+    Supports:
+    - 'OP MNC001'
+    - 'OPMNC001'
+    - 'IP MNC12'
+    """
+    if not number_value:
+        return None
+    s = str(number_value).strip().upper()
+    if 'MNC' not in s:
+        return None
+    try:
+        tail = s.split('MNC', 1)[-1].strip()
+        # Keep only digits from tail (defensive against accidental suffixes).
+        digits = ''.join(ch for ch in tail if ch.isdigit())
+        if not digits:
+            return None
+        return int(digits)
+    except Exception:
+        return None
+
+
+def _recent_patient_number_max(patient_type: str, limit: int = 2500) -> int:
+    """Best-effort max-seq discovery, optimized for large datasets.
+
+    We read the most recently inserted rows (by id) and parse the numeric suffix.
+    This avoids slow full-table scans and avoids lexicographic ordering issues
+    once the sequence grows beyond 999.
+    """
+    pt = _normalize_patient_type(patient_type)
+    col = Patient.op_number if pt == 'OP' else Patient.ip_number
+    prefix = pt
+
+    rows = (
+        db.session.query(col)
+        .filter(col.isnot(None))
+        .filter(col.ilike(f'{prefix}%'))
+        .order_by(Patient.id.desc())
+        .limit(int(limit))
+        .all()
+    )
+    best = 0
+    for (val,) in rows:
+        seq = _extract_mnc_suffix_int(val)
+        if seq and seq > best:
+            best = seq
+    return int(best)
+
+
+def peek_patient_number(patient_type: str | None) -> str:
+    """Return the next OP/IP number for display, without reserving it."""
+    pt = _normalize_patient_type(patient_type)
+    prefix = pt
+
+    counter = db.session.get(PatientNumberCounter, pt)
+    if counter and isinstance(counter.last_value, int):
+        next_value = int(counter.last_value) + 1
     else:
-        new_seq = 1
-    
-    return f"{prefix}MNC{new_seq:03d}"
+        next_value = _recent_patient_number_max(pt) + 1
+
+    return f"{prefix} MNC{next_value:03d}"
+
+
+def generate_patient_number(patient_type):
+    """Reserve and return a unique patient number (collision-safe).
+
+    Uses a row-locked counter so multiple concurrent requests can't collide.
+    """
+    pt = _normalize_patient_type(patient_type)
+    prefix = pt
+
+    # Retry in case two workers try to create the counter row at the same time.
+    for attempt in (1, 2, 3):
+        try:
+            with db.session.begin_nested():
+                counter = (
+                    PatientNumberCounter.query
+                    .filter_by(kind=pt)
+                    .with_for_update()
+                    .first()
+                )
+
+                if not counter:
+                    seed = _recent_patient_number_max(pt)
+                    counter = PatientNumberCounter(kind=pt, last_value=int(seed))
+                    db.session.add(counter)
+                    db.session.flush()
+
+                # Drift protection (manual inserts / imports): ensure counter is at least current max.
+                try:
+                    recent_max = _recent_patient_number_max(pt, limit=200)
+                    if recent_max > int(counter.last_value or 0):
+                        counter.last_value = int(recent_max)
+                except Exception:
+                    pass
+
+                counter.last_value = int(counter.last_value or 0) + 1
+                next_value = int(counter.last_value)
+
+            return f"{prefix} MNC{next_value:03d}"
+        except IntegrityError:
+            # Counter row insert race: rollback nested transaction and retry.
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            if attempt >= 3:
+                raise
+            continue
+
+# Preserve a reference to the robust implementation so any legacy/duplicate
+# definitions later in this file can safely delegate without recursion.
+_generate_patient_number_impl = generate_patient_number
 
 def generate_sale_number():
     now = datetime.now()
@@ -19719,7 +19839,11 @@ def manage_patients():
         
         if action == 'add':
             try:
-                patient_type = request.form.get('patient_type')
+                raw_patient_type = request.form.get('patient_type')
+                patient_type = (raw_patient_type or '').strip().upper()
+                if patient_type not in {'OP', 'IP'}:
+                    patient_type = 'OP'
+
                 patient_number = generate_patient_number(patient_type)
                 
                 patient = Patient(
@@ -23946,8 +24070,9 @@ def get_patient_number():
     patient_type = request.args.get('type')
     if patient_type not in ['OP', 'IP']:
         return jsonify({'error': 'Invalid patient type'}), 400
-    
-    number = generate_patient_number(patient_type)
+
+    # Display-only preview: do not reserve/consume a number here.
+    number = peek_patient_number(patient_type)
     return jsonify({'number': number})
 
 
@@ -23971,22 +24096,13 @@ def dashboard_stats():
     })
 
 def generate_patient_number(patient_type):
-    """Generate patient number in format OP MNC001 or IP MNC001"""
-    prefix = 'OP' if patient_type == 'OP' else 'IP'
-    last_patient = Patient.query.filter(
-        Patient.op_number.like(f'{prefix} MNC%') if patient_type == 'OP' else Patient.ip_number.like(f'{prefix} MNC%')
-    ).order_by(
-        Patient.op_number.desc() if patient_type == 'OP' else Patient.ip_number.desc()
-    ).first()
-    
-    if last_patient:
-        last_number_str = (last_patient.op_number if patient_type == 'OP' else last_patient.ip_number).split('MNC')[-1]
-        last_number = int(last_number_str)
-        new_number = f"{prefix} MNC{str(last_number + 1).zfill(3)}"
-    else:
-        new_number = f"{prefix} MNC001"
-    
-    return new_number
+    """Reserve and return a unique patient number (collision-safe).
+
+    Note: The non-reserving preview is `peek_patient_number()`.
+    """
+    # Delegate to the robust, row-locked counter implementation defined earlier.
+    # This function exists because this file historically had multiple definitions.
+    return _generate_patient_number_impl(patient_type)
 
 @app.route('/doctor/patients', methods=['GET'])
 @login_required
@@ -24057,6 +24173,7 @@ def _doctor_patient_category_query(category: str):
         return q.filter(
             Patient.status == 'active',
             Patient.op_number.isnot(None),
+            Patient.ip_number.is_(None),
         ).order_by(Patient.updated_at.desc(), Patient.id.desc())
 
     if category == 'inpatients':
@@ -24096,7 +24213,7 @@ def doctor_outpatients():
         flash('Unauthorized', 'danger')
         return redirect(url_for('home'))
 
-    patients = _doctor_patient_category_query('outpatients').all()
+    patients = filter_accessible_patients(_doctor_patient_category_query('outpatients'), current_user).all()
     return render_template('doctor/patient_category.html',
         title='Outpatients',
         category='outpatients',
@@ -24111,7 +24228,7 @@ def doctor_inpatients():
         flash('Unauthorized', 'danger')
         return redirect(url_for('home'))
 
-    patients = _doctor_patient_category_query('inpatients').all()
+    patients = filter_accessible_patients(_doctor_patient_category_query('inpatients'), current_user).all()
     return render_template('doctor/patient_category.html',
         title='Inpatients',
         category='inpatients',
@@ -24126,7 +24243,7 @@ def doctor_discharged_queue():
         flash('Unauthorized', 'danger')
         return redirect(url_for('home'))
 
-    patients = _doctor_patient_category_query('discharged').all()
+    patients = filter_accessible_patients(_doctor_patient_category_query('discharged'), current_user).all()
     return render_template('doctor/patient_category.html',
         title='Discharged (Pending Confirmation)',
         category='discharged',
@@ -24141,7 +24258,7 @@ def doctor_old_inpatients():
         flash('Unauthorized', 'danger')
         return redirect(url_for('home'))
 
-    patients = _doctor_patient_category_query('old_inpatients').all()
+    patients = filter_accessible_patients(_doctor_patient_category_query('old_inpatients'), current_user).all()
     return render_template('doctor/patient_category.html',
         title='Old Inpatients',
         category='old_inpatients',
@@ -24156,7 +24273,7 @@ def doctor_old_outpatients():
         flash('Unauthorized', 'danger')
         return redirect(url_for('home'))
 
-    patients = _doctor_patient_category_query('old_outpatients').all()
+    patients = filter_accessible_patients(_doctor_patient_category_query('old_outpatients'), current_user).all()
     return render_template('doctor/patient_category.html',
         title='Old Outpatients',
         category='old_outpatients',
@@ -24872,7 +24989,13 @@ def doctor_new_patient():
         
         try:
             if section == 'biodata':
-                patient_type = request.form.get('patient_type')
+                raw_patient_type = request.form.get('patient_type')
+                patient_type = (raw_patient_type or '').strip().upper()
+                if patient_type not in {'OP', 'IP'}:
+                    # Fallback to query param (e.g., /doctor/outpatients -> ?patient_type=OP)
+                    arg_type = (request.args.get('patient_type') or '').strip().upper()
+                    patient_type = arg_type if arg_type in {'OP', 'IP'} else 'OP'
+
                 patient_number = generate_patient_number(patient_type)
 
                 insurance_provider_id = request.form.get('insurance_provider_id', type=int)
@@ -24935,6 +25058,7 @@ def doctor_new_patient():
                 return jsonify({
                     'success': True,
                     'patient_id': patient.id,
+                    'patient_number': patient.op_number or patient.ip_number,
                     'next_section': 'chief_complaint'
                 })
 
@@ -25311,10 +25435,21 @@ def doctor_new_patient():
         controlled_drugs = []
     services = Service.query.all()
 
-    preset_patient_type = (request.args.get('patient_type') or '').strip().upper()
-    if preset_patient_type not in {'OP', 'IP'}:
-        preset_patient_type = ''
-    lock_patient_type = str(request.args.get('lock_patient_type') or '').strip() in {'1', 'true', 'True', 'yes', 'on'}
+    preset_patient_type_raw = request.args.get('patient_type')
+    preset_patient_type = (preset_patient_type_raw or '').strip().upper()
+
+    # Default to outpatient for doctors so they don't have to select every time.
+    # If a caller needs IP they can pass ?patient_type=IP.
+    if not preset_patient_type:
+        preset_patient_type = 'OP'
+
+    raw_is_valid = (preset_patient_type_raw or '').strip().upper() in {'OP', 'IP'}
+    if not raw_is_valid and (preset_patient_type_raw or '').strip():
+        # Invalid explicit type: fall back to OP but don't lock.
+        preset_patient_type = 'OP'
+
+    lock_patient_type_requested = str(request.args.get('lock_patient_type') or '').strip() in {'1', 'true', 'True', 'yes', 'on'}
+    lock_patient_type = bool(lock_patient_type_requested and raw_is_valid)
     
     try:
         insurance_providers = InsuranceProvider.query.order_by(InsuranceProvider.name).all()
@@ -25903,18 +26038,33 @@ def ai_treatment():
         return jsonify({'success': False, 'error': 'Patient not found'}), 404
     
     try:
-        diagnosis = PatientDiagnosis.query.filter_by(patient_id=patient.id).first()
-        history = PatientHistory.query.filter_by(patient_id=patient.id).first()
-        
-        if not diagnosis or not diagnosis.working_diagnosis:
-            return jsonify({'success': False, 'error': 'Diagnosis required'}), 400
+        diagnosis = (
+            PatientDiagnosis.query
+            .filter_by(patient_id=patient.id)
+            .order_by(PatientDiagnosis.created_at.desc(), PatientDiagnosis.id.desc())
+            .first()
+        )
+        history = (
+            PatientHistory.query
+            .filter_by(patient_id=patient.id)
+            .order_by(PatientHistory.created_at.desc(), PatientHistory.id.desc())
+            .first()
+        )
+
+        diagnosis_text = (diagnosis.working_diagnosis or '').strip() if diagnosis else ''
+        if not diagnosis_text:
+            # Fallback context (still useful if Diagnosis tab wasn't saved yet)
+            diagnosis_text = (
+                f"Not documented. Chief complaint: {(patient.chief_complaint or '').strip()} | "
+                f"HPI: {(patient.history_present_illness or '').strip()}"
+            ).strip()
         
         available_drugs = Drug.query.filter(Drug.remaining_quantity > 0).all()
         
         patient_data = {
             'age': patient.age,
             'gender': patient.gender,
-            'diagnosis': diagnosis.working_diagnosis,
+            'diagnosis': diagnosis_text,
             'allergies': history.allergies if history else 'None known',
             'medications': history.medications if history else 'None'
         }
@@ -25941,7 +26091,6 @@ def ai_treatment():
         
         management.ai_generated_plan = True
         management.ai_alternative_treatments = treatment_plan
-        management.ai_last_updated = get_eat_now()
         db.session.commit()
         
         return jsonify({
@@ -25957,6 +26106,225 @@ def ai_treatment():
             'error': 'Internal server error',
             'details': str(e)
         }), 500
+
+
+@app.route('/doctor/patient/assistant/management_progress', methods=['POST'])
+@login_required
+def ai_management_progress():
+    """Advanced management assistant: compare baseline vs latest management and advise on progress."""
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    patient_id = request.form.get('patient_id')
+    if not patient_id:
+        return jsonify({'success': False, 'error': 'Patient ID required'}), 400
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+    try:
+        mgmt_versions = (
+            PatientManagement.query
+            .filter_by(patient_id=patient.id)
+            .order_by(PatientManagement.created_at.asc(), PatientManagement.id.asc())
+            .options(db.joinedload(PatientManagement.creator))
+            .all()
+        )
+        baseline = mgmt_versions[0] if mgmt_versions else None
+        latest = mgmt_versions[-1] if mgmt_versions else None
+
+        diagnosis = (
+            PatientDiagnosis.query
+            .filter_by(patient_id=patient.id)
+            .order_by(PatientDiagnosis.created_at.desc(), PatientDiagnosis.id.desc())
+            .first()
+        )
+        latest_summary = (
+            PatientSummary.query
+            .filter_by(patient_id=patient.id)
+            .order_by(PatientSummary.created_at.desc(), PatientSummary.id.desc())
+            .first()
+        )
+        history = (
+            PatientHistory.query
+            .filter_by(patient_id=patient.id)
+            .order_by(PatientHistory.created_at.desc(), PatientHistory.id.desc())
+            .first()
+        )
+
+        def _fmt_dt(dt):
+            try:
+                return dt.strftime('%Y-%m-%d %H:%M') if dt else ''
+            except Exception:
+                return ''
+
+        def _u(user):
+            return getattr(user, 'username', None) or ''
+
+        done_services = (
+            PatientService.query
+            .filter_by(patient_id=patient.id)
+            .filter(PatientService.status.in_(['done', 'completed']))
+            .order_by(PatientService.completed_at.desc().nullslast(), PatientService.id.desc())
+            .options(
+                db.joinedload(PatientService.service),
+                db.joinedload(PatientService.performer),
+                db.joinedload(PatientService.completer),
+            )
+            .limit(20)
+            .all()
+        )
+
+        recent_rx = (
+            Prescription.query
+            .filter_by(patient_id=patient.id)
+            .order_by(Prescription.created_at.desc(), Prescription.id.desc())
+            .options(
+                db.joinedload(Prescription.items).joinedload(PrescriptionItem.drug),
+                db.joinedload(Prescription.doctor),
+                db.joinedload(Prescription.dispenser),
+            )
+            .limit(10)
+            .all()
+        )
+        recent_crx = (
+            ControlledPrescription.query
+            .filter_by(patient_id=patient.id)
+            .order_by(ControlledPrescription.created_at.desc(), ControlledPrescription.id.desc())
+            .options(
+                db.joinedload(ControlledPrescription.items).joinedload(ControlledPrescriptionItem.controlled_drug),
+                db.joinedload(ControlledPrescription.doctor),
+                db.joinedload(ControlledPrescription.dispenser),
+            )
+            .limit(10)
+            .all()
+        )
+
+        context = {
+            'patient': {
+                'age': patient.age,
+                'gender': patient.gender,
+                'patient_number': patient.op_number or patient.ip_number or '',
+                'chief_complaint': patient.chief_complaint or '',
+                'hpi': patient.history_present_illness or '',
+            },
+            'summary': {
+                'created_at': _fmt_dt(getattr(latest_summary, 'created_at', None)),
+                'text': (latest_summary.summary_text or '') if latest_summary else '',
+            },
+            'diagnosis': {
+                'working': (diagnosis.working_diagnosis or '') if diagnosis else '',
+                'differential': (diagnosis.differential_diagnosis or '') if diagnosis else '',
+            },
+            'history': {
+                'allergies': (history.allergies or '') if history else '',
+                'medications': (history.medications or '') if history else '',
+                'medical': (history.medical_history or '') if history else '',
+            },
+            'management': {
+                'baseline': {
+                    'created_at': _fmt_dt(getattr(baseline, 'created_at', None)),
+                    'by': _u(getattr(baseline, 'creator', None)),
+                    'treatment_plan': (baseline.treatment_plan or '') if baseline else '',
+                    'follow_up': (baseline.follow_up or '') if baseline else '',
+                    'notes': (baseline.notes or '') if baseline else '',
+                },
+                'latest': {
+                    'created_at': _fmt_dt(getattr(latest, 'created_at', None)),
+                    'by': _u(getattr(latest, 'creator', None)),
+                    'treatment_plan': (latest.treatment_plan or '') if latest else '',
+                    'follow_up': (latest.follow_up or '') if latest else '',
+                    'notes': (latest.notes or '') if latest else '',
+                },
+                'updates_count': len(mgmt_versions),
+            },
+            'services_done': [
+                {
+                    'service': (ps.service.name if ps.service else ''),
+                    'done_by': _u(ps.performer) or _u(ps.completer),
+                    'done_at': _fmt_dt(ps.completed_at) or _fmt_dt(getattr(ps, 'updated_at', None)),
+                }
+                for ps in done_services
+            ],
+            'prescriptions_recent': [
+                {
+                    'type': 'regular',
+                    'created_at': _fmt_dt(rx.created_at),
+                    'status': rx.status or '',
+                    'prescribed_by': _u(rx.doctor),
+                    'dispensed_at': _fmt_dt(rx.dispensed_at),
+                    'dispensed_by': _u(rx.dispenser),
+                    'items': [
+                        {
+                            'name': (it.drug.name if it.drug else ''),
+                            'quantity': it.quantity,
+                            'status': it.status or '',
+                        }
+                        for it in (rx.items or [])
+                    ],
+                }
+                for rx in recent_rx
+            ] + [
+                {
+                    'type': 'controlled',
+                    'created_at': _fmt_dt(rx.created_at),
+                    'status': rx.status or '',
+                    'prescribed_by': _u(rx.doctor),
+                    'dispensed_at': _fmt_dt(rx.dispensed_at),
+                    'dispensed_by': _u(rx.dispenser),
+                    'items': [
+                        {
+                            'name': (it.controlled_drug.name if it.controlled_drug else ''),
+                            'quantity': it.quantity,
+                            'status': it.status or '',
+                        }
+                        for it in (rx.items or [])
+                    ],
+                }
+                for rx in recent_crx
+            ],
+        }
+
+        prompt = f"""
+You are an experienced clinician assisting another clinician.
+
+Task: Review patient progress by comparing the ORIGINAL (baseline) management entry vs the LATEST management entry. If the latest treatment plan is missing or too thin, propose a complete updated treatment plan and follow-up.
+
+Rules:
+- Do not invent new patient facts.
+- If information is missing, say what is missing and what to ask/check.
+- Be concise and practical for clinical workflow.
+
+Return format (use these headings exactly):
+Progress Since Baseline:
+Comparison (What changed):
+Gaps / Missing Info:
+Updated Treatment Plan:
+Follow-up & Monitoring:
+Red Flags / Escalation:
+
+Patient context JSON:
+{json.dumps(context, ensure_ascii=False)}
+"""
+
+        ai_timeout = current_app.config.get('AI_SUMMARY_TIMEOUT_SECONDS', 20)
+        response = AIService._chat_completion(
+            model=AIService.MODELS.get('primary') or 'deepseek-chat',
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=1200,
+            timeout=ai_timeout,
+        )
+        text = (response.choices[0].message.content or '').strip()
+        if not text:
+            return jsonify({'success': False, 'error': 'Failed to generate progress review'}), 500
+
+        return jsonify({'success': True, 'progress_review': text})
+
+    except Exception as e:
+        current_app.logger.error(f"Management progress AI error: {str(e)}")
+        return jsonify({'success': False, 'error': 'Internal server error', 'details': str(e)}), 500
 
 
 def _build_doctor_patient_ai_context(patient: 'Patient') -> dict:
@@ -27518,60 +27886,35 @@ def doctor_patient_details(patient_id):
                     created_by=current_user.id,
                 )
                 db.session.add(management)
-                
-                # Handle prescriptions
-                drug_ids = request.form.getlist('drug_id')
-                quantities = request.form.getlist('quantity')
-                dosages = request.form.getlist('dosage')
-                frequencies = request.form.getlist('frequency')
-                durations = request.form.getlist('duration')
-                prescription_notes = request.form.getlist('prescription_notes')
-                
-                # Only create prescription if there are drugs specified
-                if any(drug_ids):
-                    prescription = Prescription(
-                        patient_id=patient.id,
-                        doctor_id=current_user.id,
-                        notes="Prescription from management plan",
-                        status='pending'
-                    )
-                    db.session.add(prescription)
-                    db.session.flush()  # Get the prescription ID
-                    
-                    for i in range(len(drug_ids)):
-                        if drug_ids[i] and quantities[i]:
-                            drug = db.session.get(Drug, drug_ids[i])
-                            if drug:
-                                prescription_item = PrescriptionItem(
-                                    prescription_id=prescription.id,
-                                    drug_id=drug.id,
-                                    quantity=int(quantities[i]),
-                                    dosage=dosages[i],
-                                    frequency=frequencies[i],
-                                    duration=durations[i],
-                                    notes=prescription_notes[i] if i < len(prescription_notes) else None,
-                                    status='pending'
-                                )
-                                db.session.add(prescription_item)
-                                # Stock is decremented when dispensing/sale happens in pharmacy.
+
+                # Prescriptions are created via /doctor/patient/complete_prescription from the
+                # Management tab "Complete Prescription" button. Do not create prescriptions
+                # on Management plan save to avoid duplicates.
                 
                 # Handle services
                 service_ids = request.form.getlist('service_id')
                 service_notes = request.form.get('service_notes', '')
-                
+
                 for service_id in service_ids:
-                    if service_id:
-                        service = db.session.get(Service, service_id)
-                        if service:
-                            patient_service = PatientService(
-                                patient_id=patient.id,
-                                service_id=service.id,
-                                status='requested',
-                                requested_by=current_user.id,
-                                notes=service_notes,
-                                performed_by=current_user.id
-                            )
-                            db.session.add(patient_service)
+                    try:
+                        service_id_int = int(service_id)
+                    except Exception:
+                        continue
+                    service = db.session.get(Service, service_id_int)
+                    if not service:
+                        continue
+                    patient_service = PatientService(
+                        patient_id=patient.id,
+                        service_id=service.id,
+                        # In Management tab, selecting a service means it is done/completed on save.
+                        status='done',
+                        requested_by=current_user.id,
+                        performed_by=current_user.id,
+                        completed_by=current_user.id,
+                        completed_at=get_eat_now(),
+                        notes=(service_notes or '').strip() or None,
+                    )
+                    db.session.add(patient_service)
                 
                 db.session.commit()
                 flash('Management plan updated successfully!', 'success')
@@ -27792,7 +28135,13 @@ def doctor_patient_details(patient_id):
             db.joinedload(ControlledPrescription.doctor),
             db.joinedload(ControlledPrescription.dispenser),
         ).all()
-    patient_services = PatientService.query.filter_by(patient_id=patient.id).options(
+    patient_services = PatientService.query.filter_by(patient_id=patient.id) \
+    .order_by(
+        PatientService.completed_at.desc().nullslast(),
+        PatientService.updated_at.desc(),
+        PatientService.created_at.desc(),
+        PatientService.id.desc(),
+    ).options(
         db.joinedload(PatientService.service),
         db.joinedload(PatientService.requester),
         db.joinedload(PatientService.biller),
@@ -28447,7 +28796,9 @@ def _require_role(required_roles):
 @app.route('/labtech/dashboard')
 @login_required
 def labtech_dashboard():
-    if not _require_role({'labtech', 'admin'}):
+    # Doctors are allowed to access lab workflows via the "Open Lab" entry.
+    # This does NOT grant labtechs access to doctor pages (doctor pages remain doctor-only).
+    if not _require_role({'labtech', 'admin', 'doctor'}):
         return redirect(url_for('home'))
 
     pending_count = LabRequest.query.filter(LabRequest.status == 'pending').count()
@@ -28475,7 +28826,7 @@ def labtech_dashboard():
 @app.route('/labtech/lab-requests')
 @login_required
 def labtech_lab_requests():
-    if not _require_role({'labtech', 'admin'}):
+    if not _require_role({'labtech', 'admin', 'doctor'}):
         return redirect(url_for('home'))
 
     status = (request.args.get('status') or '').strip().lower() or None
@@ -28543,7 +28894,7 @@ def labtech_lab_requests():
 @app.route('/labtech/lab-request/<int:request_id>')
 @login_required
 def labtech_lab_request_detail(request_id):
-    if not _require_role({'labtech', 'admin'}):
+    if not _require_role({'labtech', 'admin', 'doctor'}):
         return redirect(url_for('home'))
 
     lab_request = db.session.get(LabRequest, request_id)
@@ -28558,7 +28909,7 @@ def labtech_lab_request_detail(request_id):
 @app.route('/labtech/lab-request/<int:request_id>/complete', methods=['POST'])
 @login_required
 def labtech_complete_lab_request(request_id):
-    if not _require_role({'labtech', 'admin'}):
+    if not _require_role({'labtech', 'admin', 'doctor'}):
         return redirect(url_for('home'))
 
     lab_request = db.session.get(LabRequest, request_id)
@@ -30078,6 +30429,8 @@ def api_patient_completed_services(patient_id: int):
                 'patient_service_id': r.id,
                 'service_id': r.service_id,
                 'service_name': (r.service.name if getattr(r, 'service', None) else None),
+                'price': float(getattr(getattr(r, 'service', None), 'price', 0) or 0),
+                'service_price': float(getattr(getattr(r, 'service', None), 'price', 0) or 0),
                 'status': r.status or 'completed',
                 'created_at': r.created_at.isoformat() if getattr(r, 'created_at', None) else None,
             }
@@ -30242,15 +30595,65 @@ def api_patient_prescriptions(patient_id: int):
             if not drug:
                 continue
             unit_price = float(getattr(drug, 'selling_price', 0) or 0)
+            qty = int(getattr(item, 'quantity', 0) or 0)
             items_payload.append({
                 'id': item.id,
                 'drug_name': getattr(drug, 'name', None),
                 'drug_number': getattr(drug, 'drug_number', None),
-                'quantity': int(getattr(item, 'quantity', 0) or 0),
+                'quantity': qty,
                 'unit_price': unit_price,
+                'total_price': float(unit_price * qty),
+                'status': 'dispensed',
+                'dispensed': True,
             })
         if items_payload:
             payload.append({'id': prescription.id, 'items': items_payload})
+
+    return jsonify(payload)
+
+
+@app.route('/api/patient/<int:patient_id>/controlled-prescriptions')
+@login_required
+def api_patient_controlled_prescriptions(patient_id: int):
+    # Allow both receptionist and pharmacist to access
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    patient = Patient.query.get(patient_id)
+    if not patient:
+        return jsonify({'error': 'Patient not found'}), 404
+
+    cprescriptions = (
+        ControlledPrescription.query
+        .filter_by(patient_id=patient.id)
+        .order_by(ControlledPrescription.created_at.desc())
+        .all()
+    )
+
+    payload = []
+    for cp in cprescriptions:
+        items_payload = []
+        for item in (cp.items or []):
+            if getattr(item, 'status', None) != 'dispensed':
+                continue
+            drug = getattr(item, 'controlled_drug', None)
+            if not drug:
+                continue
+            unit_price = float(getattr(drug, 'selling_price', 0) or 0)
+            qty = int(getattr(item, 'quantity', 0) or 0)
+            items_payload.append({
+                'id': item.id,
+                'drug_name': getattr(drug, 'name', None),
+                'drug_number': getattr(drug, 'drug_number', None),
+                'quantity': qty,
+                'unit_price': unit_price,
+                'total_price': float(unit_price * qty),
+                'status': 'dispensed',
+                'dispensed': True,
+            })
+        if items_payload:
+            payload.append({'id': cp.id, 'items': items_payload})
 
     return jsonify(payload)
 

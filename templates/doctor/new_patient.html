@@ -596,7 +596,7 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
                 
                 <h4>Prescriptions</h4>
                 <div id="prescription-items">
-                    <div class="prescription-item form-row">
+                    <div class="prescription-item form-row compact-rx">
                         <div class="form-group col-md-1 d-flex align-items-center">
                             <div class="form-check mt-3">
                                 <input class="form-check-input controlled-toggle" type="checkbox">
@@ -626,10 +626,10 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
                         <div class="form-group col-md-2">
                             <input type="text" class="form-control" name="dosage" placeholder="Dosage">
                         </div>
-                        <div class="form-group col-md-2">
+                        <div class="form-group col-md-1">
                             <input type="text" class="form-control" name="frequency" placeholder="Frequency">
                         </div>
-                        <div class="form-group col-md-2">
+                        <div class="form-group col-md-1">
                             <input type="text" class="form-control" name="duration" placeholder="Duration">
                         </div>
                         <div class="form-group col-md-2">
@@ -913,6 +913,31 @@ $(document).ready(function() {
         placeholder: 'Select options'
     });
 
+    function mmcHideSelect2Select($select) {
+        $select.hide();
+        const $container = $select.next('.select2');
+        if ($container.length) $container.hide();
+    }
+
+    function mmcShowSelect2Select($select) {
+        $select.show();
+        const $container = $select.next('.select2');
+        if ($container.length) $container.show();
+    }
+
+    // Ensure the initial prescription row has Select2 search (not only cloned rows)
+    if ($.fn && $.fn.select2) {
+        $('.drug-select, .controlled-drug-select').each(function() {
+            const $el = $(this);
+            if (!$el.data('select2')) {
+                $el.select2({ width: '100%' });
+            }
+            if ($el.is(':hidden')) {
+                mmcHideSelect2Select($el);
+            }
+        });
+    }
+
     // Generate patient number when type is selected
     $('#patient_type').change(function() {
         if ($(this).val()) {
@@ -927,6 +952,23 @@ $(document).ready(function() {
         } else {
             $('#patient_number').val('');
         }
+
+        // If the select is disabled (locked), it won't be submitted with the form.
+        // Add/update a hidden field so the backend still receives patient_type.
+        try {
+            const sel = $('#patient_type');
+            const hiddenId = 'patient_type_locked_hidden';
+            if (sel.prop('disabled')) {
+                let hidden = $('#' + hiddenId);
+                if (!hidden.length) {
+                    hidden = $('<input/>', { type: 'hidden', id: hiddenId, name: 'patient_type' });
+                    $('#patientForm').append(hidden);
+                }
+                hidden.val(String(sel.val() || '').trim());
+            } else {
+                $('#' + hiddenId).remove();
+            }
+        } catch (e) { /* ignore */ }
     });
 
     // Apply preset after handlers are registered but before draft restore runs.
@@ -970,6 +1012,10 @@ $(document).ready(function() {
         newItem.find('.drug-select, .controlled-drug-select').select2({
             width: '100%'
         });
+
+        // Keep controlled drug select hidden (including its Select2 container)
+        mmcShowSelect2Select(newItem.find('.drug-select'));
+        mmcHideSelect2Select(newItem.find('.controlled-drug-select'));
     });
 
     // Remove prescription item
@@ -1006,12 +1052,12 @@ $(document).ready(function() {
 
         if (isControlled) {
             normalSelect.val('').trigger('change');
-            normalSelect.closest('.form-group').find('.drug-select').hide();
-            controlledSelect.show();
+            mmcHideSelect2Select(normalSelect);
+            mmcShowSelect2Select(controlledSelect);
         } else {
             controlledSelect.val('').trigger('change');
-            controlledSelect.hide();
-            normalSelect.show();
+            mmcHideSelect2Select(controlledSelect);
+            mmcShowSelect2Select(normalSelect);
         }
     });
 
@@ -1369,6 +1415,10 @@ $(document).ready(function() {
                     if (response.success) {
                         if (response.patient_id) {
                             $('#patient_id').val(response.patient_id);
+                        }
+                        // Ensure the UI shows the exact reserved/saved number after biodata save.
+                        if (response.patient_number) {
+                            try { $('#patient_number').val(String(response.patient_number)); } catch (e) { /* ignore */ }
                         }
                         scheduleDraftSave();
                         resolve(response);
@@ -2220,6 +2270,27 @@ $(document).ready(function() {
     .prescription-item .form-group.col-md-1 {
         width: 100%;
     }
+}
+
+/* Compact prescription row (matches patient_details) */
+.prescription-item.compact-rx .form-group {
+    margin-bottom: 6px;
+}
+
+.prescription-item.compact-rx .form-control {
+    height: calc(1.5em + 0.5rem + 2px);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.9rem;
+}
+
+.prescription-item.compact-rx .btn {
+    padding: 0.2rem 0.4rem;
+    font-size: 0.85rem;
+    line-height: 1.2;
+}
+
+.prescription-item.compact-rx .view-dosage-btn {
+    margin-top: 4px !important;
 }
 
 /* Select2 Styling */

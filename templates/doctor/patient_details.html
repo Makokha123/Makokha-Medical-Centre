@@ -882,271 +882,256 @@
     <div class="tab-content {% if active_tab == 'management' %}active{% endif %}" id="management-tab">
         <div class="section-header">
             <h2><i class="fas fa-tasks"></i> Management Plan</h2>
-            {% if management_nav and management_nav.total %}
-            <div class="section-version-nav">
-                <span class="text-muted">
-                    Updated: {{ management.created_at.strftime('%Y-%m-%d %H:%M') if management and management.created_at else 'N/A' }}
-                    {% if management and management.creator %}by Dr. {{ management.creator.username }}{% endif %}
-                    ({{ management_nav.index }}/{{ management_nav.total }})
-                </span>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='management', management_id=management_nav.prev_id) if management_nav.prev_id else '#' }}" {% if not management_nav.prev_id %}aria-disabled="true" onclick="return false;"{% endif %}>
-                    <i class="fas fa-chevron-left"></i> Prev
-                </a>
-                <a class="btn btn-outline btn-sm" href="{{ url_for('doctor_patient_details', patient_id=patient.id, tab='management', management_id=management_nav.next_id) if management_nav.next_id else '#' }}" {% if not management_nav.next_id %}aria-disabled="true" onclick="return false;"{% endif %}>
-                    Next <i class="fas fa-chevron-right"></i>
-                </a>
-            </div>
-            {% endif %}
-            <div class="management-actions">
-                <button class="btn btn-primary" onclick="doctorPatient.openManagementModal()">
-                    <i class="fas fa-plus"></i> Add New Entry
-                </button>
-                <button class="btn btn-success" onclick="doctorPatient.openPrescriptionModal()">
-                    <i class="fas fa-prescription"></i> New Prescription
-                </button>
-            </div>
-
-            <div class="assistant-tools" style="margin-top: 8px;">
+            <div class="assistant-tools">
                 <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewManagementAI()">
-                    <i class="fas fa-eye"></i> Review
+                    <i class="fas fa-eye"></i> Review Plan
                 </button>
                 <button type="button" class="btn btn-success btn-sm" onclick="doctorPatient.generateManagementAI()">
-                    <i class="fas fa-robot"></i> Generate
+                    <i class="fas fa-robot"></i> Generate Plan
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.reviewManagementProgressAI()">
+                    <i class="fas fa-eye"></i> Review Progress
+                </button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.generateManagementProgressAI()">
+                    <i class="fas fa-chart-line"></i> Generate Progress
                 </button>
             </div>
         </div>
 
-        <textarea id="mgmtAiStoredPlan" class="d-none">{{ management.ai_alternative_treatments if management and management.ai_alternative_treatments else '' }}</textarea>
-
         <div id="managementAiPanel" class="assistant-panel" style="display: none;">
-            <h4><i class="fas fa-robot"></i> Doctor Assistant - Treatment Plan</h4>
-            <div class="text-muted" style="margin-bottom: 6px;">Doctor Assistant suggested plan (requires a saved Diagnosis)</div>
-            <div id="managementAiText" class="assistant-outline">-</div>
+            <h4><i class="fas fa-robot"></i> Doctor Assistant - Management</h4>
+            <div class="text-muted" style="margin-bottom: 6px;">Generate a treatment plan or review progress by comparing baseline vs latest management entries.</div>
+
+            <input type="hidden" id="mgmtAiStoredPlan" value="{{ management.ai_alternative_treatments if management and management.ai_alternative_treatments else '' }}">
+            <input type="hidden" id="mgmtAiStoredProgress" value="">
+
+            <div style="margin-bottom: 10px;">
+                <h6 style="margin: 0 0 6px;">Treatment Plan</h6>
+                <div id="managementAiText" class="assistant-outline">-</div>
+                <div class="assistant-tools" style="margin-top: 10px;">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedManagementPlan()">
+                        <i class="fas fa-pen"></i> Use in Treatment Plan
+                    </button>
+                </div>
+            </div>
+
+            <div>
+                <h6 style="margin: 10px 0 6px;">Progress Review</h6>
+                <div id="managementProgressAiText" class="assistant-outline">-</div>
+            </div>
+
             <div class="assistant-tools" style="margin-top: 10px;">
-                <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.useGeneratedManagementPlan()">
-                    <i class="fas fa-copy"></i> Use in Treatment Plan Entry
-                </button>
                 <button type="button" class="btn btn-outline btn-sm" onclick="doctorPatient.hideAIPanel('managementAiPanel')">Close</button>
             </div>
         </div>
-        
-        <div class="management-content">
-            <!-- Treatment Plan -->
-            <div class="management-section">
-                <div class="section-header-inline">
-                    <h4>Treatment Plan</h4>
-                    <button class="btn btn-outline btn-sm" onclick="doctorPatient.openModal('treatment-plan')">
-                        <i class="fas fa-plus"></i> Add Entry
-                    </button>
-                </div>
-                <div class="management-text">
-                    {{ management.treatment_plan if management and management.treatment_plan else 'Not documented' }}
-                </div>
-            </div>
 
-            <!-- Follow-up -->
-            <div class="management-section">
-                <div class="section-header-inline">
-                    <h4>Follow-up Plan</h4>
-                    <button class="btn btn-outline btn-sm" onclick="doctorPatient.openModal('follow-up-plan')">
-                        <i class="fas fa-plus"></i> Add Entry
-                    </button>
-                </div>
-                <div class="management-text">
-                    {{ management.follow_up if management and management.follow_up else 'Not documented' }}
-                </div>
-            </div>
+        <!-- Management Entry Form (matches New Patient Management section) -->
+        <div class="patient-form-container" style="max-width: 1100px;">
+            <form method="POST" id="management-entry-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="section" value="management">
+                <input type="hidden" name="active_tab" value="management">
+                <input type="hidden" name="patient_id" id="management_patient_id" value="{{ patient.id }}">
 
-            <!-- Current Prescriptions -->
-            <div class="management-section">
-                <div class="section-header-inline">
-                    <h4>Current Prescriptions</h4>
-                    <button class="btn btn-outline btn-sm" onclick="doctorPatient.openPrescriptionModal()">
-                        <i class="fas fa-plus"></i> Add Prescription
-                    </button>
-                </div>
-                {% if prescriptions %}
-                <div class="prescriptions-list">
-                    {% for prescription in prescriptions %}
-                    <div class="prescription-card">
-                        <div class="prescription-header">
-                            <span class="prescription-date">{{ prescription.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                            <span class="prescription-status status-{{ prescription.status }}">{{ prescription.status|title }}</span>
-                        </div>
-                        <div class="prescription-meta">
-                            <div><small><strong>Prescribed by:</strong> {% if prescription.doctor %}Dr. {{ prescription.doctor.username }}{% else %}Unknown Doctor{% endif %}</small></div>
-                            {% if prescription.dispensed_at or prescription.dispenser %}
-                                <div>
-                                    <small>
-                                        <strong>Dispensed:</strong>
-                                        {% if prescription.dispensed_at %}{{ prescription.dispensed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
-                                        {% if prescription.dispenser %} by {{ prescription.dispenser.username }}{% endif %}
-                                    </small>
+                <div class="form-section" id="management-section" style="margin-top: 0;">
+                    <h3>Management Plan</h3>
+
+                    <div class="form-group">
+                        <label for="treatment_plan">Treatment Plan*</label>
+                        <textarea class="form-control" id="treatment_plan" name="treatment_plan" rows="3" required>{{ management.treatment_plan if management and management.treatment_plan else '' }}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="follow_up">Follow Up Plan</label>
+                        <textarea class="form-control" id="follow_up" name="follow_up" rows="2" placeholder="When to return, what to watch for, etc.">{{ management.follow_up if management and management.follow_up else '' }}</textarea>
+                    </div>
+
+                    <h4>Prescriptions</h4>
+                    <div id="prescription-items">
+                        <div class="prescription-item form-row compact-rx">
+                            <div class="form-group col-md-1 d-flex align-items-center">
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input controlled-toggle" type="checkbox">
+                                    <label class="form-check-label" style="font-size: 0.85rem;">Controlled</label>
                                 </div>
-                            {% endif %}
-                        </div>
-                        <div class="prescription-items">
-                            {% for item in prescription.items %}
-                            <div class="prescription-item">
-                                <strong>{{ item.drug.name }}</strong> - 
-                                {{ item.quantity }} units, {{ item.dosage }}, {{ item.frequency }} for {{ item.duration }}
-                                {% if item.notes %}<br><small>{{ item.notes }}</small>{% endif %}
                             </div>
+                            <div class="form-group col-md-3">
+                                <select class="form-control drug-select" name="drug_id">
+                                    <option value="">Select Drug</option>
+                                    {% for drug in drugs %}
+                                        <option value="{{ drug.id }}" data-stock="{{ drug.remaining_quantity }}">{{ drug.name }} ({{ drug.remaining_quantity }} in stock)</option>
+                                    {% endfor %}
+                                </select>
+                                <select class="form-control controlled-drug-select" name="controlled_drug_id" style="display:none;">
+                                    <option value="">Select Controlled Drug</option>
+                                    {% for cdrug in controlled_drugs %}
+                                        <option value="{{ cdrug.id }}" data-stock="{{ cdrug.remaining_quantity }}">{{ cdrug.name }} ({{ cdrug.remaining_quantity }} in stock)</option>
+                                    {% endfor %}
+                                </select>
+                                <button type="button" class="btn btn-sm btn-outline-info mt-2 view-dosage-btn">
+                                    <i class="fas fa-info-circle"></i> View Dosage
+                                </button>
+                            </div>
+                            <div class="form-group col-md-1">
+                                <input type="number" class="form-control" name="quantity" placeholder="Qty" min="1">
+                            </div>
+                            <div class="form-group col-md-2">
+                                <input type="text" class="form-control" name="dosage" placeholder="Dosage">
+                            </div>
+                            <div class="form-group col-md-1">
+                                <input type="text" class="form-control" name="frequency" placeholder="Frequency">
+                            </div>
+                            <div class="form-group col-md-1">
+                                <input type="text" class="form-control" name="duration" placeholder="Duration">
+                            </div>
+                            <div class="form-group col-md-2">
+                                <input type="text" class="form-control" name="prescription_notes" placeholder="Notes">
+                            </div>
+                            <div class="form-group col-md-1 d-flex align-items-center">
+                                <button type="button" class="btn btn-sm btn-danger remove-prescription" title="Remove this medication">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-secondary" id="add-prescription">
+                        <i class="fas fa-plus"></i> Add Another Medication
+                    </button>
+
+                    <div class="mt-3">
+                        <button type="button" class="btn btn-success" id="complete-prescription">
+                            <i class="fas fa-check-circle"></i> Complete Prescription
+                        </button>
+                        <div id="prescription-feedback" class="mt-2" style="display: none;"></div>
+                    </div>
+
+                    <h4 class="mt-4">Services</h4>
+                    <div class="form-group">
+                        <select class="form-control select2" name="service_id" id="management_service_id" multiple>
+                            {% for service in services %}
+                                <option value="{{ service.id }}">{{ service.name }}</option>
                             {% endfor %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="empty-state">
-                    <i class="fas fa-prescription"></i>
-                    <p>No prescriptions yet</p>
-                    <button class="btn btn-primary" onclick="doctorPatient.openPrescriptionModal()">
-                        <i class="fas fa-plus"></i> Create First Prescription
-                    </button>
-                </div>
-                {% endif %}
-            </div>
-
-            <!-- Controlled Prescriptions -->
-            <div class="management-section">
-                <div class="section-header-inline">
-                    <h4>Controlled Prescriptions</h4>
-                </div>
-                {% if controlled_prescriptions %}
-                <div class="prescriptions-list">
-                    {% for prescription in controlled_prescriptions %}
-                    <div class="prescription-card">
-                        <div class="prescription-header">
-                            <span class="prescription-date">{{ prescription.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                            <span class="prescription-status status-{{ prescription.status }}">{{ prescription.status|title }}</span>
-                        </div>
-                        <div class="prescription-meta">
-                            <div><small><strong>Prescribed by:</strong> {% if prescription.doctor %}Dr. {{ prescription.doctor.username }}{% else %}Unknown Doctor{% endif %}</small></div>
-                            {% if prescription.dispensed_at or prescription.dispenser %}
-                                <div>
-                                    <small>
-                                        <strong>Dispensed:</strong>
-                                        {% if prescription.dispensed_at %}{{ prescription.dispensed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
-                                        {% if prescription.dispenser %} by {{ prescription.dispenser.username }}{% endif %}
-                                    </small>
-                                </div>
-                            {% endif %}
-                        </div>
-                        <div class="prescription-items">
-                            {% for item in prescription.items %}
-                            <div class="prescription-item">
-                                <strong>{{ item.controlled_drug.name }}</strong> -
-                                {{ item.quantity }} units, {{ item.dosage }}, {{ item.frequency }} for {{ item.duration }}
-                                {% if item.notes %}<br><small>{{ item.notes }}</small>{% endif %}
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="empty-state">
-                    <i class="fas fa-prescription"></i>
-                    <p>No controlled prescriptions yet</p>
-                    <button class="btn btn-primary" onclick="doctorPatient.openControlledPrescriptionModal()">
-                        <i class="fas fa-plus"></i> Create Controlled Prescription
-                    </button>
-                </div>
-                {% endif %}
-            </div>
-
-            <!-- Requested Services -->
-            <div class="management-section">
-                <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
-                    <h4 style="margin:0;">Requested Services</h4>
-                    <button type="button" class="btn btn-primary btn-sm" onclick="doctorPatient.openRequestedServiceModal()">
-                        <i class="fas fa-plus"></i> Add Service
-                    </button>
-                </div>
-                {% if patient_services %}
-                <div class="services-list">
-                    {% for service in patient_services %}
-                    <div class="service-card">
-                        <div class="service-header">
-                            <strong>{{ service.service.name }}</strong>
-                            <span class="service-status status-{{ service.status }}">{{ service.status|title }}</span>
-                        </div>
-                        {% if service.notes %}<div><small>{{ service.notes }}</small></div>{% endif %}
-                        <div class="service-meta">
-                            <div>
-                                <small>
-                                    <strong>Requested:</strong>
-                                    {% if service.created_at %}{{ service.created_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
-                                    {% if service.requester %} by {{ service.requester.username }}{% endif %}
-                                </small>
-                            </div>
-                            {% if service.billed_at or service.biller or service.billed_sale %}
-                                <div>
-                                    <small>
-                                        <strong>Billed:</strong>
-                                        {% if service.billed_at %}{{ service.billed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
-                                        {% if service.biller %} by {{ service.biller.username }}{% endif %}
-                                        {% if service.billed_sale and service.billed_sale.sale_number %} (Sale: {{ service.billed_sale.sale_number }}){% endif %}
-                                    </small>
-                                </div>
-                            {% endif %}
-                            {% if service.completed_at or service.completer %}
-                                <div>
-                                    <small>
-                                        <strong>Completed:</strong>
-                                        {% if service.completed_at %}{{ service.completed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}N/A{% endif %}
-                                        {% if service.completer %} by {{ service.completer.username }}{% endif %}
-                                    </small>
-                                </div>
-                            {% endif %}
-                            {% if service.performer %}
-                                <div><small><strong>Performed by:</strong> {{ service.performer.username }}</small></div>
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="empty-state">
-                    <i class="fas fa-concierge-bell"></i>
-                    <p>No services requested yet</p>
-                </div>
-                {% endif %}
-            </div>
-
-            <!-- Add Requested Service Modal (custom modal system) -->
-            <div class="modal" id="requested-service-modal">
-                <div class="modal-content" style="max-width: 760px;">
-                    <div class="modal-header">
-                        <h2><i class="fas fa-concierge-bell"></i> Add Requested Service</h2>
-                        <button class="close-btn" onclick="doctorPatient.closeModal('requested-service')">&times;</button>
+                        </select>
+                        <textarea class="form-control mt-2" name="service_notes" placeholder="Notes for services" rows="2"></textarea>
                     </div>
 
                     <div class="form-group">
-                        <label for="requested-service-search">Search Service *</label>
-                        <input type="text" id="requested-service-search" placeholder="Type service name..." autocomplete="off" />
-                        <small class="form-help">Searches admin-defined active services.</small>
+                        <label for="management_notes">Additional Notes</label>
+                        <textarea class="form-control" id="management_notes" name="management_notes" rows="3">{{ management.notes if management and management.notes else '' }}</textarea>
                     </div>
-
-                    <div class="form-group">
-                        <label for="requested-service-notes">Notes (optional)</label>
-                        <textarea id="requested-service-notes" rows="3" placeholder="Any special instructions..."></textarea>
-                    </div>
-
-                    <div id="requested-service-results" style="max-height:320px;overflow:auto;"></div>
-                    <div id="requested-service-status" style="margin-top:10px;"></div>
 
                     <div class="form-actions">
-                        <button type="button" class="btn" onclick="doctorPatient.closeModal('requested-service')">Close</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Save Management Entry
+                        </button>
                     </div>
                 </div>
-            </div>
+            </form>
         </div>
 
-        {% if management_versions %}
+        <!-- Services Done (recorded in PatientService on save) -->
+        <div class="section-history" style="margin-top: 30px;">
+            <h3>Services Done</h3>
+            {% set has_done_service = false %}
+            {% for ps in patient_services %}
+                {% if ps.status in ['done', 'completed'] %}
+                    {% set has_done_service = true %}
+                {% endif %}
+            {% endfor %}
+
+            {% if has_done_service %}
+                <div class="history-timeline history-scroll">
+                    {% for ps in patient_services %}
+                        {% if ps.status in ['done', 'completed'] %}
+                        <div class="history-entry">
+                            <div class="history-header">
+                                <span class="history-date">
+                                    {% if ps.completed_at %}{{ ps.completed_at.strftime('%Y-%m-%d %H:%M') }}
+                                    {% elif ps.updated_at %}{{ ps.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                                    {% elif ps.created_at %}{{ ps.created_at.strftime('%Y-%m-%d %H:%M') }}
+                                    {% else %}N/A{% endif %}
+                                </span>
+                                <span class="history-author">
+                                    {% if ps.performer %}{{ ps.performer.username }}
+                                    {% elif ps.completer %}{{ ps.completer.username }}
+                                    {% elif ps.biller %}{{ ps.biller.username }}
+                                    {% elif ps.requester %}{{ ps.requester.username }}
+                                    {% else %}N/A{% endif %}
+                                </span>
+                            </div>
+                            <div class="history-details">
+                                <div class="detail-row"><strong>{{ ps.service.name if ps.service else 'Service' }}</strong></div>
+                                {% if ps.notes %}<div class="detail-row text-muted">{{ ps.notes }}</div>{% endif %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <i class="fas fa-concierge-bell"></i>
+                    <p>No completed services yet</p>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- Prescribed Drugs (all together, text only) -->
+        <div class="section-history" style="margin-top: 30px;">
+            <h3>Prescribed Drugs</h3>
+            {% if prescriptions or controlled_prescriptions %}
+                <div class="history-timeline history-scroll">
+                    {% set all_rx = (prescriptions or []) + (controlled_prescriptions or []) %}
+                    {% for rx in all_rx|sort(attribute='created_at', reverse=True) %}
+                        <div class="history-entry rx-entry">
+                            <div class="history-header">
+                                <span class="history-date">{{ rx.created_at.strftime('%Y-%m-%d %H:%M') if rx.created_at else 'N/A' }}</span>
+                                <span class="history-author">
+                                    Prescribed by {% if rx.doctor %}Dr. {{ rx.doctor.username }}{% else %}N/A{% endif %}
+                                </span>
+                            </div>
+                            <div class="rx-meta">
+                                {% if rx.dispensed_at %}
+                                    Dispensed by {% if rx.dispenser %}{{ rx.dispenser.username }}{% else %}Pharmacist{% endif %}
+                                    at {{ rx.dispensed_at.strftime('%Y-%m-%d %H:%M') }}
+                                {% else %}
+                                    <span class="text-muted">Not dispensed yet</span>
+                                {% endif %}
+                            </div>
+                            <div class="rx-lines">
+                                <ul>
+                                    {% for item in (rx.items or []) %}
+                                        {% if item.drug and item.drug.name %}
+                                            {% set _drug_name = item.drug.name %}
+                                        {% elif item.controlled_drug and item.controlled_drug.name %}
+                                            {% set _drug_name = item.controlled_drug.name %}
+                                        {% else %}
+                                            {% set _drug_name = 'Drug' %}
+                                        {% endif %}
+                                        <li>
+                                            {{ _drug_name }}
+                                            {% if item.dosage %} {{ item.dosage }}{% endif %}
+                                            {% if item.quantity %} ({{ item.quantity }}){% endif %}
+                                            {% if item.frequency %} {{ item.frequency }}{% endif %}
+                                            {% if item.duration %} {{ item.duration }}{% endif %}
+                                            {% if item.notes %} - <span class="text-muted">{{ item.notes }}</span>{% endif %}
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <i class="fas fa-prescription-bottle-alt"></i>
+                    <p>No prescribed drugs yet</p>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- Append-only Management History (latest first; new entries never overwrite) -->
         <div class="section-history" style="margin-top: 30px;">
             <h3>Management Plan Update History</h3>
+            {% if management_versions %}
             <div class="history-timeline history-scroll">
                 {% for entry in management_versions|reverse %}
                 <div class="history-entry {% if loop.first %}current{% endif %}">
@@ -1169,8 +1154,13 @@
                 </div>
                 {% endfor %}
             </div>
+            {% else %}
+            <div class="empty-state">
+                <i class="fas fa-tasks"></i>
+                <p>No management entries yet</p>
+            </div>
+            {% endif %}
         </div>
-        {% endif %}
     </div>
 
     <!-- In the summary tab section -->
@@ -2451,6 +2441,65 @@
     border-bottom: none;
 }
 
+/* Compact prescribed-drugs cards (Management tab) */
+.history-entry.rx-entry {
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border-left-width: 3px;
+}
+
+.history-entry.rx-entry .history-header {
+    margin-bottom: 4px;
+    font-size: 11px;
+}
+
+.history-entry.rx-entry .rx-meta {
+    font-size: 12px;
+    color: var(--gray-600);
+    margin-top: 2px;
+}
+
+.history-entry.rx-entry .rx-lines {
+    margin-top: 6px;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.history-entry.rx-entry .rx-lines ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.history-entry.rx-entry .rx-lines li {
+    margin: 2px 0;
+}
+
+/* Compact prescription entry rows (Management tab + New Patient parity) */
+.prescription-item.compact-rx {
+    margin-bottom: 8px;
+}
+
+.prescription-item.compact-rx .form-group {
+    margin-bottom: 0;
+}
+
+.prescription-item.compact-rx .form-control {
+    height: 32px;
+    padding: 4px 8px;
+    font-size: 0.85rem;
+}
+
+.prescription-item.compact-rx .btn.btn-sm {
+    padding: 4px 8px;
+    font-size: 0.82rem;
+}
+
+.prescription-item.compact-rx .view-dosage-btn {
+    margin-top: 4px !important;
+    padding: 2px 6px;
+    font-size: 0.75rem;
+}
+
 /* Review Systems Grid */
 .review-systems-grid {
     display: grid;
@@ -2720,6 +2769,35 @@
 .management-content {
     display: grid;
     gap: 25px;
+}
+
+/* Ensure the new Management entry form is always visible */
+#management-tab .patient-form-container,
+#management-tab #management-entry-form,
+#management-tab #management-section {
+    display: block !important;
+}
+
+#management-tab .patient-form-container {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--border-radius);
+    padding: 18px;
+    margin-bottom: 24px;
+}
+
+#management-tab #management-entry-form .form-control,
+#management-tab #management-entry-form input,
+#management-tab #management-entry-form select,
+#management-tab #management-entry-form textarea {
+    background: #fff;
+    color: var(--gray-800);
+}
+
+#management-tab #management-entry-form .form-control::placeholder,
+#management-tab #management-entry-form input::placeholder,
+#management-tab #management-entry-form textarea::placeholder {
+    color: var(--gray-500);
 }
 
 .management-section {
@@ -3531,7 +3609,18 @@ class DoctorPatientManagement {
         const out = document.getElementById('managementAiText');
         if (out) {
             out.innerHTML = mmcFormatAssistantOutline(
-                stored.trim() || 'No saved treatment plan yet. Click Generate to create one (requires a saved Diagnosis).'
+                stored.trim() || 'No saved treatment plan yet. Click Generate to create one.'
+            );
+        }
+        this._showAIPanel('managementAiPanel');
+    }
+
+    reviewManagementProgressAI() {
+        const stored = (document.getElementById('mgmtAiStoredProgress') || {}).value || '';
+        const out = document.getElementById('managementProgressAiText');
+        if (out) {
+            out.innerHTML = mmcFormatAssistantOutline(
+                stored.trim() || 'No saved progress review yet. Click Generate Progress to compare baseline vs latest management entries.'
             );
         }
         this._showAIPanel('managementAiPanel');
@@ -3542,7 +3631,7 @@ class DoctorPatientManagement {
             this.showAlert('Patient ID missing; reload and try again.', 'error');
             return;
         }
-        if (!confirm('Generate an AI treatment plan (requires a saved Diagnosis)?')) return;
+        if (!confirm('Generate an AI treatment plan from this patient’s data?')) return;
 
         try {
             const out = document.getElementById('managementAiText');
@@ -3572,6 +3661,41 @@ class DoctorPatientManagement {
         }
     }
 
+    async generateManagementProgressAI() {
+        if (!this.patientId) {
+            this.showAlert('Patient ID missing; reload and try again.', 'error');
+            return;
+        }
+        if (!confirm('Generate an AI progress review (baseline vs latest management entry)?')) return;
+
+        try {
+            const out = document.getElementById('managementProgressAiText');
+            if (out) out.innerHTML = '<span class="text-muted">Generating progress review...</span>';
+            this._showAIPanel('managementAiPanel');
+
+            this.showAlert('Generating progress review...', 'info');
+            const fd = new FormData();
+            fd.append('patient_id', String(this.patientId));
+            const result = await this._postAI('/doctor/patient/assistant/management_progress', fd);
+
+            const review = result.progress_review || '';
+            this.lastGeneratedManagementProgress = review;
+            if (out) out.innerHTML = mmcFormatAssistantOutline(review || 'No review returned.');
+
+            const store = document.getElementById('mgmtAiStoredProgress');
+            if (store) store.value = review || '';
+
+            this._showAIPanel('managementAiPanel');
+            this.showAlert('Progress review generated.', 'success');
+        } catch (e) {
+            const msg = (e && e.message) ? e.message : 'Failed to generate progress review';
+            const outElement = document.getElementById('managementProgressAiText');
+            if (outElement) outElement.innerHTML = `<span class="text-danger">Error: ${mmcEscapeHtml(msg)}</span>`;
+            this._showAIPanel('managementAiPanel');
+            this.showAlert(msg, 'error');
+        }
+    }
+
     useGeneratedManagementPlan() {
         const text = (
             (this.lastGeneratedManagementPlan || '')
@@ -3582,15 +3706,28 @@ class DoctorPatientManagement {
             return;
         }
 
-        this.openModal('treatment-plan');
-        setTimeout(() => {
-            const textarea = document.getElementById('treatment-plan-only');
-            if (textarea) {
-                textarea.value = text;
-                textarea.dispatchEvent(new Event('change', { bubbles: true }));
-                textarea.focus();
-            }
-        }, 100);
+        // Prefer the new Management entry textarea
+        const mgmtTextarea = document.getElementById('treatment_plan');
+        if (mgmtTextarea) {
+            mgmtTextarea.value = text;
+            mgmtTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+            mgmtTextarea.focus();
+            this.showAlert('Treatment plan copied into Management form.', 'success');
+            return;
+        }
+
+        // Fallback to legacy modal if present
+        if (typeof this.openModal === 'function') {
+            this.openModal('treatment-plan');
+            setTimeout(() => {
+                const textarea = document.getElementById('treatment-plan-only');
+                if (textarea) {
+                    textarea.value = text;
+                    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                    textarea.focus();
+                }
+            }, 100);
+        }
     }
 
     // Summary AI
@@ -5078,6 +5215,271 @@ document.addEventListener('DOMContentLoaded', function() {
         printWindow.document.close();
         printWindow.print();
     };
+
+    // ============================
+    // Management Tab (New Patient parity)
+    // ============================
+    function mmcGetCSRFToken() {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta && meta.getAttribute('content')) {
+            return meta.getAttribute('content');
+        }
+        const hidden = document.querySelector('input[name="csrf_token"]');
+        return (hidden && hidden.value) ? hidden.value : '';
+    }
+
+    function mmcInitSelect2InManagement() {
+        try {
+            if (window.jQuery && window.jQuery.fn && window.jQuery.fn.select2) {
+                window.jQuery('.select2').select2({ width: '100%', placeholder: 'Select options' });
+
+                // Ensure the initial prescription row has Select2 search (not only cloned rows)
+                window.jQuery('.drug-select, .controlled-drug-select').each(function() {
+                    const $el = window.jQuery(this);
+                    if (!$el.data('select2')) {
+                        $el.select2({ width: '100%' });
+                    }
+                    if ($el.is(':hidden')) {
+                        $el.hide();
+                        const $container = $el.next('.select2');
+                        if ($container.length) $container.hide();
+                    }
+                });
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    mmcInitSelect2InManagement();
+
+    function mmcGetPatientIdForManagement() {
+        const root = document.querySelector('.doctor-patient-container');
+        const fromAttr = root ? Number(root.getAttribute('data-patient-id')) : NaN;
+        if (Number.isFinite(fromAttr) && fromAttr > 0) return fromAttr;
+        const hidden = document.getElementById('management_patient_id');
+        const fromHidden = hidden ? Number(hidden.value) : NaN;
+        return (Number.isFinite(fromHidden) && fromHidden > 0) ? fromHidden : null;
+    }
+
+    // Add prescription item
+    if (window.jQuery) {
+        window.jQuery('#add-prescription').on('click', function() {
+            const newItem = window.jQuery('.prescription-item').first().clone();
+            newItem.find('input').val('');
+            newItem.find('select').val('');
+            newItem.find('.controlled-drug-select').hide();
+            newItem.find('.drug-select').show();
+            newItem.find('.controlled-toggle').prop('checked', false);
+            window.jQuery('#prescription-items').append(newItem);
+
+            // Reinitialize Select2 for the new selects (if select2 is used)
+            try {
+                if (window.jQuery.fn && window.jQuery.fn.select2) {
+                    newItem.find('.drug-select, .controlled-drug-select').select2({ width: '100%' });
+
+                    // Keep controlled drug select hidden (including its Select2 container)
+                    const $normal = newItem.find('.drug-select');
+                    const $controlled = newItem.find('.controlled-drug-select');
+                    $normal.show();
+                    const $normalContainer = $normal.next('.select2');
+                    if ($normalContainer.length) $normalContainer.show();
+                    $controlled.hide();
+                    const $controlledContainer = $controlled.next('.select2');
+                    if ($controlledContainer.length) $controlledContainer.hide();
+                }
+            } catch (e) {
+                // ignore
+            }
+        });
+
+        // Remove prescription item
+        window.jQuery(document).on('click', '.remove-prescription', function() {
+            const prescriptionItems = window.jQuery('.prescription-item');
+            if (prescriptionItems.length > 1) {
+                window.jQuery(this).closest('.prescription-item').remove();
+            } else {
+                alert('You must keep at least one prescription row. Clear the fields instead of removing.');
+            }
+        });
+
+        // Drug stock validation
+        window.jQuery(document).on('change', '.drug-select, .controlled-drug-select', function() {
+            const selectedOption = window.jQuery(this).find('option:selected');
+            const stock = selectedOption.data('stock');
+            const quantityInput = window.jQuery(this).closest('.prescription-item').find('input[name="quantity"]');
+
+            if (stock !== undefined) {
+                quantityInput.attr('max', stock);
+                if (parseInt(quantityInput.val()) > parseInt(stock)) {
+                    alert('Quantity exceeds available stock');
+                    quantityInput.val('');
+                }
+            }
+        });
+
+        // Controlled toggle
+        window.jQuery(document).on('change', '.controlled-toggle', function() {
+            const row = window.jQuery(this).closest('.prescription-item');
+            const isControlled = window.jQuery(this).is(':checked');
+            const normalSelect = row.find('select[name="drug_id"]');
+            const controlledSelect = row.find('select[name="controlled_drug_id"]');
+
+            const mmcHideSelect2Select = ($select) => {
+                $select.hide();
+                const $container = $select.next('.select2');
+                if ($container.length) $container.hide();
+            };
+
+            const mmcShowSelect2Select = ($select) => {
+                $select.show();
+                const $container = $select.next('.select2');
+                if ($container.length) $container.show();
+            };
+
+            if (isControlled) {
+                normalSelect.val('').trigger('change');
+                mmcHideSelect2Select(normalSelect);
+                mmcShowSelect2Select(controlledSelect);
+            } else {
+                controlledSelect.val('').trigger('change');
+                mmcHideSelect2Select(controlledSelect);
+                mmcShowSelect2Select(normalSelect);
+            }
+        });
+
+        function mmcRenderDosageBody(data) {
+            const dosage = (data && data.dosage) ? data.dosage : {};
+            const rows = (label, value) => {
+                const v = (value === null || value === undefined) ? '' : String(value).trim();
+                return v ? `<div style="margin-bottom:6px;"><strong>${label}:</strong> ${v}</div>` : '';
+            };
+            return `
+                ${rows('Indication', dosage.indication)}
+                ${rows('Contraindication', dosage.contraindication)}
+                ${rows('Interaction', dosage.interaction)}
+                ${rows('Side Effects', dosage.side_effects)}
+                <hr/>
+                ${rows('Dosage (Pediatrics)', dosage.dosage_peds)}
+                ${rows('Dosage (Adults)', dosage.dosage_adults)}
+                ${rows('Dosage (Geriatrics)', dosage.dosage_geriatrics)}
+                <hr/>
+                ${rows('Important Notes', dosage.important_notes)}
+            `;
+        }
+
+        // View dosage button
+        window.jQuery(document).on('click', '.view-dosage-btn', function() {
+            const row = window.jQuery(this).closest('.prescription-item');
+            const isControlled = row.find('.controlled-toggle').is(':checked');
+            const drugId = isControlled ? row.find('select[name="controlled_drug_id"]').val() : row.find('select[name="drug_id"]').val();
+
+            if (!drugId) {
+                alert('Please select a drug first.');
+                return;
+            }
+
+            const url = isControlled ? `/doctor/controlled-drugs/${drugId}/dosage` : `/doctor/drugs/${drugId}/dosage`;
+            window.jQuery('#dosageSourceText').text('');
+            window.jQuery('#dosageContent').html('<div class="text-muted">Loading...</div>');
+
+            // Use the existing custom modal if present
+            const modal = document.getElementById('dosage-modal');
+            if (modal) {
+                modal.style.display = 'flex';
+                document.body.style.overflow = 'hidden';
+            }
+
+            window.jQuery.get(url)
+                .done(function(data) {
+                    const src = data.source === 'db' ? 'Database' : (data.source === 'index' ? 'Dosage index book' : 'Not available');
+                    window.jQuery('#dosageSourceText').text(`Source: ${src}`);
+                    window.jQuery('#dosageContent').html(mmcRenderDosageBody(data));
+                })
+                .fail(function() {
+                    window.jQuery('#dosageContent').html('<div class="text-danger">Failed to load dosage information.</div>');
+                });
+        });
+
+        // Handle Complete Prescription button (sends to pharmacy)
+        window.jQuery('#complete-prescription').on('click', function() {
+            const patientId = mmcGetPatientIdForManagement();
+            if (!patientId) {
+                alert('Patient ID missing');
+                return;
+            }
+
+            const prescriptions = [];
+            window.jQuery('.prescription-item').each(function() {
+                const isControlled = window.jQuery(this).find('.controlled-toggle').is(':checked');
+                const drugId = window.jQuery(this).find('select[name="drug_id"]').val();
+                const controlledDrugId = window.jQuery(this).find('select[name="controlled_drug_id"]').val();
+                const quantity = window.jQuery(this).find('input[name="quantity"]').val();
+                const dosage = window.jQuery(this).find('input[name="dosage"]').val();
+                const frequency = window.jQuery(this).find('input[name="frequency"]').val();
+                const duration = window.jQuery(this).find('input[name="duration"]').val();
+                const notes = window.jQuery(this).find('input[name="prescription_notes"]').val();
+
+                if (quantity && dosage && frequency && duration) {
+                    if (isControlled && controlledDrugId) {
+                        prescriptions.push({
+                            is_controlled: true,
+                            controlled_drug_id: controlledDrugId,
+                            quantity: quantity,
+                            dosage: dosage,
+                            frequency: frequency,
+                            duration: duration,
+                            notes: notes
+                        });
+                    } else if (!isControlled && drugId) {
+                        prescriptions.push({
+                            drug_id: drugId,
+                            quantity: quantity,
+                            dosage: dosage,
+                            frequency: frequency,
+                            duration: duration,
+                            notes: notes
+                        });
+                    }
+                }
+            });
+
+            if (prescriptions.length === 0) {
+                alert('No valid prescriptions to save. Please add at least one medication with all required fields.');
+                return;
+            }
+
+            window.jQuery('#prescription-feedback').html('<div class="spinner-border spinner-border-sm" role="status"></div> Saving prescription...').show();
+            window.jQuery('#complete-prescription').prop('disabled', true);
+
+            window.jQuery.ajax({
+                url: '/doctor/patient/complete_prescription',
+                method: 'POST',
+                contentType: 'application/json',
+                headers: {
+                    'X-CSRFToken': mmcGetCSRFToken(),
+                },
+                data: JSON.stringify({
+                    patient_id: patientId,
+                    prescriptions: prescriptions,
+                    csrf_token: mmcGetCSRFToken(),
+                }),
+                success: function(response) {
+                    if (response && response.success) {
+                        window.jQuery('#prescription-feedback').html('<div class="alert alert-success">Prescription saved successfully! You can continue adding more prescriptions.</div>');
+                        window.jQuery('#complete-prescription').prop('disabled', false);
+                    } else {
+                        window.jQuery('#prescription-feedback').html('<div class="alert alert-danger">Error: ' + ((response && response.error) || 'Failed to save prescription') + '</div>');
+                        window.jQuery('#complete-prescription').prop('disabled', false);
+                    }
+                },
+                error: function(xhr) {
+                    window.jQuery('#prescription-feedback').html('<div class="alert alert-danger">Error: ' + ((xhr && xhr.responseJSON && xhr.responseJSON.error) || 'Failed to connect to server') + '</div>');
+                    window.jQuery('#complete-prescription').prop('disabled', false);
+                }
+            });
+        });
+    }
 });
 
 // Add global error handler

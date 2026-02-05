@@ -640,55 +640,71 @@ function loadPatientInsurance(patientId) {
 
 // Load prescriptions when patient is selected - AUTO-POPULATE ONLY DISPENSED
 function loadPatientPrescriptions(patientId) {
-    fetch(`/api/patient/${patientId}/prescriptions`)
-        .then(response => response.json())
-        .then(data => {
+    Promise.all([
+        fetch(`/api/patient/${patientId}/prescriptions`).then(r => (r.ok ? r.json() : [])),
+        fetch(`/api/patient/${patientId}/controlled-prescriptions`).then(r => (r.ok ? r.json() : [])),
+    ])
+        .then(([regularData, controlledData]) => {
             const container = document.getElementById('prescription-list');
             container.innerHTML = '';
             clearAutoHiddenInputs('prescription_items');
-            
-            if (data.length > 0) {
-                let foundDispensed = false;
-                data.forEach(prescription => {
-                    // Only show dispensed items
-                    const dispensedItems = prescription.items.filter(item => 
-                        item.status === 'dispensed' || item.dispensed === true
-                    );
-                    
-                    if (dispensedItems.length > 0) {
-                        foundDispensed = true;
-                        const prescriptionElement = document.createElement('div');
-                        prescriptionElement.className = 'prescription-item';
-                        prescriptionElement.innerHTML = `
-                            <h4>Prescription #${prescription.id}</h4>
-                            <div class="prescription-items">
-                                ${dispensedItems.map(item => {
-                                    // Auto-add hidden input for each dispensed item
-                                    addAutoHiddenInput('prescription_items', item.id);
-                                    return `
-                                        <div class="prescription-line">
-                                            <i class="fas fa-check-circle text-success"></i>
-                                            <span>
-                                                ${item.drug_name} (${item.drug_number}) - 
-                                                ${item.quantity} x KSH ${item.unit_price.toFixed(2)} = 
-                                                KSH ${(item.quantity * item.unit_price).toFixed(2)}
-                                                <span class="badge badge-success">Dispensed</span>
-                                            </span>
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        `;
-                        container.appendChild(prescriptionElement);
-                    }
-                });
-                
-                if (!foundDispensed) {
-                    container.innerHTML = '<div class="alert alert-info">No dispensed prescriptions found for this patient</div>';
-                }
-            } else {
-                container.innerHTML = '<div class="alert alert-info">No prescriptions found for this patient</div>';
+            clearAutoHiddenInputs('controlled_prescription_items');
+
+            const sections = [];
+            if (Array.isArray(regularData) && regularData.length) {
+                sections.push({ title: 'Prescriptions', data: regularData, inputName: 'prescription_items' });
             }
+            if (Array.isArray(controlledData) && controlledData.length) {
+                sections.push({ title: 'Prescriptions', data: controlledData, inputName: 'controlled_prescription_items' });
+            }
+
+            if (sections.length === 0) {
+                container.innerHTML = '<div class="alert alert-info">No prescriptions found for this patient</div>';
+                document.getElementById('billing-form').dispatchEvent(new Event('change'));
+                return;
+            }
+
+            let foundDispensed = false;
+
+            sections.forEach(section => {
+                (section.data || []).forEach(prescription => {
+                    const items = (prescription && Array.isArray(prescription.items)) ? prescription.items : [];
+                    const dispensedItems = items.filter(item => item && (item.status === 'dispensed' || item.dispensed === true));
+
+                    if (dispensedItems.length === 0) return;
+                    foundDispensed = true;
+
+                    const prescriptionElement = document.createElement('div');
+                    prescriptionElement.className = 'prescription-item';
+                    prescriptionElement.innerHTML = `
+                        <h4>Prescription #${prescription.id}</h4>
+                        <div class="prescription-items">
+                            ${dispensedItems.map(item => {
+                                const qty = Number(item.quantity || 0);
+                                const unit = Number(item.unit_price || 0);
+                                addAutoHiddenInput(section.inputName, item.id);
+                                return `
+                                    <div class="prescription-line">
+                                        <i class="fas fa-check-circle text-success"></i>
+                                        <span>
+                                            ${item.drug_name || 'Drug'} (${item.drug_number || ''}) -
+                                            ${qty} x KSH ${unit.toFixed(2)} =
+                                            KSH ${(qty * unit).toFixed(2)}
+                                            <span class="badge badge-success">Dispensed</span>
+                                        </span>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    `;
+                    container.appendChild(prescriptionElement);
+                });
+            });
+
+            if (!foundDispensed) {
+                container.innerHTML = '<div class="alert alert-info">No dispensed prescriptions found for this patient</div>';
+            }
+
             document.getElementById('billing-form').dispatchEvent(new Event('change'));
         })
         .catch(() => {

@@ -10,7 +10,14 @@
                 {% if patient and patient.ip_number %}(IP: {{ patient.ip_number }}){% elif patient and patient.op_number %}(OP: {{ patient.op_number }}){% endif %}
             </div>
         </div>
-        <a class="btn btn-outline-secondary" href="{{ url_for('labtech_lab_requests') }}"><i class="bi bi-arrow-left"></i> Back</a>
+        <div class="d-flex gap-2">
+            {% if current_user and (current_user.role|string)|lower == 'doctor' %}
+                <a class="btn btn-outline-secondary" href="{{ url_for('doctor_dashboard') }}">
+                    <i class="bi bi-arrow-left"></i> Back to Doctor
+                </a>
+            {% endif %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('labtech_lab_requests') }}"><i class="bi bi-arrow-left"></i> Back</a>
+        </div>
     </div>
 
     <div class="row g-3">
