@@ -78,6 +78,17 @@
       </div>
       <div class="receipt-total">Total: KSh {{ "%.2f"|format(sale.total_amount) }}</div>
 
+      <div class="receipt-details" style="margin-top: 12px;">
+        <h4>Payment Summary</h4>
+        <p><strong>Payment Method:</strong> {{ (sale.payment_method or 'cash')|upper }}</p>
+        <p><strong>Amount:</strong> KSh {{ "%.2f"|format(sale.total_amount or 0) }}</p>
+        {% if (sale.payment_method or 'cash') == 'cash' and amount_given is defined and amount_given is not none %}
+          <p><strong>Amount Given (Cash):</strong> KSh {{ "%.2f"|format(amount_given) }}</p>
+          {% set _bal = (change if (change is defined and change is not none) else ((amount_given or 0) - (sale.total_amount or 0))) %}
+          <p><strong>{{ 'Balance' if _bal >= 0 else 'Balance Due' }}:</strong> KSh {{ "%.2f"|format(_bal) }}</p>
+        {% endif %}
+      </div>
+
     {% elif refund %}
       <div class="receipt-items">
         <h4>Refund Items</h4>

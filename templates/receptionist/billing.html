@@ -410,64 +410,97 @@
         const nowStr = new Date().toLocaleString();
         const servedBy = '{{ current_user.username if current_user.is_authenticated else "" }}';
 
-        function section(title, rows, renderRow) {
+        function sumRows(rows, getTotal) {
+            try {
+                return (rows || []).reduce((acc, r) => acc + Number(getTotal(r) || 0), 0);
+            } catch (e) {
+                return 0;
+            }
+        }
+
+        function sectionPlain(title, rows, renderLine, sectionTotal) {
             if (!rows || rows.length === 0) return '';
+            const totalHtml = (sectionTotal !== null && sectionTotal !== undefined)
+                ? `<span><b>${fmtMoney(sectionTotal)}</b></span>`
+                : '';
             return `
-                <div class="r-title">${title}</div>
-                <table>
-                    <tbody>
-                        ${rows.map(renderRow).join('')}
-                    </tbody>
-                </table>
+                <div class="r-title" style="display:flex;justify-content:space-between;gap:10px;">
+                    <span>${title}</span>
+                    ${totalHtml}
+                </div>
+                <div class="r-small">
+                    ${rows.map(renderLine).join('')}
+                </div>
                 <hr>
             `;
         }
 
-        const servicesHtml = section('Services Done', meta.services, (r) => {
-            const price = Number(r.price || r.service_price || 0);
-            return `<tr><td>${safe(r.service_name || 'Service')}</td><td class="r-right">${fmtMoney(price)}</td></tr>`;
-        });
-        const labsHtml = section('Lab (Completed)', meta.labs, (r) => {
-            const price = Number(r.price || 0);
-            return `<tr><td>${safe(r.name || 'Lab')}</td><td class="r-right">${fmtMoney(price)}</td></tr>`;
-        });
-        const imagingHtml = section('Imaging (Completed)', meta.imaging, (r) => {
-            const price = Number(r.price || 0);
-            return `<tr><td>${safe(r.name || 'Imaging')}</td><td class="r-right">${fmtMoney(price)}</td></tr>`;
-        });
-        const drugsHtml = section('Dispensed Drugs', meta.rxItems, (r) => {
+        const servicesTotal = sumRows(meta.services, (r) => Number(r.price || r.service_price || 0));
+        const labsTotal = sumRows(meta.labs, (r) => Number(r.price || 0));
+        const imagingTotal = sumRows(meta.imaging, (r) => Number(r.price || 0));
+        const drugsTotal = sumRows(meta.rxItems, (r) => {
             const qty = Number(r.quantity || 0);
             const unit = Number(r.unit_price || 0);
-            const total = Number(r.total_price || (qty * unit));
-            return `<tr><td>${safe(r.drug_name || 'Drug')} <span class="r-muted">(${qty} x ${unit.toFixed(2)})</span></td><td class="r-right">${fmtMoney(total)}</td></tr>`;
+            return Number(r.total_price || (qty * unit));
         });
-        const cdrugsHtml = section('Controlled Drugs', meta.crxItems, (r) => {
+        const cdrugsTotal = sumRows(meta.crxItems, (r) => {
             const qty = Number(r.quantity || 0);
             const unit = Number(r.unit_price || 0);
-            const total = Number(r.total_price || (qty * unit));
-            return `<tr><td>${safe(r.drug_name || 'Controlled')} <span class="r-muted">(${qty} x ${unit.toFixed(2)})</span></td><td class="r-right">${fmtMoney(total)}</td></tr>`;
+            return Number(r.total_price || (qty * unit));
         });
 
+        const servicesHtml = sectionPlain('Services Done', meta.services, (r) => {
+            const price = Number(r.price || r.service_price || 0);
+            return `<div style="display:flex;justify-content:space-between;gap:10px;"><span>${safe(r.service_name || 'Service')}</span><span>${fmtMoney(price)}</span></div>`;
+        }, servicesTotal);
+        const labsHtml = sectionPlain('Lab (Completed)', meta.labs, (r) => {
+            const price = Number(r.price || 0);
+            return `<div style="display:flex;justify-content:space-between;gap:10px;"><span>${safe(r.name || 'Lab')}</span><span>${fmtMoney(price)}</span></div>`;
+        }, labsTotal);
+        const imagingHtml = sectionPlain('Imaging (Completed)', meta.imaging, (r) => {
+            const price = Number(r.price || 0);
+            return `<div style="display:flex;justify-content:space-between;gap:10px;"><span>${safe(r.name || 'Imaging')}</span><span>${fmtMoney(price)}</span></div>`;
+        }, imagingTotal);
+        const drugsHtml = sectionPlain('Drugs Prescribed/Dispensed', meta.rxItems, (r) => {
+            const qty = Number(r.quantity || 0);
+            const unit = Number(r.unit_price || 0);
+            const total = Number(r.total_price || (qty * unit));
+            return `<div style="display:flex;justify-content:space-between;gap:10px;"><span>${safe(r.drug_name || 'Drug')} <span class="r-muted">(${qty} x ${unit.toFixed(2)})</span></span><span>${fmtMoney(total)}</span></div>`;
+        }, drugsTotal);
+        const cdrugsHtml = sectionPlain('Controlled Drugs', meta.crxItems, (r) => {
+            const qty = Number(r.quantity || 0);
+            const unit = Number(r.unit_price || 0);
+            const total = Number(r.total_price || (qty * unit));
+            return `<div style="display:flex;justify-content:space-between;gap:10px;"><span>${safe(r.drug_name || 'Controlled')} <span class="r-muted">(${qty} x ${unit.toFixed(2)})</span></span><span>${fmtMoney(total)}</span></div>`;
+        }, cdrugsTotal);
+
         let wardHtml = '';
+        let wardTotal = 0;
         if (type === 'inpatient' && meta.wardPreview && meta.wardPreview.assigned && elIncludeWardStay.checked) {
             const w = meta.wardPreview;
             const amount = Number(w.amount || 0);
+            wardTotal = amount;
             wardHtml = `
-                <div class="r-title">Ward Stay</div>
-                <table>
-                    <tbody>
-                        <tr>
-                            <td>${safe(w.ward_name)} - Bed ${safe(w.bed_number)}<br><span class="r-muted">${safe(w.start_date)} to ${safe(w.end_date)} (${safe(w.days)} day(s))</span></td>
-                            <td class="r-right">${fmtMoney(amount)}</td>
-                        </tr>
-                    </tbody>
-                </table>
+                <div class="r-title" style="display:flex;justify-content:space-between;gap:10px;">
+                    <span>Ward Stay</span>
+                    <span><b>${fmtMoney(amount)}</b></span>
+                </div>
+                <div class="r-small">
+                    <div style="display:flex;justify-content:space-between;gap:10px;">
+                        <span>${safe(w.ward_name)} - Bed ${safe(w.bed_number)}<br><span class="r-muted">${safe(w.start_date)} to ${safe(w.end_date)} (${safe(w.days)} day(s))</span></span>
+                        <span>${fmtMoney(amount)}</span>
+                    </div>
+                </div>
                 <hr>
             `;
         }
 
         const total = Number(meta.total || 0);
-        const pm = safe(elPaymentMethod.value).toUpperCase();
+        const pmRaw = safe(elPaymentMethod.value);
+        const pm = pmRaw.toUpperCase();
+        const amountGiven = (pmRaw === 'cash' && (elAmountGiven.value || '').trim() !== '') ? Number(elAmountGiven.value) : null;
+        const balance = (amountGiven !== null && !Number.isNaN(amountGiven)) ? (Number(amountGiven) - total) : null;
+        const balanceLabel = (balance !== null && balance < 0) ? 'Balance Due' : 'Balance';
 
         const stampHtml = `
             <div class="r-center" style="margin-top:10px;">{{ generate_rubber_stamp(size=160) }}</div>
@@ -499,12 +532,17 @@
             ${cdrugsHtml}
             ${wardHtml}
             <div class="r-title">Summary</div>
-            <table>
-                <tbody>
-                    <tr><td>Total</td><td class="r-right"><b>${fmtMoney(total)}</b></td></tr>
-                    <tr><td>Payment</td><td class="r-right">${pm}</td></tr>
-                </tbody>
-            </table>
+            <div class="r-small">
+                <div style="display:flex;justify-content:space-between;gap:10px;"><span>Total</span><span><b>${fmtMoney(total)}</b></span></div>
+            </div>
+            <hr>
+            <div class="r-title">Payment</div>
+            <div class="r-small">
+                <div style="display:flex;justify-content:space-between;gap:10px;"><span>Method</span><span>${pm}</span></div>
+                <div style="display:flex;justify-content:space-between;gap:10px;"><span>Amount</span><span><b>${fmtMoney(total)}</b></span></div>
+                ${amountGiven !== null ? `<div style="display:flex;justify-content:space-between;gap:10px;"><span>Amount Given (Cash)</span><span>${fmtMoney(amountGiven)}</span></div>` : ''}
+                ${amountGiven !== null ? `<div style="display:flex;justify-content:space-between;gap:10px;"><span>${balanceLabel}</span><span>${fmtMoney(balance)}</span></div>` : ''}
+            </div>
             ${stampHtml}
         `;
     }
@@ -613,7 +651,8 @@
 
     async function loadBills() {
         try {
-            const rows = await fetchJson('/api/receptionist/bills?limit=60');
+            const pt = (elPatientType && elPatientType.value) ? String(elPatientType.value) : 'all';
+            const rows = await fetchJson(`/api/receptionist/bills?limit=60&scope=patient_bills&patient_type=${encodeURIComponent(pt)}`);
             elBillsTable.innerHTML = '';
             if (!rows || rows.length === 0) {
                 elBillsTable.innerHTML = '<tr><td colspan="7" class="text-muted">No bills yet.</td></tr>';
@@ -715,7 +754,10 @@
     });
     setPaymentMethod('cash');
 
-    elPatientType.addEventListener('change', () => loadPatients().catch(console.error));
+    elPatientType.addEventListener('change', () => {
+        loadPatients().catch(console.error);
+        loadBills().catch(console.error);
+    });
     elPatientSearch.addEventListener('input', () => {
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => loadPatients().catch(console.error), 250);

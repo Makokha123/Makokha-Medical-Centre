@@ -22354,10 +22354,19 @@ def pharmacist_controlled_sale_receipt(sale_id):
     if not sale:
         abort(404)
 
-    if embedded_requested:
-        return Response(render_template('pharmacist/controlled_receipt_simple.html', sale=sale), mimetype='text/html')
+    # Optional cash metadata (when printing/reprinting)
+    amount_given = request.args.get('amount_given', type=float)
+    change = None
+    if amount_given is not None:
+        try:
+            change = float(amount_given) - float(sale.total_amount or 0)
+        except Exception:
+            change = None
 
-    return render_template('pharmacist/controlled_receipt.html', sale=sale)
+    if embedded_requested:
+        return Response(render_template('pharmacist/controlled_receipt_simple.html', sale=sale, amount_given=amount_given, change=change), mimetype='text/html')
+
+    return render_template('pharmacist/controlled_receipt.html', sale=sale, amount_given=amount_given, change=change)
 
 
 @app.route('/pharmacist/api/controlled-sales/search')
@@ -22419,7 +22428,15 @@ def admin_controlled_sale_receipt(sale_id):
     if not sale:
         abort(404)
 
-    return render_template('pharmacist/controlled_receipt.html', sale=sale)
+    amount_given = request.args.get('amount_given', type=float)
+    change = None
+    if amount_given is not None:
+        try:
+            change = float(amount_given) - float(sale.total_amount or 0)
+        except Exception:
+            change = None
+
+    return render_template('pharmacist/controlled_receipt.html', sale=sale, amount_given=amount_given, change=change)
 
 
 @app.route('/admin/reports/controlled-sales/export', methods=['GET'])
@@ -23371,7 +23388,30 @@ def admin_transaction_receipt(transaction_id):
     except Exception:
         pass
 
-    rendered = render_template('admin/transaction_receipt.html', transaction=tx, sale=sale, refund=refund, expense=expense, purchase=purchase)
+    amount_given = request.args.get('amount_given', type=float)
+    change = None
+    if amount_given is not None:
+        base_amount = None
+        try:
+            base_amount = float((sale.total_amount if sale else tx.amount) or 0)
+        except Exception:
+            base_amount = None
+        if base_amount is not None:
+            try:
+                change = float(amount_given) - float(base_amount)
+            except Exception:
+                change = None
+
+    rendered = render_template(
+        'admin/transaction_receipt.html',
+        transaction=tx,
+        sale=sale,
+        refund=refund,
+        expense=expense,
+        purchase=purchase,
+        amount_given=amount_given,
+        change=change,
+    )
     try:
         _ensure_transaction_receipt(tx, rendered, prefix='TX')
         db.session.commit()
@@ -30428,6 +30468,68 @@ def api_patient_details(patient_id: int):
     })
 
 
+def _parse_money(val: str | None):
+    if val is None:
+        return None
+    try:
+        s = str(val).strip()
+        if not s:
+            return None
+        s = s.replace(',', '')
+        return float(s)
+    except Exception:
+        return None
+
+
+def _extract_cash_from_receipt_html(html: str | None):
+    """Best-effort extraction of cash fields from stored receipt HTML.
+
+    Works across multiple receipt templates by scanning for 'Amount Given'
+    and either 'Change' or 'Balance' values.
+    """
+    if not html:
+        return (None, None)
+    try:
+        text = re.sub(r'<[^>]+>', ' ', str(html))
+        text = re.sub(r'\s+', ' ', text)
+    except Exception:
+        text = str(html)
+
+    amount_given = None
+    change = None
+
+    m = re.search(r'Amount\s*Given[^0-9]*([0-9][0-9,]*\.?[0-9]*)', text, flags=re.IGNORECASE)
+    if m:
+        amount_given = _parse_money(m.group(1))
+
+    m = re.search(r'(Change|Balance\s*Due|Balance)[^0-9-]*(-?[0-9][0-9,]*\.?[0-9]*)', text, flags=re.IGNORECASE)
+    if m:
+        change = _parse_money(m.group(2))
+
+    return (amount_given, change)
+
+
+def _resolve_cash_meta(payment_method: str | None, total_amount: float, amount_given: float | None, change: float | None, receipt_html: str | None = None):
+    pm = (payment_method or '').strip().lower()
+    if pm != 'cash':
+        return (None, None)
+
+    if amount_given is None or change is None:
+        a2, c2 = _extract_cash_from_receipt_html(receipt_html)
+        if amount_given is None:
+            amount_given = a2
+        if change is None:
+            change = c2
+
+    if amount_given is not None and change is None:
+        try:
+            change = float(amount_given) - float(total_amount or 0)
+        except Exception:
+            change = None
+
+    return (amount_given, change)
+
+
 @app.route('/api/receptionist/bills')
 @login_required
 def api_receptionist_bills():
@@ -30439,12 +30541,31 @@ def api_receptionist_bills():
     limit = request.args.get('limit', 50, type=int)
     limit = max(1, min(int(limit or 50), 200))
     patient_type = (request.args.get('patient_type') or 'all').strip().lower()
+    scope = (request.args.get('scope') or 'patient_bills').strip().lower()
 
     q = (
         db.session.query(Sale)
         .options(db.joinedload(Sale.patient), db.joinedload(Sale.user))
         .order_by(Sale.created_at.desc())
     )
+
+    # Default behavior: only show bills created via the receptionist billing flow.
+    # This prevents pharmacy drug sales (and other non-frontdesk sales) from appearing in
+    # the Receptionist "Created Bills" table.
+    if scope != 'all_sales':
+        q = q.filter(Sale.patient_id.isnot(None))
+
+        if _transaction_supports_metadata():
+            tx_exists = (
+                db.session.query(Transaction.id)
+                .filter(Transaction.transaction_type == 'sale')
+                .filter(Transaction.reference_id == Sale.id)
+                # Legacy rows may not have reference_table set.
+                .filter(db.or_(Transaction.reference_table.is_(None), Transaction.reference_table == 'sales'))
+                .filter(Transaction.category == 'patient_billing')
+                .filter(Transaction.department.in_(['reception', 'frontdesk']))
+            )
+            q = q.filter(tx_exists.exists())
 
     # Patient type filter uses presence of IP number (same semantics as existing UI)
     if patient_type == 'inpatient':
@@ -30462,6 +30583,33 @@ def api_receptionist_bills():
         except Exception:
             patient_name = ''
 
+        # Attach cash amount_given/change to URLs when we can infer from stored Transaction receipt HTML.
+        tx_receipt_html = None
+        try:
+            tx = (
+                db.session.query(Transaction)
+                .filter(Transaction.transaction_type == 'sale')
+                .filter(Transaction.reference_id == sale.id)
+                .order_by(Transaction.id.desc())
+                .first()
+            )
+            tx_receipt_html = getattr(tx, 'receipt_html', None) if tx else None
+        except Exception:
+            tx_receipt_html = None
+
+        ag = None
+        ch = None
+        try:
+            ag, ch = _resolve_cash_meta(getattr(sale, 'payment_method', None), float(sale.total_amount or 0), None, None, tx_receipt_html)
+        except Exception:
+            ag = ch = None
+
+        receipt_url = url_for('receptionist_receipt', sale_id=sale.id)
+        pdf_url = url_for('api_sale_receipt_pdf', sale_id=sale.id)
+        if ag is not None:
+            receipt_url = f"{receipt_url}?amount_given={ag:.2f}&change={(ch if ch is not None else (ag - float(sale.total_amount or 0))):.2f}"
+            pdf_url = f"{pdf_url}?amount_given={ag:.2f}&change={(ch if ch is not None else (ag - float(sale.total_amount or 0))):.2f}"
+
         out.append({
             'sale_id': sale.id,
             'sale_number': sale.sale_number,
@@ -30477,8 +30625,8 @@ def api_receptionist_bills():
                 'age': getattr(patient, 'age', None),
                 'gender': getattr(patient, 'gender', None),
             },
-            'receipt_url': url_for('receptionist_receipt', sale_id=sale.id),
-            'pdf_url': url_for('api_sale_receipt_pdf', sale_id=sale.id),
+            'receipt_url': receipt_url,
+            'pdf_url': pdf_url,
         })
 
     return jsonify(out)
@@ -30575,6 +30723,38 @@ def api_sale_receipt_pdf(sale_id: int):
         except Exception:
             signature_bytes = None
 
+    # Resolve optional cash metadata (from query params OR JSON body if called internally from WhatsApp share endpoint)
+    amount_given = request.args.get('amount_given', type=float)
+    change = request.args.get('change', type=float)
+    if amount_given is None and request.is_json:
+        try:
+            data = request.get_json(silent=True) or {}
+            if isinstance(data, dict):
+                if data.get('amount_given') is not None:
+                    amount_given = float(data.get('amount_given'))
+                if data.get('change') is not None:
+                    change = float(data.get('change'))
+        except Exception:
+            pass
+
+    tx_receipt_html = None
+    try:
+        tx = (
+            db.session.query(Transaction)
+            .filter(Transaction.transaction_type == 'sale')
+            .filter(Transaction.reference_id == sale.id)
+            .order_by(Transaction.id.desc())
+            .first()
+        )
+        tx_receipt_html = getattr(tx, 'receipt_html', None) if tx else None
+    except Exception:
+        tx_receipt_html = None
+
+    try:
+        amount_given, change = _resolve_cash_meta(getattr(sale, 'payment_method', None), float(sale.total_amount or 0), amount_given, change, tx_receipt_html)
+    except Exception:
+        pass
+
     def _generate_pdf_bytes() -> bytes:
         # Create PDF
         buf = BytesIO()
@@ -30670,10 +30850,25 @@ def api_sale_receipt_pdf(sale_id: int):
         c.setFont('Helvetica-Bold', 9)
         c.drawString(5 * mm, y, 'TOTAL')
         c.drawRightString(page_w - 5 * mm, y, f"KSh {float(sale.total_amount or 0):,.2f}")
-        y -= 6 * mm
+        y -= 5 * mm
+        c.setFont('Helvetica-Bold', 7)
+        c.drawString(5 * mm, y, 'PAYMENT SUMMARY')
+        y -= 4 * mm
         c.setFont('Helvetica', 7)
-        c.drawString(5 * mm, y, f"Payment: {(sale.payment_method or '').upper()}")
-        y -= 6 * mm
+        _kv('Method', str((sale.payment_method or '').upper()))
+        _kv('Amount', f"KSh {float(sale.total_amount or 0):,.2f}")
+        if (str(getattr(sale, 'payment_method', '') or '').lower().strip() == 'cash') and amount_given is not None:
+            _kv('Amount Given', f"KSh {float(amount_given or 0):,.2f}")
+            bal = change
+            if bal is None:
+                try:
+                    bal = float(amount_given) - float(sale.total_amount or 0)
+                except Exception:
+                    bal = None
+            if bal is not None:
+                label = 'Balance' if float(bal) >= 0 else 'Balance Due'
+                _kv(label, f"KSh {float(bal):,.2f}")
+        y -= 2 * mm
 
         # Rubber-stamp (drawn, no external SVG deps)
         stamp_w = page_w - 10 * mm
@@ -31179,6 +31374,25 @@ def api_controlled_sale_receipt_pdf(sale_id: int):
         except Exception:
             signature_bytes = None
 
+    amount_given = request.args.get('amount_given', type=float)
+    change = request.args.get('change', type=float)
+    if amount_given is None and request.is_json:
+        try:
+            data = request.get_json(silent=True) or {}
+            if isinstance(data, dict):
+                if data.get('amount_given') is not None:
+                    amount_given = float(data.get('amount_given'))
+                if data.get('change') is not None:
+                    change = float(data.get('change'))
+        except Exception:
+            pass
+
+    # Controlled sales store receipt_html directly; use that for best-effort extraction
+    try:
+        amount_given, change = _resolve_cash_meta(getattr(sale, 'payment_method', None), float(getattr(sale, 'total_amount', 0) or 0), amount_given, change, getattr(sale, 'receipt_html', None))
+    except Exception:
+        pass
+
     buf = BytesIO()
     page_w, page_h = (80 * mm, 260 * mm)
     c = rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -31281,7 +31495,26 @@ def api_controlled_sale_receipt_pdf(sale_id: int):
     c.setFont('Helvetica-Bold', 9)
     c.drawString(5 * mm, y, 'TOTAL')
     c.drawRightString(page_w - 5 * mm, y, f"KSh {float(getattr(sale, 'total_amount', 0) or 0):,.2f}")
-    y -= 6 * mm
+    y -= 5 * mm
+
+    c.setFont('Helvetica-Bold', 7)
+    c.drawString(5 * mm, y, 'PAYMENT SUMMARY')
+    y -= 4 * mm
+    c.setFont('Helvetica', 7)
+    _kv('Method', str((getattr(sale, 'payment_method', '') or '').upper()))
+    _kv('Amount', f"KSh {float(getattr(sale, 'total_amount', 0) or 0):,.2f}")
+    if (str(getattr(sale, 'payment_method', '') or '').lower().strip() == 'cash') and amount_given is not None:
+        _kv('Amount Given', f"KSh {float(amount_given or 0):,.2f}")
+        bal = change
+        if bal is None:
+            try:
+                bal = float(amount_given) - float(getattr(sale, 'total_amount', 0) or 0)
+            except Exception:
+                bal = None
+        if bal is not None:
+            label = 'Balance' if float(bal) >= 0 else 'Balance Due'
+            _kv(label, f"KSh {float(bal):,.2f}")
+    y -= 2 * mm
 
     stamp_w = page_w - 10 * mm
     stamp_h = 22 * mm
@@ -31490,6 +31723,26 @@ def api_transaction_receipt_pdf(transaction_id: int):
         c.drawRightString(x4, y, (col4 or '')[:12])
         y -= 3.8 * mm
 
+    # Optional cash metadata (query/body/receipt_html)
+    amount_given = request.args.get('amount_given', type=float)
+    change = request.args.get('change', type=float)
+    if amount_given is None and request.is_json:
+        try:
+            data = request.get_json(silent=True) or {}
+            if isinstance(data, dict):
+                if data.get('amount_given') is not None:
+                    amount_given = float(data.get('amount_given'))
+                if data.get('change') is not None:
+                    change = float(data.get('change'))
+        except Exception:
+            pass
+
+    try:
+        base_amt = float((getattr(sale, 'total_amount', None) if sale else getattr(tx, 'amount', 0)) or 0)
+        amount_given, change = _resolve_cash_meta(getattr(sale, 'payment_method', None) if sale else getattr(tx, 'payment_method', None), base_amt, amount_given, change, getattr(tx, 'receipt_html', None))
+    except Exception:
+        pass
+
     # Header
     c.setFont('Helvetica-Bold', 10)
     c.drawCentredString(page_w / 2, y, 'MAKOKHA MEDICAL CENTRE')
@@ -31578,6 +31831,26 @@ def api_transaction_receipt_pdf(transaction_id: int):
     c.drawString(5 * mm, y, 'Amount')
     c.drawRightString(page_w - 5 * mm, y, f"KSh {float(getattr(tx, 'amount', 0) or 0):,.2f}")
     y -= 6 * mm
+
+    # Payment summary for customer-pay (sale) transactions
+    if sale:
+        pm = str((getattr(sale, 'payment_method', None) or getattr(tx, 'payment_method', None) or '')).strip().lower()
+        c.setFont('Helvetica-Bold', 8)
+        c.drawString(5 * mm, y, 'Payment Summary')
+        y -= 4 * mm
+        _kv('Method', str((getattr(sale, 'payment_method', None) or getattr(tx, 'payment_method', None) or '').upper()))
+        _kv('Amount', f"KSh {float(getattr(sale, 'total_amount', 0) or 0):,.2f}")
+        if pm == 'cash' and amount_given is not None:
+            _kv('Amount Given', f"KSh {float(amount_given or 0):,.2f}")
+            bal = change
+            if bal is None:
+                try:
+                    bal = float(amount_given) - float(getattr(sale, 'total_amount', 0) or 0)
+                except Exception:
+                    bal = None
+            if bal is not None:
+                label = 'Balance' if float(bal) >= 0 else 'Balance Due'
+                _kv(label, f"KSh {float(bal):,.2f}")
 
     c.showPage()
     c.save()

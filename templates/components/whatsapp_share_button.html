@@ -83,6 +83,23 @@ Optional variables:
     const payload = {};
     if(to){ payload.to = to; }
 
+    // Optional cash metadata (picked from current URL if present)
+    try{
+      const params = new URLSearchParams(window.location.search || '');
+      const ag = params.get('amount_given');
+      const ch = params.get('change');
+      if(ag !== null && ag !== ''){
+        const v = Number(ag);
+        if(Number.isFinite(v)) payload.amount_given = v;
+      }
+      if(ch !== null && ch !== ''){
+        const v = Number(ch);
+        if(Number.isFinite(v)) payload.change = v;
+      }
+    } catch(e) {
+      // ignore
+    }
+
     btn.disabled = true;
     const oldText = btn.textContent;
     btn.textContent = 'Sending…';

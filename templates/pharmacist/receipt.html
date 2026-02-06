@@ -233,46 +233,63 @@
                         <th colspan="4" class="text-end">Subtotal:</th>
                         <th class="text-end">{{ "Ksh {:,.2f}".format(sale.total_amount) }}</th>
                     </tr>
-                    {% if sale.payment_method == 'insurance' and (sale.insurance_cover is defined) and sale.insurance_cover %}
-                    <tr>
-                        <th colspan="4" class="text-end">Insurance Cover:</th>
-                        <th class="text-end">{{ "Ksh {:,.2f}".format(sale.insurance_cover) }}</th>
-                    </tr>
-                    <tr>
-                        <th colspan="4" class="text-end">Amount Paid:</th>
-                        <th class="text-end">{{ "Ksh {:,.2f}".format(sale.total_amount - (sale.insurance_cover or 0)) }}</th>
-                    </tr>
-                    {% endif %}
-                    {% if sale.payment_method == 'cash' and amount_given is defined and amount_given is not none %}
-                    <tr>
-                        <th colspan="4" class="text-end">Total Amount:</th>
-                        <th class="text-end">{{ "Ksh {:,.2f}".format(sale.total_amount) }}</th>
-                    </tr>
-                    <tr>
-                        <th colspan="4" class="text-end">Amount Given:</th>
-                        <th class="text-end">{{ "Ksh {:,.2f}".format(amount_given) }}</th>
-                    </tr>
-                    <tr>
-                        <th colspan="4" class="text-end">Change:</th>
-                        <th class="text-end">{{ "Ksh {:,.2f}".format(change if (change is defined and change is not none) else 0) }}</th>
-                    </tr>
-                    {% endif %}
-                    <tr>
-                        <th colspan="4" class="text-end">Payment Method:</th>
-                        <th class="text-end">
-                            {% if sale.payment_method == 'mpesa' %}
-                                M-Pesa
-                            {% elif sale.payment_method == 'credit_card' %}
-                                Credit Card
-                            {% elif sale.payment_method == 'insurance' %}
-                                Insurance
-                            {% else %}
-                                Cash
-                            {% endif %}
-                        </th>
-                    </tr>
                 </tfoot>
             </table>
+        </div>
+
+        <div class="mt-3">
+            <h6 class="mb-2">Payment Summary</h6>
+            {% set _insurance_cover = (sale.insurance_cover if (sale.insurance_cover is defined and sale.insurance_cover) else 0) %}
+            {% set _amount_due = (sale.total_amount - _insurance_cover) if sale.payment_method == 'insurance' else sale.total_amount %}
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0">
+                    <tbody>
+                        <tr>
+                            <th>Total</th>
+                            <td class="text-end"><strong>{{ "Ksh {:,.2f}".format(sale.total_amount) }}</strong></td>
+                        </tr>
+                        {% if sale.payment_method == 'insurance' and (sale.insurance_cover is defined) and sale.insurance_cover %}
+                        <tr>
+                            <th>Insurance Cover</th>
+                            <td class="text-end">{{ "Ksh {:,.2f}".format(sale.insurance_cover) }}</td>
+                        </tr>
+                        <tr>
+                            <th>Amount Paid</th>
+                            <td class="text-end"><strong>{{ "Ksh {:,.2f}".format(_amount_due) }}</strong></td>
+                        </tr>
+                        {% endif %}
+                        <tr>
+                            <th>Payment Method</th>
+                            <td class="text-end">
+                                {% if sale.payment_method == 'mpesa' %}
+                                    M-Pesa
+                                {% elif sale.payment_method == 'credit_card' %}
+                                    Credit Card
+                                {% elif sale.payment_method == 'insurance' %}
+                                    Insurance
+                                {% else %}
+                                    Cash
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Amount</th>
+                            <td class="text-end"><strong>{{ "Ksh {:,.2f}".format(_amount_due) }}</strong></td>
+                        </tr>
+                        {% if sale.payment_method == 'cash' and amount_given is defined and amount_given is not none %}
+                        <tr>
+                            <th>Amount Given (Cash)</th>
+                            <td class="text-end">{{ "Ksh {:,.2f}".format(amount_given) }}</td>
+                        </tr>
+                        {% set _bal = (change if (change is defined and change is not none) else (amount_given - _amount_due)) %}
+                        <tr>
+                            <th>{{ 'Balance' if _bal >= 0 else 'Balance Due' }}</th>
+                            <td class="text-end">{{ "Ksh {:,.2f}".format(_bal) }}</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <div class="receipt-footer text-center mt-4">
