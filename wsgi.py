@@ -1,10 +1,12 @@
 import eventlet
 eventlet.monkey_patch()
 
+import socketio as socketio_pkg
+
 from app import app, socketio
 
 # Create the WSGI app for Gunicorn
-socketio_app = socketio.WSGIApp(socketio, app)
+socketio_app = socketio_pkg.WSGIApp(socketio.server, app)
 
 # This is what Gunicorn will use
 application = socketio_app
