@@ -1,11 +1,29 @@
 from __future__ import annotations
 import os
-if os.environ.get('RENDER'):
+
+# Socket.IO async backend selection.
+#
+# IMPORTANT: Avoid unconditional eventlet monkey-patching in production.
+# On some platforms/configurations (e.g. Gunicorn preload + Eventlet on newer
+# Python versions), monkey_patch() can leak into the Gunicorn arbiter and crash
+# with: "do not call blocking functions from the mainloop".
+#
+# Default behavior:
+# - Render (production): threading (stable; falls back to polling if websockets unavailable)
+# - Local/dev: threading
+#
+# To force eventlet explicitly, set: SOCKETIO_ASYNC_MODE=eventlet
+_socketio_async_mode = (os.getenv('SOCKETIO_ASYNC_MODE') or '').strip().lower()
+if not _socketio_async_mode:
+    _socketio_async_mode = 'threading'
+
+if _socketio_async_mode == 'eventlet':
     try:
         import eventlet
         eventlet.monkey_patch()
-    except ImportError:
-        pass
+    except Exception:
+        # If eventlet is unavailable or fails to patch, continue without it.
+        _socketio_async_mode = 'threading'
 from logging.handlers import RotatingFileHandler
 from operator import and_
 from sqlalchemy import MetaData, Table
@@ -212,8 +230,8 @@ EncryptionUtils.init_fernet(app)
 # Initialize Socket.IO for real-time communication
 from flask_socketio import SocketIO
 
-# Use eventlet in production (Render/gunicorn), threading in development
-async_mode = 'eventlet' if os.environ.get('RENDER') else 'threading'
+# Use configured async mode (default: threading).
+async_mode = _socketio_async_mode
 socketio = SocketIO(
     app, 
     cors_allowed_origins="*", 
@@ -7079,6 +7097,7 @@ def inject_stamp_signature_functions():
         get_current_signature_date=get_current_signature_date
     )
 
+@csrf.exempt
 @app.route('/logout', methods=['POST'])
 @login_required
 def logout():
