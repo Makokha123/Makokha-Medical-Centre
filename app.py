@@ -30727,7 +30727,11 @@ def api_sale_receipt_pdf(sale_id: int):
 @app.route('/api/sales/<int:sale_id>/share-whatsapp', methods=['POST'])
 @login_required
 def api_sale_share_whatsapp(sale_id: int):
-    """Send a sale receipt PDF to the patient's WhatsApp number via Meta Cloud API."""
+    """Send a sale receipt PDF to a WhatsApp number via Meta Cloud API.
+
+    If the request includes a manual destination number (JSON body {"to": "..."}),
+    that number is used even for walk-in sales that have no linked patient.
+    """
     user_role = str(current_user.role).lower().strip() if current_user.role else ''
     if user_role not in ('receptionist', 'admin', 'pharmacist'):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
@@ -30753,8 +30757,6 @@ def api_sale_share_whatsapp(sale_id: int):
         return jsonify({'success': False, 'error': 'Forbidden'}), 403
 
     patient = getattr(sale, 'patient', None)
-    if not patient:
-        return jsonify({'success': False, 'error': 'Sale has no patient'}), 400
 
     data = request.get_json(silent=True) if request.is_json else None
     if isinstance(data, dict):
@@ -30762,10 +30764,12 @@ def api_sale_share_whatsapp(sale_id: int):
     else:
         override_to = ''
 
+    # Prefer the manually entered destination number. Fall back to patient phone only
+    # when the user leaves the prompt blank.
     raw_phone = override_to or str(getattr(patient, 'phone', '') or '').strip()
     to_msisdn = normalize_msisdn(raw_phone)
     if not to_msisdn:
-        return jsonify({'success': False, 'error': 'Patient phone number is missing/invalid for WhatsApp (expected e.g. 0712xxxxxx or +2547xxxxxxx).'}), 400
+        return jsonify({'success': False, 'error': 'Enter a valid phone number for WhatsApp (e.g. 0712xxxxxx or +2547xxxxxxx).'}), 400
 
     # Reuse the PDF generation logic by calling the PDF endpoint implementation.
     # (Generated here again to avoid internal HTTP calls.)
