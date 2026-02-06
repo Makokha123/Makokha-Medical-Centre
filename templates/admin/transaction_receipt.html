@@ -26,6 +26,11 @@
   <div class="receipt-container">
     <div class="no-print">
       <button class="btn" onclick="window.print()">Print / Save PDF</button>
+      {% set whatsapp_share_endpoint = url_for('api_transaction_share_whatsapp', transaction_id=transaction.id) %}
+      {% set whatsapp_fallback_pdf = url_for('api_transaction_receipt_pdf', transaction_id=transaction.id) %}
+      {% set whatsapp_default_phone = '' %}
+      {% set _class = 'btn' %}
+      {% include 'components/whatsapp_share_button.html' %}
     </div>
 
     <div class="receipt-header">

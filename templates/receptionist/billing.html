@@ -634,12 +634,12 @@
                     <td>
                         <a class="btn btn-sm btn-outline-primary" target="_blank" href="${safe(r.receipt_url)}">View</a>
                         <button class="btn btn-sm btn-outline-secondary" data-action="print" data-receipt="${safe(r.receipt_url)}">Print</button>
-                        <button class="btn btn-sm btn-success" data-action="share" data-pdf="${safe(r.pdf_url)}" ${canCreateBills ? '' : 'disabled'}>Share PDF</button>
+                        <button class="btn btn-sm btn-success" data-action="share" data-pdf="${safe(r.pdf_url)}" ${canCreateBills ? '' : 'disabled'}><i class="fab fa-whatsapp"></i> Send WhatsApp</button>
                     </td>
                 `;
                 tr.querySelector('[data-action="print"]').addEventListener('click', () => window.open(r.receipt_url, '_blank'));
                 const shareBtn = tr.querySelector('[data-action="share"]');
-                shareBtn.addEventListener('click', () => sharePdfFromUrl(r.pdf_url, r.sale_number));
+                shareBtn.addEventListener('click', () => shareViaWhatsAppCloud(r.sale_id, r.sale_number, r.pdf_url));
                 elBillsTable.appendChild(tr);
             });
         } catch (e) {
@@ -679,6 +679,36 @@
         }
     }
 
+    async function shareViaWhatsAppCloud(saleId, saleNumber, fallbackPdfUrl) {
+        if (!saleId) return;
+        try {
+            setStatus('info', 'Sending receipt to WhatsApp…');
+            const resp = await fetchJson(`/api/sales/${saleId}/share-whatsapp`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                },
+                body: JSON.stringify({})
+            });
+
+            const to = resp && resp.to ? resp.to : '';
+            setStatus('success', `Sent to WhatsApp${to ? ' (' + to + ')' : ''}.`);
+            return resp;
+        } catch (e) {
+            console.error(e);
+            const msg = (e && e.message) ? e.message : 'Failed to send via WhatsApp';
+
+            if (/not configured|not available|missing reportlab|pdf generator not available/i.test(msg)) {
+                setStatus('info', `${msg} Opening PDF instead…`);
+                if (fallbackPdfUrl) window.open(fallbackPdfUrl, '_blank');
+                return;
+            }
+
+            setStatus('error', msg);
+        }
+    }
+
     // Events
     document.querySelectorAll('.payment-btn').forEach(btn => {
         btn.addEventListener('click', () => setPaymentMethod(btn.getAttribute('data-method')));
@@ -697,7 +727,7 @@
             setStatus('error', 'Generate a bill first.');
             return;
         }
-        sharePdfFromUrl(`/api/sales/${lastGenerated.sale_id}/receipt.pdf`, lastGenerated.sale_number);
+        shareViaWhatsAppCloud(lastGenerated.sale_id, lastGenerated.sale_number, `/api/sales/${lastGenerated.sale_id}/receipt.pdf`);
     });
     elRefreshBillsBtn.addEventListener('click', () => loadBills());
 

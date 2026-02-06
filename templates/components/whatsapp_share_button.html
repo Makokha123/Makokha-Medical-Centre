@@ -1,0 +1,109 @@
+{# Reusable WhatsApp share button.
+
+Required variables:
+- whatsapp_share_endpoint: POST endpoint that accepts JSON {to?: string}
+
+Optional variables:
+- whatsapp_default_phone: prefill for prompt
+- whatsapp_fallback_pdf: URL to open if WhatsApp not configured
+- whatsapp_button_label: button text
+- whatsapp_button_class: CSS classes
+- whatsapp_title: prompt title
+#}
+
+{% set _btn_id = whatsapp_btn_id|default('waShareBtn_' ~ (range(100000, 999999)|random)) %}
+{% set _default_phone = whatsapp_default_phone|default('') %}
+{% set _fallback_pdf = whatsapp_fallback_pdf|default('') %}
+{% set _label = whatsapp_button_label|default('Share via WhatsApp (PDF)') %}
+{% set _class = whatsapp_button_class|default('btn btn-success btn-sm') %}
+{% set _title = whatsapp_title|default('Enter WhatsApp number') %}
+
+<button
+  type="button"
+  id="{{ _btn_id }}"
+  class="{{ _class }} no-print"
+  data-endpoint="{{ whatsapp_share_endpoint }}"
+  data-default-phone="{{ _default_phone }}"
+  data-fallback-pdf="{{ _fallback_pdf }}"
+  data-title="{{ _title }}"
+>{{ _label }}</button>
+
+<script>
+(function(){
+  const btn = document.getElementById({{ _btn_id|tojson }});
+  if(!btn) return;
+
+  {% if csrf_token is defined %}
+  const csrfFromTemplate = {{ csrf_token()|tojson }};
+  {% else %}
+  const csrfFromTemplate = '';
+  {% endif %}
+
+  function getCsrf(){
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return (meta && meta.content) ? meta.content : (csrfFromTemplate || '');
+  }
+
+  async function postJson(url, payload){
+    const headers = { 'Content-Type': 'application/json' };
+    const csrf = getCsrf();
+    if(csrf){ headers['X-CSRFToken'] = csrf; }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload || {})
+    });
+
+    let data = null;
+    try { data = await res.json(); } catch(e) {}
+
+    if(!res.ok){
+      const msg = (data && data.error) ? data.error : (res.status + ' ' + res.statusText);
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  btn.addEventListener('click', async function(){
+    const endpoint = btn.getAttribute('data-endpoint') || '';
+    const fallbackPdf = btn.getAttribute('data-fallback-pdf') || '';
+    const defaultPhone = btn.getAttribute('data-default-phone') || '';
+    const title = btn.getAttribute('data-title') || 'Enter WhatsApp number';
+
+    if(!endpoint){
+      alert('WhatsApp share endpoint not configured on this receipt.');
+      return;
+    }
+
+    const input = window.prompt(title + '\n(e.g. 0712xxxxxx or +2547xxxxxxx)\nLeave blank to use patient phone if available.', defaultPhone);
+    if(input === null) return;
+
+    const to = String(input || '').trim();
+    const payload = {};
+    if(to){ payload.to = to; }
+
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = 'Sending…';
+
+    try{
+      const resp = await postJson(endpoint, payload);
+      const sentTo = (resp && resp.to) ? (' to ' + resp.to) : '';
+      alert('Sent via WhatsApp' + sentTo + '.');
+    } catch(e){
+      const msg = (e && e.message) ? e.message : 'Failed to send via WhatsApp';
+      // Fall back to PDF open if config missing.
+      if(/not configured|not available|missing reportlab|pdf generator not available/i.test(msg) && fallbackPdf){
+        alert(msg + '\nOpening PDF instead.');
+        window.open(fallbackPdf, '_blank');
+      } else {
+        alert(msg);
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldText;
+    }
+  });
+})();
+</script>

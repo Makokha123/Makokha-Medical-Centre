@@ -112,6 +112,8 @@ import html as html_lib
 
 from utils.encrypted_type import EncryptedType
 from utils.stamp_signature import generate_rubber_stamp, generate_digital_signature
+from utils.whatsapp_meta import normalize_msisdn, send_document, send_text, WhatsAppConfigError
+from utils.whatsapp_settings_store import load_whatsapp_settings, save_whatsapp_settings, mask_token
 
 import base64
 from io import BytesIO
@@ -30471,7 +30473,7 @@ def api_sale_receipt_pdf(sale_id: int):
     This is used by the receptionist billing UI for Print/Share flows.
     """
     user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'admin'):
+    if user_role not in ('receptionist', 'admin', 'pharmacist'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     if not _REPORTLAB_AVAILABLE:
@@ -30554,31 +30556,386 @@ def api_sale_receipt_pdf(sale_id: int):
         except Exception:
             signature_bytes = None
 
-    # Create PDF
-    buf = BytesIO()
-    page_w, page_h = (80 * mm, 260 * mm)
-    c = rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
+    def _generate_pdf_bytes() -> bytes:
+        # Create PDF
+        buf = BytesIO()
+        page_w, page_h = (80 * mm, 260 * mm)
+        c = rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
 
+        y = page_h - 10 * mm
+
+        # Logo
+        try:
+            logo_path = os.path.join(app.root_path, 'static', 'images', 'logo.png')
+            if os.path.exists(logo_path):
+                c.drawImage(logo_path, (page_w - 18 * mm) / 2, y - 18 * mm, width=18 * mm, height=18 * mm, preserveAspectRatio=True, mask='auto')
+                y -= 20 * mm
+        except Exception:
+            pass
+
+        # Header
+        c.setFont('Helvetica-Bold', 10)
+        c.drawCentredString(page_w / 2, y, 'MAKOKHA MEDICAL CENTRE')
+        y -= 5 * mm
+        c.setFont('Helvetica', 7)
+        c.drawCentredString(page_w / 2, y, 'OFFICIAL RECEIPT')
+        y -= 4 * mm
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(0.5)
+        c.line(5 * mm, y, page_w - 5 * mm, y)
+        y -= 4 * mm
+
+        def _kv(label: str, value: str):
+            nonlocal y
+            c.setFont('Helvetica-Bold', 7)
+            c.drawString(5 * mm, y, f'{label}:')
+            c.setFont('Helvetica', 7)
+            c.drawRightString(page_w - 5 * mm, y, (value or '')[:60])
+            y -= 4 * mm
+
+        _kv('Sale', sale.sale_number)
+        _kv('Date', created_str)
+        _kv('Served By', served_by)
+        if patient:
+            _kv('Patient', patient_name)
+            age = str(getattr(patient, 'age', '') or '')
+            gender = str(getattr(patient, 'gender', '') or '')
+            _kv('Age/Sex', f'{age} / {gender}'.strip(' /'))
+            if getattr(patient, 'ip_number', None):
+                _kv('IP No', str(patient.ip_number))
+            if getattr(patient, 'op_number', None):
+                _kv('OP No', str(patient.op_number))
+
+        y -= 1 * mm
+        c.line(5 * mm, y, page_w - 5 * mm, y)
+        y -= 4 * mm
+
+        def _draw_section(title: str, rows: list['SaleItem']):
+            nonlocal y
+            if not rows:
+                return
+
+            c.setFont('Helvetica-Bold', 8)
+            c.drawString(5 * mm, y, title)
+            y -= 4 * mm
+
+            c.setFont('Helvetica', 7)
+            for it in rows:
+                desc = (getattr(it, 'description', '') or '').strip()
+                qty = int(getattr(it, 'quantity', 1) or 1)
+                unit = float(getattr(it, 'unit_price', 0) or 0)
+                total = float(getattr(it, 'total_price', 0) or (unit * qty))
+                line = f"{desc}"[:44]
+                c.drawString(5 * mm, y, line)
+                y -= 3.5 * mm
+                c.setFont('Helvetica', 6.5)
+                c.drawString(7 * mm, y, f"{qty} x {unit:,.2f}")
+                c.drawRightString(page_w - 5 * mm, y, f"{total:,.2f}")
+                y -= 4 * mm
+                c.setFont('Helvetica', 7)
+                if y < 55 * mm:
+                    c.showPage()
+                    y = page_h - 10 * mm
+
+            y -= 1 * mm
+
+        _draw_section('Services Done', services)
+        _draw_section('Lab (Completed)', labs)
+        _draw_section('Imaging (Completed)', imaging)
+        _draw_section('Dispensed Drugs', drugs)
+        _draw_section('Controlled Drugs', controlled)
+        _draw_section('Ward Stay', ward)
+
+        c.line(5 * mm, y, page_w - 5 * mm, y)
+        y -= 5 * mm
+        c.setFont('Helvetica-Bold', 9)
+        c.drawString(5 * mm, y, 'TOTAL')
+        c.drawRightString(page_w - 5 * mm, y, f"KSh {float(sale.total_amount or 0):,.2f}")
+        y -= 6 * mm
+        c.setFont('Helvetica', 7)
+        c.drawString(5 * mm, y, f"Payment: {(sale.payment_method or '').upper()}")
+        y -= 6 * mm
+
+        # Rubber-stamp (drawn, no external SVG deps)
+        stamp_w = page_w - 10 * mm
+        stamp_h = 22 * mm
+        stamp_x = 5 * mm
+        stamp_y = max(12 * mm, y - stamp_h)
+        c.setStrokeColor(colors.HexColor('#2e3192'))
+        c.setLineWidth(1.2)
+        c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
+        c.setFont('Helvetica-Bold', 7)
+        c.setFillColor(colors.HexColor('#2e3192'))
+        c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, 'MAKOKHA MEDICAL CENTRE')
+        c.setFillColor(colors.HexColor('#dc143c'))
+        c.setFont('Helvetica-Bold', 8)
+        c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
+        c.setFillColor(colors.HexColor('#2e3192'))
+        c.setFont('Helvetica', 6.5)
+        c.drawCentredString(page_w / 2, stamp_y + 4 * mm, 'Tel: 0741 256 531 / 0713 580 997')
+        c.setFillColor(colors.black)
+        y = stamp_y - 6 * mm
+
+        # Signature
+        if signature_bytes:
+            try:
+                img = ImageReader(BytesIO(signature_bytes))
+                sig_w = 35 * mm
+                sig_h = 14 * mm
+                c.drawImage(img, 5 * mm, max(5 * mm, y - sig_h), width=sig_w, height=sig_h, preserveAspectRatio=True, mask='auto')
+                c.setFont('Helvetica', 6.5)
+                c.drawString(5 * mm, max(5 * mm, y - sig_h) - 3 * mm, 'Signed')
+            except Exception:
+                pass
+
+        c.showPage()
+        c.save()
+        buf.seek(0)
+
+        return buf.getvalue()
+
+    pdf_bytes = _generate_pdf_bytes()
+    filename = f"receipt-{sale.sale_number}.pdf"
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
+        headers={
+            'Content-Disposition': f'attachment; filename={filename}'
+        },
+    )
+
+
+@app.route('/api/sales/<int:sale_id>/share-whatsapp', methods=['POST'])
+@login_required
+def api_sale_share_whatsapp(sale_id: int):
+    """Send a sale receipt PDF to the patient's WhatsApp number via Meta Cloud API."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'admin', 'pharmacist'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    if not _REPORTLAB_AVAILABLE:
+        return jsonify({'success': False, 'error': 'PDF generator not available (missing reportlab).'}), 501
+
+    sale = (
+        db.session.query(Sale)
+        .options(
+            db.joinedload(Sale.items),
+            db.joinedload(Sale.patient),
+            db.joinedload(Sale.user),
+        )
+        .filter(Sale.id == sale_id)
+        .first()
+    )
+    if not sale:
+        return jsonify({'success': False, 'error': 'Sale not found'}), 404
+
+    # Non-admins can only share bills they created.
+    if user_role != 'admin' and getattr(sale, 'user_id', None) != current_user.id:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    patient = getattr(sale, 'patient', None)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Sale has no patient'}), 400
+
+    data = request.get_json(silent=True) if request.is_json else None
+    if isinstance(data, dict):
+        override_to = (data.get('to') or '').strip()
+    else:
+        override_to = ''
+
+    raw_phone = override_to or str(getattr(patient, 'phone', '') or '').strip()
+    to_msisdn = normalize_msisdn(raw_phone)
+    if not to_msisdn:
+        return jsonify({'success': False, 'error': 'Patient phone number is missing/invalid for WhatsApp (expected e.g. 0712xxxxxx or +2547xxxxxxx).'}), 400
+
+    # Reuse the PDF generation logic by calling the PDF endpoint implementation.
+    # (Generated here again to avoid internal HTTP calls.)
+    try:
+        # Generate bytes by calling the same function path.
+        # NOTE: This relies on the local helper inside api_sale_receipt_pdf; keep in sync.
+        # To avoid duplication in the future, consider extracting to a module-level helper.
+        pdf_resp = api_sale_receipt_pdf(sale_id)
+        if isinstance(pdf_resp, Response) and pdf_resp.mimetype == 'application/pdf':
+            pdf_bytes = pdf_resp.get_data()
+        else:
+            return jsonify({'success': False, 'error': 'Failed to generate PDF'}), 500
+    except Exception as e:
+        current_app.logger.error(f'WhatsApp PDF generation failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to generate PDF'}), 500
+
+    filename = f"Receipt-{sale.sale_number}.pdf"
+    caption = f"Makokha Medical Centre\nReceipt {sale.sale_number}\nTotal KSh {float(sale.total_amount or 0):,.2f}"
+
+    try:
+        settings = load_whatsapp_settings(current_app.instance_path)
+        if settings:
+            result = send_document(
+                to_msisdn=to_msisdn,
+                pdf_bytes=pdf_bytes,
+                filename=filename,
+                caption=caption,
+                token=settings.token,
+                phone_number_id=settings.phone_number_id,
+                version=settings.api_version,
+            )
+        else:
+            result = send_document(to_msisdn=to_msisdn, pdf_bytes=pdf_bytes, filename=filename, caption=caption)
+    except WhatsAppConfigError as e:
+        return jsonify({'success': False, 'error': str(e)}), 501
+    except Exception as e:
+        current_app.logger.error(f'WhatsApp send failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': f'WhatsApp send failed: {str(e)}'}), 500
+
+    return jsonify({'success': True, 'to': to_msisdn, 'result': result})
+
+
+@app.route('/admin/whatsapp-settings', methods=['GET', 'POST'])
+@login_required
+def admin_whatsapp_settings():
+    """Admin UI to store/test WhatsApp Cloud API settings (no env vars required)."""
+    if str(getattr(current_user, 'role', '')).lower().strip() != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    existing = load_whatsapp_settings(current_app.instance_path)
+
+    if request.method == 'POST':
+        phone_number_id = (request.form.get('phone_number_id') or '').strip()
+        api_version = (request.form.get('api_version') or 'v19.0').strip() or 'v19.0'
+        token = (request.form.get('token') or '').strip()
+
+        # Allow leaving token blank to keep current token.
+        if not token and existing:
+            token = existing.token
+
+        if not phone_number_id or not token:
+            flash('Phone Number ID and Token are required.', 'danger')
+        else:
+            save_whatsapp_settings(
+                instance_path=current_app.instance_path,
+                token=token,
+                phone_number_id=phone_number_id,
+                api_version=api_version,
+            )
+            flash('WhatsApp settings saved.', 'success')
+            existing = load_whatsapp_settings(current_app.instance_path)
+
+    return render_template(
+        'admin/whatsapp_settings.html',
+        settings=existing,
+        masked_token=mask_token(existing.token) if existing else '',
+    )
+
+
+@app.route('/admin/whatsapp-settings/test', methods=['POST'])
+@login_required
+def admin_whatsapp_settings_test():
+    if str(getattr(current_user, 'role', '')).lower().strip() != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    settings = load_whatsapp_settings(current_app.instance_path)
+    if not settings:
+        return jsonify({'success': False, 'error': 'WhatsApp settings not configured.'}), 400
+
+    data = request.get_json(silent=True) if request.is_json else None
+    if isinstance(data, dict):
+        raw_phone = (data.get('to') or '').strip()
+        text = (data.get('text') or '').strip() or 'Makokha Medical Centre: WhatsApp configuration test OK.'
+    else:
+        raw_phone = (request.form.get('to') or '').strip()
+        text = (request.form.get('text') or '').strip() or 'Makokha Medical Centre: WhatsApp configuration test OK.'
+
+    to_msisdn = normalize_msisdn(raw_phone)
+    if not to_msisdn:
+        return jsonify({'success': False, 'error': 'Invalid phone number (expected e.g. 0712xxxxxx or +2547xxxxxxx).'}), 400
+
+    try:
+        payload = send_text(
+            to_msisdn=to_msisdn,
+            text=text,
+            token=settings.token,
+            phone_number_id=settings.phone_number_id,
+            version=settings.api_version,
+        )
+        return jsonify({'success': True, 'to': to_msisdn, 'result': payload})
+    except Exception as e:
+        current_app.logger.error(f'WhatsApp test send failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/refunds/<int:refund_id>/receipt.pdf')
+@login_required
+def api_refund_receipt_pdf(refund_id: int):
+    """PDF receipt for refunds (pharmacist/admin)."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('pharmacist', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if not _REPORTLAB_AVAILABLE:
+        return jsonify({'error': 'PDF generator not available (missing reportlab).'}), 501
+
+    refund = (
+        db.session.query(Refund)
+        .options(
+            db.joinedload(Refund.items).joinedload(RefundItem.sale_item),
+            db.joinedload(Refund.sale).joinedload(Sale.patient),
+            db.joinedload(Refund.user),
+        )
+        .filter(Refund.id == refund_id)
+        .first()
+    )
+    if not refund:
+        return jsonify({'error': 'Refund not found'}), 404
+
+    if user_role != 'admin' and getattr(refund, 'user_id', None) != current_user.id:
+        return jsonify({'error': 'Forbidden'}), 403
+
+    patient_name = ''
+    try:
+        if refund.sale and refund.sale.patient:
+            patient_name = refund.sale.patient.get_decrypted_name
+    except Exception:
+        patient_name = ''
+
+    created_at = getattr(refund, 'created_at', None)
+    created_str = created_at.strftime('%Y-%m-%d %H:%M') if created_at else ''
+    served_by = getattr(getattr(refund, 'user', None), 'username', None) or 'Pharmacy'
+
+    # Signature: prefer an admin signature if available, else current user
+    signature_data_uri = None
+    try:
+        admin_user = User.query.filter(func.lower(User.role) == 'admin').order_by(User.id.asc()).first()
+    except Exception:
+        admin_user = None
+
+    try:
+        if admin_user:
+            sig = DrawnSignature.query.filter_by(user_id=admin_user.id, is_active=True).first()
+            signature_data_uri = getattr(sig, 'signature_data', None) if sig else None
+        if not signature_data_uri:
+            sig = DrawnSignature.query.filter_by(user_id=current_user.id, is_active=True).first()
+            signature_data_uri = getattr(sig, 'signature_data', None) if sig else None
+    except Exception:
+        signature_data_uri = None
+
+    signature_bytes = None
+    if signature_data_uri and isinstance(signature_data_uri, str) and 'base64,' in signature_data_uri:
+        try:
+            signature_bytes = base64.b64decode(signature_data_uri.split('base64,', 1)[1])
+        except Exception:
+            signature_bytes = None
+
+    buf = BytesIO()
+    page_w, page_h = (80 * mm, 240 * mm)
+    c = rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
     y = page_h - 10 * mm
 
-    # Logo
-    try:
-        logo_path = os.path.join(app.root_path, 'static', 'images', 'logo.png')
-        if os.path.exists(logo_path):
-            c.drawImage(logo_path, (page_w - 18 * mm) / 2, y - 18 * mm, width=18 * mm, height=18 * mm, preserveAspectRatio=True, mask='auto')
-            y -= 20 * mm
-    except Exception:
-        pass
-
-    # Header
     c.setFont('Helvetica-Bold', 10)
     c.drawCentredString(page_w / 2, y, 'MAKOKHA MEDICAL CENTRE')
     y -= 5 * mm
     c.setFont('Helvetica', 7)
-    c.drawCentredString(page_w / 2, y, 'OFFICIAL RECEIPT')
+    c.drawCentredString(page_w / 2, y, 'REFUND RECEIPT')
     y -= 4 * mm
-    c.setStrokeColor(colors.black)
-    c.setLineWidth(0.5)
     c.line(5 * mm, y, page_w - 5 * mm, y)
     y -= 4 * mm
 
@@ -30590,70 +30947,51 @@ def api_sale_receipt_pdf(sale_id: int):
         c.drawRightString(page_w - 5 * mm, y, (value or '')[:60])
         y -= 4 * mm
 
-    _kv('Sale', sale.sale_number)
+    _kv('Refund', refund.refund_number)
     _kv('Date', created_str)
     _kv('Served By', served_by)
-    if patient:
+    if patient_name:
         _kv('Patient', patient_name)
-        age = str(getattr(patient, 'age', '') or '')
-        gender = str(getattr(patient, 'gender', '') or '')
-        _kv('Age/Sex', f'{age} / {gender}'.strip(' /'))
-        if getattr(patient, 'ip_number', None):
-            _kv('IP No', str(patient.ip_number))
-        if getattr(patient, 'op_number', None):
-            _kv('OP No', str(patient.op_number))
+    try:
+        if refund.sale and refund.sale.sale_number:
+            _kv('Orig Sale', refund.sale.sale_number)
+    except Exception:
+        pass
 
     y -= 1 * mm
     c.line(5 * mm, y, page_w - 5 * mm, y)
     y -= 4 * mm
 
-    def _draw_section(title: str, rows: list['SaleItem']):
-        nonlocal y
-        if not rows:
-            return
+    c.setFont('Helvetica-Bold', 8)
+    c.drawString(5 * mm, y, 'Items')
+    y -= 4 * mm
+    c.setFont('Helvetica', 7)
+    for it in (refund.items or []):
+        desc = ''
+        try:
+            desc = (getattr(getattr(it, 'sale_item', None), 'drug_name', None) or getattr(getattr(it, 'sale_item', None), 'description', None) or 'Item')
+        except Exception:
+            desc = 'Item'
+        qty = int(getattr(it, 'quantity', 1) or 1)
+        unit = float(getattr(it, 'unit_price', 0) or 0)
+        total = float(getattr(it, 'total_price', 0) or (unit * qty))
 
-        c.setFont('Helvetica-Bold', 8)
-        c.drawString(5 * mm, y, title)
+        c.drawString(5 * mm, y, str(desc)[:44])
+        y -= 3.5 * mm
+        c.setFont('Helvetica', 6.5)
+        c.drawString(7 * mm, y, f"{qty} x {unit:,.2f}")
+        c.drawRightString(page_w - 5 * mm, y, f"{total:,.2f}")
         y -= 4 * mm
-
         c.setFont('Helvetica', 7)
-        for it in rows:
-            desc = (getattr(it, 'description', '') or '').strip()
-            qty = int(getattr(it, 'quantity', 1) or 1)
-            unit = float(getattr(it, 'unit_price', 0) or 0)
-            total = float(getattr(it, 'total_price', 0) or (unit * qty))
-            line = f"{desc}"[:44]
-            c.drawString(5 * mm, y, line)
-            y -= 3.5 * mm
-            c.setFont('Helvetica', 6.5)
-            c.drawString(7 * mm, y, f"{qty} x {unit:,.2f}")
-            c.drawRightString(page_w - 5 * mm, y, f"{total:,.2f}")
-            y -= 4 * mm
-            c.setFont('Helvetica', 7)
-            if y < 55 * mm:
-                c.showPage()
-                y = page_h - 10 * mm
-
-        y -= 1 * mm
-
-    _draw_section('Services Done', services)
-    _draw_section('Lab (Completed)', labs)
-    _draw_section('Imaging (Completed)', imaging)
-    _draw_section('Dispensed Drugs', drugs)
-    _draw_section('Controlled Drugs', controlled)
-    _draw_section('Ward Stay', ward)
 
     c.line(5 * mm, y, page_w - 5 * mm, y)
     y -= 5 * mm
     c.setFont('Helvetica-Bold', 9)
-    c.drawString(5 * mm, y, 'TOTAL')
-    c.drawRightString(page_w - 5 * mm, y, f"KSh {float(sale.total_amount or 0):,.2f}")
-    y -= 6 * mm
-    c.setFont('Helvetica', 7)
-    c.drawString(5 * mm, y, f"Payment: {(sale.payment_method or '').upper()}")
+    c.drawString(5 * mm, y, 'TOTAL REFUND')
+    c.drawRightString(page_w - 5 * mm, y, f"KSh {float(refund.total_amount or 0):,.2f}")
     y -= 6 * mm
 
-    # Rubber-stamp (drawn, no external SVG deps)
+    # Stamp
     stamp_w = page_w - 10 * mm
     stamp_h = 22 * mm
     stamp_x = 5 * mm
@@ -30673,7 +31011,6 @@ def api_sale_receipt_pdf(sale_id: int):
     c.setFillColor(colors.black)
     y = stamp_y - 6 * mm
 
-    # Signature
     if signature_bytes:
         try:
             img = ImageReader(BytesIO(signature_bytes))
@@ -30690,14 +31027,595 @@ def api_sale_receipt_pdf(sale_id: int):
     buf.seek(0)
 
     pdf_bytes = buf.getvalue()
-    filename = f"receipt-{sale.sale_number}.pdf"
-    return Response(
-        pdf_bytes,
-        mimetype='application/pdf',
-        headers={
-            'Content-Disposition': f'attachment; filename={filename}'
-        },
+    filename = f"refund-{refund.refund_number}.pdf"
+    return Response(pdf_bytes, mimetype='application/pdf', headers={'Content-Disposition': f'attachment; filename={filename}'})
+
+
+@app.route('/api/refunds/<int:refund_id>/share-whatsapp', methods=['POST'])
+@login_required
+def api_refund_share_whatsapp(refund_id: int):
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('pharmacist', 'admin'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    refund = Refund.query.get(refund_id)
+    if not refund:
+        return jsonify({'success': False, 'error': 'Refund not found'}), 404
+
+    if user_role != 'admin' and getattr(refund, 'user_id', None) != current_user.id:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    data = request.get_json(silent=True) if request.is_json else None
+    override_to = (data.get('to') or '').strip() if isinstance(data, dict) else ''
+
+    raw_phone = override_to
+    if not raw_phone:
+        try:
+            raw_phone = str(getattr(getattr(getattr(refund, 'sale', None), 'patient', None), 'phone', '') or '').strip()
+        except Exception:
+            raw_phone = ''
+
+    to_msisdn = normalize_msisdn(raw_phone)
+    if not to_msisdn:
+        return jsonify({'success': False, 'error': 'Phone number is missing/invalid for WhatsApp.'}), 400
+
+    try:
+        pdf_resp = api_refund_receipt_pdf(refund_id)
+        if isinstance(pdf_resp, Response) and pdf_resp.mimetype == 'application/pdf':
+            pdf_bytes = pdf_resp.get_data()
+        else:
+            return jsonify({'success': False, 'error': 'Failed to generate PDF'}), 500
+    except Exception as e:
+        current_app.logger.error(f'Refund WhatsApp PDF generation failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to generate PDF'}), 500
+
+    filename = f"Refund-{refund.refund_number}.pdf"
+    caption = f"Makokha Medical Centre\nRefund {refund.refund_number}\nTotal KSh {float(refund.total_amount or 0):,.2f}"
+
+    try:
+        settings = load_whatsapp_settings(current_app.instance_path)
+        if settings:
+            result = send_document(
+                to_msisdn=to_msisdn,
+                pdf_bytes=pdf_bytes,
+                filename=filename,
+                caption=caption,
+                token=settings.token,
+                phone_number_id=settings.phone_number_id,
+                version=settings.api_version,
+            )
+        else:
+            result = send_document(to_msisdn=to_msisdn, pdf_bytes=pdf_bytes, filename=filename, caption=caption)
+    except WhatsAppConfigError as e:
+        return jsonify({'success': False, 'error': str(e)}), 501
+    except Exception as e:
+        current_app.logger.error(f'Refund WhatsApp send failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    return jsonify({'success': True, 'to': to_msisdn, 'result': result})
+
+
+@app.route('/api/controlled-sales/<int:sale_id>/receipt.pdf')
+@login_required
+def api_controlled_sale_receipt_pdf(sale_id: int):
+    """PDF receipt for controlled sales."""
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('pharmacist', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    if not _REPORTLAB_AVAILABLE:
+        return jsonify({'error': 'PDF generator not available (missing reportlab).'}), 501
+
+    sale = (
+        db.session.query(ControlledSale)
+        .options(
+            db.joinedload(ControlledSale.items),
+            db.joinedload(ControlledSale.patient),
+            db.joinedload(ControlledSale.user),
+        )
+        .filter(ControlledSale.id == sale_id)
+        .first()
     )
+    if not sale:
+        return jsonify({'error': 'Controlled sale not found'}), 404
+
+    if user_role != 'admin' and getattr(sale, 'user_id', None) != current_user.id:
+        return jsonify({'error': 'Forbidden'}), 403
+
+    patient_name = ''
+    try:
+        if sale.patient:
+            patient_name = sale.patient.get_decrypted_name
+    except Exception:
+        patient_name = ''
+
+    created_at = getattr(sale, 'created_at', None)
+    created_str = created_at.strftime('%Y-%m-%d %H:%M') if created_at else ''
+    served_by = getattr(getattr(sale, 'user', None), 'username', None) or 'Pharmacy'
+
+    signature_data_uri = None
+    try:
+        admin_user = User.query.filter(func.lower(User.role) == 'admin').order_by(User.id.asc()).first()
+    except Exception:
+        admin_user = None
+
+    try:
+        if admin_user:
+            sig = DrawnSignature.query.filter_by(user_id=admin_user.id, is_active=True).first()
+            signature_data_uri = getattr(sig, 'signature_data', None) if sig else None
+        if not signature_data_uri:
+            sig = DrawnSignature.query.filter_by(user_id=current_user.id, is_active=True).first()
+            signature_data_uri = getattr(sig, 'signature_data', None) if sig else None
+    except Exception:
+        signature_data_uri = None
+
+    signature_bytes = None
+    if signature_data_uri and isinstance(signature_data_uri, str) and 'base64,' in signature_data_uri:
+        try:
+            signature_bytes = base64.b64decode(signature_data_uri.split('base64,', 1)[1])
+        except Exception:
+            signature_bytes = None
+
+    buf = BytesIO()
+    page_w, page_h = (80 * mm, 260 * mm)
+    c = rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
+    y = page_h - 10 * mm
+
+    c.setFont('Helvetica-Bold', 10)
+    c.drawCentredString(page_w / 2, y, 'MAKOKHA MEDICAL CENTRE')
+    y -= 5 * mm
+    c.setFont('Helvetica', 7)
+    c.drawCentredString(page_w / 2, y, 'CONTROLLED DRUGS RECEIPT')
+    y -= 4 * mm
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 4 * mm
+
+    def _kv(label: str, value: str):
+        nonlocal y
+        c.setFont('Helvetica-Bold', 7)
+        c.drawString(5 * mm, y, f'{label}:')
+        c.setFont('Helvetica', 7)
+        c.drawRightString(page_w - 5 * mm, y, (value or '')[:60])
+        y -= 4 * mm
+
+    _kv('Sale', str(getattr(sale, 'sale_number', '') or sale.id))
+    _kv('Date', created_str)
+    _kv('Served By', served_by)
+
+    # Customer/Patient details (mirror pharmacist controlled receipt)
+    customer_name = str(getattr(sale, 'customer_name', '') or '').strip()
+    customer_phone = str(getattr(sale, 'customer_phone', '') or '').strip()
+    customer_age = str(getattr(sale, 'customer_age', '') or '').strip()
+    customer_gender = str(getattr(sale, 'customer_gender', '') or '').strip()
+    diagnosis = str(getattr(sale, 'diagnosis', '') or '').strip()
+    destination = str(getattr(sale, 'destination', '') or '').strip()
+
+    if not customer_name and getattr(sale, 'patient', None):
+        try:
+            customer_name = str(getattr(sale.patient, 'get_decrypted_name', '') or '').strip()
+        except Exception:
+            customer_name = ''
+    if not customer_phone and getattr(sale, 'patient', None):
+        try:
+            customer_phone = str(getattr(sale.patient, 'phone', '') or '').strip()
+        except Exception:
+            customer_phone = ''
+    if not customer_age and getattr(sale, 'patient', None):
+        try:
+            customer_age = str(getattr(sale.patient, 'age', '') or '').strip()
+        except Exception:
+            customer_age = ''
+    if not customer_gender and getattr(sale, 'patient', None):
+        try:
+            customer_gender = str(getattr(sale.patient, 'gender', '') or '').strip()
+        except Exception:
+            customer_gender = ''
+    if not destination and getattr(sale, 'patient', None):
+        try:
+            destination = str(getattr(sale.patient, 'destination', '') or '').strip()
+        except Exception:
+            destination = ''
+
+    if customer_name:
+        _kv('Customer', customer_name)
+    if customer_phone:
+        _kv('Phone', customer_phone)
+    if customer_age or customer_gender:
+        _kv('Age/Sex', f"{customer_age} / {customer_gender}".strip(' /'))
+    if diagnosis:
+        _kv('Dx', diagnosis)
+    if destination:
+        _kv('Destination', destination)
+
+    y -= 1 * mm
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 4 * mm
+
+    c.setFont('Helvetica-Bold', 8)
+    c.drawString(5 * mm, y, 'Items')
+    y -= 4 * mm
+    c.setFont('Helvetica', 7)
+
+    for it in (sale.items or []):
+        desc = (getattr(it, 'controlled_drug_name', '') or '').strip() or 'Drug'
+        qty = int(getattr(it, 'quantity', 1) or 1)
+        unit = float(getattr(it, 'unit_price', 0) or 0)
+        total = float(getattr(it, 'total_price', 0) or (unit * qty))
+
+        c.drawString(5 * mm, y, desc[:44])
+        y -= 3.5 * mm
+        c.setFont('Helvetica', 6.5)
+        c.drawString(7 * mm, y, f"{qty} x {unit:,.2f}")
+        c.drawRightString(page_w - 5 * mm, y, f"{total:,.2f}")
+        y -= 4 * mm
+        c.setFont('Helvetica', 7)
+        if y < 55 * mm:
+            c.showPage()
+            y = page_h - 10 * mm
+
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 5 * mm
+    c.setFont('Helvetica-Bold', 9)
+    c.drawString(5 * mm, y, 'TOTAL')
+    c.drawRightString(page_w - 5 * mm, y, f"KSh {float(getattr(sale, 'total_amount', 0) or 0):,.2f}")
+    y -= 6 * mm
+
+    stamp_w = page_w - 10 * mm
+    stamp_h = 22 * mm
+    stamp_x = 5 * mm
+    stamp_y = max(12 * mm, y - stamp_h)
+    c.setStrokeColor(colors.HexColor('#2e3192'))
+    c.setLineWidth(1.2)
+    c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
+    c.setFont('Helvetica-Bold', 7)
+    c.setFillColor(colors.HexColor('#2e3192'))
+    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, 'MAKOKHA MEDICAL CENTRE')
+    c.setFillColor(colors.HexColor('#dc143c'))
+    c.setFont('Helvetica-Bold', 8)
+    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
+    c.setFillColor(colors.HexColor('#2e3192'))
+    c.setFont('Helvetica', 6.5)
+    c.drawCentredString(page_w / 2, stamp_y + 4 * mm, 'Tel: 0741 256 531 / 0713 580 997')
+    c.setFillColor(colors.black)
+    y = stamp_y - 6 * mm
+
+    if signature_bytes:
+        try:
+            img = ImageReader(BytesIO(signature_bytes))
+            sig_w = 35 * mm
+            sig_h = 14 * mm
+            c.drawImage(img, 5 * mm, max(5 * mm, y - sig_h), width=sig_w, height=sig_h, preserveAspectRatio=True, mask='auto')
+            c.setFont('Helvetica', 6.5)
+            c.drawString(5 * mm, max(5 * mm, y - sig_h) - 3 * mm, 'Signed')
+        except Exception:
+            pass
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+
+    pdf_bytes = buf.getvalue()
+    filename = f"controlled-receipt-{getattr(sale, 'sale_number', sale.id)}.pdf"
+    return Response(pdf_bytes, mimetype='application/pdf', headers={'Content-Disposition': f'attachment; filename={filename}'})
+
+
+@app.route('/api/controlled-sales/<int:sale_id>/share-whatsapp', methods=['POST'])
+@login_required
+def api_controlled_sale_share_whatsapp(sale_id: int):
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('pharmacist', 'admin'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    sale = ControlledSale.query.get(sale_id)
+    if not sale:
+        return jsonify({'success': False, 'error': 'Controlled sale not found'}), 404
+
+    if user_role != 'admin' and getattr(sale, 'user_id', None) != current_user.id:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    data = request.get_json(silent=True) if request.is_json else None
+    override_to = (data.get('to') or '').strip() if isinstance(data, dict) else ''
+
+    raw_phone = override_to
+    if not raw_phone:
+        try:
+            if getattr(sale, 'customer_phone', None):
+                raw_phone = str(sale.customer_phone or '').strip()
+            elif getattr(sale, 'patient', None):
+                raw_phone = str(getattr(sale.patient, 'phone', '') or '').strip()
+        except Exception:
+            raw_phone = ''
+
+    to_msisdn = normalize_msisdn(raw_phone)
+    if not to_msisdn:
+        return jsonify({'success': False, 'error': 'Phone number is missing/invalid for WhatsApp.'}), 400
+
+    try:
+        pdf_resp = api_controlled_sale_receipt_pdf(sale_id)
+        if isinstance(pdf_resp, Response) and pdf_resp.mimetype == 'application/pdf':
+            pdf_bytes = pdf_resp.get_data()
+        else:
+            return jsonify({'success': False, 'error': 'Failed to generate PDF'}), 500
+    except Exception as e:
+        current_app.logger.error(f'Controlled WhatsApp PDF generation failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to generate PDF'}), 500
+
+    filename = f"Controlled-Receipt-{getattr(sale, 'sale_number', sale.id)}.pdf"
+    caption = f"Makokha Medical Centre\nControlled Receipt {getattr(sale, 'sale_number', sale.id)}\nTotal KSh {float(getattr(sale, 'total_amount', 0) or 0):,.2f}"
+
+    try:
+        settings = load_whatsapp_settings(current_app.instance_path)
+        if settings:
+            result = send_document(
+                to_msisdn=to_msisdn,
+                pdf_bytes=pdf_bytes,
+                filename=filename,
+                caption=caption,
+                token=settings.token,
+                phone_number_id=settings.phone_number_id,
+                version=settings.api_version,
+            )
+        else:
+            result = send_document(to_msisdn=to_msisdn, pdf_bytes=pdf_bytes, filename=filename, caption=caption)
+    except WhatsAppConfigError as e:
+        return jsonify({'success': False, 'error': str(e)}), 501
+    except Exception as e:
+        current_app.logger.error(f'Controlled WhatsApp send failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    return jsonify({'success': True, 'to': to_msisdn, 'result': result})
+
+
+@app.route('/api/transactions/<int:transaction_id>/receipt.pdf')
+@login_required
+def api_transaction_receipt_pdf(transaction_id: int):
+    """PDF for admin transaction receipts.
+
+    This PDF mirrors the `admin/transaction_receipt.html` structure so that
+    transactions always share their *own* PDF format.
+    """
+    if str(getattr(current_user, 'role', '')).lower().strip() != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    tx = Transaction.query.get(transaction_id)
+    if not tx:
+        return jsonify({'error': 'Transaction not found'}), 404
+
+    if not _REPORTLAB_AVAILABLE:
+        return jsonify({'error': 'PDF generator not available (missing reportlab).'}), 501
+
+    # Load reference objects (best-effort; never fail the PDF if missing)
+    sale = None
+    refund = None
+    expense = None
+    purchase = None
+    ref_id = getattr(tx, 'reference_id', None)
+    try:
+        if tx.transaction_type == 'sale' and ref_id:
+            sale = (
+                db.session.query(Sale)
+                .options(
+                    db.joinedload(Sale.items),
+                    db.joinedload(Sale.patient),
+                    db.joinedload(Sale.user),
+                )
+                .filter(Sale.id == int(ref_id))
+                .first()
+            )
+        elif tx.transaction_type == 'refund' and ref_id:
+            refund = (
+                db.session.query(Refund)
+                .options(
+                    db.joinedload(Refund.items).joinedload(RefundItem.sale_item),
+                    db.joinedload(Refund.sale).joinedload(Sale.patient),
+                    db.joinedload(Refund.user),
+                )
+                .filter(Refund.id == int(ref_id))
+                .first()
+            )
+        elif tx.transaction_type == 'expense' and ref_id:
+            expense = Expense.query.get(int(ref_id))
+        elif tx.transaction_type == 'purchase' and ref_id:
+            purchase = Purchase.query.get(int(ref_id))
+        elif tx.transaction_type == 'controlled_sale' and ref_id:
+            # Keep controlled sale inside the transaction PDF (do not reuse controlled sale receipt PDF).
+            # If needed later, we can expand details similar to the sale section.
+            pass
+    except Exception:
+        sale = refund = expense = purchase = None
+
+    buf = BytesIO()
+    page_w, page_h = (80 * mm, 260 * mm)
+    c = rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
+    y = page_h - 10 * mm
+
+    def _ensure_space(min_y: float = 20 * mm):
+        nonlocal y
+        if y < min_y:
+            c.showPage()
+            y = page_h - 10 * mm
+
+    def _kv(label: str, value: str):
+        nonlocal y
+        _ensure_space()
+        c.setFont('Helvetica-Bold', 7)
+        c.drawString(5 * mm, y, f'{label}:')
+        c.setFont('Helvetica', 7)
+        c.drawRightString(page_w - 5 * mm, y, (value or '')[:60])
+        y -= 4 * mm
+
+    def _section(title: str):
+        nonlocal y
+        _ensure_space(30 * mm)
+        y -= 2 * mm
+        c.setFont('Helvetica-Bold', 8)
+        c.drawString(5 * mm, y, title)
+        y -= 4 * mm
+
+    def _table_row(col1: str, col2: str, col3: str, col4: str):
+        nonlocal y
+        _ensure_space(26 * mm)
+        c.setFont('Helvetica', 6.5)
+        # Column layout within 70mm printable width
+        x1 = 5 * mm
+        x2 = 43 * mm
+        x3 = 54 * mm
+        x4 = page_w - 5 * mm
+        c.drawString(x1, y, (col1 or '')[:28])
+        c.drawRightString(x2, y, (col2 or '')[:10])
+        c.drawRightString(x3, y, (col3 or '')[:10])
+        c.drawRightString(x4, y, (col4 or '')[:12])
+        y -= 3.8 * mm
+
+    # Header
+    c.setFont('Helvetica-Bold', 10)
+    c.drawCentredString(page_w / 2, y, 'MAKOKHA MEDICAL CENTRE')
+    y -= 5 * mm
+    c.setFont('Helvetica', 7)
+    c.drawCentredString(page_w / 2, y, 'TRANSACTION RECEIPT')
+    y -= 4 * mm
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 4 * mm
+
+    # Meta (matches admin/transaction_receipt.html)
+    _kv('Receipt #', str(getattr(tx, 'receipt_number', '') or f"TX-{tx.id}"))
+    _kv('Transaction #', str(getattr(tx, 'transaction_number', '') or ''))
+    _kv('Type', str(getattr(tx, 'transaction_type', '') or '').capitalize())
+    try:
+        _kv('Date', tx.created_at.strftime('%Y-%m-%d %H:%M') if tx.created_at else '')
+    except Exception:
+        _kv('Date', '')
+    if getattr(tx, 'receipt_reprinted_at', None):
+        try:
+            _kv('Reprinted', tx.receipt_reprinted_at.strftime('%Y-%m-%d %H:%M'))
+        except Exception:
+            pass
+    processed_by = getattr(getattr(tx, 'user', None), 'username', '') or ''
+    _kv('Processed By', processed_by)
+    notes = str(getattr(tx, 'notes', '') or '')
+    if notes:
+        _kv('Notes', notes[:60])
+
+    y -= 1 * mm
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 4 * mm
+
+    # Body
+    if sale:
+        _section('Sale Items')
+        _table_row('Drug', 'Qty', 'Unit', 'Total')
+        c.line(5 * mm, y, page_w - 5 * mm, y)
+        y -= 3 * mm
+        for it in (getattr(sale, 'items', None) or []):
+            desc = (getattr(it, 'drug_name', None) or getattr(it, 'description', None) or '').strip() or 'Item'
+            qty = int(getattr(it, 'quantity', 0) or 0)
+            unit = float(getattr(it, 'unit_price', 0) or 0)
+            total = float(getattr(it, 'total_price', 0) or (unit * qty))
+            _table_row(desc, str(qty), f"{unit:,.2f}", f"{total:,.2f}")
+        y -= 1 * mm
+        c.line(5 * mm, y, page_w - 5 * mm, y)
+        y -= 5 * mm
+        c.setFont('Helvetica-Bold', 8)
+        c.drawString(5 * mm, y, 'Total:')
+        c.drawRightString(page_w - 5 * mm, y, f"KSh {float(getattr(sale, 'total_amount', 0) or 0):,.2f}")
+        y -= 6 * mm
+    elif refund:
+        _section('Refund Items')
+        _table_row('Item', 'Qty', 'Unit', 'Total')
+        c.line(5 * mm, y, page_w - 5 * mm, y)
+        y -= 3 * mm
+        for it in (getattr(refund, 'items', None) or []):
+            sale_item = getattr(it, 'sale_item', None)
+            desc = (getattr(sale_item, 'drug_name', None) or getattr(getattr(sale_item, 'drug', None), 'name', None) or '').strip() or 'Item'
+            qty = int(getattr(it, 'quantity', 0) or 0)
+            unit = float(getattr(it, 'unit_price', 0) or 0)
+            total = float(getattr(it, 'total_price', 0) or (unit * qty))
+            _table_row(desc, str(qty), f"{unit:,.2f}", f"{total:,.2f}")
+        y -= 1 * mm
+        c.line(5 * mm, y, page_w - 5 * mm, y)
+        y -= 5 * mm
+        c.setFont('Helvetica-Bold', 8)
+        c.drawString(5 * mm, y, 'Refund Total:')
+        c.drawRightString(page_w - 5 * mm, y, f"KSh {float(getattr(refund, 'total_amount', 0) or 0):,.2f}")
+        y -= 6 * mm
+    elif expense:
+        _section('Expense')
+        _kv('Category', str(getattr(expense, 'category', '') or ''))
+        _kv('Description', str(getattr(expense, 'description', '') or '')[:60])
+    elif purchase:
+        _section('Purchase')
+        _kv('Supplier', str(getattr(purchase, 'supplier', '') or ''))
+        _kv('Invoice #', str(getattr(purchase, 'invoice_number', '') or ''))
+
+    # Always show transaction amount at bottom
+    _ensure_space(24 * mm)
+    c.line(5 * mm, y, page_w - 5 * mm, y)
+    y -= 5 * mm
+    c.setFont('Helvetica-Bold', 9)
+    c.drawString(5 * mm, y, 'Amount')
+    c.drawRightString(page_w - 5 * mm, y, f"KSh {float(getattr(tx, 'amount', 0) or 0):,.2f}")
+    y -= 6 * mm
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+
+    pdf_bytes = buf.getvalue()
+    filename = f"transaction-{getattr(tx, 'receipt_number', '') or tx.id}.pdf"
+    return Response(pdf_bytes, mimetype='application/pdf', headers={'Content-Disposition': f'attachment; filename={filename}'})
+
+
+@app.route('/api/transactions/<int:transaction_id>/share-whatsapp', methods=['POST'])
+@login_required
+def api_transaction_share_whatsapp(transaction_id: int):
+    if str(getattr(current_user, 'role', '')).lower().strip() != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    tx = Transaction.query.get(transaction_id)
+    if not tx:
+        return jsonify({'success': False, 'error': 'Transaction not found'}), 404
+
+    data = request.get_json(silent=True) if request.is_json else None
+    override_to = (data.get('to') or '').strip() if isinstance(data, dict) else ''
+
+    to_msisdn = normalize_msisdn(override_to)
+    if not to_msisdn:
+        return jsonify({'success': False, 'error': 'Enter a valid phone number for WhatsApp.'}), 400
+
+    try:
+        pdf_resp = api_transaction_receipt_pdf(transaction_id)
+        if isinstance(pdf_resp, Response) and pdf_resp.mimetype == 'application/pdf':
+            pdf_bytes = pdf_resp.get_data()
+        else:
+            return jsonify({'success': False, 'error': 'Failed to generate PDF'}), 500
+    except Exception as e:
+        current_app.logger.error(f'Transaction WhatsApp PDF generation failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to generate PDF'}), 500
+
+    filename = f"Transaction-{getattr(tx, 'receipt_number', '') or ('TX-' + str(tx.id))}.pdf"
+    caption = f"Makokha Medical Centre\nTransaction {getattr(tx, 'receipt_number', '') or ('TX-' + str(tx.id))}\nAmount KSh {float(getattr(tx, 'amount', 0) or 0):,.2f}"
+
+    try:
+        settings = load_whatsapp_settings(current_app.instance_path)
+        if settings:
+            result = send_document(
+                to_msisdn=to_msisdn,
+                pdf_bytes=pdf_bytes,
+                filename=filename,
+                caption=caption,
+                token=settings.token,
+                phone_number_id=settings.phone_number_id,
+                version=settings.api_version,
+            )
+        else:
+            result = send_document(to_msisdn=to_msisdn, pdf_bytes=pdf_bytes, filename=filename, caption=caption)
+    except WhatsAppConfigError as e:
+        return jsonify({'success': False, 'error': str(e)}), 501
+    except Exception as e:
+        current_app.logger.error(f'Transaction WhatsApp send failed: {str(e)}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    return jsonify({'success': True, 'to': to_msisdn, 'result': result})
 
 @app.route('/api/notifications_list')
 @login_required

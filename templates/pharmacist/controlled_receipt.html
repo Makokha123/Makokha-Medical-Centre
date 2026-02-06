@@ -8,6 +8,10 @@
   <div class="d-flex justify-content-between align-items-center mb-3 no-print">
     <button class="btn btn-outline-secondary" type="button" id="closeControlledReceiptBtn"><i class="bi bi-x-circle"></i> Close</button>
     <div class="d-flex gap-2">
+      {% set whatsapp_share_endpoint = url_for('api_controlled_sale_share_whatsapp', sale_id=sale.id) %}
+      {% set whatsapp_fallback_pdf = url_for('api_controlled_sale_receipt_pdf', sale_id=sale.id) %}
+      {% set whatsapp_default_phone = (sale.customer_phone or (decrypt_data(sale.patient.phone) if sale.patient and sale.patient.phone else '')) %}
+      {% include 'components/whatsapp_share_button.html' %}
       <button class="btn btn-primary" onclick="window.print()"><i class="bi bi-printer"></i> Print / Save PDF</button>
     </div>
   </div>

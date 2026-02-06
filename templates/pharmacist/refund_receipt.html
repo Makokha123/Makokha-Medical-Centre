@@ -7,6 +7,13 @@
     <button id="closeReceipt" class="btn btn-secondary btn-sm">Close</button>
 </div>
 {% endif %}
+
+<div class="no-print" style="max-width: 500px; margin: 0 auto 10px auto; text-align: right;">
+    {% set whatsapp_share_endpoint = url_for('api_refund_share_whatsapp', refund_id=refund.id) %}
+    {% set whatsapp_fallback_pdf = url_for('api_refund_receipt_pdf', refund_id=refund.id) %}
+    {% set whatsapp_default_phone = (decrypt_data(refund.sale.patient.phone) if refund.sale and refund.sale.patient and refund.sale.patient.phone else '') %}
+    {% include 'components/whatsapp_share_button.html' %}
+</div>
 <div class="receipt-container">
     <div class="receipt-header text-center mb-4">
         <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Clinic Logo" class="logo mb-2">

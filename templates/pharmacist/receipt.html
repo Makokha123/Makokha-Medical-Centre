@@ -140,6 +140,13 @@
     </div>
 {% endif %}
 
+<div class="no-print text-center my-2">
+    {% set whatsapp_share_endpoint = url_for('api_sale_share_whatsapp', sale_id=sale.id) %}
+    {% set whatsapp_fallback_pdf = url_for('api_sale_receipt_pdf', sale_id=sale.id) %}
+    {% set whatsapp_default_phone = (decrypt_data(sale.patient.phone) if sale.patient and sale.patient.phone else '') %}
+    {% include 'components/whatsapp_share_button.html' %}
+</div>
+
     <div class="receipt-container">
         <div class="receipt-header text-center mb-4">
             <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Clinic Logo" class="logo mb-2">

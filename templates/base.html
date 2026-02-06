@@ -921,6 +921,12 @@
                                 <span class="nav-text">Financial Reports</span>
                             </a>
                         </div>
+                        <div class="nav-item">
+                            <a href="{{ url_for('admin_whatsapp_settings') }}" class="nav-link">
+                                <i class="bi bi-whatsapp"></i>
+                                <span class="nav-text">WhatsApp Settings</span>
+                            </a>
+                        </div>
                     {% elif current_user.role == 'doctor' %}
                         <!-- Doctor Navigation -->
                         <div class="nav-item">
