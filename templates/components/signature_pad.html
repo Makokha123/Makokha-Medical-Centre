@@ -150,21 +150,119 @@
     function setupCanvas() {
         const canvas = signatureCanvas;
         const ctx = signatureCtx;
-        
-        // Set canvas background
+
+        function resizeCanvasToDisplaySize() {
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+
+            // Keep drawing coordinates in CSS pixels for simplicity.
+            const newWidth = Math.max(1, Math.round(rect.width * dpr));
+            const newHeight = Math.max(1, Math.round(rect.height * dpr));
+            if (canvas.width !== newWidth || canvas.height !== newHeight) {
+                canvas.width = newWidth;
+                canvas.height = newHeight;
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                redrawCanvas();
+            } else {
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            }
+        }
+
+        function getPointFromEvent(e) {
+            const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+
+            if (e.touches && e.touches.length) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+
+            // Convert to CSS pixel space (ctx is scaled to DPR).
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function onPointerDown(e) {
+            if (!drawingEnabled) return;
+            // Only accept primary button for mouse; pen/touch is fine.
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            e.preventDefault();
+            isDrawing = true;
+            currentPath = [];
+            const p = getPointFromEvent(e);
+            currentPath.push(p);
+            redoStack = [];
+
+            try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+
+        function onPointerMove(e) {
+            if (!isDrawing || !drawingEnabled) return;
+            e.preventDefault();
+            const p = getPointFromEvent(e);
+            currentPath.push(p);
+
+            const ctx = signatureCtx;
+            const color = document.getElementById('penColor').value;
+            const size = document.getElementById('penSize').value;
+
+            const len = currentPath.length;
+            if (len >= 2) {
+                const prevPoint = currentPath[len - 2];
+                const currPoint = currentPath[len - 1];
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = size;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                ctx.beginPath();
+                ctx.moveTo(prevPoint.x, prevPoint.y);
+                ctx.lineTo(currPoint.x, currPoint.y);
+                ctx.stroke();
+            }
+        }
+
+        function onPointerUp(e) {
+            if (e) {
+                try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+            }
+            stopDrawing();
+        }
+
+        // Initialize background and sizing
+        resizeCanvasToDisplaySize();
         ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Mouse events
-        canvas.addEventListener('mousedown', startDrawing);
-        canvas.addEventListener('mousemove', draw);
-        canvas.addEventListener('mouseup', stopDrawing);
-        canvas.addEventListener('mouseout', stopDrawing);
-        
-        // Touch events
-        canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-        canvas.addEventListener('touchend', stopDrawing);
+        ctx.fillRect(0, 0, canvas.getBoundingClientRect().width, canvas.getBoundingClientRect().height);
+
+        // Prefer Pointer Events for unified touch+mouse+pen.
+        if (window.PointerEvent) {
+            canvas.addEventListener('pointerdown', onPointerDown);
+            canvas.addEventListener('pointermove', onPointerMove);
+            canvas.addEventListener('pointerup', onPointerUp);
+            canvas.addEventListener('pointercancel', onPointerUp);
+            canvas.addEventListener('pointerleave', onPointerUp);
+        } else {
+            // Fallback for very old browsers.
+            canvas.addEventListener('mousedown', startDrawing);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', stopDrawing);
+            canvas.addEventListener('mouseout', stopDrawing);
+
+            canvas.addEventListener('touchstart', function(e){ e.preventDefault(); startDrawing(e.touches[0]); }, { passive: false });
+            canvas.addEventListener('touchmove', function(e){ e.preventDefault(); draw(e.touches[0]); }, { passive: false });
+            canvas.addEventListener('touchend', stopDrawing);
+        }
+
+        window.addEventListener('resize', function(){
+            // Keep drawings consistent when layout changes.
+            resizeCanvasToDisplaySize();
+        });
         
         // Pen size change
         const penSizeInput = document.getElementById('penSize');
@@ -235,29 +333,7 @@
         currentPath = [];
     }
     
-    function handleTouchStart(e) {
-        e.preventDefault();
-        if (!drawingEnabled) return;
-        
-        const touch = e.touches[0];
-        const mouseEvent = new MouseEvent('mousedown', {
-            clientX: touch.clientX,
-            clientY: touch.clientY
-        });
-        signatureCanvas.dispatchEvent(mouseEvent);
-    }
-    
-    function handleTouchMove(e) {
-        e.preventDefault();
-        if (!drawingEnabled) return;
-        
-        const touch = e.touches[0];
-        const mouseEvent = new MouseEvent('mousemove', {
-            clientX: touch.clientX,
-            clientY: touch.clientY
-        });
-        signatureCanvas.dispatchEvent(mouseEvent);
-    }
+    // Touch handlers removed in favor of Pointer Events.
     
     window.startDrawingSignature = function() {
         document.getElementById('signaturePlaceholder').style.display = 'none';
@@ -363,6 +439,21 @@
         document.getElementById('signatureDrawing').style.display = 'block';
         drawingEnabled = true;
         document.getElementById('penModeIndicator').style.display = 'block';
+
+        // Restore saved signature image onto canvas so user can add/adjust.
+        if (savedSignature) {
+            const img = new Image();
+            img.onload = function() {
+                // Clear and paint white background first
+                const canvas = signatureCanvas;
+                const ctx = signatureCtx;
+                const rect = canvas.getBoundingClientRect();
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, rect.width, rect.height);
+                ctx.drawImage(img, 0, 0, rect.width, rect.height);
+            };
+            img.src = savedSignature;
+        }
     };
     
     window.deleteSignature = function() {

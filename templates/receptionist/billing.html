@@ -1,8 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-{% set legacy = request.args.get('legacy') %}
-{% if not legacy %}
+
 
 <meta name="csrf-token" content="{{ csrf_token() }}">
 
@@ -12,9 +11,7 @@
             <h2 class="mb-0">Reception Billing</h2>
             <small class="text-muted">Select patient → Generate bill → Print or Share (PDF)</small>
         </div>
-        <div class="text-right">
-            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('receptionist_billing') }}?legacy=1">Legacy UI</a>
-        </div>
+        <div class="text-right"></div>
     </div>
 
     <div class="row">
@@ -503,9 +500,36 @@
         const balanceLabel = (balance !== null && balance < 0) ? 'Balance Due' : 'Balance';
 
         const stampHtml = `
-            <div class="r-center" style="margin-top:10px;">{{ generate_rubber_stamp(size=160) }}</div>
+            <div class="r-center" style="margin-top:10px;">{{ generate_rubber_stamp(size=220) }}</div>
         `;
 
+
+    function openAndPrint(url) {
+        let href = String(url || '').trim();
+        if (!href) {
+            setStatus('error', 'Receipt URL is missing.');
+            return;
+        }
+
+        if (!/([?&])reprint=1(&|$)/.test(href)) {
+            href += (href.includes('?') ? '&' : '?') + 'reprint=1';
+        }
+
+        const w = window.open(href, '_blank');
+        if (!w) {
+            setStatus('error', 'Popup blocked. Please allow popups to print.');
+            return;
+        }
+
+        w.addEventListener('load', () => {
+            try {
+                w.focus();
+                w.print();
+            } catch (e) {
+                // If browser blocks programmatic print, user can still print manually.
+            }
+        }, { once: true });
+    }
         return `
             <div class="r-center">
                 <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" style="height:48px;">
@@ -631,13 +655,15 @@
                 rxItems: data.rxItems,
                 crxItems: data.crxItems,
                 wardPreview: data.wardPreview,
-                total: Number(created.total_amount || total)
+                total: Number((created.total_amount ?? created['total_amount']) ?? total),
+                receipt_url: created.receipt_url || `/receptionist/sale/${created.sale_id}/receipt`,
+                pdf_url: created.pdf_url || `/api/sales/${created.sale_id}/receipt.pdf`,
             };
 
             elReceiptCard.style.display = 'block';
             elReceiptPreview.innerHTML = buildReceiptPreview(lastGenerated);
             elViewReceiptLink.style.display = 'inline-flex';
-            elViewReceiptLink.href = `/receptionist/sale/${created.sale_id}/receipt`;
+            elViewReceiptLink.href = lastGenerated.receipt_url;
 
             setStatus('success', 'Bill created successfully.');
             await loadBills();
@@ -676,7 +702,7 @@
                         <button class="btn btn-sm btn-success" data-action="share" data-pdf="${safe(r.pdf_url)}" ${canCreateBills ? '' : 'disabled'}><i class="fab fa-whatsapp"></i> Send WhatsApp</button>
                     </td>
                 `;
-                tr.querySelector('[data-action="print"]').addEventListener('click', () => window.open(r.receipt_url, '_blank'));
+                tr.querySelector('[data-action="print"]').addEventListener('click', () => openAndPrint(r.receipt_url));
                 const shareBtn = tr.querySelector('[data-action="share"]');
                 shareBtn.addEventListener('click', () => shareViaWhatsAppCloud(r.sale_id, r.sale_number, r.pdf_url));
                 elBillsTable.appendChild(tr);
@@ -763,13 +789,19 @@
         searchTimer = setTimeout(() => loadPatients().catch(console.error), 250);
     });
     elGenerateBillBtn.addEventListener('click', () => generateBill());
-    elPrintBtn.addEventListener('click', () => window.print());
+    elPrintBtn.addEventListener('click', () => {
+        if (!lastGenerated || !lastGenerated.receipt_url) {
+            setStatus('error', 'Generate a bill first.');
+            return;
+        }
+        openAndPrint(lastGenerated.receipt_url);
+    });
     elShareBtn.addEventListener('click', () => {
         if (!lastGenerated || !lastGenerated.sale_id) {
             setStatus('error', 'Generate a bill first.');
             return;
         }
-        shareViaWhatsAppCloud(lastGenerated.sale_id, lastGenerated.sale_number, `/api/sales/${lastGenerated.sale_id}/receipt.pdf`);
+        shareViaWhatsAppCloud(lastGenerated.sale_id, lastGenerated.sale_number, lastGenerated.pdf_url || `/api/sales/${lastGenerated.sale_id}/receipt.pdf`);
     });
     elRefreshBillsBtn.addEventListener('click', () => loadBills());
 
@@ -824,466 +856,6 @@
                         <div class="form-group">
                             <label>Lab Tests <small class="text-muted">(Auto-populated - Completed tests only)</small></label>
                             <div class="lab-list" id="lab-list">
-                                <div class="alert alert-info">
-                                    Select a patient to view completed lab tests
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label>Imaging Tests <small class="text-muted">(Auto-populated - Completed imaging only)</small></label>
-                            <div class="imaging-list" id="imaging-list">
-                                <div class="alert alert-info">
-                                    Select a patient to view completed imaging tests
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label>Ward Stay</label>
-                            <div id="ward-stay-container" class="alert alert-info">
-                                Select a patient to view ward stay charges
-                            </div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Prescriptions <small class="text-muted">(Auto-populated - Dispensed drugs only)</small></label>
-                            <div class="prescription-list" id="prescription-list">
-                                <!-- Prescriptions will be loaded via AJAX when patient is selected -->
-                                <div class="alert alert-info">
-                                    Select a patient to view their dispensed prescriptions
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Payment Method Selection -->
-                        <div class="payment-method-section">
-                            <h6 class="payment-title"><i class="fas fa-credit-card"></i> Select Payment Method</h6>
-                            <div class="payment-buttons">
-                                <button type="button" class="payment-btn" data-method="mpesa" id="mpesaPaymentBtn">
-                                    <div class="payment-icon mpesa-icon">
-                                        <img src="{{ url_for('static', filename='images/mpesa-logo.png') }}" alt="M-Pesa" onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\'fas fa-mobile-alt\'></i>';">
-                                    </div>
-                                    <span>M-Pesa</span>
-                                </button>
-                                <button type="button" class="payment-btn active" data-method="cash" id="cashPaymentBtn">
-                                    <div class="payment-icon cash-icon">
-                                        <i class="fas fa-money-bill-wave"></i>
-                                    </div>
-                                    <span>Cash</span>
-                                </button>
-                                <button type="button" class="payment-btn" data-method="insurance" id="insurancePaymentBtn">
-                                    <div class="payment-icon insurance-icon">
-                                        <i class="fas fa-shield-alt"></i>
-                                    </div>
-                                    <span>Insurance</span>
-                                </button>
-                                <button type="button" class="payment-btn" data-method="card" id="cardPaymentBtn">
-                                    <div class="payment-icon card-icon">
-                                        <i class="fas fa-credit-card"></i>
-                                    </div>
-                                    <span>Card</span>
-                                </button>
-                                <button type="button" class="payment-btn" data-method="paypal" id="paypalPaymentBtn">
-                                    <div class="payment-icon paypal-icon">
-                                        <i class="fab fa-paypal"></i>
-                                    </div>
-                                    <span>PayPal</span>
-                                </button>
-                            </div>
-                            <input type="hidden" id="payment-method" name="payment_method" value="cash" required>
-                        </div>
-                        
-                        <div id="cash-amount-section" style="display: block;" class="form-group">
-                            <label for="cash-amount-given-billing">Amount Given by Client</label>
-                            <input type="number" id="cash-amount-given-billing" name="amount_given" class="form-control" placeholder="Enter amount client gave" min="0" step="0.01">
-                            <small class="form-text text-muted">Enter the amount the client gave. Change will be calculated on the receipt.</small>
-                        </div>
-                        
-                        <div id="mpesa-collect-section" style="display: none;" class="form-group">
-                            <div class="alert alert-info">
-                                <i class="fas fa-info-circle"></i> M-Pesa payment selected. After creating the bill, you can collect payment via STK Push or verify manual Till payment.
-                            </div>
-                        </div>
-                        
-                        <div id="insurance-billing-section" style="display: none;" class="form-group">
-                            <div id="insurance-active-hint" class="alert alert-light border" style="display:none;"></div>
-                            <label for="insurance-policy-number">Patient Insurance Policy Number</label>
-                            <input type="text" id="insurance-policy-number-billing" name="insurance_policy_number" class="form-control" placeholder="Enter patient insurance policy number">
-                            <small class="form-text text-muted">Insurance claim will be created for this invoice</small>
-                        </div>
-
-                        <div id="card-billing-section" style="display: none;" class="form-group">
-                            <label for="card-reference-billing">Card Reference (Optional)</label>
-                            <input type="text" id="card-reference-billing" name="card_reference" class="form-control" placeholder="Approval code / last 4 / reference">
-                            <small class="form-text text-muted">Card payments are recorded as completed. Store a reference for audit.</small>
-                        </div>
-
-                        <div id="paypal-billing-section" style="display: none;" class="form-group">
-                            <label for="paypal-reference-billing">PayPal Transaction ID (Optional)</label>
-                            <input type="text" id="paypal-reference-billing" name="paypal_reference" class="form-control" placeholder="PayPal transaction / capture ID">
-                            <small class="form-text text-muted">PayPal payments are recorded as completed. Store a reference for audit.</small>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="notes">Notes</label>
-                            <textarea id="notes" name="notes" class="form-control" rows="3"></textarea>
-                        </div>
-                        
-                        <div class="form-actions">
-                            <button type="reset" class="btn btn-secondary">
-                                <i class="fas fa-undo"></i> Reset
-                            </button>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-save"></i> Create Bill
-                            </button>
-                        </div>
-                    </form>
-                </div>
-                
-                <div class="billing-summary">
-                    <h3><i class="fas fa-calculator"></i> Bill Summary</h3>
-                    <div class="summary-details">
-                        <div class="summary-item">
-                            <span class="summary-label">Services:</span>
-                            <span class="summary-value" id="services-total">KSH 0.00</span>
-                        </div>
-                        <div class="summary-item">
-                            <span class="summary-label">Lab Tests:</span>
-                            <span class="summary-value" id="labs-total">KSH 0.00</span>
-                        </div>
-                        <div class="summary-item">
-                            <span class="summary-label">Imaging:</span>
-                            <span class="summary-value" id="imaging-total">KSH 0.00</span>
-                        </div>
-                        <div class="summary-item">
-                            <span class="summary-label">Medications:</span>
-                            <span class="summary-value" id="meds-total">KSH 0.00</span>
-                        </div>
-                        <div class="summary-item">
-                            <span class="summary-label">Ward Stay:</span>
-                            <span class="summary-value" id="ward-total">KSH 0.00</span>
-                        </div>
-                        <div class="summary-item total">
-                            <span class="summary-label">Total Amount:</span>
-                            <span class="summary-value" id="total-amount">KSH 0.00</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-<!-- M-Pesa Collection Modal -->
-<div class="modal fade" id="mpesaCollectModal" tabindex="-1" role="dialog">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title"><i class="fas fa-mobile-alt"></i> Collect M-Pesa Payment</h5>
-                <button type="button" class="close" data-dismiss="modal">
-                    <span>&times;</span>
-                </button>
-            </div>
-            <div class="modal-body">
-                <input type="hidden" id="mpesa-invoice-id">
-                <input type="hidden" id="mpesa-invoice-number">
-                <div class="mb-3">
-                    <strong>Invoice:</strong> <span id="mpesa-invoice-display"></span><br>
-                    <strong>Amount Due:</strong> <span id="mpesa-amount-display"></span>
-                </div>
-                
-                <ul class="nav nav-tabs" role="tablist">
-                    <li class="nav-item">
-                        <a class="nav-link active" data-toggle="tab" href="#stk-tab">STK Push</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" data-toggle="tab" href="#verify-tab">Verify Manual Till</a>
-                    </li>
-                </ul>
-                
-                <div class="tab-content mt-3">
-                    <div id="stk-tab" class="tab-pane fade show active">
-                        <div class="form-group">
-                            <label>Customer Phone Number</label>
-                            <input type="text" id="stk-phone" class="form-control" placeholder="254712345678">
-                            <small class="form-text text-muted">Format: 254712345678</small>
-                        </div>
-                        <button class="btn btn-primary btn-block" id="stkPushBtn">
-                            <i class="fas fa-paper-plane"></i> Send STK Push
-                        </button>
-                        <div id="stk-status" class="mt-2"></div>
-                    </div>
-                    
-                    <div id="verify-tab" class="tab-pane fade">
-                        <div class="alert alert-info">
-                            <i class="fas fa-info-circle"></i> Customer paid manually via Till? Enter the M-Pesa code to verify.
-                        </div>
-                        <div class="form-group">
-                            <label>M-Pesa Transaction Code</label>
-                            <input type="text" id="verify-mpesa-code" class="form-control" placeholder="e.g. SH12AB3CD4">
-                        </div>
-                        <div class="form-group">
-                            <label>Customer Phone (optional)</label>
-                            <input type="text" id="verify-phone" class="form-control" placeholder="254712345678">
-                        </div>
-                        <button class="btn btn-success btn-block" id="verifyTillBtn">
-                            <i class="fas fa-check-circle"></i> Verify Payment
-                        </button>
-                        <div id="verify-status" class="mt-2"></div>
-                    </div>
-                </div>
-            </div>
-
-</div>
-
-<!-- DataTables and other JS libraries -->
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
-
-
-<script>
-// Payment Method Button Handlers
-$('.payment-btn').click(function() {
-    if ($(this).prop('disabled')) {
-        alert('Insurance payment is locked until verified for this patient.');
-        return;
-    }
-    // Remove active class from all buttons
-    $('.payment-btn').removeClass('active');
-    
-    // Add active class to clicked button
-    $(this).addClass('active');
-    
-    // Get selected method
-    const method = $(this).data('method');
-    $('#payment-method').val(method);
-    
-    // Hide all payment-specific sections
-    $('#mpesa-collect-section, #insurance-billing-section, #cash-amount-section, #card-billing-section, #paypal-billing-section').hide();
-    
-    // Show relevant section based on method
-    if (method === 'mpesa') {
-        $('#mpesa-collect-section').slideDown();
-    } else if (method === 'insurance') {
-        $('#insurance-billing-section').slideDown();
-    } else if (method === 'cash') {
-        $('#cash-amount-section').slideDown();
-    } else if (method === 'card') {
-        $('#card-billing-section').slideDown();
-    } else if (method === 'paypal') {
-        $('#paypal-billing-section').slideDown();
-    }
-});
-
-// M-Pesa Collection Functions
-function showMpesaCollectModal(invoiceId, invoiceNumber, amountDue) {
-    $('#mpesa-invoice-id').val(invoiceId);
-    $('#mpesa-invoice-number').val(invoiceNumber);
-    $('#mpesa-invoice-display').text(invoiceNumber);
-    $('#mpesa-amount-display').text('KSH ' + parseFloat(amountDue).toFixed(2));
-    $('#stk-phone').val('');
-    $('#verify-mpesa-code').val('');
-    $('#verify-phone').val('');
-    $('#stk-status').html('');
-    $('#verify-status').html('');
-    $('#mpesaCollectModal').modal('show');
-}
-
-$('#stkPushBtn').click(function() {
-    const phone = $('#stk-phone').val().trim();
-    const invoiceId = $('#mpesa-invoice-id').val();
-    const amount = $('#mpesa-amount-display').text().replace('KSH ', '').trim();
-    
-    if (!phone) {
-        $('#stk-status').html('<div class="alert alert-danger">Phone number is required</div>');
-        return;
-    }
-    
-    const $btn = $(this);
-    $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Sending...');
-    $('#stk-status').html('<div class="alert alert-info"><i class="fas fa-spinner fa-spin"></i> Initiating STK Push...</div>');
-    
-    $.ajax({
-        url: '/api/mpesa/stkpush',
-        method: 'POST',
-        contentType: 'application/json',
-        headers: { 'X-CSRFToken': $('input[name="csrf_token"]').val() },
-        data: JSON.stringify({
-            phone_number: phone,
-            amount: parseFloat(amount),
-            invoice_id: parseInt(invoiceId)
-        }),
-        success: function(response) {
-            if (response.ok) {
-                $('#stk-status').html(`
-                    <div class="alert alert-success">
-                        <i class="fas fa-check-circle"></i> STK Push sent! Customer should see prompt on their phone.
-                        <br><small>Payment will be automatically recorded once customer completes.</small>
-                    </div>
-                `);
-                setTimeout(() => {
-                    $('#mpesaCollectModal').modal('hide');
-                    location.reload();
-                }, 3000);
-            } else {
-                $('#stk-status').html(`<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ${response.error || 'Failed to send STK Push'}</div>`);
-            }
-        },
-        error: function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Request failed';
-            $('#stk-status').html(`<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ${msg}</div>`);
-        },
-        complete: function() {
-            $btn.prop('disabled', false).html('<i class="fas fa-paper-plane"></i> Send STK Push');
-        }
-    });
-});
-
-$('#verifyTillBtn').click(function() {
-    const mpesaCode = $('#verify-mpesa-code').val().trim();
-    const phone = $('#verify-phone').val().trim();
-    const invoiceNumber = $('#mpesa-invoice-number').val();
-    const amount = $('#mpesa-amount-display').text().replace('KSH ', '').trim();
-    
-    if (!mpesaCode) {
-        $('#verify-status').html('<div class="alert alert-danger">M-Pesa code is required</div>');
-        return;
-    }
-    
-    const $btn = $(this);
-    $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Verifying...');
-    $('#verify-status').html('<div class="alert alert-info"><i class="fas fa-spinner fa-spin"></i> Verifying payment with Safaricom...</div>');
-    
-    $.ajax({
-        url: '/api/mpesa/transaction-status/query',
-        method: 'POST',
-        contentType: 'application/json',
-        headers: { 'X-CSRFToken': $('input[name="csrf_token"]').val() },
-        data: JSON.stringify({
-            mpesa_code: mpesaCode,
-            phone_number: phone || undefined,
-            invoice_number: invoiceNumber,
-            amount: parseFloat(amount)
-        }),
-        success: function(response) {
-            if (response.ok) {
-                $('#verify-status').html(`
-                    <div class="alert alert-success">
-                        <i class="fas fa-check-circle"></i> Verification request submitted!
-                        <br><small>Payment will be recorded once verification completes (usually within 30 seconds).</small>
-                    </div>
-                `);
-                setTimeout(() => {
-                    $('#mpesaCollectModal').modal('hide');
-                    location.reload();
-                }, 3000);
-            } else {
-                $('#verify-status').html(`<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ${response.error || 'Verification failed'}</div>`);
-            }
-        },
-        error: function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Request failed';
-            $('#verify-status').html(`<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ${msg}</div>`);
-        },
-        complete: function() {
-            $btn.prop('disabled', false).html('<i class="fas fa-check-circle"></i> Verify Payment');
-        }
-    });
-});
-
-// Patient search functionality
-document.getElementById('patient-search').addEventListener('input', function(e) {
-    const query = e.target.value.trim();
-    if (query.length > 2) {
-        fetch(`/api/patients?search=${encodeURIComponent(query)}`)
-            .then(response => response.json())
-            .then(data => {
-                const resultsContainer = document.getElementById('search-results');
-                resultsContainer.innerHTML = '';
-                
-                if (data.length > 0) {
-                    data.forEach(patient => {
-                        const patientElement = document.createElement('div');
-                        patientElement.className = 'search-result-item';
-                        patientElement.innerHTML = `
-                            <strong>${patient.name}</strong>
-                            <div>${patient.op_number || patient.ip_number}</div>
-                            <div>Age: ${patient.age || 'N/A'}, Gender: ${patient.gender || 'N/A'}</div>
-                            <button class="btn btn-sm btn-primary select-patient" 
-                                    data-id="${patient.id}">
-                                Select
-                            </button>
-                        `;
-                        resultsContainer.appendChild(patientElement);
-                    });
-                    
-                    // Add event listeners to select buttons
-                    document.querySelectorAll('.select-patient').forEach(button => {
-                        button.addEventListener('click', function() {
-                            const patientId = this.getAttribute('data-id');
-                            document.getElementById('patient-id').value = patientId;
-                            loadPatientDetails(patientId);
-                            resultsContainer.innerHTML = '';
-                        });
-                    });
-                } else {
-                    resultsContainer.innerHTML = '<div class="alert alert-info">No patients found</div>';
-                }
-            });
-    }
-});
-
-document.getElementById('patient-id').addEventListener('change', function() {
-    const patientId = this.value;
-    if (!patientId) return;
-    loadPatientDetails(patientId);
-});
-
-// Store current patient data
-let currentPatientData = null;
-
-// Load patient details first to determine patient type
-function loadPatientDetails(patientId) {
-    fetch(`/api/patients/${patientId}`)
-        .then(response => response.json())
-        .then(patient => {
-            currentPatientData = patient;
-            
-            // Load all patient data
-            loadPatientPrescriptions(patientId);
-            loadCompletedServices(patientId);
-            loadCompletedLabs(patientId);
-            loadCompletedImaging(patientId);
-            loadPatientInsurance(patientId);
-            
-            // Only load ward stay if patient is INPATIENT (has IP number)
-            const isInpatient = patient.ip_number && patient.ip_number.trim() !== '';
-            const wardContainer = document.getElementById('ward-stay-container');
-            
-            if (isInpatient) {
-                wardContainer.parentElement.style.display = 'block';
-                loadPatientWardStay(patientId);
-            } else {
-                // Hide ward stay for outpatients
-                wardContainer.parentElement.style.display = 'none';
-                wardContainer.innerHTML = '';
-                clearAutoHiddenInputs('include_ward_stay');
-                document.getElementById('billing-form').dispatchEvent(new Event('change'));
-            }
-        })
-        .catch(error => {
-            console.error('Failed to load patient details:', error);
-            // Fallback: load everything anyway
-            loadPatientPrescriptions(patientId);
-            loadPatientWardStay(patientId);
-            loadCompletedServices(patientId);
-            loadCompletedLabs(patientId);
-            loadCompletedImaging(patientId);
-            loadPatientInsurance(patientId);
-        });
-}
 
 function clearAutoHiddenInputs(name) {
     document.querySelectorAll(`input[type="hidden"][data-auto-hidden="1"][data-auto-name="${name}"]`).forEach(el => el.remove());

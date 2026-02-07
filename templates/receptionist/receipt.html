@@ -10,7 +10,6 @@
             <a class="btn btn-secondary" href="{{ url_for('receptionist_dashboard') }}">Back</a>
             {% set whatsapp_share_endpoint = url_for('api_sale_share_whatsapp', sale_id=sale.id) %}
             {% set whatsapp_fallback_pdf = url_for('api_sale_receipt_pdf', sale_id=sale.id) %}
-            {% set whatsapp_default_phone = (decrypt_data(sale.patient.phone) if sale.patient and sale.patient.phone else '') %}
             {% include 'components/whatsapp_share_button.html' %}
             <button class="btn btn-primary" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
         </div>
@@ -142,7 +141,10 @@
                 </div>
             </div>
 
-            <div class="text-center mt-3">
+            <div class="text-center mt-4">
+                <div class="d-flex justify-content-center" style="margin-bottom:12px;">
+                    {{ generate_rubber_stamp() }}
+                </div>
                 <div class="small text-muted">Thank you for your visit.</div>
             </div>
         </div>

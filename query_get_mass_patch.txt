@@ -1,0 +1,1237 @@
+*** Begin Patch
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            return default
+-
++
++
++def _db_get(model, ident):
++    """SQLAlchemy 2.x-safe replacement for Model.query.get(ident)."""
++    if ident is None:
++        return None
++
++    # First try as-is.
++    try:
++        obj = db.session.get(model, ident)
++        if obj is not None:
++            return obj
++    except Exception:
++        pass
++
++    # Then try common coercions (Flask request ids often arrive as strings).
++    try:
++        ident_int = int(str(ident).strip())
++    except Exception:
++        return None
++
++    try:
++        return db.session.get(model, ident_int)
++    except Exception:
++        return None
++
++
++def _db_get_or_404(model, ident):
++    """SQLAlchemy 2.x-safe replacement for Model.query.get_or_404(ident)."""
++    obj = _db_get(model, ident)
++    if obj is None:
++        abort(404)
++    return obj
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    ward_name = context.get('ward_name', 'Ward')
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                        if item['action'] == 'create':
+-                            drug = Drug.query.get(item['drug_id'])
++                            drug = _db_get(Drug, item['drug_id'])
+                            if not drug:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                        # fill existing dosage
+-                        dosage = DrugDosage.query.get(item['dosage_id'])
++                        dosage = _db_get(DrugDosage, item['dosage_id'])
+                        if not dosage or not dosage.drug_record:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                    if item['action'] == 'create':
+-                        drug = ControlledDrug.query.get(item['drug_id'])
++                        drug = _db_get(ControlledDrug, item['drug_id'])
+                        if not drug:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-                    dosage = ControlledDrugDosage.query.get(item['dosage_id'])
++                    dosage = _db_get(ControlledDrugDosage, item['dosage_id'])
+                    if not dosage or not dosage.controlled_drug_record:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        if initiated_by_user_id:
+-            u = User.query.get(int(initiated_by_user_id))
++            u = _db_get(User, int(initiated_by_user_id))
+            if u:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        try:
+-            u = User.query.get(int(served_by_user_id))
++            u = _db_get(User, int(served_by_user_id))
+            if u:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                ward_id = request.form.get('ward_id')
+-                ward = Ward.query.get(ward_id)
++                ward = _db_get(Ward, ward_id)
+                if not ward:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                
+-                bed = Bed.query.get(bed_id)
++                bed = _db_get(Bed, bed_id)
+                if bed.status == 'occupied':
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                bed_id = request.form.get('bed_id')
+-                bed = Bed.query.get(bed_id)
++                bed = _db_get(Bed, bed_id)
+                bed.status = 'available'
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                ward_id = request.form.get('ward_id')
+-                ward = Ward.query.get(ward_id)
++                ward = _db_get(Ward, ward_id)
+                if not ward:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                bed_id = request.form.get('bed_id')
+-                bed = Bed.query.get(bed_id)
++                bed = _db_get(Bed, bed_id)
+                if not bed:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        return {'error': 'Unauthorized'}, 403
+-    user = User.query.get(user_id)
++    user = _db_get(User, user_id)
+    if not user:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            user_id = request.form.get('user_id')
+-            user = User.query.get(user_id)
++            user = _db_get(User, user_id)
+            if user:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            user_id = request.form.get('user_id')
+-            user = User.query.get(user_id)
++            user = _db_get(User, user_id)
+            if user:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    user = User.query.get_or_404(user_id)
++    user = _db_get_or_404(User, user_id)
+    assignments = UserWardAssignment.query.filter_by(user_id=user_id).all()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    user = User.query.get_or_404(user_id)
++    user = _db_get_or_404(User, user_id)
+    assignments = UserDepartmentAssignment.query.filter_by(user_id=user_id).all()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    user = User.query.get_or_404(user_id)
++    user = _db_get_or_404(User, user_id)
+    data = request.get_json()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    # Check if ward exists
+-    ward = Ward.query.get(ward_id)
++    ward = _db_get(Ward, ward_id)
+    if not ward:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    user = User.query.get_or_404(user_id)
++    user = _db_get_or_404(User, user_id)
+    data = request.get_json()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    # Check if department exists
+-    department = OutpatientDepartment.query.get(department_id)
++    department = _db_get(OutpatientDepartment, department_id)
+    if not department:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            employee_id = request.form.get('employee_id')
+-            employee = Employee.query.get(employee_id)
++            employee = _db_get(Employee, employee_id)
+            if employee:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            employee_id = request.form.get('employee_id')
+-            employee = Employee.query.get(employee_id)
++            employee = _db_get(Employee, employee_id)
+            if employee:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    payroll = Payroll.query.get_or_404(payroll_id)
++    payroll = _db_get_or_404(Payroll, payroll_id)
+    employees = Employee.query.order_by(Employee.name).all()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        abort(403)
+-    payroll = Payroll.query.get_or_404(payroll_id)
++    payroll = _db_get_or_404(Payroll, payroll_id)
+    return render_template('admin/view_payroll.html', payroll=payroll)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        abort(403)
+-    payroll = Payroll.query.get_or_404(payroll_id)
++    payroll = _db_get_or_404(Payroll, payroll_id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def make_payroll_payment(payroll_id):
+-    payroll = Payroll.query.get_or_404(payroll_id)
++    payroll = _db_get_or_404(Payroll, payroll_id)
+    payment_amount = float(request.form.get('amount', 0) or 0)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        try:
+-            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
++            employee = _db_get(Employee, payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            employee_name = getattr(employee, 'name', None) if employee else None
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    payroll = Payroll.query.get_or_404(payroll_id)
++    payroll = _db_get_or_404(Payroll, payroll_id)
+    amount = request.form.get('amount')
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            backup_id = request.form.get('backup_id')
+-            backup = BackupRecord.query.get_or_404(backup_id)
++            backup = _db_get_or_404(BackupRecord, backup_id)
+            
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            backup_id = request.form.get('backup_id')
+-            backup = BackupRecord.query.get_or_404(backup_id)
++            backup = _db_get_or_404(BackupRecord, backup_id)
+            
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            backup_id = request.form.get('backup_id')
+-            backup = BackupRecord.query.get_or_404(backup_id)
++            backup = _db_get_or_404(BackupRecord, backup_id)
+            
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-            backup_user = BackupLoginUser.query.get(int(bu_id))
++            backup_user = _db_get(BackupLoginUser, int(bu_id))
+            if not backup_user or (backup_user.email or '').strip().lower() != email:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-            admin_user = User.query.get(int(admin_user_id))
++            admin_user = _db_get(User, int(admin_user_id))
+            if not admin_user or str(getattr(admin_user, 'role', '') or '') != 'admin':
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-        backup_user = BackupLoginUser.query.get(int(bu_id))
++        backup_user = _db_get(BackupLoginUser, int(bu_id))
+        if not backup_user or (backup_user.email or '').strip().lower() != email:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-        backup_user = BackupLoginUser.query.get(int(bu_id))
++        backup_user = _db_get(BackupLoginUser, int(bu_id))
+        if not backup_user or (backup_user.email or '').strip().lower() != email:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    backup_user = BackupLoginUser.query.get(user_id)
++    backup_user = _db_get(BackupLoginUser, user_id)
+    if not backup_user:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    backup_user = BackupLoginUser.query.get(user_id)
++    backup_user = _db_get(BackupLoginUser, user_id)
+    if not backup_user:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    user = User.query.get(int(target_user_id))
++    user = _db_get(User, int(target_user_id))
+    if not user or user.role != 'admin':
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            plan_id = request.form.get('plan_id')
+-            plan = DisasterRecoveryPlan.query.get_or_404(plan_id)
++            plan = _db_get_or_404(DisasterRecoveryPlan, plan_id)
+            
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            plan_id = request.form.get('plan_id')
+-            plan = DisasterRecoveryPlan.query.get_or_404(plan_id)
++            plan = _db_get_or_404(DisasterRecoveryPlan, plan_id)
+            
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    backup = BackupRecord.query.get_or_404(backup_id)
++    backup = _db_get_or_404(BackupRecord, backup_id)
+    stats = _backup_extract_stats(backup.notes)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    with app.app_context():
+-        plan = DisasterRecoveryPlan.query.get(plan_id)
++        plan = _db_get(DisasterRecoveryPlan, plan_id)
+        backup = BackupRecord.query.get(backup_id)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        plan = DisasterRecoveryPlan.query.get(plan_id)
+-        backup = BackupRecord.query.get(backup_id)
++        backup = _db_get(BackupRecord, backup_id)
+        if not plan or not backup:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        
+-    po = PurchaseOrder.query.get_or_404(po_id)
++    po = _db_get_or_404(PurchaseOrder, po_id)
+    return render_template('admin/view_purchase_order.html', po=po)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        
+-    po = PurchaseOrder.query.get_or_404(po_id)
++    po = _db_get_or_404(PurchaseOrder, po_id)
+    now = get_eat_now()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        
+-    po = PurchaseOrder.query.get_or_404(po_id)
++    po = _db_get_or_404(PurchaseOrder, po_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    try:
+-        po = PurchaseOrder.query.get_or_404(po_id)
++        po = _db_get_or_404(PurchaseOrder, po_id)
+        po_number = po.po_number
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        
+-    expense = Expense.query.get_or_404(expense_id)
++    expense = _db_get_or_404(Expense, expense_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        
+-    expense = Expense.query.get_or_404(expense_id)
++    expense = _db_get_or_404(Expense, expense_id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        
+-    debtor = Debtor.query.get_or_404(debtor_id)
++    debtor = _db_get_or_404(Debtor, debtor_id)
+    payments = DebtorPayment.query.filter_by(debtor_id=debtor.id).order_by(DebtorPayment.payment_date.desc()).all()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        
+-    debtor = Debtor.query.get_or_404(debtor_id)
++    debtor = _db_get_or_404(Debtor, debtor_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        
+-    debtor = Debtor.query.get_or_404(debtor_id)
++    debtor = _db_get_or_404(Debtor, debtor_id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    try:
+-        policy = InsurancePolicy.query.get_or_404(policy_id)
++        policy = _db_get_or_404(InsurancePolicy, policy_id)
+        db.session.delete(policy)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    try:
+-        claim = InsuranceClaim.query.get_or_404(claim_id)
++        claim = _db_get_or_404(InsuranceClaim, claim_id)
+        db.session.delete(claim)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    payroll = Payroll.query.get_or_404(id)
++    payroll = _db_get_or_404(Payroll, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        try:
+-            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
++            employee = _db_get(Employee, payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            employee_name = getattr(employee, 'name', None) if employee else None
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        try:
+-            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
++            employee = _db_get(Employee, payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            payee_email = None
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    drawing = Transaction.query.get_or_404(id)
++    drawing = _db_get_or_404(Transaction, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    drawing = Transaction.query.get_or_404(id)
++    drawing = _db_get_or_404(Transaction, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    try:
+-        bill = Expense.query.get_or_404(id)
++        bill = _db_get_or_404(Expense, id)
+
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def delete_bill(id):
+-    bill = Expense.query.get_or_404(id)
++    bill = _db_get_or_404(Expense, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def pay_bill(id):
+-    bill = Expense.query.get_or_404(id)
++    bill = _db_get_or_404(Expense, id)
+    if bill.status == 'paid':
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    bill = Expense.query.get_or_404(id)
++    bill = _db_get_or_404(Expense, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    purchase = Purchase.query.get_or_404(id)
++    purchase = _db_get_or_404(Purchase, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    purchase = Purchase.query.get_or_404(id)
++    purchase = _db_get_or_404(Purchase, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    payroll = Payroll.query.get_or_404(id)
++    payroll = _db_get_or_404(Payroll, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-        employee = Employee.query.get(employee_id)
++        employee = _db_get(Employee, employee_id)
+        if not employee:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    employee = Employee.query.get_or_404(employee_id)
++    employee = _db_get_or_404(Employee, employee_id)
+    return jsonify({'salary': employee.salary})
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    debtor = Debtor.query.get_or_404(debtor_id)
++    debtor = _db_get_or_404(Debtor, debtor_id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    debt = Debt.query.get_or_404(id)
++    debt = _db_get_or_404(Debt, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    debt = Debt.query.get_or_404(id)
++    debt = _db_get_or_404(Debt, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    try:
+-        debt = Debt.query.get_or_404(debt_id)
++        debt = _db_get_or_404(Debt, debt_id)
+        amount = float(request.form.get('amount', 0))
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    debt = Debt.query.get_or_404(debt_id)
++    debt = _db_get_or_404(Debt, debt_id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    transaction = Transaction.query.get_or_404(id)
++    transaction = _db_get_or_404(Transaction, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        for payroll in pending_payroll:
+-            employee = Employee.query.get(payroll.employee_id) if payroll.employee_id else None
++            employee = _db_get(Employee, payroll.employee_id) if payroll.employee_id else None
+            payroll_data.append({
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            dosage_id = request.form.get('dosage_id')
+-            dosage = DrugDosage.query.get(dosage_id)
++            dosage = _db_get(DrugDosage, dosage_id)
+            if dosage:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    dosage = DrugDosage.query.get_or_404(dosage_id)
++    dosage = _db_get_or_404(DrugDosage, dosage_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    drug = Drug.query.get_or_404(drug_id)
++    drug = _db_get_or_404(Drug, drug_id)
+    dosage = DrugDosage.query.filter_by(drug_id=drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    controlled_drug = ControlledDrug.query.get_or_404(controlled_drug_id)
++    controlled_drug = _db_get_or_404(ControlledDrug, controlled_drug_id)
+    dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=controlled_drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            patient_id = request.form.get('patient_id')
+-            patient = Patient.query.get(patient_id)
++            patient = _db_get(Patient, patient_id)
+            if patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    patient = Patient.query.get_or_404(patient_id)
++    patient = _db_get_or_404(Patient, patient_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    patient = Patient.query.get_or_404(patient_id)
++    patient = _db_get_or_404(Patient, patient_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def get_service(id):
+-    service = Service.query.get(id)
++    service = _db_get(Service, id)
+    if not service:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def update_service(id):
+-    service = Service.query.get(id)
++    service = _db_get(Service, id)
+    if not service:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def toggle_service_active(id):
+-    service = Service.query.get(id)
++    service = _db_get(Service, id)
+    if not service:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def delete_service(id):
+-    service = Service.query.get(id)
++    service = _db_get(Service, id)
+    if not service:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def get_lab_test(id):
+-    lab_test = LabTest.query.get(id)
++    lab_test = _db_get(LabTest, id)
+    if not lab_test:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def update_lab_test(id):
+-    lab_test = LabTest.query.get(id)
++    lab_test = _db_get(LabTest, id)
+    if not lab_test:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def toggle_lab_test_active(id):
+-    lab_test = LabTest.query.get(id)
++    lab_test = _db_get(LabTest, id)
+    if not lab_test:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def delete_lab_test(id):
+-    lab_test = LabTest.query.get(id)
++    lab_test = _db_get(LabTest, id)
+    if not lab_test:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def get_imaging_test(id):
+-    imaging_test = ImagingTest.query.get(id)
++    imaging_test = _db_get(ImagingTest, id)
+    if not imaging_test:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def update_imaging_test(id):
+-    imaging_test = ImagingTest.query.get(id)
++    imaging_test = _db_get(ImagingTest, id)
+    if not imaging_test:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def toggle_imaging_test_active(id):
+-    imaging_test = ImagingTest.query.get(id)
++    imaging_test = _db_get(ImagingTest, id)
+    if not imaging_test:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def delete_imaging_test(id):
+-    imaging_test = ImagingTest.query.get(id)
++    imaging_test = _db_get(ImagingTest, id)
+    if not imaging_test:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    dosage = DrugDosage.query.get_or_404(dosage_id)
++    dosage = _db_get_or_404(DrugDosage, dosage_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    drug = Drug.query.get_or_404(drug_id)
++    drug = _db_get_or_404(Drug, drug_id)
+    dosage = DrugDosage.query.filter_by(drug_id=drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    drug = ControlledDrug.query.get_or_404(drug_id)
++    drug = _db_get_or_404(ControlledDrug, drug_id)
+    dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            dosage_id = request.form.get('dosage_id')
+-            dosage = ControlledDrugDosage.query.get(dosage_id)
++            dosage = _db_get(ControlledDrugDosage, dosage_id)
+            if dosage:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            dosage_id = request.form.get('dosage_id')
+-            dosage = ControlledDrugDosage.query.get(dosage_id)
++            dosage = _db_get(ControlledDrugDosage, dosage_id)
+            if dosage:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        return jsonify({'error': 'Unauthorized'}), 403
+-    dosage = ControlledDrugDosage.query.get_or_404(dosage_id)
++    dosage = _db_get_or_404(ControlledDrugDosage, dosage_id)
+    return jsonify({
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        return jsonify({'error': 'Unauthorized'}), 403
+-    drug = ControlledDrug.query.get_or_404(drug_id)
++    drug = _db_get_or_404(ControlledDrug, drug_id)
+    dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    if kind == 'drug':
+-        drug = Drug.query.get_or_404(drug_id)
++        drug = _db_get_or_404(Drug, drug_id)
+        existing = DrugDosage.query.filter_by(drug_id=drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    drug = ControlledDrug.query.get_or_404(drug_id)
++    drug = _db_get_or_404(ControlledDrug, drug_id)
+    existing = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        return jsonify({'error': 'Unauthorized'}), 403
+-    drug = Drug.query.get_or_404(drug_id)
++    drug = _db_get_or_404(Drug, drug_id)
+    dosage = DrugDosage.query.filter_by(drug_id=drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        return jsonify({'error': 'Unauthorized'}), 403
+-    drug = ControlledDrug.query.get_or_404(drug_id)
++    drug = _db_get_or_404(ControlledDrug, drug_id)
+    dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        elif tx.transaction_type == 'expense' and tx.reference_id:
+-            expense = Expense.query.get(tx.reference_id)
++            expense = _db_get(Expense, tx.reference_id)
+        elif tx.transaction_type == 'purchase' and tx.reference_id:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        elif tx.transaction_type == 'purchase' and tx.reference_id:
+-            purchase = Purchase.query.get(tx.reference_id)
++            purchase = _db_get(Purchase, tx.reference_id)
+    except Exception:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    prescription = Prescription.query.get_or_404(id)
++    prescription = _db_get_or_404(Prescription, id)
+    try:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get_or_404(patient_id)
++    patient = _db_get_or_404(Patient, patient_id)
+    ctx = _get_patient_bed_stay_context(patient_id)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get_or_404(patient_id)
++    patient = _db_get_or_404(Patient, patient_id)
+    ctx = _get_patient_bed_stay_context(patient_id)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    patient = Patient.query.get_or_404(patient_id)
++    patient = _db_get_or_404(Patient, patient_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    patient = Patient.query.get_or_404(patient_id)
++    patient = _db_get_or_404(Patient, patient_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    patient = Patient.query.get_or_404(patient_id)
++    patient = _db_get_or_404(Patient, patient_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    patient = Patient.query.get_or_404(patient_id)
++    patient = _db_get_or_404(Patient, patient_id)
+    
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    try:
+-        notification = NurseNotification.query.get_or_404(notification_id)
++        notification = _db_get_or_404(NurseNotification, notification_id)
+        notification.status = 'completed'
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    sale = Sale.query.get(sale_id)
++    sale = _db_get(Sale, sale_id)
+    if not sale:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    drug = Drug.query.get_or_404(drug_id)
++    drug = _db_get_or_404(Drug, drug_id)
+    return jsonify({
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    
+-    drug = ControlledDrug.query.get_or_404(controlled_drug_id)
++    drug = _db_get_or_404(ControlledDrug, controlled_drug_id)
+    return jsonify({
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    tx = Transaction.query.get(transaction_id)
++    tx = _db_get(Transaction, transaction_id)
+    if not tx:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        elif tx.transaction_type == 'expense' and ref_id:
+-            expense = Expense.query.get(int(ref_id))
++            expense = _db_get(Expense, int(ref_id))
+        elif tx.transaction_type == 'purchase' and ref_id:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        elif tx.transaction_type == 'purchase' and ref_id:
+-            purchase = Purchase.query.get(int(ref_id))
++            purchase = _db_get(Purchase, int(ref_id))
+        elif tx.transaction_type == 'controlled_sale' and ref_id:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    """API endpoint to mark a notification as read."""
+-    notification = Notification.query.get_or_404(notification_id)
++    notification = _db_get_or_404(Notification, notification_id)
+    if notification.user_id != current_user.id:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    service = Service.query.get(service_id_int)
++    service = _db_get(Service, service_id_int)
+    if not service or not getattr(service, 'is_active', True):
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    """
+-    patient = Patient.query.get(patient_id)
++    patient = _db_get(Patient, patient_id)
+    if not patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    try:
+-        provider = InsuranceProvider.query.get_or_404(provider_id)
++        provider = _db_get_or_404(InsuranceProvider, provider_id)
+        provider.name = request.form.get('name')
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    try:
+-        provider = InsuranceProvider.query.get_or_404(provider_id)
++        provider = _db_get_or_404(InsuranceProvider, provider_id)
+        provider_name = provider.name
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def edit_patient_insurance(patient_insurance_id):
+-    p_insurance = PatientInsurance.query.get_or_404(patient_insurance_id)
++    p_insurance = _db_get_or_404(PatientInsurance, patient_insurance_id)
+    p_insurance.patient_id = request.form.get('patient_id')
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def delete_patient_insurance(patient_insurance_id):
+-    p_insurance = PatientInsurance.query.get_or_404(patient_insurance_id)
++    p_insurance = _db_get_or_404(PatientInsurance, patient_insurance_id)
+    db.session.delete(p_insurance)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def update_claim(claim_id):
+-    claim = Claim.query.get_or_404(claim_id)
++    claim = _db_get_or_404(Claim, claim_id)
+    claim.total_amount = request.form.get('total_amount')
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def edit_invoice(invoice_id):
+-    invoice = Invoice.query.get_or_404(invoice_id)
++    invoice = _db_get_or_404(Invoice, invoice_id)
+    if request.method == 'POST':
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def view_invoice(invoice_id):
+-    invoice = Invoice.query.get_or_404(invoice_id)
++    invoice = _db_get_or_404(Invoice, invoice_id)
+    return render_template('admin/view_invoice.html', invoice=invoice)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def delete_invoice(invoice_id):
+-    invoice = Invoice.query.get_or_404(invoice_id)
++    invoice = _db_get_or_404(Invoice, invoice_id)
+    db.session.delete(invoice)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                if getattr(payment, 'provider_txn_id', None):
+-                    provider_txn = MpesaProviderTxn.query.get(int(payment.provider_txn_id))
++                    provider_txn = _db_get(MpesaProviderTxn, int(payment.provider_txn_id))
+                if not provider_txn and checkout_id:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-                    pi = PaymentIntent.query.get(int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
++                    pi = _db_get(PaymentIntent, int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
+                    if pi:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        if payment.invoice_id:
+-            invoice = Invoice.query.get(payment.invoice_id)
++            invoice = _db_get(Invoice, payment.invoice_id)
+            if invoice and payment.amount_received:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                    if payment.invoice_id:
+-                        inv = Invoice.query.get(payment.invoice_id)
++                        inv = _db_get(Invoice, payment.invoice_id)
+                        if inv:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                            try:
+-                                patient = Patient.query.get(inv.patient_id) if getattr(inv, 'patient_id', None) else None
++                                patient = _db_get(Patient, inv.patient_id) if getattr(inv, 'patient_id', None) else None
+                                if patient:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                if getattr(payment, 'provider_txn_id', None):
+-                    provider_txn = MpesaProviderTxn.query.get(int(payment.provider_txn_id))
++                    provider_txn = _db_get(MpesaProviderTxn, int(payment.provider_txn_id))
+                if not provider_txn and checkout_id:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-                    pi = PaymentIntent.query.get(int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
++                    pi = _db_get(PaymentIntent, int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
+                    if pi:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            if getattr(q, 'provider_txn_id', None):
+-                ptxn = MpesaProviderTxn.query.get(int(q.provider_txn_id))
++                ptxn = _db_get(MpesaProviderTxn, int(q.provider_txn_id))
+                if ptxn:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            if getattr(q, 'payment_intent_id', None):
+-                pi = PaymentIntent.query.get(int(q.payment_intent_id))
++                pi = _db_get(PaymentIntent, int(q.payment_intent_id))
+                if pi:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        # If we can post, do it idempotently.
+-        invoice = Invoice.query.get(q.invoice_id) if q.invoice_id else None
++        invoice = _db_get(Invoice, q.invoice_id) if q.invoice_id else None
+        amount = _to_decimal_2dp(q.amount_expected) if q.amount_expected is not None else None
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                if getattr(q, 'provider_txn_id', None):
+-                    ptxn = MpesaProviderTxn.query.get(int(q.provider_txn_id))
++                    ptxn = _db_get(MpesaProviderTxn, int(q.provider_txn_id))
+                    if ptxn:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                if getattr(q, 'payment_intent_id', None):
+-                    pi = PaymentIntent.query.get(int(q.payment_intent_id))
++                    pi = _db_get(PaymentIntent, int(q.payment_intent_id))
+                    if pi:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            if getattr(payout, 'provider_txn_id', None):
+-                ptxn = MpesaProviderTxn.query.get(int(payout.provider_txn_id))
++                ptxn = _db_get(MpesaProviderTxn, int(payout.provider_txn_id))
+                if ptxn:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            if getattr(payout, 'payment_intent_id', None):
+-                pi = PaymentIntent.query.get(int(payout.payment_intent_id))
++                pi = _db_get(PaymentIntent, int(payout.payment_intent_id))
+                if pi:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                if getattr(payout, 'provider_txn_id', None):
+-                    ptxn = MpesaProviderTxn.query.get(int(payout.provider_txn_id))
++                    ptxn = _db_get(MpesaProviderTxn, int(payout.provider_txn_id))
+                    if ptxn:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+                if getattr(payout, 'payment_intent_id', None):
+-                    pi = PaymentIntent.query.get(int(payout.payment_intent_id))
++                    pi = _db_get(PaymentIntent, int(payout.payment_intent_id))
+                    if pi:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def edit_vendor(vendor_id):
+-    vendor = Vendor.query.get_or_404(vendor_id)
++    vendor = _db_get_or_404(Vendor, vendor_id)
+    vendor.name = request.form.get('name')
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def delete_vendor(vendor_id):
+-    vendor = Vendor.query.get_or_404(vendor_id)
++    vendor = _db_get_or_404(Vendor, vendor_id)
+    db.session.delete(vendor)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def edit_employee(employee_id):
+-    employee = Employee.query.get_or_404(employee_id)
++    employee = _db_get_or_404(Employee, employee_id)
+    if request.method == 'POST':
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+def delete_employee(employee_id):
+-    employee = Employee.query.get_or_404(employee_id)
++    employee = _db_get_or_404(Employee, employee_id)
+    db.session.delete(employee)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    payment = PayrollPayment.query.get_or_404(receipt_id)
++    payment = _db_get_or_404(PayrollPayment, receipt_id)
+    payroll = Payroll.query.get_or_404(payment.payroll_id)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    payment = PayrollPayment.query.get_or_404(receipt_id)
+-    payroll = Payroll.query.get_or_404(payment.payroll_id)
++    payroll = _db_get_or_404(Payroll, payment.payroll_id)
+    if int(getattr(payroll, 'employee_id', 0) or 0) != int(employee.id):
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        if receipt.get('paid_by'):
+-            issued_user = User.query.get(int(receipt.get('paid_by')))
++            issued_user = _db_get(User, int(receipt.get('paid_by')))
+    except Exception:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-    payment = PayrollPayment.query.get_or_404(receipt_id)
++    payment = _db_get_or_404(PayrollPayment, receipt_id)
+    payroll = Payroll.query.get_or_404(payment.payroll_id)
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+    payment = PayrollPayment.query.get_or_404(receipt_id)
+-    payroll = Payroll.query.get_or_404(payment.payroll_id)
++    payroll = _db_get_or_404(Payroll, payment.payroll_id)
+    if int(getattr(payroll, 'employee_id', 0) or 0) != int(employee.id):
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+        if receipt.get('paid_by'):
+-            issued_user = User.query.get(int(receipt.get('paid_by')))
++            issued_user = _db_get(User, int(receipt.get('paid_by')))
+    except Exception:
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+
+-        target = User.query.get(user_id)
++        target = _db_get(User, user_id)
+        if not target or not getattr(target, 'is_active', True):
+
+*** Update File: C:\Users\makok\Desktop\Makokha-Medical-Centre\app.py
+@@
+            other_user_id = c.receiver_id if c.caller_id == current_user.id else c.caller_id
+-            other_user = User.query.get(other_user_id)
++            other_user = _db_get(User, other_user_id)
+            payload.append({
+
+*** End Patch

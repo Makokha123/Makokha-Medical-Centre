@@ -11,7 +11,7 @@
 <div class="no-print" style="max-width: 500px; margin: 0 auto 10px auto; text-align: right;">
     {% set whatsapp_share_endpoint = url_for('api_refund_share_whatsapp', refund_id=refund.id) %}
     {% set whatsapp_fallback_pdf = url_for('api_refund_receipt_pdf', refund_id=refund.id) %}
-    {% set whatsapp_default_phone = (decrypt_data(refund.sale.patient.phone) if refund.sale and refund.sale.patient and refund.sale.patient.phone else '') %}
+    {% set whatsapp_default_phone = '' %}
     {% include 'components/whatsapp_share_button.html' %}
 </div>
 <div class="receipt-container">

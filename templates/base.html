@@ -47,6 +47,10 @@
             --text-dark: #212529;
             --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             --radius: 8px;
+
+            /* Stamp typography (shared by SVG/PDF + HTML/CSS stamps) */
+            --stamp-font-bold: {{ stamp_typography.get('svg', {}).get('font_bold', 'Arial Black, Arial, Helvetica, sans-serif') }};
+            --stamp-font-regular: {{ stamp_typography.get('svg', {}).get('font_regular', 'Arial, Helvetica, sans-serif') }};
         }
 
         /* Global Styles */

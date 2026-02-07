@@ -485,6 +485,38 @@ def _coerce_int(value, default: int) -> int:
         except Exception:
             return default
 
+
+def _db_get(model, ident):
+    """SQLAlchemy 2.x-safe replacement for Model.query.get(ident)."""
+    if ident is None:
+        return None
+
+    # First try as-is.
+    try:
+        obj = db.session.get(model, ident)
+        if obj is not None:
+            return obj
+    except Exception:
+        pass
+
+    # Then try common coercions (Flask request ids often arrive as strings).
+    try:
+        ident_int = int(str(ident).strip())
+    except Exception:
+        return None
+
+    try:
+        return db.session.get(model, ident_int)
+    except Exception:
+        return None
+
+
+def _db_get_or_404(model, ident):
+    """SQLAlchemy 2.x-safe replacement for Model.query.get_or_404(ident)."""
+    obj = _db_get(model, ident)
+    if obj is None:
+        abort(404)
+    return obj
 _resend_api_key = (os.getenv('RESEND_API_KEY') or app.config.get('RESEND_API_KEY') or '').strip()
 _resend_from = (os.getenv('RESEND_FROM') or app.config.get('RESEND_FROM') or 'Makokha Medical Centre <onboarding@resend.dev>').strip()
 _resend_reply_to = (os.getenv('RESEND_REPLY_TO') or app.config.get('RESEND_REPLY_TO') or 'makokhamedicalcentre2025@gmail.com').strip()
@@ -1244,7 +1276,7 @@ def update_ward_stay_bill_for_patient(patient_id: int, context: dict):
 
     amount = daily_rate * unbilled_days
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     ward_name = context.get('ward_name', 'Ward')
 
     # Create Sale and Transaction first
@@ -2493,7 +2525,7 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
                 try:
                     if item['kind'] == 'drug':
                         if item['action'] == 'create':
-                            drug = Drug.query.get(item['drug_id'])
+                            drug = _db_get(Drug, item['drug_id'])
                             if not drug:
                                 raise Exception('Drug not found')
                             suggestion = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
@@ -2525,7 +2557,7 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
                             continue
 
                         # fill existing dosage
-                        dosage = DrugDosage.query.get(item['dosage_id'])
+                        dosage = _db_get(DrugDosage, item['dosage_id'])
                         if not dosage or not dosage.drug_record:
                             raise Exception('Dosage not found')
                         suggestion = _ai_generate_dosage_fields_from_name(dosage.drug_record.name, context_entry=None)
@@ -2560,7 +2592,7 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
 
                     # controlled
                     if item['action'] == 'create':
-                        drug = ControlledDrug.query.get(item['drug_id'])
+                        drug = _db_get(ControlledDrug, item['drug_id'])
                         if not drug:
                             raise Exception('Controlled drug not found')
                         suggestion = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
@@ -2591,7 +2623,7 @@ def _ai_dosage_job_thread(*, job_id: str, kind: str, mode: str, limit: int | Non
                         _write_ai_job_state(job_id, state)
                         continue
 
-                    dosage = ControlledDrugDosage.query.get(item['dosage_id'])
+                    dosage = _db_get(ControlledDrugDosage, item['dosage_id'])
                     if not dosage or not dosage.controlled_drug_record:
                         raise Exception('Controlled dosage not found')
                     suggestion = _ai_generate_dosage_fields_from_name(dosage.controlled_drug_record.name, context_entry=None)
@@ -4783,7 +4815,7 @@ def _create_payment_intent(
     department = None
     try:
         if initiated_by_user_id:
-            u = User.query.get(int(initiated_by_user_id))
+            u = _db_get(User, int(initiated_by_user_id))
             if u:
                 initiated_by_role = getattr(u, 'role', None)
                 department = _infer_department_for_user(u)
@@ -4878,7 +4910,7 @@ def _build_mpesa_receipt_html(
     served_by = served_by_label
     if not served_by and served_by_user_id:
         try:
-            u = User.query.get(int(served_by_user_id))
+            u = _db_get(User, int(served_by_user_id))
             if u:
                 served_by = getattr(u, 'username', None) or getattr(u, 'name', None) or None
                 try:
@@ -7088,13 +7120,15 @@ def inject_stamp_signature_functions():
         generate_rubber_stamp, 
         generate_digital_signature,
         get_current_stamp_date,
-        get_current_signature_date
+        get_current_signature_date,
+        get_stamp_typography,
     )
     return dict(
         generate_rubber_stamp=generate_rubber_stamp,
         generate_digital_signature=generate_digital_signature,
         get_current_stamp_date=get_current_stamp_date,
-        get_current_signature_date=get_current_signature_date
+        get_current_signature_date=get_current_signature_date,
+        stamp_typography=get_stamp_typography(),
     )
 
 @csrf.exempt
@@ -8299,7 +8333,7 @@ def manage_beds():
         elif action == 'edit_ward':
             try:
                 ward_id = request.form.get('ward_id')
-                ward = Ward.query.get(ward_id)
+                ward = _db_get(Ward, ward_id)
                 if not ward:
                     flash('Ward not found', 'danger')
                 else:
@@ -8336,7 +8370,7 @@ def manage_beds():
                 bed_id = request.form.get('bed_id')
                 patient_id = request.form.get('patient_id')
                 
-                bed = Bed.query.get(bed_id)
+                bed = _db_get(Bed, bed_id)
                 if bed.status == 'occupied':
                     flash('Bed is already occupied', 'danger')
                 else:
@@ -8368,7 +8402,7 @@ def manage_beds():
         elif action == 'release_bed':
             try:
                 bed_id = request.form.get('bed_id')
-                bed = Bed.query.get(bed_id)
+                bed = _db_get(Bed, bed_id)
                 bed.status = 'available'
                 try:
                     now = get_eat_now()
@@ -8404,7 +8438,7 @@ def manage_beds():
         elif action == 'delete_ward':
             try:
                 ward_id = request.form.get('ward_id')
-                ward = Ward.query.get(ward_id)
+                ward = _db_get(Ward, ward_id)
                 if not ward:
                     flash('Ward not found', 'danger')
                 else:
@@ -8420,7 +8454,7 @@ def manage_beds():
         elif action == 'delete_bed':
             try:
                 bed_id = request.form.get('bed_id')
-                bed = Bed.query.get(bed_id)
+                bed = _db_get(Bed, bed_id)
                 if not bed:
                     flash('Bed not found', 'danger')
                 else:
@@ -8931,7 +8965,7 @@ def get_next_drug_number():
 def get_user_details(user_id):
     if current_user.role != 'admin':
         return {'error': 'Unauthorized'}, 403
-    user = User.query.get(user_id)
+    user = _db_get(User, user_id)
     if not user:
         return {'error': 'User not found'}, 404
     return {
@@ -9132,7 +9166,7 @@ def manage_users():
         
         elif action == 'edit':
             user_id = request.form.get('user_id')
-            user = User.query.get(user_id)
+            user = _db_get(User, user_id)
             if user:
                 try:
                     old_values = {
@@ -9170,7 +9204,7 @@ def manage_users():
         
         elif action == 'delete':
             user_id = request.form.get('user_id')
-            user = User.query.get(user_id)
+            user = _db_get(User, user_id)
             if user:
                 if user.id == current_user.id:
                     flash('You cannot delete your own account', 'danger')
@@ -9242,7 +9276,7 @@ def get_user_ward_assignments(user_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    user = User.query.get_or_404(user_id)
+    user = _db_get_or_404(User, user_id)
     assignments = UserWardAssignment.query.filter_by(user_id=user_id).all()
     
     return jsonify({
@@ -9264,7 +9298,7 @@ def get_user_department_assignments(user_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    user = User.query.get_or_404(user_id)
+    user = _db_get_or_404(User, user_id)
     assignments = UserDepartmentAssignment.query.filter_by(user_id=user_id).all()
     
     return jsonify({
@@ -9286,7 +9320,7 @@ def add_user_ward_assignment(user_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    user = User.query.get_or_404(user_id)
+    user = _db_get_or_404(User, user_id)
     data = request.get_json()
     
     ward_id = data.get('ward_id')
@@ -9297,7 +9331,7 @@ def add_user_ward_assignment(user_id):
         return jsonify({'error': 'Ward ID and role are required'}), 400
     
     # Check if ward exists
-    ward = Ward.query.get(ward_id)
+    ward = _db_get(Ward, ward_id)
     if not ward:
         return jsonify({'error': 'Ward not found'}), 404
     
@@ -9344,7 +9378,7 @@ def add_user_department_assignment(user_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    user = User.query.get_or_404(user_id)
+    user = _db_get_or_404(User, user_id)
     data = request.get_json()
     
     department_id = data.get('department_id')
@@ -9355,7 +9389,7 @@ def add_user_department_assignment(user_id):
         return jsonify({'error': 'Department ID and role are required'}), 400
     
     # Check if department exists
-    department = OutpatientDepartment.query.get(department_id)
+    department = _db_get(OutpatientDepartment, department_id)
     if not department:
         return jsonify({'error': 'Department not found'}), 404
     
@@ -9491,7 +9525,7 @@ def manage_employees():
         
         elif action == 'edit':
             employee_id = request.form.get('employee_id')
-            employee = Employee.query.get(employee_id)
+            employee = _db_get(Employee, employee_id)
             if employee:
                 try:
                     old_values = {
@@ -9545,7 +9579,7 @@ def manage_employees():
         
         elif action == 'delete':
             employee_id = request.form.get('employee_id')
-            employee = Employee.query.get(employee_id)
+            employee = _db_get(Employee, employee_id)
             if employee:
                 try:
                     log_audit('delete', 'Employee', employee.id, {
@@ -11662,12 +11696,16 @@ def generate_reports():
             tx = tx_by_sale_id.get(s.id)
             receipt_url = url_for('admin_transaction_receipt', transaction_id=tx.id) if tx else None
 
+            # Back-compat alias: some older snippets used `sale` in this loop.
+            sale = s
+            pdf_url = url_for('api_sale_receipt_pdf', sale_id=sale.id) if 'api_sale_receipt_pdf' in current_app.view_functions else f"/api/sales/{sale.id}/receipt.pdf"
+
             receipts.append({
                 'sale_id': s.id,
                 'sale_number': s.sale_number,
                 'created_at': s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '',
                 'pharmacist_name': s.pharmacist_name,
-                'payment_method': s.payment_method,
+                'pdf_url': pdf_url,
                 'total_amount': float(s.total_amount or 0),
                 'patient_name': patient_name,
                 'customer_name': patient_name,
@@ -11790,7 +11828,7 @@ def edit_payroll(payroll_id):
     if current_user.role != 'admin':
         abort(403)
     
-    payroll = Payroll.query.get_or_404(payroll_id)
+    payroll = _db_get_or_404(Payroll, payroll_id)
     employees = Employee.query.order_by(Employee.name).all()
     
     if request.method == 'POST':
@@ -11815,7 +11853,7 @@ def edit_payroll(payroll_id):
 def view_payroll(payroll_id):
     if current_user.role != 'admin':
         abort(403)
-    payroll = Payroll.query.get_or_404(payroll_id)
+    payroll = _db_get_or_404(Payroll, payroll_id)
     return render_template('admin/view_payroll.html', payroll=payroll)
 
 @app.route('/admin/payroll/<int:payroll_id>/delete', methods=['POST'])
@@ -11826,7 +11864,7 @@ def delete_payroll(payroll_id):
         if request.headers.get('X-CSRFToken') or 'application/json' in request.headers.get('Accept', ''):
             return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         abort(403)
-    payroll = Payroll.query.get_or_404(payroll_id)
+    payroll = _db_get_or_404(Payroll, payroll_id)
     try:
         db.session.delete(payroll)
         db.session.commit()
@@ -11850,7 +11888,7 @@ def delete_payroll(payroll_id):
 @app.route('/admin/payroll/<int:payroll_id>/make_payment', methods=['POST'])
 @login_required
 def make_payroll_payment(payroll_id):
-    payroll = Payroll.query.get_or_404(payroll_id)
+    payroll = _db_get_or_404(Payroll, payroll_id)
     payment_amount = float(request.form.get('amount', 0) or 0)
     payment_date = request.form.get('payment_date')
     payment_method = (request.form.get('payment_method') or '').strip() or None
@@ -11921,7 +11959,7 @@ def make_payroll_payment(payroll_id):
         db.session.add(transaction)
 
         try:
-            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            employee = _db_get(Employee, payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
             employee_name = getattr(employee, 'name', None) if employee else None
             receipt_html = "".join([
                 "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
@@ -11975,7 +12013,7 @@ def make_payroll_payment(payroll_id):
     if current_user.role != 'admin':
         abort(403)
     
-    payroll = Payroll.query.get_or_404(payroll_id)
+    payroll = _db_get_or_404(Payroll, payroll_id)
     amount = request.form.get('amount')
     notes = request.form.get('notes')
     
@@ -13868,7 +13906,7 @@ def backup_management():
         
         elif action == 'restore_backup':
             backup_id = request.form.get('backup_id')
-            backup = BackupRecord.query.get_or_404(backup_id)
+            backup = _db_get_or_404(BackupRecord, backup_id)
             
             try:
                 # Verify backup exists
@@ -13901,7 +13939,7 @@ def backup_management():
         
         elif action == 'download_backup':
             backup_id = request.form.get('backup_id')
-            backup = BackupRecord.query.get_or_404(backup_id)
+            backup = _db_get_or_404(BackupRecord, backup_id)
             
             try:
                 if not verify_backup_exists(backup):
@@ -13949,7 +13987,7 @@ def backup_management():
         
         elif action == 'delete_backup':
             backup_id = request.form.get('backup_id')
-            backup = BackupRecord.query.get_or_404(backup_id)
+            backup = _db_get_or_404(BackupRecord, backup_id)
             
             try:
                 # Delete from storage
@@ -14577,7 +14615,7 @@ def backup_add_user():
                 session.pop('backup_add_user_id', None)
                 return redirect(url_for('backup_manage_users'))
 
-            backup_user = BackupLoginUser.query.get(int(bu_id))
+            backup_user = _db_get(BackupLoginUser, int(bu_id))
             if not backup_user or (backup_user.email or '').strip().lower() != email:
                 flash('Pending user not found. Start again.', 'danger')
                 session.pop('backup_add_stage', None)
@@ -14591,7 +14629,7 @@ def backup_add_user():
                 flash('Please select an admin to add.', 'danger')
                 return redirect(url_for('backup_manage_users'))
 
-            admin_user = User.query.get(int(admin_user_id))
+            admin_user = _db_get(User, int(admin_user_id))
             if not admin_user or str(getattr(admin_user, 'role', '') or '') != 'admin':
                 flash('Selected user is not a valid admin.', 'danger')
                 return redirect(url_for('backup_manage_users'))
@@ -14656,7 +14694,7 @@ def backup_add_user():
             session.pop('backup_add_user_id', None)
             return redirect(url_for('backup_manage_users'))
 
-        backup_user = BackupLoginUser.query.get(int(bu_id))
+        backup_user = _db_get(BackupLoginUser, int(bu_id))
         if not backup_user or (backup_user.email or '').strip().lower() != email:
             flash('Pending user not found. Start again.', 'danger')
             session.pop('backup_add_stage', None)
@@ -14713,7 +14751,7 @@ def backup_add_user():
             flash(msg, 'danger')
             return redirect(url_for('backup_manage_users'))
 
-        backup_user = BackupLoginUser.query.get(int(bu_id))
+        backup_user = _db_get(BackupLoginUser, int(bu_id))
         if not backup_user or (backup_user.email or '').strip().lower() != email:
             flash('Pending user not found. Start again.', 'danger')
             return redirect(url_for('backup_manage_users'))
@@ -14750,7 +14788,7 @@ def backup_remove_user(user_id: int):
     if not _check_is_main_admin():
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
-    backup_user = BackupLoginUser.query.get(user_id)
+    backup_user = _db_get(BackupLoginUser, user_id)
     if not backup_user:
         flash('User not found', 'danger')
         return redirect(url_for('backup_manage_users'))
@@ -14772,7 +14810,7 @@ def backup_toggle_user(user_id: int):
     if not _check_is_main_admin():
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
-    backup_user = BackupLoginUser.query.get(user_id)
+    backup_user = _db_get(BackupLoginUser, user_id)
     if not backup_user:
         return jsonify({'success': False, 'error': 'Not found'}), 404
     
@@ -14869,7 +14907,7 @@ def backup_access_set_for_admin():
         flash(msg, 'danger')
         return redirect(url_for('backup_management'))
 
-    user = User.query.get(int(target_user_id))
+    user = _db_get(User, int(target_user_id))
     if not user or user.role != 'admin':
         flash('Selected user is not an admin.', 'danger')
         return redirect(url_for('backup_management'))
@@ -14996,7 +15034,7 @@ def disaster_recovery():
         
         elif action == 'update_recovery_plan':
             plan_id = request.form.get('plan_id')
-            plan = DisasterRecoveryPlan.query.get_or_404(plan_id)
+            plan = _db_get_or_404(DisasterRecoveryPlan, plan_id)
             
             try:
                 plan.name = request.form.get('name', plan.name)
@@ -15012,7 +15050,7 @@ def disaster_recovery():
         
         elif action == 'test_recovery_plan':
             plan_id = request.form.get('plan_id')
-            plan = DisasterRecoveryPlan.query.get_or_404(plan_id)
+            plan = _db_get_or_404(DisasterRecoveryPlan, plan_id)
             
             try:
                 # Find most recent backup
@@ -15047,7 +15085,7 @@ def backup_status(backup_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    backup = BackupRecord.query.get_or_404(backup_id)
+    backup = _db_get_or_404(BackupRecord, backup_id)
     stats = _backup_extract_stats(backup.notes)
     restore = _backup_extract_restore_status(backup.notes)
     return jsonify({
@@ -15776,8 +15814,8 @@ def restore_backup(backup_id):
 def test_disaster_recovery(plan_id, backup_id):
     """Test disaster recovery plan by verifying the latest backup can be decrypted and parsed."""
     with app.app_context():
-        plan = DisasterRecoveryPlan.query.get(plan_id)
-        backup = BackupRecord.query.get(backup_id)
+        plan = _db_get(DisasterRecoveryPlan, plan_id)
+        backup = _db_get(BackupRecord, backup_id)
         if not plan or not backup:
             return
 
@@ -17130,7 +17168,7 @@ def view_purchase_order(po_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
-    po = PurchaseOrder.query.get_or_404(po_id)
+    po = _db_get_or_404(PurchaseOrder, po_id)
     return render_template('admin/view_purchase_order.html', po=po)
 
 @app.route('/admin/purchase_order/<int:po_id>/pdf')
@@ -17141,7 +17179,7 @@ def purchase_order_pdf(po_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
-    po = PurchaseOrder.query.get_or_404(po_id)
+    po = _db_get_or_404(PurchaseOrder, po_id)
     now = get_eat_now()
     return render_template('admin/lpo_pdf.html', 
                          po=po, 
@@ -17158,7 +17196,7 @@ def edit_purchase_order(po_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
-    po = PurchaseOrder.query.get_or_404(po_id)
+    po = _db_get_or_404(PurchaseOrder, po_id)
     
     if request.method == 'POST':
         po.vendor_id = request.form.get('vendor_id')
@@ -17215,7 +17253,7 @@ def edit_purchase_order(po_id):
 def delete_purchase_order(po_id):
     """Delete a purchase order and its items"""
     try:
-        po = PurchaseOrder.query.get_or_404(po_id)
+        po = _db_get_or_404(PurchaseOrder, po_id)
         po_number = po.po_number
         
         # Delete associated items first
@@ -17323,7 +17361,7 @@ def edit_expense(expense_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
-    expense = Expense.query.get_or_404(expense_id)
+    expense = _db_get_or_404(Expense, expense_id)
     
     if request.method == 'POST':
         expense.expense_type = request.form.get('category')
@@ -17369,7 +17407,7 @@ def delete_expense(expense_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
-    expense = Expense.query.get_or_404(expense_id)
+    expense = _db_get_or_404(Expense, expense_id)
     try:
         # Delete associated ledger entries to prevent orphan Transactions.
         tq = Transaction.query.filter_by(transaction_type='expense', reference_id=expense.id)
@@ -17474,7 +17512,7 @@ def view_debtor(debtor_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
-    debtor = Debtor.query.get_or_404(debtor_id)
+    debtor = _db_get_or_404(Debtor, debtor_id)
     payments = DebtorPayment.query.filter_by(debtor_id=debtor.id).order_by(DebtorPayment.payment_date.desc()).all()
     return render_template('admin/view_debtor.html', debtor=debtor, payments=payments)
 
@@ -17519,7 +17557,7 @@ def edit_debtor(debtor_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
-    debtor = Debtor.query.get_or_404(debtor_id)
+    debtor = _db_get_or_404(Debtor, debtor_id)
     
     if request.method == 'POST':
         try:
@@ -17575,7 +17613,7 @@ def delete_debtor(debtor_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('dashboard'))
         
-    debtor = Debtor.query.get_or_404(debtor_id)
+    debtor = _db_get_or_404(Debtor, debtor_id)
     try:
         debtor_name = debtor.name
         db.session.delete(debtor)
@@ -17873,7 +17911,7 @@ def delete_insurance_policy(policy_id):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     try:
-        policy = InsurancePolicy.query.get_or_404(policy_id)
+        policy = _db_get_or_404(InsurancePolicy, policy_id)
         db.session.delete(policy)
         db.session.commit()
         return jsonify({'success': True, 'message': 'Insurance policy deleted successfully'})
@@ -17888,7 +17926,7 @@ def delete_insurance_claim(claim_id):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
     try:
-        claim = InsuranceClaim.query.get_or_404(claim_id)
+        claim = _db_get_or_404(InsuranceClaim, claim_id)
         db.session.delete(claim)
         db.session.commit()
         return jsonify({'success': True, 'message': 'Insurance claim deleted successfully'})
@@ -17969,7 +18007,7 @@ def pay_payroll(id):
     if current_user.role not in ('admin', 'accountant'):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    payroll = Payroll.query.get_or_404(id)
+    payroll = _db_get_or_404(Payroll, id)
     try:
         # Ensure DB schema for payroll_payments has expected columns (helps when migrations weren't run)
         try:
@@ -18041,7 +18079,7 @@ def pay_payroll(id):
 
         # Generate a simple receipt for email/audit
         try:
-            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            employee = _db_get(Employee, payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
             employee_name = getattr(employee, 'name', None) if employee else None
             receipt_html = "".join([
                 "<div style='font-family:Arial,sans-serif;max-width:700px;margin:0 auto;'>",
@@ -18070,7 +18108,7 @@ def pay_payroll(id):
 
         # Email receipt to payee (best-effort)
         try:
-            employee = Employee.query.get(payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
+            employee = _db_get(Employee, payroll.employee_id) if getattr(payroll, 'employee_id', None) else None
             payee_email = None
             if employee and getattr(employee, 'user', None) and getattr(employee.user, 'email', None):
                 payee_email = str(employee.user.email)
@@ -18106,7 +18144,7 @@ def update_drawing(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    drawing = Transaction.query.get_or_404(id)
+    drawing = _db_get_or_404(Transaction, id)
     try:
         drawing.amount = float(request.form.get('amount'))
         description = request.form.get('description')
@@ -18123,7 +18161,7 @@ def delete_drawing(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
-    drawing = Transaction.query.get_or_404(id)
+    drawing = _db_get_or_404(Transaction, id)
     try:
         db.session.delete(drawing)
         db.session.commit()
@@ -18195,7 +18233,7 @@ def add_bill():
 @login_required
 def update_bill(id):
     try:
-        bill = Expense.query.get_or_404(id)
+        bill = _db_get_or_404(Expense, id)
 
         old_values = {
             'expense_type': bill.expense_type,
@@ -18236,7 +18274,7 @@ def update_bill(id):
 @app.route('/admin/delete_bill/<int:id>', methods=['POST'])
 @login_required
 def delete_bill(id):
-    bill = Expense.query.get_or_404(id)
+    bill = _db_get_or_404(Expense, id)
     try:
         old_values = {
             'expense_id': bill.id,
@@ -18266,7 +18304,7 @@ def delete_bill(id):
 @app.route('/admin/pay_bill/<int:id>', methods=['POST'])
 @login_required
 def pay_bill(id):
-    bill = Expense.query.get_or_404(id)
+    bill = _db_get_or_404(Expense, id)
     if bill.status == 'paid':
         return jsonify({'success': False, 'error': 'Bill already paid'}), 400
 
@@ -18319,7 +18357,7 @@ def pay_bill_v2(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
-    bill = Expense.query.get_or_404(id)
+    bill = _db_get_or_404(Expense, id)
     try:
         bill.status = 'paid'
         bill.paid_date = get_eat_now().date()
@@ -18459,7 +18497,7 @@ def update_purchase(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
-    purchase = Purchase.query.get_or_404(id)
+    purchase = _db_get_or_404(Purchase, id)
     try:
         purchase.purchase_type = request.form.get('purchase_type')
         purchase.amount = float(request.form.get('amount'))
@@ -18500,7 +18538,7 @@ def delete_purchase(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
-    purchase = Purchase.query.get_or_404(id)
+    purchase = _db_get_or_404(Purchase, id)
     try:
         # Delete associated transaction first
         q = Transaction.query.filter_by(transaction_type='purchase', reference_id=id)
@@ -18687,7 +18725,7 @@ def update_payroll(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    payroll = Payroll.query.get_or_404(id)
+    payroll = _db_get_or_404(Payroll, id)
     try:
         employee_id = (request.form.get('employee_id') or '').strip()
         payment_date_raw = (request.form.get('payment_date') or '').strip()
@@ -18697,7 +18735,7 @@ def update_payroll(id):
         if not employee_id or not payment_date_raw or total_amount_raw is None or str(total_amount_raw).strip() == '':
             return jsonify({'success': False, 'error': 'Please fill all required fields'}), 400
 
-        employee = Employee.query.get(employee_id)
+        employee = _db_get(Employee, employee_id)
         if not employee:
             return jsonify({'success': False, 'error': 'Employee not found'}), 404
 
@@ -18740,7 +18778,7 @@ def get_employee_salary(employee_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    employee = Employee.query.get_or_404(employee_id)
+    employee = _db_get_or_404(Employee, employee_id)
     return jsonify({'salary': employee.salary})
 
 # ================
@@ -18759,7 +18797,7 @@ def add_debtor_payment(debtor_id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    debtor = Debtor.query.get_or_404(debtor_id)
+    debtor = _db_get_or_404(Debtor, debtor_id)
     try:
         if not all([request.form.get('amount'), request.form.get('payment_date')]):
             return jsonify({'success': False, 'error': 'Amount and payment date are required'}), 400
@@ -18984,7 +19022,7 @@ def update_debt(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    debt = Debt.query.get_or_404(id)
+    debt = _db_get_or_404(Debt, id)
     try:
         creditor = (request.form.get('creditor') or '').strip()
         debt_type = (request.form.get('debt_type') or '').strip() or debt.debt_type
@@ -19038,7 +19076,7 @@ def delete_debt(id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    debt = Debt.query.get_or_404(id)
+    debt = _db_get_or_404(Debt, id)
     try:
         # Prevent deleting debts that already have payment records.
         payments_count = 0
@@ -19061,7 +19099,7 @@ def delete_debt(id):
 @login_required
 def add_debt_payment(debt_id):
     try:
-        debt = Debt.query.get_or_404(debt_id)
+        debt = _db_get_or_404(Debt, debt_id)
         amount = float(request.form.get('amount', 0))
         payment_method = request.form.get('payment_method', '')
         payment_date = request.form.get('payment_date', date.today())
@@ -19134,7 +19172,7 @@ def add_debt_payment(debt_id):
     if current_user.role != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    debt = Debt.query.get_or_404(debt_id)
+    debt = _db_get_or_404(Debt, debt_id)
     try:
         amount_raw = request.form.get('amount')
         payment_date_raw = request.form.get('payment_date')
@@ -19250,7 +19288,7 @@ def delete_transaction(id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    transaction = Transaction.query.get_or_404(id)
+    transaction = _db_get_or_404(Transaction, id)
     try:
         # Handle linked records when we can safely identify them.
         ref_table = None
@@ -19347,7 +19385,7 @@ def pending_payments_details():
         
         payroll_data = []
         for payroll in pending_payroll:
-            employee = Employee.query.get(payroll.employee_id) if payroll.employee_id else None
+            employee = _db_get(Employee, payroll.employee_id) if payroll.employee_id else None
             payroll_data.append({
                 'id': payroll.id,
                 'payroll_number': payroll.payroll_number,
@@ -19459,7 +19497,7 @@ def manage_dosage():
         
         elif action == 'edit':
             dosage_id = request.form.get('dosage_id')
-            dosage = DrugDosage.query.get(dosage_id)
+            dosage = _db_get(DrugDosage, dosage_id)
             if dosage:
                 try:
                     old_values = {
@@ -19610,7 +19648,7 @@ def get_dosage(dosage_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    dosage = DrugDosage.query.get_or_404(dosage_id)
+    dosage = _db_get_or_404(DrugDosage, dosage_id)
     
     return jsonify({
         'id': dosage.id,
@@ -19650,7 +19688,7 @@ def get_drug_dosage(drug_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    drug = Drug.query.get_or_404(drug_id)
+    drug = _db_get_or_404(Drug, drug_id)
     dosage = DrugDosage.query.filter_by(drug_id=drug.id).first()
     
     return jsonify({
@@ -19679,7 +19717,7 @@ def get_controlled_drug_dosage(controlled_drug_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    controlled_drug = ControlledDrug.query.get_or_404(controlled_drug_id)
+    controlled_drug = _db_get_or_404(ControlledDrug, controlled_drug_id)
     dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=controlled_drug.id).first()
     
     return jsonify({
@@ -19912,7 +19950,7 @@ def manage_patients():
         
         elif action == 'edit':
             patient_id = request.form.get('patient_id')
-            patient = Patient.query.get(patient_id)
+            patient = _db_get(Patient, patient_id)
             if patient:
                 try:
                     old_values = {
@@ -19985,7 +20023,7 @@ def get_patient(patient_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    patient = Patient.query.get_or_404(patient_id)
+    patient = _db_get_or_404(Patient, patient_id)
     
     return jsonify({
         'id': patient.id,
@@ -20010,7 +20048,7 @@ def patient_details(patient_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    patient = Patient.query.get_or_404(patient_id)
+    patient = _db_get_or_404(Patient, patient_id)
     
     # Calculate financial totals
     total_lab_amount = sum(lab.test.price for lab in patient.labs)
@@ -20121,7 +20159,7 @@ def add_service():
 @limiter.limit("60 per minute")
 @admin_required_json
 def get_service(id):
-    service = Service.query.get(id)
+    service = _db_get(Service, id)
     if not service:
         return jsonify({'success': False, 'error': 'Not found'}), 404
     return success_response({
@@ -20136,7 +20174,7 @@ def get_service(id):
 @limiter.limit("20 per minute")
 @admin_required_json
 def update_service(id):
-    service = Service.query.get(id)
+    service = _db_get(Service, id)
     if not service:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -20188,7 +20226,7 @@ def update_service(id):
 @limiter.limit("30 per minute")
 @admin_required_json
 def toggle_service_active(id):
-    service = Service.query.get(id)
+    service = _db_get(Service, id)
     if not service:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -20212,7 +20250,7 @@ def toggle_service_active(id):
 @limiter.limit("20 per minute")
 @admin_required_json
 def delete_service(id):
-    service = Service.query.get(id)
+    service = _db_get(Service, id)
     if not service:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -20271,7 +20309,7 @@ def add_lab_test():
 @limiter.limit("60 per minute")
 @admin_required_json
 def get_lab_test(id):
-    lab_test = LabTest.query.get(id)
+    lab_test = _db_get(LabTest, id)
     if not lab_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
     return success_response({
@@ -20286,7 +20324,7 @@ def get_lab_test(id):
 @limiter.limit("20 per minute")
 @admin_required_json
 def update_lab_test(id):
-    lab_test = LabTest.query.get(id)
+    lab_test = _db_get(LabTest, id)
     if not lab_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -20338,7 +20376,7 @@ def update_lab_test(id):
 @limiter.limit("30 per minute")
 @admin_required_json
 def toggle_lab_test_active(id):
-    lab_test = LabTest.query.get(id)
+    lab_test = _db_get(LabTest, id)
     if not lab_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -20362,7 +20400,7 @@ def toggle_lab_test_active(id):
 @limiter.limit("20 per minute")
 @admin_required_json
 def delete_lab_test(id):
-    lab_test = LabTest.query.get(id)
+    lab_test = _db_get(LabTest, id)
     if not lab_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -20429,7 +20467,7 @@ def add_imaging_test():
 @limiter.limit("60 per minute")
 @admin_required_json
 def get_imaging_test(id):
-    imaging_test = ImagingTest.query.get(id)
+    imaging_test = _db_get(ImagingTest, id)
     if not imaging_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
     return success_response({
@@ -20444,7 +20482,7 @@ def get_imaging_test(id):
 @limiter.limit("20 per minute")
 @admin_required_json
 def update_imaging_test(id):
-    imaging_test = ImagingTest.query.get(id)
+    imaging_test = _db_get(ImagingTest, id)
     if not imaging_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -20494,7 +20532,7 @@ def update_imaging_test(id):
 @limiter.limit("30 per minute")
 @admin_required_json
 def toggle_imaging_test_active(id):
-    imaging_test = ImagingTest.query.get(id)
+    imaging_test = _db_get(ImagingTest, id)
     if not imaging_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -20518,7 +20556,7 @@ def toggle_imaging_test_active(id):
 @limiter.limit("20 per minute")
 @admin_required_json
 def delete_imaging_test(id):
-    imaging_test = ImagingTest.query.get(id)
+    imaging_test = _db_get(ImagingTest, id)
     if not imaging_test:
         return jsonify({'success': False, 'error': 'Not found'}), 404
 
@@ -21060,7 +21098,7 @@ def pharmacist_get_dosage(dosage_id):
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    dosage = DrugDosage.query.get_or_404(dosage_id)
+    dosage = _db_get_or_404(DrugDosage, dosage_id)
     
     return jsonify({
         'id': dosage.id,
@@ -21099,7 +21137,7 @@ def pharmacist_get_drug_dosage(drug_id):
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    drug = Drug.query.get_or_404(drug_id)
+    drug = _db_get_or_404(Drug, drug_id)
     dosage = DrugDosage.query.filter_by(drug_id=drug.id).first()
     
     return jsonify({
@@ -21135,7 +21173,7 @@ def pharmacist_get_controlled_drug_dosage(drug_id):
     if current_user.role != 'pharmacist':
         return jsonify({'error': 'Unauthorized'}), 403
 
-    drug = ControlledDrug.query.get_or_404(drug_id)
+    drug = _db_get_or_404(ControlledDrug, drug_id)
     dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
     return jsonify({
         'drug': {
@@ -21190,7 +21228,7 @@ def manage_controlled_dosage():
 
         elif action == 'edit':
             dosage_id = request.form.get('dosage_id')
-            dosage = ControlledDrugDosage.query.get(dosage_id)
+            dosage = _db_get(ControlledDrugDosage, dosage_id)
             if dosage:
                 try:
                     dosage.indication = request.form.get('indication')
@@ -21215,7 +21253,7 @@ def manage_controlled_dosage():
 
         elif action == 'delete':
             dosage_id = request.form.get('dosage_id')
-            dosage = ControlledDrugDosage.query.get(dosage_id)
+            dosage = _db_get(ControlledDrugDosage, dosage_id)
             if dosage:
                 try:
                     db.session.delete(dosage)
@@ -21259,7 +21297,7 @@ def manage_controlled_dosage():
 def admin_get_controlled_dosage(dosage_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
-    dosage = ControlledDrugDosage.query.get_or_404(dosage_id)
+    dosage = _db_get_or_404(ControlledDrugDosage, dosage_id)
     return jsonify({
         'id': dosage.id,
         'drug': {
@@ -21296,7 +21334,7 @@ def admin_get_controlled_drugs_without_dosage():
 def admin_get_controlled_drug_dosage(drug_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
-    drug = ControlledDrug.query.get_or_404(drug_id)
+    drug = _db_get_or_404(ControlledDrug, drug_id)
     dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
     return jsonify({
         'drug': {
@@ -21382,7 +21420,7 @@ def admin_ai_suggest_dosage():
         return jsonify({'error': 'Invalid request'}), 400
 
     if kind == 'drug':
-        drug = Drug.query.get_or_404(drug_id)
+        drug = _db_get_or_404(Drug, drug_id)
         existing = DrugDosage.query.filter_by(drug_id=drug.id).first()
         try:
             structured = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
@@ -21404,7 +21442,7 @@ def admin_ai_suggest_dosage():
             }
         })
 
-    drug = ControlledDrug.query.get_or_404(drug_id)
+    drug = _db_get_or_404(ControlledDrug, drug_id)
     existing = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
     try:
         structured = _ai_generate_dosage_fields_from_name(drug.name, context_entry=None)
@@ -21780,7 +21818,7 @@ def admin_ai_dosage_agent_job_complete(job_id):
 def doctor_get_drug_dosage(drug_id):
     if current_user.role != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
-    drug = Drug.query.get_or_404(drug_id)
+    drug = _db_get_or_404(Drug, drug_id)
     dosage = DrugDosage.query.filter_by(drug_id=drug.id).first()
     return jsonify({
         'drug': {'id': drug.id, 'name': drug.name, 'drug_number': drug.drug_number},
@@ -21803,7 +21841,7 @@ def doctor_get_drug_dosage(drug_id):
 def doctor_get_controlled_drug_dosage(drug_id):
     if current_user.role != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
-    drug = ControlledDrug.query.get_or_404(drug_id)
+    drug = _db_get_or_404(ControlledDrug, drug_id)
     dosage = ControlledDrugDosage.query.filter_by(controlled_drug_id=drug.id).first()
     return jsonify({
         'drug': {'id': drug.id, 'name': drug.name, 'drug_number': drug.controlled_drug_number},
@@ -23382,9 +23420,9 @@ def admin_transaction_receipt(transaction_id):
                 db.joinedload(Refund.items).joinedload(RefundItem.sale_item)
             ).get(tx.reference_id)
         elif tx.transaction_type == 'expense' and tx.reference_id:
-            expense = Expense.query.get(tx.reference_id)
+            expense = _db_get(Expense, tx.reference_id)
         elif tx.transaction_type == 'purchase' and tx.reference_id:
-            purchase = Purchase.query.get(tx.reference_id)
+            purchase = _db_get(Purchase, tx.reference_id)
     except Exception:
         pass
 
@@ -23500,7 +23538,7 @@ def delete_prescription(id):
     if current_user.role not in ('pharmacist', 'admin'):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    prescription = Prescription.query.get_or_404(id)
+    prescription = _db_get_or_404(Prescription, id)
     try:
         if prescription.status == 'dispensed':
             return jsonify({'success': False, 'error': 'Cannot remove a dispensed prescription'}), 400
@@ -24172,7 +24210,7 @@ def patient_ward_bill(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
 
-    patient = Patient.query.get_or_404(patient_id)
+    patient = _db_get_or_404(Patient, patient_id)
     ctx = _get_patient_bed_stay_context(patient_id)
 
     if not ctx:
@@ -24202,7 +24240,7 @@ def update_patient_ward_bill(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
 
-    patient = Patient.query.get_or_404(patient_id)
+    patient = _db_get_or_404(Patient, patient_id)
     ctx = _get_patient_bed_stay_context(patient_id)
 
     if not ctx:
@@ -28667,7 +28705,7 @@ def nurse_patient_details(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
-    patient = Patient.query.get_or_404(patient_id)
+    patient = _db_get_or_404(Patient, patient_id)
     
     # Check if nurse can access this patient
     if not can_user_access_patient(current_user, patient):
@@ -28733,7 +28771,7 @@ def nurse_add_vitals(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
-    patient = Patient.query.get_or_404(patient_id)
+    patient = _db_get_or_404(Patient, patient_id)
     
     try:
         # Create nursing report with vitals
@@ -28775,7 +28813,7 @@ def nurse_administer_medication(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
-    patient = Patient.query.get_or_404(patient_id)
+    patient = _db_get_or_404(Patient, patient_id)
     
     try:
         # Create medication administration record
@@ -28813,7 +28851,7 @@ def nurse_add_report(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
-    patient = Patient.query.get_or_404(patient_id)
+    patient = _db_get_or_404(Patient, patient_id)
     
     try:
         # Create nursing report
@@ -28897,7 +28935,7 @@ def nurse_complete_notification(notification_id):
         return redirect(url_for('home'))
     
     try:
-        notification = NurseNotification.query.get_or_404(notification_id)
+        notification = _db_get_or_404(NurseNotification, notification_id)
         notification.status = 'completed'
         notification.completed_at = get_eat_now()
         
@@ -29221,7 +29259,7 @@ def receptionist_patient_details(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         flash('Patient not found', 'danger')
         return redirect(url_for('receptionist_patients'))
@@ -29269,7 +29307,7 @@ def receptionist_patient_actions(patient_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         flash('Patient not found', 'danger')
         return redirect(url_for('receptionist_patients'))
@@ -29347,7 +29385,12 @@ def create_bill():
         card_reference = (request.form.get('card_reference') or '').strip()
         paypal_reference = (request.form.get('paypal_reference') or '').strip()
     
-    patient = Patient.query.get(patient_id)
+    try:
+        patient_id_int = int(patient_id)
+    except (TypeError, ValueError):
+        patient_id_int = None
+
+    patient = db.session.get(Patient, patient_id_int) if patient_id_int is not None else None
     if not patient:
         if request.is_json:
             return jsonify({'error': 'Patient not found'}), 404
@@ -29426,7 +29469,7 @@ def create_bill():
         
         # Add services
         for service_id in service_ids:
-            service = Service.query.get(service_id)
+            service = db.session.get(Service, service_id)
             if service:
                 sale_item = SaleItem(
                     sale_id=sale.id,
@@ -29502,7 +29545,7 @@ def create_bill():
             already_billed_lab_keys = set()
 
         for lab_id in lab_ids:
-            lab = LabTest.query.get(lab_id)
+            lab = db.session.get(LabTest, lab_id)
             if not lab:
                 continue
             try:
@@ -29540,7 +29583,7 @@ def create_bill():
             already_billed_img_keys = set()
 
         for imaging_id in imaging_ids:
-            imaging_test = ImagingTest.query.get(imaging_id)
+            imaging_test = db.session.get(ImagingTest, imaging_id)
             if not imaging_test or not imaging_test.is_active:
                 continue
             try:
@@ -29664,17 +29707,20 @@ def create_bill():
                         rx_key = None
                     if rx_key and rx_key in already_billed_rx_keys:
                         continue
+                    unit_price = float(getattr(item.drug, 'selling_price', 0) or 0)
+                    qty = int(getattr(item, 'quantity', 0) or 0)
+                    line_total = unit_price * qty
                     sale_item = SaleItem(
                         sale_id=sale.id,
                         drug_id=item.drug.id,
                         description=f"{item.drug.name} - {item.dosage}",
                         individual_sale_number=rx_key,
-                        quantity=item.quantity,
-                        unit_price=item.drug.selling_price,
-                        total_price=item.drug.selling_price * item.quantity
+                        quantity=qty,
+                        unit_price=unit_price,
+                        total_price=line_total
                     )
                     db.session.add(sale_item)
-                    total_amount += item.drug.selling_price * item.quantity
+                    total_amount += line_total
         else:
             prescriptions = Prescription.query.filter_by(patient_id=patient.id, status='dispensed').all()
             for prescription in prescriptions:
@@ -29698,17 +29744,20 @@ def create_bill():
                                     continue
                             except Exception:
                                 pass
+                        unit_price = float(getattr(item.drug, 'selling_price', 0) or 0)
+                        qty = int(getattr(item, 'quantity', 0) or 0)
+                        line_total = unit_price * qty
                         sale_item = SaleItem(
                             sale_id=sale.id,
                             drug_id=item.drug.id,
                             description=f"{item.drug.name} - {item.dosage}",
                             individual_sale_number=rx_key,
-                            quantity=item.quantity,
-                            unit_price=item.drug.selling_price,
-                            total_price=item.drug.selling_price * item.quantity
+                            quantity=qty,
+                            unit_price=unit_price,
+                            total_price=line_total
                         )
                         db.session.add(sale_item)
-                        total_amount += item.drug.selling_price * item.quantity
+                        total_amount += line_total
 
         # Add dispensed controlled prescriptions (incremental: avoid re-billing the same ControlledPrescriptionItem)
         # Note: SaleItem has no controlled_drug_id column; we bill as a description-only item.
@@ -29819,7 +29868,9 @@ def create_bill():
                 'success': True,
                 'sale_id': sale.id,
                 'sale_number': sale.sale_number,
-                'total_amount': total_amount
+                'total_amount': total_amount,
+                'receipt_url': url_for('receptionist_receipt', sale_id=sale.id),
+                'pdf_url': url_for('api_sale_receipt_pdf', sale_id=sale.id),
             })
         # Pass amount_given and change as query parameters for the receipt
         receipt_url = url_for('receptionist_receipt', sale_id=sale.id)
@@ -29841,19 +29892,73 @@ def receptionist_receipt(sale_id):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
     
-    sale = Sale.query.get(sale_id)
+    tx = _get_transaction_for_sale(sale_id)
+    reprint_requested = request.args.get('reprint') == '1'
+    stored_invalid = False
+
+    # Prefer the persisted snapshot so "View/Print" always opens the exact generated receipt.
+    if tx and tx.receipt_html:
+        stored_html = tx.receipt_html
+        # Backward-compat: older sanitization escaped tags, causing receipts to display as text.
+        if stored_html and ('&lt;' in stored_html or '&gt;' in stored_html):
+            try:
+                stored_html = _sanitize_receipt_html(html_lib.unescape(stored_html))
+            except Exception:
+                stored_html = tx.receipt_html
+
+        # If the stored receipt was generated before items were flushed, it may have no rows.
+        if stored_html and 'No items found for this sale.' in stored_html:
+            stored_invalid = True
+        else:
+            if reprint_requested:
+                try:
+                    tx.receipt_reprint_count = int(tx.receipt_reprint_count or 0) + 1
+                    tx.receipt_reprinted_at = get_eat_now()
+                    db.session.add(tx)
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                return Response(_inject_reprint_banner(stored_html, tx.receipt_reprinted_at, tx.receipt_reprint_count), mimetype='text/html')
+            return Response(stored_html, mimetype='text/html')
+
+    sale = db.session.query(Sale).options(
+        db.joinedload(Sale.user),
+        db.joinedload(Sale.items).joinedload(SaleItem.drug),
+        db.joinedload(Sale.patient)
+    ).where(Sale.id == sale_id).first()
+
     if not sale:
         flash('Sale not found', 'danger')
         return redirect(url_for('receptionist_dashboard'))
-    
-    # Get amount_given and change from query params (for cash payments)
+
+    # Get amount_given and change from query params (for old receipts without snapshots)
     amount_given = request.args.get('amount_given', type=float)
     change = request.args.get('change', type=float)
-    
-    return render_template('receptionist/receipt.html', 
-                          sale=sale,
-                          amount_given=amount_given,
-                          change=change)
+
+    rendered = render_template(
+        'receptionist/receipt.html',
+        sale=sale,
+        amount_given=amount_given,
+        change=change,
+    )
+
+    # Persist for future reprints if transaction exists
+    try:
+        if not tx:
+            tx = _get_transaction_for_sale(sale_id)
+        if tx:
+            _ensure_transaction_receipt(tx, rendered, prefix='SALE', force=stored_invalid)
+            if reprint_requested:
+                tx.receipt_reprint_count = int(tx.receipt_reprint_count or 0) + 1
+                tx.receipt_reprinted_at = get_eat_now()
+                db.session.add(tx)
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    if reprint_requested and tx:
+        return Response(_inject_reprint_banner(tx.receipt_html or rendered, tx.receipt_reprinted_at, tx.receipt_reprint_count), mimetype='text/html')
+    return Response(rendered, mimetype='text/html')
 
 # API Routes
 @app.route('/api/drugs')
@@ -30268,7 +30373,7 @@ def api_single_drug(drug_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    drug = Drug.query.get_or_404(drug_id)
+    drug = _db_get_or_404(Drug, drug_id)
     return jsonify({
         'id': drug.id,
         'drug_number': drug.drug_number,
@@ -30353,7 +30458,7 @@ def api_single_controlled_drug(controlled_drug_id):
     if current_user.role != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
     
-    drug = ControlledDrug.query.get_or_404(controlled_drug_id)
+    drug = _db_get_or_404(ControlledDrug, controlled_drug_id)
     return jsonify({
         'id': drug.id,
         'controlled_drug_number': drug.controlled_drug_number,
@@ -30440,7 +30545,7 @@ def api_patient_details(patient_id: int):
 
     Additive endpoint (was referenced by existing JS but missing in some builds).
     """
-    patient = Patient.query.get(patient_id)
+    patient = db.session.get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
@@ -30453,7 +30558,38 @@ def api_patient_details(patient_id: int):
         except Exception:
             name = str(patient.name or '')
 
-    phone = str(patient.phone or '').strip()
+    # Decrypt sensitive fields for display (never return ciphertext to receptionist UI).
+    try:
+        phone = str(getattr(patient, 'get_decrypted_phone', '') or '').strip()
+    except Exception:
+        try:
+            phone = Config.decrypt_data_static(patient.phone)
+        except Exception:
+            phone = str(getattr(patient, 'phone', '') or '').strip()
+
+    try:
+        address = str(getattr(patient, 'get_decrypted_address', '') or '').strip()
+    except Exception:
+        try:
+            address = Config.decrypt_data_static(patient.address)
+        except Exception:
+            address = str(getattr(patient, 'address', '') or '').strip()
+
+    try:
+        nok_name = str(getattr(patient, 'get_decrypted_nok_name', '') or '').strip()
+    except Exception:
+        try:
+            nok_name = Config.decrypt_data_static(patient.nok_name)
+        except Exception:
+            nok_name = str(getattr(patient, 'nok_name', '') or '').strip()
+
+    try:
+        nok_contact = str(getattr(patient, 'get_decrypted_nok_contact', '') or '').strip()
+    except Exception:
+        try:
+            nok_contact = Config.decrypt_data_static(patient.nok_contact)
+        except Exception:
+            nok_contact = str(getattr(patient, 'nok_contact', '') or '').strip()
 
     return jsonify({
         'id': patient.id,
@@ -30463,6 +30599,9 @@ def api_patient_details(patient_id: int):
         'age': patient.age,
         'gender': patient.gender,
         'phone': phone,
+        'address': address,
+        'nok_name': nok_name,
+        'nok_contact': nok_contact,
         'status': patient.status,
         'patient_type': 'inpatient' if (patient.ip_number and str(patient.ip_number).strip()) else 'outpatient',
     })
@@ -30630,6 +30769,54 @@ def api_receptionist_bills():
         })
 
     return jsonify(out)
+
+
+def _draw_rubber_stamp_pdf(c, page_w, y, facility_name='MAKOKHA MEDICAL CENTRE', phone1='0741 256 531', phone2='0713 580 997'):
+    try:
+        from utils.stamp_signature import get_stamp_typography
+        typo = get_stamp_typography()
+        stamp_color = typo.get('colors', {}).get('stamp', '#2e3192')
+        date_color = typo.get('colors', {}).get('date', '#dc143c')
+        pdf_style = typo.get('pdf', {})
+        font_bold = pdf_style.get('font_bold', 'Helvetica-Bold')
+        font_regular = pdf_style.get('font_regular', 'Helvetica')
+        size_title = float(pdf_style.get('size_title', 7.0) or 7.0)
+        size_date = float(pdf_style.get('size_date', 8.0) or 8.0)
+        size_contact = float(pdf_style.get('size_contact', 6.5) or 6.5)
+        line_width = float(pdf_style.get('line_width', 1.2) or 1.2)
+    except Exception:
+        stamp_color = '#2e3192'
+        date_color = '#dc143c'
+        font_bold = 'Helvetica-Bold'
+        font_regular = 'Helvetica'
+        size_title = 7.0
+        size_date = 8.0
+        size_contact = 6.5
+        line_width = 1.2
+
+    stamp_w = page_w - 10 * mm
+    stamp_h = 22 * mm
+    stamp_x = 5 * mm
+    stamp_y = max(12 * mm, y - stamp_h)
+
+    c.setStrokeColor(colors.HexColor(stamp_color))
+    c.setLineWidth(line_width)
+    c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
+
+    c.setFillColor(colors.HexColor(stamp_color))
+    c.setFont(font_bold, size_title)
+    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, facility_name)
+
+    c.setFillColor(colors.HexColor(date_color))
+    c.setFont(font_bold, size_date)
+    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
+
+    c.setFillColor(colors.HexColor(stamp_color))
+    c.setFont(font_regular, size_contact)
+    c.drawCentredString(page_w / 2, stamp_y + 4 * mm, f'Tel: {phone1} / {phone2}')
+
+    c.setFillColor(colors.black)
+    return stamp_y
 
 
 @app.route('/api/sales/<int:sale_id>/receipt.pdf')
@@ -30870,24 +31057,8 @@ def api_sale_receipt_pdf(sale_id: int):
                 _kv(label, f"KSh {float(bal):,.2f}")
         y -= 2 * mm
 
-        # Rubber-stamp (drawn, no external SVG deps)
-        stamp_w = page_w - 10 * mm
-        stamp_h = 22 * mm
-        stamp_x = 5 * mm
-        stamp_y = max(12 * mm, y - stamp_h)
-        c.setStrokeColor(colors.HexColor('#2e3192'))
-        c.setLineWidth(1.2)
-        c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
-        c.setFont('Helvetica-Bold', 7)
-        c.setFillColor(colors.HexColor('#2e3192'))
-        c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, 'MAKOKHA MEDICAL CENTRE')
-        c.setFillColor(colors.HexColor('#dc143c'))
-        c.setFont('Helvetica-Bold', 8)
-        c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
-        c.setFillColor(colors.HexColor('#2e3192'))
-        c.setFont('Helvetica', 6.5)
-        c.drawCentredString(page_w / 2, stamp_y + 4 * mm, 'Tel: 0741 256 531 / 0713 580 997')
-        c.setFillColor(colors.black)
+        # Rubber-stamp
+        stamp_y = _draw_rubber_stamp_pdf(c, page_w, y)
         y = stamp_y - 6 * mm
 
         # Signature
@@ -30959,10 +31130,8 @@ def api_sale_share_whatsapp(sale_id: int):
     else:
         override_to = ''
 
-    # Prefer the manually entered destination number. Fall back to patient phone only
-    # when the user leaves the prompt blank.
-    raw_phone = override_to or str(getattr(patient, 'phone', '') or '').strip()
-    to_msisdn = normalize_msisdn(raw_phone)
+    # Always require manual entry; never auto-load patient phone.
+    to_msisdn = normalize_msisdn(override_to)
     if not to_msisdn:
         return jsonify({'success': False, 'error': 'Enter a valid phone number for WhatsApp (e.g. 0712xxxxxx or +2547xxxxxxx).'}), 400
 
@@ -31210,23 +31379,27 @@ def api_refund_receipt_pdf(refund_id: int):
     y -= 6 * mm
 
     # Stamp
-    stamp_w = page_w - 10 * mm
-    stamp_h = 22 * mm
-    stamp_x = 5 * mm
-    stamp_y = max(12 * mm, y - stamp_h)
-    c.setStrokeColor(colors.HexColor('#2e3192'))
-    c.setLineWidth(1.2)
-    c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
-    c.setFont('Helvetica-Bold', 7)
-    c.setFillColor(colors.HexColor('#2e3192'))
-    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, 'MAKOKHA MEDICAL CENTRE')
-    c.setFillColor(colors.HexColor('#dc143c'))
-    c.setFont('Helvetica-Bold', 8)
-    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
-    c.setFillColor(colors.HexColor('#2e3192'))
-    c.setFont('Helvetica', 6.5)
-    c.drawCentredString(page_w / 2, stamp_y + 4 * mm, 'Tel: 0741 256 531 / 0713 580 997')
-    c.setFillColor(colors.black)
+    try:
+        stamp_y = _draw_rubber_stamp_pdf(c, page_w, y)
+    except Exception:
+        # Fallback: keep existing behavior if helper isn't in scope for any reason
+        stamp_w = page_w - 10 * mm
+        stamp_h = 22 * mm
+        stamp_x = 5 * mm
+        stamp_y = max(12 * mm, y - stamp_h)
+        c.setStrokeColor(colors.HexColor('#2e3192'))
+        c.setLineWidth(1.2)
+        c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
+        c.setFont('Helvetica-Bold', 7)
+        c.setFillColor(colors.HexColor('#2e3192'))
+        c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, 'MAKOKHA MEDICAL CENTRE')
+        c.setFillColor(colors.HexColor('#dc143c'))
+        c.setFont('Helvetica-Bold', 8)
+        c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
+        c.setFillColor(colors.HexColor('#2e3192'))
+        c.setFont('Helvetica', 6.5)
+        c.drawCentredString(page_w / 2, stamp_y + 4 * mm, 'Tel: 0741 256 531 / 0713 580 997')
+        c.setFillColor(colors.black)
     y = stamp_y - 6 * mm
 
     if signature_bytes:
@@ -31256,7 +31429,7 @@ def api_refund_share_whatsapp(refund_id: int):
     if user_role not in ('pharmacist', 'admin'):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    refund = Refund.query.get(refund_id)
+    refund = db.session.get(Refund, refund_id)
     if not refund:
         return jsonify({'success': False, 'error': 'Refund not found'}), 404
 
@@ -31266,16 +31439,10 @@ def api_refund_share_whatsapp(refund_id: int):
     data = request.get_json(silent=True) if request.is_json else None
     override_to = (data.get('to') or '').strip() if isinstance(data, dict) else ''
 
-    raw_phone = override_to
-    if not raw_phone:
-        try:
-            raw_phone = str(getattr(getattr(getattr(refund, 'sale', None), 'patient', None), 'phone', '') or '').strip()
-        except Exception:
-            raw_phone = ''
-
-    to_msisdn = normalize_msisdn(raw_phone)
+    # Always require manual entry; never auto-load patient phone.
+    to_msisdn = normalize_msisdn(override_to)
     if not to_msisdn:
-        return jsonify({'success': False, 'error': 'Phone number is missing/invalid for WhatsApp.'}), 400
+        return jsonify({'success': False, 'error': 'Enter a valid phone number for WhatsApp.'}), 400
 
     try:
         pdf_resp = api_refund_receipt_pdf(refund_id)
@@ -31516,23 +31683,26 @@ def api_controlled_sale_receipt_pdf(sale_id: int):
             _kv(label, f"KSh {float(bal):,.2f}")
     y -= 2 * mm
 
-    stamp_w = page_w - 10 * mm
-    stamp_h = 22 * mm
-    stamp_x = 5 * mm
-    stamp_y = max(12 * mm, y - stamp_h)
-    c.setStrokeColor(colors.HexColor('#2e3192'))
-    c.setLineWidth(1.2)
-    c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
-    c.setFont('Helvetica-Bold', 7)
-    c.setFillColor(colors.HexColor('#2e3192'))
-    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, 'MAKOKHA MEDICAL CENTRE')
-    c.setFillColor(colors.HexColor('#dc143c'))
-    c.setFont('Helvetica-Bold', 8)
-    c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
-    c.setFillColor(colors.HexColor('#2e3192'))
-    c.setFont('Helvetica', 6.5)
-    c.drawCentredString(page_w / 2, stamp_y + 4 * mm, 'Tel: 0741 256 531 / 0713 580 997')
-    c.setFillColor(colors.black)
+    try:
+        stamp_y = _draw_rubber_stamp_pdf(c, page_w, y)
+    except Exception:
+        stamp_w = page_w - 10 * mm
+        stamp_h = 22 * mm
+        stamp_x = 5 * mm
+        stamp_y = max(12 * mm, y - stamp_h)
+        c.setStrokeColor(colors.HexColor('#2e3192'))
+        c.setLineWidth(1.2)
+        c.rect(stamp_x, stamp_y, stamp_w, stamp_h, stroke=1, fill=0)
+        c.setFont('Helvetica-Bold', 7)
+        c.setFillColor(colors.HexColor('#2e3192'))
+        c.drawCentredString(page_w / 2, stamp_y + stamp_h - 6 * mm, 'MAKOKHA MEDICAL CENTRE')
+        c.setFillColor(colors.HexColor('#dc143c'))
+        c.setFont('Helvetica-Bold', 8)
+        c.drawCentredString(page_w / 2, stamp_y + stamp_h - 12 * mm, datetime.now().strftime('%d %b %Y').upper())
+        c.setFillColor(colors.HexColor('#2e3192'))
+        c.setFont('Helvetica', 6.5)
+        c.drawCentredString(page_w / 2, stamp_y + 4 * mm, 'Tel: 0741 256 531 / 0713 580 997')
+        c.setFillColor(colors.black)
     y = stamp_y - 6 * mm
 
     if signature_bytes:
@@ -31562,7 +31732,7 @@ def api_controlled_sale_share_whatsapp(sale_id: int):
     if user_role not in ('pharmacist', 'admin'):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    sale = ControlledSale.query.get(sale_id)
+    sale = db.session.get(ControlledSale, sale_id)
     if not sale:
         return jsonify({'success': False, 'error': 'Controlled sale not found'}), 404
 
@@ -31572,19 +31742,10 @@ def api_controlled_sale_share_whatsapp(sale_id: int):
     data = request.get_json(silent=True) if request.is_json else None
     override_to = (data.get('to') or '').strip() if isinstance(data, dict) else ''
 
-    raw_phone = override_to
-    if not raw_phone:
-        try:
-            if getattr(sale, 'customer_phone', None):
-                raw_phone = str(sale.customer_phone or '').strip()
-            elif getattr(sale, 'patient', None):
-                raw_phone = str(getattr(sale.patient, 'phone', '') or '').strip()
-        except Exception:
-            raw_phone = ''
-
-    to_msisdn = normalize_msisdn(raw_phone)
+    # Always require manual entry; never auto-load patient/customer phone.
+    to_msisdn = normalize_msisdn(override_to)
     if not to_msisdn:
-        return jsonify({'success': False, 'error': 'Phone number is missing/invalid for WhatsApp.'}), 400
+        return jsonify({'success': False, 'error': 'Enter a valid phone number for WhatsApp.'}), 400
 
     try:
         pdf_resp = api_controlled_sale_receipt_pdf(sale_id)
@@ -31633,7 +31794,7 @@ def api_transaction_receipt_pdf(transaction_id: int):
     if str(getattr(current_user, 'role', '')).lower().strip() != 'admin':
         return jsonify({'error': 'Unauthorized'}), 403
 
-    tx = Transaction.query.get(transaction_id)
+    tx = _db_get(Transaction, transaction_id)
     if not tx:
         return jsonify({'error': 'Transaction not found'}), 404
 
@@ -31670,9 +31831,9 @@ def api_transaction_receipt_pdf(transaction_id: int):
                 .first()
             )
         elif tx.transaction_type == 'expense' and ref_id:
-            expense = Expense.query.get(int(ref_id))
+            expense = _db_get(Expense, int(ref_id))
         elif tx.transaction_type == 'purchase' and ref_id:
-            purchase = Purchase.query.get(int(ref_id))
+            purchase = _db_get(Purchase, int(ref_id))
         elif tx.transaction_type == 'controlled_sale' and ref_id:
             # Keep controlled sale inside the transaction PDF (do not reuse controlled sale receipt PDF).
             # If needed later, we can expand details similar to the sale section.
@@ -31867,7 +32028,7 @@ def api_transaction_share_whatsapp(transaction_id: int):
     if str(getattr(current_user, 'role', '')).lower().strip() != 'admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
 
-    tx = Transaction.query.get(transaction_id)
+    tx = db.session.get(Transaction, transaction_id)
     if not tx:
         return jsonify({'success': False, 'error': 'Transaction not found'}), 404
 
@@ -31943,7 +32104,7 @@ def api_get_notifications():
 @login_required
 def mark_notification_read(notification_id):
     """API endpoint to mark a notification as read."""
-    notification = Notification.query.get_or_404(notification_id)
+    notification = _db_get_or_404(Notification, notification_id)
     if notification.user_id != current_user.id:
         abort(403)
     notification.is_read = True
@@ -31990,7 +32151,7 @@ def api_patient_requested_services(patient_id: int):
     if user_role not in ('receptionist', 'pharmacist'):
         return jsonify({'error': 'Unauthorized'}), 403
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
@@ -32025,16 +32186,23 @@ def api_patient_completed_services(patient_id: int):
     if user_role not in ('receptionist', 'pharmacist'):
         return jsonify({'error': 'Unauthorized'}), 403
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
     try:
+        # Billing should show all unbilled services for the patient, regardless of
+        # whether they are still "requested" or already "done".
         rows = (
             PatientService.query
             .filter(PatientService.patient_id == patient.id)
-            .filter(PatientService.status.in_(['completed', 'done']))
             .filter(PatientService.billed_sale_id.is_(None))
+            .filter(
+                or_(
+                    PatientService.status.is_(None),
+                    PatientService.status.in_(['requested', 'in_progress', 'done', 'completed'])
+                )
+            )
             .order_by(PatientService.created_at.desc())
             .all()
         )
@@ -32045,7 +32213,7 @@ def api_patient_completed_services(patient_id: int):
                 'service_name': (r.service.name if getattr(r, 'service', None) else None),
                 'price': float(getattr(getattr(r, 'service', None), 'price', 0) or 0),
                 'service_price': float(getattr(getattr(r, 'service', None), 'price', 0) or 0),
-                'status': r.status or 'completed',
+                'status': r.status or 'requested',
                 'created_at': r.created_at.isoformat() if getattr(r, 'created_at', None) else None,
             }
             for r in rows
@@ -32133,7 +32301,7 @@ def api_doctor_add_requested_service(patient_id: int):
     if user_role not in ('doctor', 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
@@ -32150,7 +32318,7 @@ def api_doctor_add_requested_service(patient_id: int):
     except Exception:
         return jsonify({'error': 'Invalid service'}), 400
 
-    service = Service.query.get(service_id_int)
+    service = _db_get(Service, service_id_int)
     if not service or not getattr(service, 'is_active', True):
         return jsonify({'error': 'Service not found'}), 404
 
@@ -32188,7 +32356,7 @@ def doctor_api_patient_services_done(patient_id: int):
     if user_role not in ('doctor', 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
@@ -32238,7 +32406,7 @@ def api_patient_prescriptions(patient_id: int):
     if user_role not in ('receptionist', 'pharmacist'):
         return jsonify({'error': 'Unauthorized'}), 403
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
@@ -32284,7 +32452,7 @@ def api_patient_controlled_prescriptions(patient_id: int):
     if user_role not in ('receptionist', 'pharmacist'):
         return jsonify({'error': 'Unauthorized'}), 403
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
@@ -32329,7 +32497,7 @@ def api_patient_completed_labs(patient_id: int):
     if user_role not in ('receptionist', 'pharmacist'):
         return jsonify({'error': 'Unauthorized'}), 403
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
@@ -32375,14 +32543,14 @@ def api_patient_completed_imaging(patient_id: int):
     if user_role not in ('receptionist', 'pharmacist'):
         return jsonify({'error': 'Unauthorized'}), 403
 
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
     try:
         imaging_ids = {
             int(r.test_id) for r in (patient.imaging_requests or [])
-            if getattr(r, 'status', None) == 'completed' and getattr(r, 'test_id', None)
+            if getattr(r, 'test_id', None) and (getattr(r, 'status', None) or '').lower() not in ('cancelled', 'canceled')
         }
     except Exception:
         imaging_ids = set()
@@ -32425,7 +32593,7 @@ def api_patient_ward_stay_preview(patient_id: int):
     Returns a computed (not persisted) preview so the receptionist UI can show
     an auto-updating daily amount.
     """
-    patient = Patient.query.get(patient_id)
+    patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
 
@@ -32659,7 +32827,7 @@ def add_insurance_provider():
 @admin_required
 def edit_insurance_provider(provider_id):
     try:
-        provider = InsuranceProvider.query.get_or_404(provider_id)
+        provider = _db_get_or_404(InsuranceProvider, provider_id)
         provider.name = request.form.get('name')
         provider.contact_person = request.form.get('contact_person')
         provider.phone = request.form.get('phone')
@@ -32694,7 +32862,7 @@ def edit_insurance_provider(provider_id):
 @admin_required
 def delete_insurance_provider(provider_id):
     try:
-        provider = InsuranceProvider.query.get_or_404(provider_id)
+        provider = _db_get_or_404(InsuranceProvider, provider_id)
         provider_name = provider.name
         db.session.delete(provider)
         db.session.commit()
@@ -32761,7 +32929,7 @@ def add_patient_insurance():
 @login_required
 @admin_required
 def edit_patient_insurance(patient_insurance_id):
-    p_insurance = PatientInsurance.query.get_or_404(patient_insurance_id)
+    p_insurance = _db_get_or_404(PatientInsurance, patient_insurance_id)
     p_insurance.patient_id = request.form.get('patient_id')
     p_insurance.provider_id = request.form.get('provider_id')
     p_insurance.policy_number = request.form.get('policy_number')
@@ -32779,7 +32947,7 @@ def edit_patient_insurance(patient_insurance_id):
 @login_required
 @admin_required
 def delete_patient_insurance(patient_insurance_id):
-    p_insurance = PatientInsurance.query.get_or_404(patient_insurance_id)
+    p_insurance = _db_get_or_404(PatientInsurance, patient_insurance_id)
     db.session.delete(p_insurance)
     db.session.commit()
     flash('Patient insurance policy deleted successfully.', 'success')
@@ -32820,7 +32988,7 @@ def create_claim():
 @login_required
 @admin_required
 def update_claim(claim_id):
-    claim = Claim.query.get_or_404(claim_id)
+    claim = _db_get_or_404(Claim, claim_id)
     claim.total_amount = request.form.get('total_amount')
     claim.amount_paid = request.form.get('amount_paid') if request.form.get('amount_paid') else None
     date_paid_str = request.form.get('date_paid')
@@ -32907,7 +33075,7 @@ def create_invoice():
 @login_required
 @admin_required
 def edit_invoice(invoice_id):
-    invoice = Invoice.query.get_or_404(invoice_id)
+    invoice = _db_get_or_404(Invoice, invoice_id)
     if request.method == 'POST':
         invoice.patient_id = request.form.get('patient_id')
         invoice.date_issued = datetime.strptime(request.form.get('date_issued'), '%Y-%m-%d')
@@ -32952,14 +33120,14 @@ def edit_invoice(invoice_id):
 @login_required
 @admin_required
 def view_invoice(invoice_id):
-    invoice = Invoice.query.get_or_404(invoice_id)
+    invoice = _db_get_or_404(Invoice, invoice_id)
     return render_template('admin/view_invoice.html', invoice=invoice)
 
 @app.route('/admin/invoices/delete/<int:invoice_id>', methods=['POST'])
 @login_required
 @admin_required
 def delete_invoice(invoice_id):
-    invoice = Invoice.query.get_or_404(invoice_id)
+    invoice = _db_get_or_404(Invoice, invoice_id)
     db.session.delete(invoice)
     db.session.commit()
     flash('Invoice deleted successfully.', 'success')
@@ -33206,7 +33374,7 @@ def mpesa_stk_callback():
             if _payment_intents_supported():
                 provider_txn = None
                 if getattr(payment, 'provider_txn_id', None):
-                    provider_txn = MpesaProviderTxn.query.get(int(payment.provider_txn_id))
+                    provider_txn = _db_get(MpesaProviderTxn, int(payment.provider_txn_id))
                 if not provider_txn and checkout_id:
                     provider_txn = MpesaProviderTxn.query.filter_by(checkout_request_id=checkout_id).first()
                 if not provider_txn and merchant_id:
@@ -33222,7 +33390,7 @@ def mpesa_stk_callback():
                     db.session.add(provider_txn)
                     _maybe_set_link_fields(payment, provider_txn_id=int(provider_txn.id), payment_intent_id=int(provider_txn.payment_intent_id))
 
-                    pi = PaymentIntent.query.get(int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
+                    pi = _db_get(PaymentIntent, int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
                     if pi:
                         pi.status = 'success'
                         db.session.add(pi)
@@ -33231,7 +33399,7 @@ def mpesa_stk_callback():
 
         # Auto-post to invoice if linked
         if payment.invoice_id:
-            invoice = Invoice.query.get(payment.invoice_id)
+            invoice = _db_get(Invoice, payment.invoice_id)
             if invoice and payment.amount_received:
                 _apply_payment_to_invoice(invoice, _to_decimal_2dp(payment.amount_received))
 
@@ -33267,11 +33435,11 @@ def mpesa_stk_callback():
                     payer_name = None
                     purpose = None
                     if payment.invoice_id:
-                        inv = Invoice.query.get(payment.invoice_id)
+                        inv = _db_get(Invoice, payment.invoice_id)
                         if inv:
                             purpose = f"Invoice {getattr(inv, 'invoice_number', '')}".strip()
                             try:
-                                patient = Patient.query.get(inv.patient_id) if getattr(inv, 'patient_id', None) else None
+                                patient = _db_get(Patient, inv.patient_id) if getattr(inv, 'patient_id', None) else None
                                 if patient:
                                     payer_name = getattr(patient, 'full_name', None) or getattr(patient, 'name', None) or None
                             except Exception:
@@ -33301,7 +33469,7 @@ def mpesa_stk_callback():
             if _payment_intents_supported():
                 provider_txn = None
                 if getattr(payment, 'provider_txn_id', None):
-                    provider_txn = MpesaProviderTxn.query.get(int(payment.provider_txn_id))
+                    provider_txn = _db_get(MpesaProviderTxn, int(payment.provider_txn_id))
                 if not provider_txn and checkout_id:
                     provider_txn = MpesaProviderTxn.query.filter_by(checkout_request_id=checkout_id).first()
                 if not provider_txn and merchant_id:
@@ -33315,7 +33483,7 @@ def mpesa_stk_callback():
                     provider_txn.completed_at = provider_txn.completed_at or get_eat_now()
                     db.session.add(provider_txn)
 
-                    pi = PaymentIntent.query.get(int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
+                    pi = _db_get(PaymentIntent, int(provider_txn.payment_intent_id)) if getattr(provider_txn, 'payment_intent_id', None) else None
                     if pi:
                         pi.status = 'failed'
                         db.session.add(pi)
@@ -33703,7 +33871,7 @@ def mpesa_transaction_status_result():
     try:
         if _payment_intents_supported():
             if getattr(q, 'provider_txn_id', None):
-                ptxn = MpesaProviderTxn.query.get(int(q.provider_txn_id))
+                ptxn = _db_get(MpesaProviderTxn, int(q.provider_txn_id))
                 if ptxn:
                     _maybe_set_link_fields(
                         ptxn,
@@ -33714,7 +33882,7 @@ def mpesa_transaction_status_result():
                     )
                     db.session.add(ptxn)
             if getattr(q, 'payment_intent_id', None):
-                pi = PaymentIntent.query.get(int(q.payment_intent_id))
+                pi = _db_get(PaymentIntent, int(q.payment_intent_id))
                 if pi:
                     pi.status = 'success' if q.result_code == 0 else 'failed'
                     pi.updated_at = get_eat_now()
@@ -33726,7 +33894,7 @@ def mpesa_transaction_status_result():
         q.status = 'success'
 
         # If we can post, do it idempotently.
-        invoice = Invoice.query.get(q.invoice_id) if q.invoice_id else None
+        invoice = _db_get(Invoice, q.invoice_id) if q.invoice_id else None
         amount = _to_decimal_2dp(q.amount_expected) if q.amount_expected is not None else None
 
         if invoice and amount and amount > 0:
@@ -33830,7 +33998,7 @@ def mpesa_transaction_status_timeout():
         try:
             if _payment_intents_supported():
                 if getattr(q, 'provider_txn_id', None):
-                    ptxn = MpesaProviderTxn.query.get(int(q.provider_txn_id))
+                    ptxn = _db_get(MpesaProviderTxn, int(q.provider_txn_id))
                     if ptxn:
                         _maybe_set_link_fields(
                             ptxn,
@@ -33840,7 +34008,7 @@ def mpesa_transaction_status_timeout():
                         )
                         db.session.add(ptxn)
                 if getattr(q, 'payment_intent_id', None):
-                    pi = PaymentIntent.query.get(int(q.payment_intent_id))
+                    pi = _db_get(PaymentIntent, int(q.payment_intent_id))
                     if pi:
                         pi.status = 'failed'
                         pi.updated_at = get_eat_now()
@@ -34374,7 +34542,7 @@ def _mpesa_payout_handle_result(payload: dict) -> None:
     try:
         if _payment_intents_supported():
             if getattr(payout, 'provider_txn_id', None):
-                ptxn = MpesaProviderTxn.query.get(int(payout.provider_txn_id))
+                ptxn = _db_get(MpesaProviderTxn, int(payout.provider_txn_id))
                 if ptxn:
                     _maybe_set_link_fields(
                         ptxn,
@@ -34386,7 +34554,7 @@ def _mpesa_payout_handle_result(payload: dict) -> None:
                     )
                     db.session.add(ptxn)
             if getattr(payout, 'payment_intent_id', None):
-                pi = PaymentIntent.query.get(int(payout.payment_intent_id))
+                pi = _db_get(PaymentIntent, int(payout.payment_intent_id))
                 if pi:
                     pi.status = 'success' if payout.result_code == 0 else 'failed'
                     pi.updated_at = get_eat_now()
@@ -34467,7 +34635,7 @@ def mpesa_payout_timeout():
         try:
             if _payment_intents_supported():
                 if getattr(payout, 'provider_txn_id', None):
-                    ptxn = MpesaProviderTxn.query.get(int(payout.provider_txn_id))
+                    ptxn = _db_get(MpesaProviderTxn, int(payout.provider_txn_id))
                     if ptxn:
                         _maybe_set_link_fields(
                             ptxn,
@@ -34477,7 +34645,7 @@ def mpesa_payout_timeout():
                         )
                         db.session.add(ptxn)
                 if getattr(payout, 'payment_intent_id', None):
-                    pi = PaymentIntent.query.get(int(payout.payment_intent_id))
+                    pi = _db_get(PaymentIntent, int(payout.payment_intent_id))
                     if pi:
                         pi.status = 'failed'
                         pi.updated_at = get_eat_now()
@@ -34530,7 +34698,7 @@ def add_vendor():
 @login_required
 @admin_required
 def edit_vendor(vendor_id):
-    vendor = Vendor.query.get_or_404(vendor_id)
+    vendor = _db_get_or_404(Vendor, vendor_id)
     vendor.name = request.form.get('name')
     contact_person = request.form.get('contact_person')
     phone = request.form.get('phone')
@@ -34551,7 +34719,7 @@ def edit_vendor(vendor_id):
 @login_required
 @admin_required
 def delete_vendor(vendor_id):
-    vendor = Vendor.query.get_or_404(vendor_id)
+    vendor = _db_get_or_404(Vendor, vendor_id)
     db.session.delete(vendor)
     db.session.commit()
     flash('Vendor deleted successfully.', 'success')
@@ -34599,7 +34767,7 @@ def create_employee():
 @login_required
 @admin_required
 def edit_employee(employee_id):
-    employee = Employee.query.get_or_404(employee_id)
+    employee = _db_get_or_404(Employee, employee_id)
     if request.method == 'POST':
         employee.name = request.form.get('name')
         employee.position = request.form.get('position')
@@ -34619,7 +34787,7 @@ def edit_employee(employee_id):
 @login_required
 @admin_required
 def delete_employee(employee_id):
-    employee = Employee.query.get_or_404(employee_id)
+    employee = _db_get_or_404(Employee, employee_id)
     db.session.delete(employee)
     db.session.commit()
     flash('Employee deleted successfully.', 'success')
@@ -34711,8 +34879,8 @@ def view_payroll_receipt(receipt_id):
         flash('No employee profile is linked to your account.', 'warning')
         return redirect(url_for('home'))
 
-    payment = PayrollPayment.query.get_or_404(receipt_id)
-    payroll = Payroll.query.get_or_404(payment.payroll_id)
+    payment = _db_get_or_404(PayrollPayment, receipt_id)
+    payroll = _db_get_or_404(Payroll, payment.payroll_id)
     if int(getattr(payroll, 'employee_id', 0) or 0) != int(employee.id):
         abort(403)
 
@@ -34721,7 +34889,7 @@ def view_payroll_receipt(receipt_id):
     issued_user = None
     try:
         if receipt.get('paid_by'):
-            issued_user = User.query.get(int(receipt.get('paid_by')))
+            issued_user = _db_get(User, int(receipt.get('paid_by')))
     except Exception:
         issued_user = None
 
@@ -34757,8 +34925,8 @@ def download_payroll_receipt_employee(receipt_id):
         flash('No employee profile is linked to your account.', 'warning')
         return redirect(url_for('home'))
 
-    payment = PayrollPayment.query.get_or_404(receipt_id)
-    payroll = Payroll.query.get_or_404(payment.payroll_id)
+    payment = _db_get_or_404(PayrollPayment, receipt_id)
+    payroll = _db_get_or_404(Payroll, payment.payroll_id)
     if int(getattr(payroll, 'employee_id', 0) or 0) != int(employee.id):
         abort(403)
 
@@ -34766,7 +34934,7 @@ def download_payroll_receipt_employee(receipt_id):
     issued_user = None
     try:
         if receipt.get('paid_by'):
-            issued_user = User.query.get(int(receipt.get('paid_by')))
+            issued_user = _db_get(User, int(receipt.get('paid_by')))
     except Exception:
         issued_user = None
 
@@ -35330,7 +35498,7 @@ def api_communication_block_user(user_id: int):
         if user_id == current_user.id:
             return jsonify({'success': False, 'error': 'Cannot block yourself'}), 400
 
-        target = User.query.get(user_id)
+        target = _db_get(User, user_id)
         if not target or not getattr(target, 'is_active', True):
             return jsonify({'success': False, 'error': 'User not found'}), 404
 
@@ -35414,7 +35582,7 @@ def api_communication_calls_history():
         payload = []
         for c in rows:
             other_user_id = c.receiver_id if c.caller_id == current_user.id else c.caller_id
-            other_user = User.query.get(other_user_id)
+            other_user = _db_get(User, other_user_id)
             payload.append({
                 'call_id': c.call_id,
                 'call_type': c.call_type,

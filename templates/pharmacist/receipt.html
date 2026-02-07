@@ -143,7 +143,7 @@
 <div class="no-print text-center my-2">
     {% set whatsapp_share_endpoint = url_for('api_sale_share_whatsapp', sale_id=sale.id) %}
     {% set whatsapp_fallback_pdf = url_for('api_sale_receipt_pdf', sale_id=sale.id) %}
-    {% set whatsapp_default_phone = (decrypt_data(sale.patient.phone) if sale.patient and sale.patient.phone else '') %}
+    {% set whatsapp_default_phone = '' %}
     {% include 'components/whatsapp_share_button.html' %}
 </div>
 

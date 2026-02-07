@@ -4,7 +4,6 @@ Required variables:
 - whatsapp_share_endpoint: POST endpoint that accepts JSON {to?: string}
 
 Optional variables:
-- whatsapp_default_phone: prefill for prompt
 - whatsapp_fallback_pdf: URL to open if WhatsApp not configured
 - whatsapp_button_label: button text
 - whatsapp_button_class: CSS classes
@@ -12,7 +11,6 @@ Optional variables:
 #}
 
 {% set _btn_id = whatsapp_btn_id|default('waShareBtn_' ~ (range(100000, 999999)|random)) %}
-{% set _default_phone = whatsapp_default_phone|default('') %}
 {% set _fallback_pdf = whatsapp_fallback_pdf|default('') %}
 {% set _label = whatsapp_button_label|default('Share via WhatsApp (PDF)') %}
 {% set _class = whatsapp_button_class|default('btn btn-success btn-sm') %}
@@ -23,7 +21,6 @@ Optional variables:
   id="{{ _btn_id }}"
   class="{{ _class }} no-print"
   data-endpoint="{{ whatsapp_share_endpoint }}"
-  data-default-phone="{{ _default_phone }}"
   data-fallback-pdf="{{ _fallback_pdf }}"
   data-title="{{ _title }}"
 >{{ _label }}</button>
@@ -68,7 +65,6 @@ Optional variables:
   btn.addEventListener('click', async function(){
     const endpoint = btn.getAttribute('data-endpoint') || '';
     const fallbackPdf = btn.getAttribute('data-fallback-pdf') || '';
-    const defaultPhone = btn.getAttribute('data-default-phone') || '';
     const title = btn.getAttribute('data-title') || 'Enter WhatsApp number';
 
     if(!endpoint){
@@ -76,12 +72,16 @@ Optional variables:
       return;
     }
 
-    const input = window.prompt(title + '\n(e.g. 0712xxxxxx or +2547xxxxxxx)\nLeave blank to use patient phone if available.', defaultPhone);
+    const input = window.prompt(title + '\n(e.g. 0712xxxxxx or +2547xxxxxxx)');
     if(input === null) return;
 
     const to = String(input || '').trim();
-    const payload = {};
-    if(to){ payload.to = to; }
+    if(!to){
+      alert('Phone number is required.');
+      return;
+    }
+
+    const payload = { to };
 
     // Optional cash metadata (picked from current URL if present)
     try{

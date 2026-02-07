@@ -12,7 +12,7 @@
         position: relative;
         background: linear-gradient(135deg, rgba(192, 57, 43, 0.1) 0%, rgba(192, 57, 43, 0.05) 100%);
         transform: rotate(-15deg);
-        font-family: 'Arial Black', 'Arial Bold', Arial, sans-serif;
+        font-family: var(--stamp-font-bold, Arial Black, Arial, Helvetica, sans-serif);
         text-align: center;
         padding: 15px;
         box-shadow: 0 0 0 2px #c0392b inset;
@@ -56,6 +56,7 @@
         color: #c0392b;
         margin-top: 5px;
         letter-spacing: 0.5px;
+        font-family: var(--stamp-font-regular, Arial, Helvetica, sans-serif);
     }
     
     .stamp-bottom {
@@ -63,6 +64,7 @@
         color: #c0392b;
         margin-top: 3px;
         text-transform: uppercase;
+        font-family: var(--stamp-font-regular, Arial, Helvetica, sans-serif);
     }
     
     .digital-signature {
