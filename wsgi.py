@@ -1,15 +1,18 @@
 import os
 
-# Ensure Flask-SocketIO uses eventlet when this entrypoint is used.
-os.environ.setdefault('SOCKETIO_ASYNC_MODE', 'eventlet')
-
-try:
-    import eventlet
-    eventlet.monkey_patch()
-except Exception:
-    # If eventlet fails to patch for any reason, continue.
-    # (Gunicorn worker class / async mode should be adjusted accordingly.)
-    eventlet = None
+# IMPORTANT:
+# Do not force Eventlet in production by default.
+# Render/Gunicorn can crash if `os` gets monkey-patched in the master process:
+#   RuntimeError: do not call blocking functions from the mainloop
+#
+# If you explicitly want Eventlet, set `SOCKETIO_ASYNC_MODE=eventlet`.
+if (os.getenv('SOCKETIO_ASYNC_MODE') or '').strip().lower() == 'eventlet':
+    try:
+        import eventlet
+        # Avoid patching `os` so Gunicorn arbiter pipes don't become green.
+        eventlet.monkey_patch(os=False)
+    except Exception:
+        pass
 
 from app import app, socketio
 

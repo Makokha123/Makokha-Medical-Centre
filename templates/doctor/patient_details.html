@@ -149,7 +149,8 @@
                 <div class="col-md-3">
                     <div class="form-group">
                         <label>Age</label>
-                        <input type="number" name="age" class="form-control" value="{{ patient.age or '' }}">
+                        <input type="text" name="age" class="form-control" value="{{ patient.age or '' }}" placeholder="e.g. 2 weeks, 6 months, 1.5 years, 1 year 6 months">
+                        <small class="text-muted">You can enter age in weeks, months, or years (fractions accepted). Saved as whole years.</small>
                     </div>
                 </div>
                 <div class="col-md-3">

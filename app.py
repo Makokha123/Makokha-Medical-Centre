@@ -20,7 +20,8 @@ if not _socketio_async_mode:
 if _socketio_async_mode == 'eventlet':
     try:
         import eventlet
-        eventlet.monkey_patch()
+        # Avoid patching `os` so Gunicorn arbiter pipes don't become green.
+        eventlet.monkey_patch(os=False)
     except Exception:
         # If eventlet is unavailable or fails to patch, continue without it.
         _socketio_async_mode = 'threading'
@@ -7391,6 +7392,129 @@ def _parse_dt_any(val) -> datetime | None:
         s = s[:-1] + '+00:00'
     try:
         return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def _parse_age_years(value) -> int | None:
+    """Parse human age inputs into integer years.
+
+    Accepts inputs like:
+    - "2", "2.5" (truncates decimals)
+    - "2 weeks", "6 months", "1 year"
+    - "1½ years", "1 year 6 months", "18 months"
+
+    Storage stays as whole years (int), so any fractional years are truncated.
+    """
+    if value is None:
+        return None
+
+    try:
+        s = str(value).strip().lower()
+    except Exception:
+        return None
+
+    if not s:
+        return None
+
+    # Normalize separators and compact formats like "1y6m".
+    s = s.replace(',', ' ').replace(';', ' ').replace('_', ' ')
+    s = re.sub(r'(?<=\d)(?=[a-z])', ' ', s)
+    s = re.sub(r'(?<=[a-z])(?=\d)', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+
+    fraction_chars = '¼½¾⅓⅔⅛⅜⅝⅞'
+    fraction_map = {
+        '¼': 0.25,
+        '½': 0.5,
+        '¾': 0.75,
+        '⅛': 0.125,
+        '⅜': 0.375,
+        '⅝': 0.625,
+        '⅞': 0.875,
+        '⅓': 1.0 / 3.0,
+        '⅔': 2.0 / 3.0,
+    }
+
+    def _parse_number_token(tok: str) -> float | None:
+        t = (tok or '').strip()
+        if not t:
+            return None
+        try:
+            if '/' in t:
+                parts = t.split('/', 1)
+                if len(parts) == 2:
+                    num = float(parts[0]) if parts[0] else 0.0
+                    den = float(parts[1])
+                    if den == 0:
+                        return None
+                    return num / den
+        except Exception:
+            pass
+
+        try:
+            last = t[-1]
+            if last in fraction_map:
+                base = float(t[:-1]) if t[:-1].strip() else 0.0
+                return base + float(fraction_map[last])
+        except Exception:
+            pass
+
+        try:
+            return float(t)
+        except Exception:
+            return None
+
+    # If units are present, parse as a sum of components.
+    num_re = rf"(?:\d+(?:\.\d+)?(?:/\d+)?(?:[{fraction_chars}])?|[{fraction_chars}])"
+    pattern = re.compile(
+        rf"(?P<num>{num_re})\s*(?P<unit>years?|yrs?|yr|y|months?|mos?|mo|m|weeks?|wks?|wk|w)\b"
+    )
+
+    total_years = 0.0
+    found_unit = False
+    for m in pattern.finditer(s):
+        found_unit = True
+        num = _parse_number_token(m.group('num'))
+        if num is None:
+            continue
+
+        unit = (m.group('unit') or '').strip().lower()
+        if unit.startswith('y'):
+            total_years += num
+        elif unit.startswith('m'):
+            total_years += (num / 12.0)
+        elif unit.startswith('w'):
+            total_years += (num / 52.0)
+
+    if found_unit:
+        try:
+            return int(total_years)
+        except Exception:
+            return None
+
+    # No units: try plain numeric/fraction parsing.
+    # Drop common trailing words like "years" accidentally typed without spacing.
+    s = re.sub(rf"\b(years?|yrs?|yr|y|months?|mos?|mo|m|weeks?|wks?|wk|w)\b", '', s).strip()
+    # If after stripping units it's still a combined token (e.g., "1½"), parse it.
+    val = _parse_number_token(s)
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except Exception:
+        return None
+
+
+def _parse_int(value) -> int | None:
+    try:
+        s = str(value).strip()
+        if not s:
+            return None
+        try:
+            return int(s)
+        except Exception:
+            return int(float(s))
     except Exception:
         return None
 
@@ -19922,7 +20046,7 @@ def manage_patients():
                     op_number=patient_number if patient_type == 'OP' else None,
                     ip_number=patient_number if patient_type == 'IP' else None,
                     name=Config.encrypt_data_static(request.form.get('name')),
-                    age=int(request.form.get('age')) if request.form.get('age') else None,
+                    age=_parse_age_years(request.form.get('age')),
                     gender=request.form.get('gender'),
                     address=Config.encrypt_data_static(request.form.get('address')) if request.form.get('address') else None,
                     phone=Config.encrypt_data_static(request.form.get('phone')) if request.form.get('phone') else None,
@@ -19968,7 +20092,7 @@ def manage_patients():
                     }
                     
                     patient.name = Config.encrypt_data_static(request.form.get('name'))
-                    patient.age = int(request.form.get('age')) if request.form.get('age') else None
+                    patient.age = _parse_age_years(request.form.get('age'))
                     patient.gender = request.form.get('gender')
                     patient.address = Config.encrypt_data_static(request.form.get('address')) if request.form.get('address') else None
                     patient.phone = Config.encrypt_data_static(request.form.get('phone')) if request.form.get('phone') else None
@@ -24959,13 +25083,6 @@ def doctor_create_patient():
     payload = request.get_json(silent=True) or {}
     biodata = payload.get('bioData') or payload.get('biodata') or {}
 
-    def _parse_int(value):
-        try:
-            s = str(value).strip()
-            return int(s) if s else None
-        except Exception:
-            return None
-
     def _parse_date(value):
         try:
             s = str(value).strip()
@@ -25009,7 +25126,7 @@ def doctor_create_patient():
             op_number=patient_number if patient_type == 'OP' else None,
             ip_number=patient_number if patient_type == 'IP' else None,
             name=Config.encrypt_data_static(name),
-            age=_parse_int(biodata.get('age')),
+            age=_parse_age_years(biodata.get('age')),
             gender=(biodata.get('gender') or None),
             address=Config.encrypt_data_static(biodata.get('address')) if biodata.get('address') else None,
             phone=Config.encrypt_data_static(biodata.get('phone')) if biodata.get('phone') else None,
@@ -25200,7 +25317,7 @@ def doctor_new_patient():
                     op_number=patient_number if patient_type == 'OP' else None,
                     ip_number=patient_number if patient_type == 'IP' else None,
                     name=Config.encrypt_data_static(request.form.get('name')),
-                    age=int(request.form.get('age')) if request.form.get('age') else None,
+                    age=_parse_age_years(request.form.get('age')),
                     gender=request.form.get('gender'),
                     address=Config.encrypt_data_static(request.form.get('address')) if request.form.get('address') else None,
                     phone=Config.encrypt_data_static(request.form.get('phone')) if request.form.get('phone') else None,
@@ -27494,7 +27611,7 @@ def handle_patient_sections():
                 op_number=patient_number if patient_type == 'OP' else None,
                 ip_number=patient_number if patient_type == 'IP' else None,
                 name=request.form.get('name'),
-                age=int(request.form.get('age')) if request.form.get('age') else None,
+                age=_parse_age_years(request.form.get('age')),
                 gender=request.form.get('gender'),
                 address=request.form.get('address') if request.form.get('address') else None,
                 phone=request.form.get('phone') if request.form.get('phone') else None,
@@ -27881,7 +27998,7 @@ def doctor_patient_details(patient_id):
                     db.session.add(entry)
 
                 patient.name = Config.encrypt_data_static(name)
-                patient.age = int(request.form.get('age')) if (request.form.get('age') or '').strip() else None
+                patient.age = _parse_age_years(request.form.get('age'))
                 patient.gender = (request.form.get('gender') or None)
                 patient.address = (
                     Config.encrypt_data_static(request.form.get('address'))
