@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import sys
 
 # Socket.IO async backend selection.
 #
@@ -17,8 +18,17 @@ _socketio_async_mode = (os.getenv('SOCKETIO_ASYNC_MODE') or '').strip().lower()
 if not _socketio_async_mode:
     # If Gunicorn is explicitly using the Eventlet worker, match it.
     # This must happen BEFORE importing Flask/Werkzeug/SQLAlchemy.
+    # NOTE: Render's start command passes args directly to gunicorn and does NOT
+    # necessarily export them via GUNICORN_CMD_ARGS. Inspect sys.argv too.
     _gunicorn_cmd = (os.getenv('GUNICORN_CMD_ARGS') or '').lower()
-    _using_gunicorn_eventlet = ('-k eventlet' in _gunicorn_cmd) or ('--worker-class eventlet' in _gunicorn_cmd) or ('worker_class=eventlet' in _gunicorn_cmd)
+    _argv_cmd = ' '.join(sys.argv).lower()
+    _combined_cmd = f"{_gunicorn_cmd} {_argv_cmd}".strip()
+    _using_gunicorn_eventlet = (
+        ('-k eventlet' in _combined_cmd)
+        or ('--worker-class eventlet' in _combined_cmd)
+        or ('worker_class=eventlet' in _combined_cmd)
+        or ('worker-class eventlet' in _combined_cmd)
+    )
     _socketio_async_mode = 'eventlet' if _using_gunicorn_eventlet else 'threading'
 
 if _socketio_async_mode == 'eventlet':
@@ -464,6 +474,29 @@ class SafeDateTime(TypeDecorator):
         return value
 
 # Initialize database extensions AFTER configuration is finalized.
+if _socketio_async_mode == 'eventlet':
+    # Eventlet + Python 3.12 can trip over SQLAlchemy's QueuePool synchronization
+    # primitives (seen on Render as: "cannot notify on un-acquired lock").
+    # NullPool avoids the internal condition/queue and is safe for correctness.
+    try:
+        from sqlalchemy.pool import NullPool
+
+        app.config.setdefault('SQLALCHEMY_ENGINE_OPTIONS', {})
+        _engine_opts = app.config['SQLALCHEMY_ENGINE_OPTIONS']
+        # NullPool does not accept QueuePool sizing/timeout options.
+        for _k in ('pool_size', 'max_overflow', 'pool_timeout'):
+            try:
+                _engine_opts.pop(_k, None)
+            except Exception:
+                pass
+        _engine_opts.update(
+            {
+                'poolclass': NullPool,
+                'pool_pre_ping': True,
+            }
+        )
+    except Exception:
+        pass
 db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
 migrate = Migrate(app, db)
 
@@ -6261,6 +6294,22 @@ def _ensure_table_columns(engine, table_name: str, columns: dict[str, str]) -> i
 
 
 def _ensure_known_backward_compat_columns(engine) -> None:
+    # Keep User compatible (email verification/password reset fields).
+    # This is critical in production: if these columns are missing, Flask-Login's
+    # user loader can crash on every request.
+    _ensure_table_columns(
+        engine,
+        'user',
+        {
+            # Default TRUE avoids locking out existing accounts.
+            'is_email_verified': 'BOOLEAN DEFAULT TRUE',
+            'email_otp_hash': 'VARCHAR(128)',
+            'email_otp_expires_at': 'TIMESTAMP',
+            'password_reset_nonce': 'VARCHAR(64)',
+            'password_reset_sent_at': 'TIMESTAMP',
+        },
+    )
+
     # Keep Bed model compatible with older DBs (common on SQLite deployments).
     _ensure_table_columns(
         engine,
@@ -6358,6 +6407,27 @@ def _ensure_known_backward_compat_columns(engine) -> None:
         },
     )
 
+
+def _backfill_user_email_verified(engine) -> None:
+    """Best-effort backfill for existing DB rows.
+
+    If `is_email_verified` exists but is NULL for older records (common when
+    added via runtime schema sync), treat them as verified to avoid changing
+    behavior for existing users.
+    """
+    try:
+        dialect = (getattr(engine, 'dialect', None) and engine.dialect.name) or ''
+        with engine.begin() as conn:
+            if dialect == 'postgresql':
+                conn.execute(sa_text('UPDATE "user" SET "is_email_verified" = TRUE WHERE "is_email_verified" IS NULL'))
+            else:
+                conn.execute(sa_text('UPDATE "user" SET "is_email_verified" = 1 WHERE "is_email_verified" IS NULL'))
+    except Exception:
+        try:
+            current_app.logger.exception('User email verification backfill failed')
+        except Exception:
+            pass
+
 @app.before_request
 def ensure_database_initialized():
     """Ensure database schema exists and default users are created before handling any request."""
@@ -6404,6 +6474,10 @@ def ensure_database_initialized():
             if not _db_schema_synced:
                 _db_schema_synced = True
                 created_tables, added_cols = _ensure_all_tables_and_columns(engine)
+
+                # Targeted, known schema compatibility fixes (production-safe).
+                _ensure_known_backward_compat_columns(engine)
+                _backfill_user_email_verified(engine)
                 # Silently skip schema sync logs
                 # if created_tables or added_cols:
                 #     app.logger.info(
