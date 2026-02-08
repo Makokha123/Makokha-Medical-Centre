@@ -252,6 +252,10 @@ if _socketio_message_queue:
 
 socketio = SocketIO(app, **socketio_kwargs)
 
+# WSGI entrypoints (so deployments can use `gunicorn ... app:app`)
+application = app
+socketio_app = app
+
 auth_bp = Blueprint('auth', __name__)
 csrf = CSRFProtect()
 
