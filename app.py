@@ -237,15 +237,20 @@ from flask_socketio import SocketIO
 
 # Use configured async mode (default: threading).
 async_mode = _socketio_async_mode
-socketio = SocketIO(
-    app, 
-    cors_allowed_origins="*", 
+_socketio_message_queue = (os.getenv('SOCKETIO_MESSAGE_QUEUE') or os.getenv('REDIS_URL') or '').strip()
+
+socketio_kwargs = dict(
+    cors_allowed_origins="*",
     async_mode=async_mode,
-    logger=True, 
+    logger=True,
     engineio_logger=False,
     ping_timeout=60,
-    ping_interval=25
+    ping_interval=25,
 )
+if _socketio_message_queue:
+    socketio_kwargs["message_queue"] = _socketio_message_queue
+
+socketio = SocketIO(app, **socketio_kwargs)
 
 auth_bp = Blueprint('auth', __name__)
 csrf = CSRFProtect()
