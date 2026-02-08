@@ -6,7 +6,17 @@ import os
 #   RuntimeError: do not call blocking functions from the mainloop
 #
 # If you explicitly want Eventlet, set `SOCKETIO_ASYNC_MODE=eventlet`.
-if (os.getenv('SOCKETIO_ASYNC_MODE') or '').strip().lower() == 'eventlet':
+#
+# IMPORTANT (Render/Gunicorn): if your start command uses `gunicorn -k eventlet ...`,
+# eventlet's worker will attempt to monkey-patch. If we don't patch *before* importing
+# Flask/Werkzeug/SQLAlchemy, eventlet may try to upgrade already-created objects and
+# trigger context errors like:
+#   RuntimeError: Working outside of application/request context.
+_socketio_async_mode = (os.getenv('SOCKETIO_ASYNC_MODE') or '').strip().lower()
+_gunicorn_cmd = (os.getenv('GUNICORN_CMD_ARGS') or '').lower()
+_using_gunicorn_eventlet = ('-k eventlet' in _gunicorn_cmd) or ('--worker-class eventlet' in _gunicorn_cmd) or ('worker_class=eventlet' in _gunicorn_cmd)
+
+if _socketio_async_mode == 'eventlet' or _using_gunicorn_eventlet:
     try:
         import eventlet
         # Avoid patching `os` so Gunicorn arbiter pipes don't become green.

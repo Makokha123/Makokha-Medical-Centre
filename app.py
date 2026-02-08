@@ -15,7 +15,11 @@ import os
 # To force eventlet explicitly, set: SOCKETIO_ASYNC_MODE=eventlet
 _socketio_async_mode = (os.getenv('SOCKETIO_ASYNC_MODE') or '').strip().lower()
 if not _socketio_async_mode:
-    _socketio_async_mode = 'threading'
+    # If Gunicorn is explicitly using the Eventlet worker, match it.
+    # This must happen BEFORE importing Flask/Werkzeug/SQLAlchemy.
+    _gunicorn_cmd = (os.getenv('GUNICORN_CMD_ARGS') or '').lower()
+    _using_gunicorn_eventlet = ('-k eventlet' in _gunicorn_cmd) or ('--worker-class eventlet' in _gunicorn_cmd) or ('worker_class=eventlet' in _gunicorn_cmd)
+    _socketio_async_mode = 'eventlet' if _using_gunicorn_eventlet else 'threading'
 
 if _socketio_async_mode == 'eventlet':
     try:
