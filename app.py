@@ -32641,12 +32641,17 @@ _VENDOR_BASE_URLS: dict[str, str] = {
 _VENDOR_ALLOWED_PREFIXES: dict[str, list[str]] = {
     'jsdelivr': [
         'npm/bootstrap@5.3.0/dist/',
+        'npm/bootstrap@4.6.0/dist/',
         'npm/bootstrap-icons@1.11.1/font/',
         'npm/select2@4.1.0-rc.0/dist/',
+        'npm/socket.io-client@4.5.4/dist/',
+        'npm/datatables.net@1.13.6/',
+        'npm/datatables.net-bs5@1.13.6/',
     ],
     'cdnjs': [
         'ajax/libs/font-awesome/5.15.3/',
         'ajax/libs/font-awesome/5.15.4/',
+        'ajax/libs/font-awesome/6.4.0/',
         'ajax/libs/jquery/3.7.1/',
     ],
     'codejquery': [
