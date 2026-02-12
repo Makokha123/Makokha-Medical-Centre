@@ -7,7 +7,11 @@
     <meta name="theme-color" content="#0d6efd">
     <!-- CSRF token for forms and JS -->
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <!-- Security feature flags (non-sensitive) -->
+    <meta name="mmc-zero-knowledge-enabled" content="{{ '1' if feature_flags.get('phase2_zero_knowledge') else '0' }}">
     <title>{% block title %}Makokha Medical Centre{% endblock %}</title>
+
+    {% set _sr = (request.script_root if request is defined else '') %}
 
     <!-- PWA Configuration -->
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
@@ -18,10 +22,10 @@
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/icon-192.png') }}">
 
     <!-- CSS Resources -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
-    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
+    <link href="{{ _sr }}/vendor/jsdelivr/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css';">
+    <link rel="stylesheet" href="{{ _sr }}/vendor/jsdelivr/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css';">
+    <link rel="stylesheet" href="{{ _sr }}/vendor/cdnjs/ajax/libs/font-awesome/5.15.3/css/all.min.css" onerror="this.onerror=null;this.href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css';">
+    <link href="{{ _sr }}/vendor/jsdelivr/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css';">
     
     <!-- Local CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
@@ -757,16 +761,16 @@
                 margin-top: 0 !important;
             }
         }
-    </style>123
+    </style>
     
     {% block extra_css %}{% endblock %}
     <!-- jQuery 3.7.1 with correct SRI and robust fallback -->
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+    <script src="{{ _sr }}/vendor/codejquery/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
     <script>
     if (typeof window.jQuery === 'undefined') {
       var s = document.createElement('script');
       s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
-      s.integrity = 'sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieZn1O6VY9j9a6U6ChjrHja9w/pp9y9cYxRcmRl6VwB2ykKQh8I9gCeRZ8g==';
+            s.integrity = 'sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==';
       s.crossOrigin = 'anonymous';
       document.head.appendChild(s);
     }
@@ -799,13 +803,93 @@
 </head>
 <body>
     {% set is_embed = request.args.get('embed') %}
-    {% set user_role = current_user.role|lower if current_user.is_authenticated and current_user.role else '' %}
+    {# Base role never changes; active role may be temporarily switched (doctor→labtech, pharmacist→receptionist) #}
+    {% set user_role = (mmc_base_role|lower) if (mmc_base_role is defined and mmc_base_role) else (current_user.role|lower if current_user.is_authenticated and current_user.role else '') %}
+    {% set active_role = (mmc_active_role|lower) if (mmc_active_role is defined and mmc_active_role) else user_role %}
     {% set is_pharmacist = user_role == 'pharmacist' %}
     {% set is_reception_context = request.path.startswith('/receptionist') %}
     {% if is_embed %}
         <style>
             body { padding-top: 0 !important; background: #fff; }
         </style>
+
+        <script>
+            // Global CSRF helper: automatically attach CSRF token to same-origin non-GET requests.
+            (function() {
+                function getCsrfToken() {
+                    try {
+                        var el = document.querySelector('meta[name="csrf-token"]');
+                        return el ? (el.getAttribute('content') || '') : '';
+                    } catch (e) {
+                        return '';
+                    }
+                }
+
+                function isSameOrigin(url) {
+                    try {
+                        var u = new URL(url, window.location.href);
+                        return u.origin === window.location.origin;
+                    } catch (e) {
+                        // If URL parsing fails, assume same-origin (relative path)
+                        return true;
+                    }
+                }
+
+                // Patch fetch
+                try {
+                    if (window.fetch) {
+                        var _origFetch = window.fetch.bind(window);
+                        window.fetch = function(input, init) {
+                            init = init || {};
+                            var method = (init.method || 'GET').toUpperCase();
+                            var url = (typeof input === 'string') ? input : (input && input.url);
+
+                            if (url && isSameOrigin(url) && !['GET','HEAD','OPTIONS','TRACE'].includes(method)) {
+                                var headers = new Headers(init.headers || {});
+                                if (!headers.has('X-CSRFToken') && !headers.has('X-CSRF-Token')) {
+                                    var token = getCsrfToken();
+                                    if (token) headers.set('X-CSRFToken', token);
+                                }
+                                init.headers = headers;
+                            }
+                            return _origFetch(input, init);
+                        };
+                    }
+                } catch (e) {
+                    // no-op
+                }
+
+                // Patch jQuery AJAX (when jQuery is available)
+                function patchJQuery() {
+                    try {
+                        if (!window.jQuery || !window.jQuery.ajaxSetup) return;
+                        window.jQuery.ajaxSetup({
+                            beforeSend: function(xhr, settings) {
+                                try {
+                                    var method = (settings.type || settings.method || 'GET').toUpperCase();
+                                    if (!settings.url || !isSameOrigin(settings.url)) return;
+                                    if (['GET','HEAD','OPTIONS','TRACE'].includes(method)) return;
+
+                                    var token = getCsrfToken();
+                                    if (token) xhr.setRequestHeader('X-CSRFToken', token);
+                                } catch (e) {
+                                    // no-op
+                                }
+                            }
+                        });
+                    } catch (e) {
+                        // no-op
+                    }
+                }
+
+                // jQuery may be loaded later in the page
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', patchJQuery);
+                } else {
+                    patchJQuery();
+                }
+            })();
+        </script>
     {% endif %}
 
     {% if not is_embed and (not is_pharmacist or is_reception_context) %}
@@ -833,7 +917,7 @@
             <!-- Navigation Menu -->
             <nav class="sidebar-nav">
                 {% if current_user.is_authenticated %}
-                    {% if current_user.role == 'admin' %}
+                    {% if active_role == 'admin' %}
                         <!-- Admin Navigation -->
                         <div class="nav-item">
                             <a href="{{ url_for('admin_dashboard') }}" class="nav-link">
@@ -931,7 +1015,7 @@
                                 <span class="nav-text">WhatsApp Settings</span>
                             </a>
                         </div>
-                    {% elif current_user.role == 'doctor' %}
+                    {% elif active_role == 'doctor' %}
                         <!-- Doctor Navigation -->
                         <div class="nav-item">
                             <a href="{{ url_for('doctor_dashboard') }}" class="nav-link">
@@ -939,6 +1023,17 @@
                                 <span class="nav-text">Dashboard</span>
                             </a>
                         </div>
+                        {% if mmc_can_switch_labtech and user_role == 'doctor' %}
+                        <div class="nav-item">
+                            <form method="post" action="{{ url_for('switch_role_to_labtech') }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="nav-link w-100 text-start border-0 bg-transparent" title="Switch to Lab Technician mode">
+                                    <i class="bi bi-flask"></i>
+                                    <span class="nav-text">Open LabTech</span>
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
                         <div class="nav-item">
                             <a href="{{ url_for('doctor_inpatients') }}" class="nav-link">
                                 <i class="bi bi-hospital"></i>
@@ -970,12 +1065,18 @@
                             </a>
                         </div>
                         <div class="nav-item">
+                            <a href="{{ url_for('doctor_archived_patients') }}" class="nav-link">
+                                <i class="bi bi-archive"></i>
+                                <span class="nav-text">Archived Patients</span>
+                            </a>
+                        </div>
+                        <div class="nav-item">
                             <a href="{{ url_for('doctor_patients') }}" class="nav-link">
                                 <i class="bi bi-people"></i>
                                 <span class="nav-text">All Patients</span>
                             </a>
                         </div>
-                    {% elif current_user.role == 'nurse' %}
+                    {% elif active_role == 'nurse' %}
                         <!-- Nurse Navigation -->
                         <div class="nav-item">
                             <a href="{{ url_for('nurse_dashboard') }}" class="nav-link">
@@ -1001,8 +1102,19 @@
                                 <span class="nav-text">Notifications</span>
                             </a>
                         </div>
-                    {% elif current_user.role == 'labtech' %}
+                    {% elif active_role == 'labtech' %}
                         <!-- Lab Technician Navigation -->
+                        {% if user_role == 'doctor' %}
+                        <div class="nav-item">
+                            <form method="post" action="{{ url_for('switch_role_to_doctor') }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="nav-link w-100 text-start border-0 bg-transparent" title="Switch back to Doctor mode">
+                                    <i class="bi bi-arrow-left-circle"></i>
+                                    <span class="nav-text">Back to Doctor</span>
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
                         <div class="nav-item">
                             <a href="{{ url_for('labtech_dashboard') }}" class="nav-link">
                                 <i class="bi bi-speedometer2"></i>
@@ -1015,7 +1127,7 @@
                                 <span class="nav-text">Lab Requests</span>
                             </a>
                         </div>
-                    {% elif user_role == 'receptionist' or (user_role == 'pharmacist' and is_reception_context) %}
+                    {% elif active_role == 'receptionist' %}
                         <!-- Receptionist Navigation -->
                         <div class="nav-item">
                             <a href="{{ url_for('receptionist_dashboard') }}" class="nav-link">
@@ -1045,7 +1157,8 @@
                     <div class="nav-item dropdown w-100">
                         <a class="nav-link dropdown-toggle d-flex align-items-center fs-6 px-3 py-3" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
                             {% if current_user.profile_picture %}
-                                <img src="{{ url_for('static', filename=current_user.profile_picture) }}" alt="Profile" class="profile-picture rounded-circle me-2" style="width: 32px; height: 32px;">
+                                {% set _pic = (current_user.profile_picture|string)|replace('uploads/', '') %}
+                                <img src="{{ url_for('serve_private_upload', filename=_pic) }}" alt="Profile" class="profile-picture rounded-circle me-2" style="width: 32px; height: 32px;">
                             {% else %}
                                 <i class="bi bi-person-circle me-2"></i>
                             {% endif %}
@@ -1076,10 +1189,13 @@
     <div class="overlay" id="overlay"></div>
     {% endif %}
 
-    {% if not is_embed and is_pharmacist and is_reception_context %}
-    <a href="{{ url_for('pharmacist_dashboard') }}" class="floating-back-btn btn btn-primary" title="Back to Pharmacist Dashboard">
-        <i class="fas fa-pills me-1"></i><span class="d-none d-sm-inline">Back to Pharmacist</span>
-    </a>
+    {% if not is_embed and is_pharmacist and is_reception_context and active_role == 'receptionist' %}
+    <form method="post" action="{{ url_for('switch_role_to_pharmacist') }}" class="floating-back-btn" title="Back to Pharmacist Dashboard">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">
+            <i class="fas fa-pills me-1"></i><span class="d-none d-sm-inline">Back to Pharmacist</span>
+        </button>
+    </form>
     {% endif %}
 
     <!-- Main Content -->
@@ -1217,15 +1333,15 @@
     {% endif %}
 
     <!-- JavaScript Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/js/all.min.js"></script>
+    <script src="{{ _sr }}/vendor/jsdelivr/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js';"></script>
+    <script src="{{ _sr }}/vendor/jsdelivr/npm/select2@4.1.0-rc.0/dist/js/select2.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js';"></script>
+    <script src="{{ _sr }}/vendor/cdnjs/ajax/libs/font-awesome/5.15.4/js/all.min.js" onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/js/all.min.js';"></script>
     
     <!-- Local JS -->
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 
-    {% if current_user.is_authenticated and current_user.role == 'doctor' %}
+    {% if current_user.is_authenticated and active_role == 'doctor' %}
     <script src="{{ url_for('static', filename='js/doctor_resume.js') }}"></script>
     {% endif %}
     
@@ -1885,11 +2001,14 @@ document.addEventListener("DOMContentLoaded", () => {
     
     <!-- Communication System -->
     {% if current_user.is_authenticated %}
+        <!-- User Settings -->
+        <script src="{{ url_for('static', filename='js/user-settings.js') }}"></script>
+
         <!-- Add user ID meta tag for communication system -->
         <meta name="user-id" content="{{ current_user.id }}">
         
         <!-- Include Socket.IO -->
-        <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+        <script src="{{ _sr }}/vendor/jsdelivr/npm/socket.io-client@4.5.4/dist/socket.io.min.js" onerror="this.onerror=null;this.src='https://cdn.socket.io/4.5.4/socket.io.min.js';"></script>
         
         <!-- Include Communication Components -->
         {% include 'components/communication_icon.html' %}
@@ -1897,6 +2016,12 @@ document.addEventListener("DOMContentLoaded", () => {
         
         <!-- Include Communication JavaScript -->
         <script src="{{ url_for('static', filename='js/communication.js') }}"></script>
+
+        {% if user_role in ['doctor', 'nurse'] %}
+            {% include 'components/emergency_code_button.html' %}
+            {% include 'components/emergency_code_modal.html' %}
+            <script src="{{ url_for('static', filename='js/emergency-codes.js') }}"></script>
+        {% endif %}
     {% endif %}
     
     {% block extra_js %}{% endblock %}

@@ -4922,22 +4922,8 @@ class DoctorPatientManagement {
                 .done(function(data) {
                     const src = data.source === 'db' ? 'Database' : (data.source === 'index' ? 'Dosage index book' : 'Not available');
                     $('#dosageSourceText').text(`Source: ${src}`);
-                    
-                    const rows = (label, value) => value ? `<div><strong>${label}:</strong> ${value}</div>` : '';
-                    const d = data.dosage || {};
-                    const html = `
-                        ${rows('Indication', d.indication)}
-                        ${rows('Contraindication', d.contraindication)}
-                        ${rows('Interaction', d.interaction)}
-                        ${rows('Side Effects', d.side_effects)}
-                        <hr/>
-                        ${rows('Dosage (Pediatrics)', d.dosage_peds)}
-                        ${rows('Dosage (Adults)', d.dosage_adults)}
-                        ${rows('Dosage (Geriatrics)', d.dosage_geriatrics)}
-                        <hr/>
-                        ${rows('Important Notes', d.important_notes)}
-                    `;
-                    $('#dosageContent').html(html);
+
+                    $('#dosageContent').html(mmcRenderDosageBody(data));
                 })
                 .fail(function() {
                     $('#dosageContent').html('<div class="text-danger">Failed to load dosage information.</div>');
@@ -5517,22 +5503,87 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         function mmcRenderDosageBody(data) {
-            const dosage = (data && data.dosage) ? data.dosage : {};
-            const rows = (label, value) => {
-                const v = (value === null || value === undefined) ? '' : String(value).trim();
-                return v ? `<div style="margin-bottom:6px;"><strong>${label}:</strong> ${v}</div>` : '';
-            };
+            const payload = data || {};
+            const dosage = payload.dosage || null;
+            const drug = payload.drug || {};
+
+            function escapeHtml(value) {
+                return String(value === null || value === undefined ? '' : value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/\"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            function splitToBulletItems(text) {
+                const raw = (text === null || text === undefined) ? '' : String(text);
+                let t = raw.replace(/\r/g, '').trim();
+                if (!t) return [];
+                t = t.replace(/\s*•\s*/g, '\n• ');
+                const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
+                const items = [];
+                for (const line of lines) {
+                    const cleaned = line
+                        .replace(/^([•\u2022\-*]+\s*)/, '')
+                        .replace(/^\d+[\).]\s*/, '')
+                        .trim();
+                    if (cleaned) items.push(cleaned);
+                }
+                return items.length ? items : [t];
+            }
+
+            function renderBullets(text) {
+                const items = splitToBulletItems(text);
+                if (!items.length) return '<span class="text-muted">-</span>';
+                const lis = items.map(i => `<li>${escapeHtml(i)}</li>`).join('');
+                return `<ul class="mb-0" style="padding-left: 1.25rem;">${lis}</ul>`;
+            }
+
+            if (!dosage) {
+                return '<div class="text-muted">No dosage information found (DB or index book).</div>';
+            }
+
             return `
-                ${rows('Indication', dosage.indication)}
-                ${rows('Contraindication', dosage.contraindication)}
-                ${rows('Interaction', dosage.interaction)}
-                ${rows('Side Effects', dosage.side_effects)}
-                <hr/>
-                ${rows('Dosage (Pediatrics)', dosage.dosage_peds)}
-                ${rows('Dosage (Adults)', dosage.dosage_adults)}
-                ${rows('Dosage (Geriatrics)', dosage.dosage_geriatrics)}
-                <hr/>
-                ${rows('Important Notes', dosage.important_notes)}
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>Basic Information</h5>
+                        <table class="table table-bordered">
+                            <tr><th>Drug Number</th><td>${escapeHtml(drug.drug_number || '-')}</td></tr>
+                            <tr><th>Drug Name</th><td>${escapeHtml(drug.name || '-')}</td></tr>
+                        </table>
+
+                        <h5>Medical Information</h5>
+                        <table class="table table-bordered">
+                            <tr><th>Indication</th><td>${renderBullets(dosage.indication)}</td></tr>
+                            <tr><th>Contraindication</th><td>${renderBullets(dosage.contraindication)}</td></tr>
+                            <tr><th>Drug Interaction</th><td>${renderBullets(dosage.interaction)}</td></tr>
+                            <tr><th>Side Effects</th><td>${renderBullets(dosage.side_effects)}</td></tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>Dosage Information</h5>
+                        <div class="card mb-3">
+                            <div class="card-header bg-info text-white">Pediatrics</div>
+                            <div class="card-body"><div class="card-text dosage-points">${renderBullets(dosage.dosage_peds)}</div></div>
+                        </div>
+                        <div class="card mb-3">
+                            <div class="card-header bg-primary text-white">Adults</div>
+                            <div class="card-body"><div class="card-text dosage-points">${renderBullets(dosage.dosage_adults)}</div></div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header bg-secondary text-white">Geriatrics</div>
+                            <div class="card-body"><div class="card-text dosage-points">${renderBullets(dosage.dosage_geriatrics)}</div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <h5>Important Notes</h5>
+                    <div class="card">
+                        <div class="card-body"><div class="card-text dosage-points">${renderBullets(dosage.important_notes)}</div></div>
+                    </div>
+                </div>
             `;
         }
 

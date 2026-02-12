@@ -12,7 +12,12 @@ class EncryptedType(TypeDecorator):
     impl = LargeBinary
     cache_ok = True
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, encrypt_non_sqlite: bool = True, **kwargs):
+        # encrypt_non_sqlite=True enables field-level encryption on PostgreSQL and
+        # other DBs where the column is typically TEXT. For legacy schemas that
+        # rely on plaintext for uniqueness/indexing (e.g., username/email), callers
+        # can opt out per-column.
+        self.encrypt_non_sqlite = bool(encrypt_non_sqlite)
         super(EncryptedType, self).__init__(*args, **kwargs)
 
     def load_dialect_impl(self, dialect):
@@ -41,14 +46,21 @@ class EncryptedType(TypeDecorator):
             else:
                 serialized_value = value
 
-            # On PostgreSQL (and most non-sqlite DBs), this app's existing schema
-            # stores these fields as VARCHAR/TEXT. To avoid type/length issues and
-            # breaking existing data, we store plaintext there.
-            if getattr(dialect, 'name', None) != 'sqlite':
+            is_sqlite = getattr(dialect, 'name', None) == 'sqlite'
+
+            # Allow per-column opt-out for non-sqlite DBs (legacy searchable/unique fields).
+            if not is_sqlite and not self.encrypt_non_sqlite:
                 return serialized_value
 
-            encrypted_value = EncryptionUtils.encrypt_data(serialized_value)
-            return encrypted_value.encode('utf-8')  # Store as bytes
+            # Avoid double-encrypting if a caller passes an existing token.
+            if isinstance(serialized_value, str) and serialized_value.startswith('gAAAA'):
+                encrypted_value = serialized_value
+            else:
+                encrypted_value = EncryptionUtils.encrypt_data(serialized_value)
+
+            if is_sqlite:
+                return encrypted_value.encode('utf-8')  # Store as bytes
+            return encrypted_value  # Store as TEXT on non-sqlite
         except Exception as e:
             try:
                 current_app.logger.error(f"Encryption failed for value: {str(e)}")

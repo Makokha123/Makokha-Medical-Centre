@@ -292,6 +292,15 @@
         endDate: null
     };
 
+    function escHtml(value) {
+        return String(value === null || value === undefined ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // Initialize date/month/year selectors
     function initializeDateControls() {
         const today = new Date();
@@ -407,7 +416,8 @@
                 }            })
             .catch(error => {
                 console.error('Error:', error);
-                contentDiv.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Error loading dashboard: ${error.message}</div>`;
+                const msg = escHtml(error && error.message ? error.message : 'Error');
+                contentDiv.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Error loading dashboard: ${msg}</div>`;
             });
     }
 
@@ -439,7 +449,8 @@
             })
             .catch(error => {
                 console.error('Error:', error);
-                contentDiv.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Error loading dashboard: ${error.message}</div>`;
+                const msg = escHtml(error && error.message ? error.message : 'Error');
+                contentDiv.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Error loading dashboard: ${msg}</div>`;
             });
     }
 
@@ -473,7 +484,8 @@
             })
             .catch(error => {
                 console.error('Error:', error);
-                contentDiv.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Error loading dashboard: ${error.message}</div>`;
+                const msg = escHtml(error && error.message ? error.message : 'Error');
+                contentDiv.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Error loading dashboard: ${msg}</div>`;
             });
     }
 
@@ -523,7 +535,8 @@
             })
             .catch(error => {
                 console.error('Yearly dashboard load error:', error);
-                contentDiv.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Error loading dashboard: ${error.message}</div>`;
+                const msg = escHtml(error && error.message ? error.message : 'Error');
+                contentDiv.innerHTML = `<div class="alert alert-danger"><i class="fas fa-exclamation-circle"></i> Error loading dashboard: ${msg}</div>`;
             });
     }
 

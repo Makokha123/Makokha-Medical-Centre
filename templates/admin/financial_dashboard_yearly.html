@@ -254,6 +254,7 @@
                     <h6 class="m-0 font-weight-bold text-primary">Revenue Metrics</h6>
                 </div>
                 <div class="card-body">
+                    {% set revenues = monthly_breakdown | map(attribute='revenue') | list %}
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Average Monthly</span>
@@ -263,13 +264,13 @@
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Highest Month</span>
-                            <span>KES {{ "{:,.2f}".format(max([m['revenue'] for m in monthly_breakdown], default=0)) }}</span>
+                            <span>KES {{ "{:,.2f}".format((revenues|max) if revenues else 0) }}</span>
                         </div>
                     </div>
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Lowest Month</span>
-                            <span>KES {{ "{:,.2f}".format(min([m['revenue'] for m in monthly_breakdown], default=0)) }}</span>
+                            <span>KES {{ "{:,.2f}".format((revenues|min) if revenues else 0) }}</span>
                         </div>
                     </div>
                 </div>
@@ -282,6 +283,7 @@
                     <h6 class="m-0 font-weight-bold text-danger">Expense Metrics</h6>
                 </div>
                 <div class="card-body">
+                    {% set expenses = monthly_breakdown | map(attribute='expense') | list %}
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Average Monthly</span>
@@ -291,13 +293,13 @@
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Highest Month</span>
-                            <span>KES {{ "{:,.2f}".format(max([m['expense'] for m in monthly_breakdown], default=0)) }}</span>
+                            <span>KES {{ "{:,.2f}".format((expenses|max) if expenses else 0) }}</span>
                         </div>
                     </div>
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Lowest Month</span>
-                            <span>KES {{ "{:,.2f}".format(min([m['expense'] for m in monthly_breakdown], default=0)) }}</span>
+                            <span>KES {{ "{:,.2f}".format((expenses|min) if expenses else 0) }}</span>
                         </div>
                     </div>
                 </div>
@@ -310,6 +312,7 @@
                     <h6 class="m-0 font-weight-bold text-success">Profit Metrics</h6>
                 </div>
                 <div class="card-body">
+                    {% set profits = monthly_breakdown | map(attribute='profit') | list %}
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Average Monthly</span>
@@ -319,13 +322,13 @@
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Best Month</span>
-                            <span>KES {{ "{:,.2f}".format(max([m['profit'] for m in monthly_breakdown], default=0)) }}</span>
+                            <span>KES {{ "{:,.2f}".format((profits|max) if profits else 0) }}</span>
                         </div>
                     </div>
                     <div class="mb-3">
                         <div class="d-flex justify-content-between">
                             <span class="fw-bold">Worst Month</span>
-                            <span>KES {{ "{:,.2f}".format(min([m['profit'] for m in monthly_breakdown], default=0)) }}</span>
+                            <span>KES {{ "{:,.2f}".format((profits|min) if profits else 0) }}</span>
                         </div>
                     </div>
                 </div>

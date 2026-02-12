@@ -72,9 +72,12 @@ class CommunicationEmailNotifications:
         
         subject = f'New message from {sender_name} - Makokha Medical Centre'
         
-        # Message preview
+        # Message preview - Security: Limit preview length to prevent large content injection
         preview = message_content[:100] if show_preview else '[Message content hidden]'
         
+        # Security Note: render_template_string() is used here but all variables are
+        # explicitly escaped using |e filter. The template string itself is hardcoded (not user input).
+        # Template variables: sender_name, message_preview, conversation_url are all escaped.
         html_body = render_template_string('''
 <!DOCTYPE html>
 <html>
@@ -89,15 +92,15 @@ class CommunicationEmailNotifications:
     
     <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e0e0e0;">
         <p style="font-size: 16px; margin-bottom: 20px;">
-            You have a new message from <strong>{{ sender_name }}</strong>:
+            You have a new message from <strong>{{ sender_name|e }}</strong>:
         </p>
         
         <div style="background: white; padding: 15px; border-left: 4px solid #2e3192; margin: 20px 0; border-radius: 4px;">
-            <p style="margin: 0; color: #666; font-style: italic;">"{{ message_preview }}"</p>
+            <p style="margin: 0; color: #666; font-style: italic;">"{{ message_preview|e }}"</p>
         </div>
         
         <p style="text-align: center; margin: 30px 0;">
-            <a href="{{ conversation_url }}" style="display: inline-block; background: #2e3192; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            <a href="{{ conversation_url|e }}" style="display: inline-block; background: #2e3192; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
                 View Message
             </a>
         </p>
@@ -106,7 +109,7 @@ class CommunicationEmailNotifications:
         
         <p style="font-size: 12px; color: #999; text-align: center;">
             Makokha Medical Centre - Communication System<br>
-            <a href="{{ settings_url }}" style="color: #2e3192;">Manage notification preferences</a>
+            <a href="{{ settings_url|e }}" style="color: #2e3192;">Manage notification preferences</a>
         </p>
     </div>
 </body>
@@ -177,7 +180,7 @@ Manage notification preferences at: {conversation_url.split('/')[0]}//communicat
     
     <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e0e0e0;">
         <p style="font-size: 16px; margin-bottom: 20px;">
-            You missed a <strong>{{ call_type }}</strong> call from <strong>{{ caller_name }}</strong>
+            You missed a <strong>{{ call_type|e }}</strong> call from <strong>{{ caller_name|e }}</strong>
         </p>
         
         <div style="background: white; padding: 15px; margin: 20px 0; border-radius: 4px; text-align: center;">
@@ -187,7 +190,7 @@ Manage notification preferences at: {conversation_url.split('/')[0]}//communicat
         </div>
         
         <p style="text-align: center; margin: 30px 0;">
-            <a href="{{ call_back_url }}" style="display: inline-block; background: #d32f2f; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            <a href="{{ call_back_url|e }}" style="display: inline-block; background: #d32f2f; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
                 Call Back
             </a>
         </p>
@@ -196,7 +199,7 @@ Manage notification preferences at: {conversation_url.split('/')[0]}//communicat
         
         <p style="font-size: 12px; color: #999; text-align: center;">
             Makokha Medical Centre - Communication System<br>
-            <a href="{{ settings_url }}" style="color: #d32f2f;">Manage notification preferences</a>
+            <a href="{{ settings_url|e }}" style="color: #d32f2f;">Manage notification preferences</a>
         </p>
     </div>
 </body>
@@ -263,7 +266,7 @@ Makokha Medical Centre - Communication System
     </div>
     
     <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e0e0e0;">
-        <p style="font-size: 16px;">Hi <strong>{{ user_name }}</strong>,</p>
+        <p style="font-size: 16px;">Hi <strong>{{ user_name|e }}</strong>,</p>
         
         <p>Here's your communication summary for today:</p>
         
@@ -280,7 +283,7 @@ Makokha Medical Centre - Communication System
         </div>
         
         <p style="text-align: center; margin: 30px 0;">
-            <a href="{{ app_url }}/communication" style="display: inline-block; background: #2e3192; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            <a href="{{ app_url|e }}/communication" style="display: inline-block; background: #2e3192; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
                 View All Messages
             </a>
         </p>

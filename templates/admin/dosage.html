@@ -432,7 +432,7 @@ function handleAssistantToggleDrug(checkbox) {
     
     const form = document.createElement('form');
     form.method = 'POST';
-    form.action = '{{ url_for("admin_toggle_assistant_dosage_agent") }}';
+    form.action = '{{ url_for("admin_toggle_ai_dosage_agent") }}';
     
     const csrfInput = document.createElement('input');
     csrfInput.type = 'hidden';
@@ -1110,7 +1110,9 @@ $(document).ready(function() {
         $.get('/admin/drugs/without-dosage', function(data) {
             $('#drug_id').empty().append('<option value="">-- Select Drug --</option>');
             data.forEach(function(drug) {
-                $('#drug_id').append(`<option value="${drug.id}">${drug.drug_number} - ${drug.name}</option>`);
+                // Use DOM APIs/jQuery .text() to avoid HTML injection via drug fields.
+                const $opt = $('<option>', { value: String(drug.id) }).text(`${String(drug.drug_number || '')} - ${String(drug.name || '')}`);
+                $('#drug_id').append($opt);
             });
         }).fail(function() {
             alert('Failed to load drugs without dosage information');

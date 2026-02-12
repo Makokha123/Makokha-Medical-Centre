@@ -1,4 +1,4 @@
-
+.md
 backups/
 instance/
 .env
@@ -6,10 +6,25 @@ instance/
 !.env.example
 logs/
 *.log
+*.log.*
+*.out
+*.err
+nohup.out
+log/
+tmp/
 *.db
 *.sqlite3
 *.sqlite
 migrations/
+
+
+# User uploads (often PHI / sensitive)
+uploads/
+static/uploads/
+
+
+# Node
+node_modules/
 
 
 # Python
@@ -33,3 +48,14 @@ ENV/
 Thumbs.db
 *.tmp
 *.bak
+
+
+# Secrets / keys (avoid committing credentials)
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.kdbx
+*secret*
+*secrets*

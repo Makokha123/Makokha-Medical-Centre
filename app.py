@@ -1,5 +1,7 @@
 from __future__ import annotations
 import os
+import mimetypes
+from io import BytesIO
 import sys
 
 # Socket.IO async backend selection.
@@ -82,7 +84,7 @@ def get_eat_today():
     """Get current date in EAT (Africa/Nairobi)."""
     return datetime.now(EAT).date()
 
-from sqlalchemy import create_engine, func, literal
+from sqlalchemy import create_engine, func, literal, literal_column
 from sqlalchemy import case
 from sqlalchemy.ext.hybrid import hybrid_property
 from config import Config 
@@ -119,7 +121,7 @@ from functools import wraps
 from itsdangerous import URLSafeTimedSerializer
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask_wtf.csrf import CSRFProtect, generate_csrf
+from flask_wtf.csrf import CSRFProtect, CSRFError, generate_csrf
 from itsdangerous import URLSafeTimedSerializer
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField
@@ -147,6 +149,14 @@ from utils.encrypted_type import EncryptedType
 from utils.stamp_signature import generate_rubber_stamp, generate_digital_signature
 from utils.whatsapp_meta import normalize_msisdn, send_document, send_text, WhatsAppConfigError
 from utils.whatsapp_settings_store import load_whatsapp_settings, save_whatsapp_settings, mask_token
+from utils.mfa_totp import MFAManager, MFASession, setup_user_mfa, verify_mfa_code
+from utils.message_encryption import MessageEncryption
+from utils.zero_knowledge import ZeroKnowledgeEncryption
+from utils.upload_encryption import encrypt_file_inplace as _encrypt_upload_file_inplace, decrypt_file_to_bytes as _decrypt_upload_file_to_bytes, is_encrypted_file as _is_encrypted_upload_file
+from utils.adaptive_auth import AdaptiveAuthentication, DeviceFingerprint, RiskAssessment
+from utils.ai_threat_detection import AIThreatDetector, BehavioralProfile, ThreatPatterns
+from utils.comprehensive_audit import AuditEntry, AuditEventType, AuditSeverity, ComprehensiveAuditSystem
+from utils.emergency_codes import get_emergency_code, list_emergency_codes
 
 import base64
 from io import BytesIO
@@ -199,6 +209,32 @@ app.jinja_env.filters['nl2br'] = nl2br
 app.jinja_env.filters['eat_time'] = format_eat_time
 
 
+def isoformat_eat(dt: Optional[datetime]) -> Optional[str]:
+    """Return an ISO-8601 string with Africa/Nairobi offset.
+
+    DB columns use naive DateTime. PostgreSQL + psycopg2 store aware datetimes as
+    UTC in 'timestamp without time zone' columns. So naive values read back from
+    the DB are actually UTC. We must treat them as UTC and convert to EAT.
+    """
+    if not dt:
+        return None
+    if not isinstance(dt, datetime):
+        return None
+    try:
+        if dt.tzinfo is None:
+            # Naive datetimes from DB are UTC — tag as UTC then convert to EAT
+            from datetime import timezone as _tz
+            dt = dt.replace(tzinfo=_tz.utc).astimezone(EAT)
+        else:
+            dt = dt.astimezone(EAT)
+        return dt.isoformat()
+    except Exception:
+        try:
+            return str(dt)
+        except Exception:
+            return None
+
+
 
 # Production configuration for Render
 if os.environ.get('RENDER'):
@@ -239,8 +275,23 @@ if not os.environ.get('RENDER'):
     app.config['REMEMBER_COOKIE_SECURE'] = False
     app.logger.info('Session cookies set to non-secure for development (HTTP)')
 
+# Configure session to be permanent (subject to PERMANENT_SESSION_LIFETIME)
+app.config['SESSION_PERMANENT'] = True
+
 Config.init_fernet(app)
 EncryptionUtils.init_fernet(app)
+
+# ---------------------------------------------------------------------------
+# Feature flags (Phase 1/2/3 security toggles)
+# ---------------------------------------------------------------------------
+try:
+    from utils.feature_flags import load_feature_flags, apply_flags_to_app_config
+
+    _feature_flags = load_feature_flags()
+    apply_flags_to_app_config(app, _feature_flags)
+    app.logger.info("Feature flags loaded (%d flags)", len(_feature_flags))
+except Exception as e:
+    app.logger.exception("Feature flags initialization failed: %s", e)
 
 # Initialize Socket.IO for real-time communication
 from flask_socketio import SocketIO
@@ -289,9 +340,63 @@ limiter = Limiter(key_func=get_remote_address, storage_uri=app.config['RATELIMIT
 csrf.init_app(app)
 limiter.init_app(app)
 
+# Initialize Custom WAF (Web Application Firewall) - Phase 2
+from utils.custom_waf import init_waf, waf
+init_waf(app)
+app.logger.info("Custom WAF (Web Application Firewall) initialized successfully")
+
+# Initialize Message Encryption - Phase 1
+message_encryptor = MessageEncryption(os.getenv('MESSAGE_ENCRYPTION_KEY'))
+app.logger.info("Message Encryption initialized successfully")
+
+# Initialize Adaptive Authentication - Phase 2
+adaptive_auth = AdaptiveAuthentication()
+app.logger.info("Adaptive Authentication initialized successfully")
+try:
+    if app.config.get("ADAPTIVE_AUTH_ENABLED") is False:
+        adaptive_auth.disable()
+    else:
+        adaptive_auth.enable()
+except Exception:
+    pass
+
+# Initialize AI Threat Detection - Phase 2
+ai_threat_detector = AIThreatDetector()
+app.logger.info("AI-Powered Threat Detection initialized successfully")
+try:
+    if app.config.get("AI_THREAT_DETECTION_ENABLED") is False:
+        ai_threat_detector.disable()
+    else:
+        ai_threat_detector.enable()
+except Exception:
+    pass
+
+# Initialize Comprehensive Audit System - Phase 2
+comprehensive_audit = ComprehensiveAuditSystem()
+app.logger.info("Comprehensive Audit System initialized successfully")
+try:
+    if app.config.get("COMPREHENSIVE_AUDIT_ENABLED") is False:
+        comprehensive_audit.disable()
+    else:
+        comprehensive_audit.enable()
+except Exception:
+    pass
+
+# Initialize Phase 3: Monitoring & Compliance (safe to skip on failure)
+try:
+    from utils.phase3_init import init_phase3
+    init_phase3(app)
+except Exception as e:
+    app.logger.exception("Phase 3 initialization failed: %s", e)
+
 UPLOAD_FOLDER = os.path.join(app.root_path, 'static', 'uploads')
 PROFILE_PICTURE_FOLDER = os.path.join(UPLOAD_FOLDER, 'profile_pictures')
 os.makedirs(PROFILE_PICTURE_FOLDER, exist_ok=True)
+
+# Private uploads (authenticated serving)
+PRIVATE_UPLOADS_ROOT = os.path.join(app.root_path, 'uploads')
+PRIVATE_PROFILE_PICTURES_DIR = os.path.join(PRIVATE_UPLOADS_ROOT, 'profile_pictures')
+os.makedirs(PRIVATE_PROFILE_PICTURES_DIR, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
 SECRET_KEY = os.getenv('SECRET_KEY')
@@ -500,6 +605,15 @@ if _socketio_async_mode == 'eventlet':
 db = SQLAlchemy(app, session_options={"autoflush": False, "autocommit": False})
 migrate = Migrate(app, db)
 
+# Enhanced Database Activity Monitoring (SIEM + audit) - Phase 3
+try:
+    from utils.db_activity_monitor import init_db_activity_monitor
+
+    with app.app_context():
+        init_db_activity_monitor(app, db.engine)
+except Exception as e:
+    app.logger.exception("DB activity monitoring init failed: %s", e)
+
 
 
 ts = URLSafeTimedSerializer(app.config['SECRET_KEY'])
@@ -626,10 +740,12 @@ class User(db.Model, UserMixin):
     __tablename__ = 'user'
     
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(EncryptedType, unique=True, nullable=False)
-    email = db.Column(EncryptedType, unique=True, nullable=False)
+    # NOTE: username/email remain plaintext-compatible on non-sqlite DBs to preserve
+    # legacy uniqueness/indexing. Sensitive secrets (MFA) are encrypted at rest.
+    username = db.Column(EncryptedType(encrypt_non_sqlite=False), unique=True, nullable=False)
+    email = db.Column(EncryptedType(encrypt_non_sqlite=False), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False)              # Hashed, not encrypted
-    role = db.Column(EncryptedType, nullable=False)
+    role = db.Column(EncryptedType(encrypt_non_sqlite=False), nullable=False)
     # These columns are BOOLEAN/TIMESTAMP/VARCHAR in the existing Postgres schema.
     # Do not store them via EncryptedType to avoid BYTEA type mismatches.
     is_active = db.Column(db.Boolean, default=True)
@@ -644,6 +760,22 @@ class User(db.Model, UserMixin):
     email_otp_expires_at = db.Column(db.DateTime)
     password_reset_nonce = db.Column(db.String(64))
     password_reset_sent_at = db.Column(db.DateTime)
+    
+    # Multi-Factor Authentication (TOTP)
+    mfa_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    mfa_secret = db.Column(EncryptedType)  # TOTP secret (encrypted)
+    mfa_backup_codes = db.Column(EncryptedType)  # JSON array of hashed backup codes (encrypted)
+    
+    # Adaptive Authentication - Device tracking
+    known_devices = db.Column(db.JSON)  # List of known device fingerprints
+    known_ips = db.Column(db.JSON)  # List of known IP addresses
+    typical_login_hours = db.Column(db.JSON)  # List of typical login hours (0-23)
+    failed_login_attempts = db.Column(db.Integer, default=0)
+    last_failed_login = db.Column(db.DateTime)
+    
+    # Zero-Knowledge Encryption
+    zk_salt = db.Column(db.String(255))  # Salt for ZK key derivation
+    encrypted_medical_key = db.Column(db.Text)  # User's encrypted medical records key
 
     def set_password(self, password):
         self.password = generate_password_hash(password)
@@ -699,6 +831,30 @@ class User(db.Model, UserMixin):
     generated_summaries = db.relationship('PatientSummary', back_populates='generator', lazy=True)
     ward_assignments = db.relationship('UserWardAssignment', back_populates='user', lazy=True, cascade='all, delete-orphan')
     department_assignments = db.relationship('UserDepartmentAssignment', back_populates='user', lazy=True, cascade='all, delete-orphan')
+
+
+class UserE2EPublicKey(db.Model):
+    """Stores a user's public key (JWK) for true end-to-end encrypted messaging.
+
+    The server stores only public key material; private keys remain client-side.
+    """
+
+    __tablename__ = 'user_e2e_public_keys'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, unique=True, index=True)
+
+    kid = db.Column(db.String(128), nullable=False)
+    alg = db.Column(db.String(64), nullable=False)
+    public_jwk = db.Column(db.Text, nullable=False)
+
+    created_at = db.Column(db.DateTime, default=get_eat_now)
+    updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
+
+    user = db.relationship('User', backref=db.backref('e2e_public_key', uselist=False))
+
+    def __repr__(self):
+        return f'<UserE2EPublicKey user_id={self.user_id} kid={self.kid}>'
 
 
 # Communication System Models
@@ -1170,6 +1326,31 @@ class OutpatientDepartment(db.Model):
     
     def __repr__(self):
         return f'<OutpatientDepartment {self.name} ({self.type})>'
+
+
+class EmergencyCodeEvent(db.Model):
+    """Logs emergency code activations (no PHI)."""
+
+    __tablename__ = 'emergency_code_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    code_key = db.Column(db.String(30), nullable=False)  # e.g. code_blue
+    scope_type = db.Column(db.String(20), nullable=False)  # ward | department
+
+    ward_id = db.Column(db.Integer, db.ForeignKey('wards.id'), nullable=True)
+    bed_id = db.Column(db.Integer, db.ForeignKey('beds.id'), nullable=True)
+    department_id = db.Column(db.Integer, db.ForeignKey('outpatient_departments.id'), nullable=True)
+
+    triggered_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    triggered_at = db.Column(db.DateTime, default=get_eat_now, nullable=False)
+
+    status = db.Column(db.String(20), default='active')  # active, cleared
+    cleared_at = db.Column(db.DateTime)
+
+    ward = db.relationship('Ward', backref='emergency_code_events', foreign_keys=[ward_id])
+    bed = db.relationship('Bed', backref='emergency_code_events', foreign_keys=[bed_id])
+    department = db.relationship('OutpatientDepartment', backref='emergency_code_events', foreign_keys=[department_id])
+    user = db.relationship('User', backref='emergency_code_events', foreign_keys=[triggered_by])
 
 
 class UserWardAssignment(db.Model):
@@ -3323,6 +3504,39 @@ class PatientNumberCounter(db.Model):
     updated_at = db.Column(db.DateTime, default=get_eat_now, onupdate=get_eat_now)
 
     
+class ReleasedPatientNumber(db.Model):
+    """Pool of released OP/IP numbers that can be reused.
+
+    Numbers are released when a draft/archived patient is deleted/canceled and
+    can safely be offered to the next new patient.
+    """
+
+    __tablename__ = 'released_patient_numbers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(2), nullable=False)  # 'OP' | 'IP'
+    seq = db.Column(db.Integer, nullable=False)
+    released_at = db.Column(db.DateTime, default=get_eat_now)
+
+    __table_args__ = (
+        db.UniqueConstraint('kind', 'seq', name='uq_released_patient_numbers_kind_seq'),
+    )
+
+
+class ArchivedPatientDraft(db.Model):
+    """Encrypted server-side snapshot of the doctor 'New Patient' wizard draft."""
+
+    __tablename__ = 'archived_patient_drafts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False, unique=True)
+    archived_at = db.Column(db.DateTime, default=get_eat_now)
+    archived_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    current_section_id = db.Column(db.String(60))
+    current_section_index = db.Column(db.Integer)
+    draft_encrypted = db.Column(db.Text, nullable=False)
+
+
 class PatientReviewSystem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     patient_id = db.Column(db.Integer, db.ForeignKey('patient.id'), nullable=False)
@@ -5260,7 +5474,6 @@ _RECEIPT_ALLOWED_TAGS = [
     'hr',
     'img',
     'button',
-    'script',
 ]
 
 _RECEIPT_ALLOWED_ATTRS = {
@@ -5269,7 +5482,6 @@ _RECEIPT_ALLOWED_ATTRS = {
     'link': ['rel', 'href'],
     'meta': ['name', 'content', 'charset'],
     'button': ['type', 'id'],
-    'script': ['type'],
 }
 
 # CSS sanitizer to allow safe inline styles (if available)
@@ -5593,7 +5805,7 @@ class AuditLog(db.Model):
             'old_values': self.old_values,
             'new_values': self.new_values,
             'ip_address': self.ip_address,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'created_at': isoformat_eat(self.created_at) if self.created_at else None,
             'user': {
                 'id': self.user.id,
                 'username': self.user.username
@@ -6260,6 +6472,9 @@ def _ensure_table_columns(engine, table_name: str, columns: dict[str, str]) -> i
     nullable columns to models without running Alembic migrations.
     """
     try:
+        if not _safe_table_name(table_name):
+            return 0
+
         inspector = sa_inspect(engine)
         existing_tables = set(inspector.get_table_names())
         if table_name not in existing_tables:
@@ -6276,12 +6491,25 @@ def _ensure_table_columns(engine, table_name: str, columns: dict[str, str]) -> i
         table_sql = quote(table_name)
         with engine.begin() as conn:
             for col_name in missing:
+                # Security: Validate column name to prevent SQL injection
+                if not _safe_table_name(col_name):
+                    current_app.logger.warning(f"Skipping unsafe column name: {col_name}")
+                    continue
+                
                 col_type = columns[col_name]
                 col_sql = quote(col_name)
+                
+                # Security: Additional validation - col_type should be a safe SQLAlchemy type string
+                # If col_type contains suspicious characters, skip it
+                col_type_str = str(col_type)
+                if any(c in col_type_str.lower() for c in [';', '--', '/*', '*/', 'drop', 'delete', 'truncate']):
+                    current_app.logger.error(f"Suspicious column type detected: {col_type_str} for column {col_name}")
+                    continue
+                
                 if dialect == 'postgresql':
-                    conn.execute(sa_text(f"ALTER TABLE {table_sql} ADD COLUMN IF NOT EXISTS {col_sql} {col_type}"))
+                    conn.execute(sa_text(f"ALTER TABLE {table_sql} ADD COLUMN IF NOT EXISTS {col_sql} {col_type_str}"))
                 else:
-                    conn.execute(sa_text(f"ALTER TABLE {table_sql} ADD COLUMN {col_sql} {col_type}"))
+                    conn.execute(sa_text(f"ALTER TABLE {table_sql} ADD COLUMN {col_sql} {col_type_str}"))
 
         return len(missing)
     except Exception:
@@ -6596,9 +6824,45 @@ def log_audit(action, table=None, record_id=None, user_id=None, changes=None,
         ip_address: IP address of the requester
     """
     try:
-        user_id = user_id if user_id is not None else (
-            current_user.id if current_user.is_authenticated else None
-        )
+        # Backward-compatibility: older call sites used positional args as:
+        #   log_audit(action, table, record_id, old_values, new_values)
+        # and did not pass user_id/changes explicitly.
+        if isinstance(user_id, dict) and old_values is None and new_values is None and (
+            changes is None or isinstance(changes, dict)
+        ):
+            old_values = user_id
+            new_values = changes
+            user_id = None
+            changes = None
+
+        def _coerce_user_id(value):
+            if value is None:
+                return None
+            # Avoid bools (subclass of int) being treated as valid IDs.
+            if isinstance(value, bool):
+                return None
+            if isinstance(value, int):
+                return value
+            try:
+                if hasattr(value, 'id'):
+                    return int(getattr(value, 'id'))
+            except Exception:
+                pass
+            if isinstance(value, dict):
+                if 'id' in value:
+                    try:
+                        return int(value.get('id'))
+                    except Exception:
+                        return None
+                return None
+            try:
+                return int(value)
+            except Exception:
+                return None
+
+        user_id = _coerce_user_id(user_id)
+        if user_id is None:
+            user_id = current_user.id if current_user.is_authenticated else None
         
         ip_address = ip_address if ip_address is not None else request.remote_addr
         
@@ -6770,6 +7034,19 @@ def peek_patient_number(patient_type: str | None) -> str:
     pt = _normalize_patient_type(patient_type)
     prefix = pt
 
+    # If we have a released number, offer the lowest one first.
+    try:
+        released = (
+            ReleasedPatientNumber.query
+            .filter_by(kind=pt)
+            .order_by(ReleasedPatientNumber.seq.asc())
+            .first()
+        )
+        if released and isinstance(released.seq, int) and released.seq > 0:
+            return f"{prefix} MNC{int(released.seq):03d}"
+    except Exception:
+        pass
+
     counter = db.session.get(PatientNumberCounter, pt)
     if counter and isinstance(counter.last_value, int):
         next_value = int(counter.last_value) + 1
@@ -6812,6 +7089,23 @@ def generate_patient_number(patient_type):
                 except Exception:
                     pass
 
+                # Reuse released numbers first (if any).
+                try:
+                    released = (
+                        ReleasedPatientNumber.query
+                        .filter_by(kind=pt)
+                        .order_by(ReleasedPatientNumber.seq.asc())
+                        .with_for_update()
+                        .first()
+                    )
+                    if released and isinstance(released.seq, int) and released.seq > 0:
+                        seq = int(released.seq)
+                        db.session.delete(released)
+                        return f"{prefix} MNC{seq:03d}"
+                except Exception:
+                    # If the pool query fails, fall back to monotonic counter.
+                    pass
+
                 counter.last_value = int(counter.last_value or 0) + 1
                 next_value = int(counter.last_value)
 
@@ -6829,6 +7123,40 @@ def generate_patient_number(patient_type):
 # Preserve a reference to the robust implementation so any legacy/duplicate
 # definitions later in this file can safely delegate without recursion.
 _generate_patient_number_impl = generate_patient_number
+
+def _patient_number_kind_and_seq(patient: 'Patient') -> tuple[str | None, int | None]:
+    """Return ('OP'|'IP', seq) for a patient number like 'OP MNC001'."""
+    if not patient:
+        return None, None
+    try:
+        if getattr(patient, 'op_number', None):
+            return 'OP', _extract_mnc_suffix_int(getattr(patient, 'op_number'))
+        if getattr(patient, 'ip_number', None):
+            return 'IP', _extract_mnc_suffix_int(getattr(patient, 'ip_number'))
+    except Exception:
+        return None, None
+    return None, None
+
+
+def _release_patient_number(kind: str | None, seq: int | None) -> bool:
+    """Add a released OP/IP number back into the reuse pool (best-effort)."""
+    k = (kind or '').strip().upper()
+    try:
+        s = int(seq) if seq is not None else None
+    except Exception:
+        s = None
+
+    if k not in {'OP', 'IP'} or not s or s <= 0:
+        return False
+
+    try:
+        exists = ReleasedPatientNumber.query.filter_by(kind=k, seq=int(s)).first()
+        if exists:
+            return True
+        db.session.add(ReleasedPatientNumber(kind=k, seq=int(s)))
+        return True
+    except Exception:
+        return False
 
 def generate_sale_number():
     now = datetime.now()
@@ -6894,48 +7222,117 @@ def home():
 @login_required
 def profile():
     if request.method == 'POST':
-        # ...existing code for saving patient...
-        db.session.commit()
-        flash('Patient saved successfully!', 'success')
-        if 'profile_picture' in request.files:
-            file = request.files['profile_picture']
-            if file and file.filename != '' and allowed_file(file.filename):
-                os.makedirs(PROFILE_PICTURE_FOLDER, exist_ok=True)
-                filename = secure_filename(file.filename)
-                timestamp = str(int(time.time()))
-                filename = f"user_{current_user.id}_{timestamp}_{filename}"
-                filepath = os.path.join(PROFILE_PICTURE_FOLDER, filename)
-                file.save(filepath)
-                if current_user.profile_picture:
-                    old_path = os.path.join(app.root_path, 'static', current_user.profile_picture)
-                    if os.path.exists(old_path):
+        try:
+            # Handle profile picture upload
+            if 'profile_picture' in request.files:
+                file = request.files['profile_picture']
+                if file and file.filename != '' and allowed_file(file.filename):
+                    os.makedirs(PRIVATE_PROFILE_PICTURES_DIR, exist_ok=True)
+                    try:
+                        _verify_image_upload(file, allowed_formats={'JPEG', 'PNG', 'GIF'})
+                    except ValueError as ve:
+                        flash(str(ve), 'danger')
+                    else:
+                        filename = secure_filename(file.filename) or 'profile.jpg'
+                        timestamp = str(int(time.time()))
+                        filename = f"user_{current_user.id}_{timestamp}_{filename}"
+                        filepath = os.path.join(PRIVATE_PROFILE_PICTURES_DIR, filename)
+                        file.save(filepath)
+
                         try:
-                            os.remove(old_path)
-                        except Exception as e:
-                            app.logger.error(f"Error deleting old profile picture: {str(e)}")
+                            _encrypt_upload_file_inplace(filepath)
+                        except Exception:
+                            pass
 
-                current_user.profile_picture = os.path.join('uploads', 'profile_pictures', filename).replace('\\', '/')
+                        if current_user.profile_picture:
+                            try:
+                                old_rel = str(current_user.profile_picture or '').replace('\\', '/').lstrip('/')
+                            except Exception:
+                                old_rel = ''
 
-        current_user.username = request.form.get('username', current_user.username)
-        current_user.email = request.form.get('email', current_user.email)
-        
-        new_password = request.form.get('new_password')
-        if new_password:
-            if check_password_hash(current_user.password, request.form.get('current_password')):
-                current_user.set_password(new_password)
-                flash('Password updated successfully!', 'success')
-            else:
-                flash('Current password is incorrect', 'danger')
-        
-        db.session.commit()
-        flash('Profile updated successfully!', 'success')
-        return redirect(url_for('profile'))
-    
+                            # Normalize possible stored values like "uploads/profile_pictures/x.jpg".
+                            if old_rel.startswith('uploads/'):
+                                old_rel = old_rel[len('uploads/'):]
+
+                            candidates = [
+                                os.path.join(app.root_path, 'uploads', old_rel),
+                                os.path.join(app.root_path, 'static', old_rel),
+                                os.path.join(app.root_path, 'static', 'uploads', old_rel),
+                            ]
+                            for p in candidates:
+                                try:
+                                    if p and os.path.exists(p):
+                                        os.remove(p)
+                                except Exception as e:
+                                    app.logger.error(f"Error deleting old profile picture: {str(e)}")
+
+                        # Store relative path for /uploads/<path>
+                        current_user.profile_picture = os.path.join('profile_pictures', filename).replace('\\', '/')
+
+            current_user.username = request.form.get('username', current_user.username)
+            current_user.email = request.form.get('email', current_user.email)
+
+            new_password = request.form.get('new_password')
+            if new_password:
+                if check_password_hash(current_user.password, request.form.get('current_password')):
+                    current_user.set_password(new_password)
+                    flash('Password updated successfully!', 'success')
+                else:
+                    flash('Current password is incorrect', 'danger')
+
+            db.session.commit()
+            flash('Profile updated successfully!', 'success')
+            return redirect(url_for('profile'))
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"Profile update error: {e}")
+            flash('An error occurred while updating your profile. Please try again.', 'danger')
+            return redirect(url_for('profile'))
+
     return render_template('profile.html', user=current_user)
 
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg', 'gif'}
+
+
+def _verify_image_upload(file_storage, *, allowed_formats: set[str]) -> None:
+    """Verify that an uploaded file is a real image (defense-in-depth).
+
+    Prevents accepting non-image payloads with an image extension.
+    """
+    if not file_storage or not getattr(file_storage, 'filename', None):
+        raise ValueError('No image uploaded.')
+
+    stream = getattr(file_storage, 'stream', None)
+    if stream is None:
+        raise ValueError('Invalid upload stream.')
+
+    try:
+        from PIL import Image, UnidentifiedImageError
+    except Exception:
+        # Pillow should exist (see requirements.txt). If it doesn't, skip verification.
+        return
+
+    try:
+        try:
+            stream.seek(0)
+        except Exception:
+            pass
+
+        img = Image.open(stream)
+        img.verify()
+        fmt = (getattr(img, 'format', None) or '').upper()
+        if fmt and fmt not in allowed_formats:
+            raise ValueError('Unsupported image format.')
+    except UnidentifiedImageError:
+        raise ValueError('Invalid image file.')
+    finally:
+        # Ensure subsequent save() reads from the beginning.
+        try:
+            stream.seek(0)
+        except Exception:
+            pass
 
 
 # ============================================
@@ -7112,6 +7509,8 @@ def login():
         password = request.form.get('password')
         role = request.form.get('role')
         remember = True if request.form.get('remember') else False
+
+        accept_language = request.headers.get('Accept-Language', '')
         
         current_app.logger.info(f"Login attempt - email/username: {email}, role: {role}")
         
@@ -7136,12 +7535,64 @@ def login():
                     current_app.logger.info(f"Password verified for user: {candidate_username}")
                     break
                 else:
-                    current_app.logger.warning(f"Password mismatch for user: {candidate_username}")
+                    # Security: Track failed password attempt
+                    candidate.failed_login_attempts = (candidate.failed_login_attempts or 0) + 1
+                    candidate.last_failed_login = get_eat_now()
+                    try:
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+                    # Security: Log failed password attempt
+                    current_app.logger.warning(f"Failed login attempt - Password mismatch: {candidate_username}, IP: {request.remote_addr}")
+
+                    # Adaptive auth: record failed attempt for risk scoring
+                    try:
+                        adaptive_auth.record_login_attempt(
+                            user_id=candidate.id,
+                            ip_address=request.remote_addr,
+                            user_agent=request.user_agent.string,
+                            success=False,
+                            accept_language=accept_language,
+                        )
+                    except Exception as e:
+                        current_app.logger.error(f"Adaptive auth record (failed) error: {e}")
+
+                    # SIEM auth failure event (best-effort)
+                    try:
+                        from utils.siem import emit_auth_event
+
+                        emit_auth_event(
+                            user_id=int(candidate.id),
+                            ip=request.headers.get('X-Forwarded-For') or request.remote_addr,
+                            success=False,
+                            meta={"stage": "password"},
+                        )
+                    except Exception:
+                        pass
+        
+        if not user:
+            # Security: Log failed login attempt (no user found or password mismatch)
+            current_app.logger.warning(f"Failed login attempt - Invalid credentials: {email}, Role: {role}, IP: {request.remote_addr}")
+
+            # SIEM auth failure event (best-effort)
+            try:
+                from utils.siem import emit_auth_event
+
+                emit_auth_event(
+                    user_id=None,
+                    ip=request.headers.get('X-Forwarded-For') or request.remote_addr,
+                    success=False,
+                    meta={"stage": "lookup"},
+                )
+            except Exception:
+                pass
         
         if user:
             if not getattr(user, 'is_email_verified', True):
                 # Keep the user on the login page and let them request + verify OTP.
                 verification_email = (str(getattr(user, 'email', '') or '')).strip()
+                # Security: Log email verification required
+                current_app.logger.warning(f"Login blocked - Email not verified: {email}, IP: {request.remote_addr}")
                 flash('Your email is not verified. Request an OTP to continue.', 'warning')
                 return render_template(
                     'auth/login.html',
@@ -7151,8 +7602,176 @@ def login():
                 )
 
             current_app.logger.info(f"Logging in user: {user.username}, role: {user.role}")
+            
+            # ==================================================================
+            # ADAPTIVE AUTHENTICATION - Phase 2
+            # ==================================================================
+            # Perform risk assessment (single canonical path)
+            device_fingerprint = DeviceFingerprint.generate_fingerprint(
+                user_agent=request.user_agent.string,
+                ip_address=request.remote_addr,
+                accept_language=accept_language
+            )
+            
+            # Get user's known devices and IPs (persisted)
+            known_devices = user.known_devices or []
+            known_ips = user.known_ips or []
+            typical_hours = user.typical_login_hours or []
+            current_hour = datetime.now().hour
+
+            risk_score, risk_level, risk_factors = adaptive_auth.assess_login_risk(
+                user_id=user.id,
+                ip_address=request.remote_addr,
+                user_agent=request.user_agent.string,
+                accept_language=accept_language,
+                known_devices=known_devices,
+                known_ips=known_ips,
+                typical_hours=typical_hours,
+                failed_attempts=(user.failed_login_attempts or 0),
+            )
+            
+            # AI Threat Detection - Phase 2
+            threat_score = 0.0
+            try:
+                # Analyze behavior patterns
+                threat_score = ai_threat_detector.analyze_login_attempt(
+                    user_id=user.id,
+                    ip_address=request.remote_addr,
+                    user_agent=request.user_agent.string,
+                    failed_attempts=user.failed_login_attempts or 0,
+                    risk_factors=risk_factors
+                )
+            except Exception as e:
+                app.logger.error(f"AI threat detection error: {e}")
+            
+            # Log comprehensive audit event
+            try:
+                comprehensive_audit.log_event(
+                    event_type=AuditEventType.LOGIN,
+                    user_id=user.id,
+                    action='login_attempt',
+                    ip_address=request.remote_addr,
+                    user_agent=request.user_agent.string,
+                    severity=AuditSeverity.INFO if risk_level == 'LOW' else AuditSeverity.MEDIUM,
+                    metadata={
+                        'risk_score': risk_score,
+                        'risk_level': risk_level,
+                        'threat_score': threat_score,
+                        'device_fingerprint': device_fingerprint[:16],  # Truncate for storage
+                        'risk_factors': {k: v for k, v in risk_factors.items() if v}  # Only true factors
+                    }
+                )
+            except Exception as e:
+                app.logger.error(f"Comprehensive audit error: {e}")
+            
+            # Update user's device and location tracking
+            try:
+                if device_fingerprint not in known_devices:
+                    known_devices.append(device_fingerprint)
+                    user.known_devices = known_devices[-10:]  # Keep last 10
+                
+                if request.remote_addr not in known_ips:
+                    known_ips.append(request.remote_addr)
+                    user.known_ips = known_ips[-10:]  # Keep last 10
+                
+                if current_hour not in typical_hours:
+                    typical_hours.append(current_hour)
+                    user.typical_login_hours = typical_hours
+            except Exception as e:
+                app.logger.error(f"Error updating device tracking: {e}")
+            
+            # ==================================================================
+            # MFA CHECK - Phase 1
+            # ==================================================================
+            # Check if MFA is enabled and required
+            require_mfa = user.mfa_enabled and user.mfa_secret
+
+            # Allow runtime disable of MFA enforcement via feature flags.
+            try:
+                if app.config.get('MFA_ENFORCEMENT_ENABLED') is False:
+                    require_mfa = False
+            except Exception:
+                pass
+            
+            # High risk logins ALWAYS require MFA (if MFA is set up)
+            if risk_level in ['HIGH', 'CRITICAL'] and user.mfa_enabled:
+                require_mfa = True
+                flash(f'High risk login detected (Risk: {risk_level}). MFA verification required.', 'warning')
+            
+            if require_mfa:
+                # Store user ID in session for MFA verification
+                session['mfa_pending_user_id'] = user.id
+                session['mfa_remember'] = remember
+                
+                # Store redirect target
+                user_role = str(user.role).lower().strip() if user.role else ''
+                next_page = request.args.get('next')
+                if not next_page or not next_page.startswith('/'):
+                    if user_role == 'admin':
+                        next_page = url_for('admin_dashboard')
+                    elif user_role == 'doctor':
+                        next_page = url_for('doctor_restore_last')
+                    elif user_role == 'nurse':
+                        next_page = url_for('nurse_dashboard')
+                    elif user_role == 'pharmacist':
+                        next_page = url_for('pharmacist_dashboard')
+                    elif user_role == 'receptionist':
+                        next_page = url_for('receptionist_dashboard')
+                    elif user_role == 'labtech':
+                        next_page = url_for('labtech_dashboard')
+                    else:
+                        next_page = url_for('home')
+                
+                session['mfa_next_page'] = next_page
+                
+                flash('Please enter your MFA verification code', 'info')
+                return redirect(url_for('auth.verify_mfa'))
+            
+            # ==================================================================
+            # COMPLETE LOGIN (No MFA or MFA not enabled)
+            # ==================================================================
+            # Security: Regenerate session to prevent session fixation attacks
+            # Store any data that needs to persist across regeneration
+            old_session_data = dict(session)
+            session.clear()
+            # Restore necessary data (Flash messages are handled by Flask)
+            for key, value in old_session_data.items():
+                if key.startswith('_') and key not in ['_csrf_token']:
+                    continue  # Skip internal Flask session keys
+                session[key] = value
+            
             login_user(user, remember=remember, fresh=True)
             user.last_login = get_eat_now()
+            user.failed_login_attempts = 0  # Reset on successful login
+
+            # Adaptive auth: record successful login for future risk scoring
+            try:
+                adaptive_auth.record_login_attempt(
+                    user_id=user.id,
+                    ip_address=request.remote_addr,
+                    user_agent=request.user_agent.string,
+                    success=True,
+                    accept_language=accept_language,
+                )
+            except Exception as e:
+                current_app.logger.error(f"Adaptive auth record (success) error: {e}")
+            
+            # Security: Log successful login for monitoring
+            current_app.logger.info(f"Successful login - User: {user.username}, Role: {user.role}, IP: {request.remote_addr}, Risk: {risk_level}")
+
+            # SIEM auth success event (best-effort)
+            try:
+                from utils.siem import emit_auth_event
+
+                emit_auth_event(
+                    user_id=int(user.id),
+                    ip=request.headers.get('X-Forwarded-For') or request.remote_addr,
+                    success=True,
+                    meta={"risk_level": str(risk_level)},
+                )
+            except Exception:
+                pass
+            
             try:
                 db.session.commit()
             except Exception as e:
@@ -7219,7 +7838,17 @@ def inject_stamp_signature_functions():
         stamp_typography=get_stamp_typography(),
     )
 
-@csrf.exempt
+@app.context_processor
+def inject_feature_flags_context():
+    """Expose persisted security feature flags to templates (no secrets)."""
+    try:
+        flags = app.config.get("FEATURE_FLAGS") or {}
+        if isinstance(flags, dict):
+            return {"feature_flags": dict(flags)}
+    except Exception:
+        pass
+    return {"feature_flags": {}}
+
 @app.route('/logout', methods=['POST'])
 @login_required
 def logout():
@@ -7227,6 +7856,228 @@ def logout():
     logout_user()
     flash('You have been logged out.', 'info')
     return redirect(url_for('auth.login'))
+
+
+# ============================================================================
+# MFA (MULTI-FACTOR AUTHENTICATION) ROUTES - PHASE 1
+# ============================================================================
+
+@auth_bp.route('/verify-mfa', methods=['GET', 'POST'])
+def verify_mfa():
+    """Verify MFA code during login"""
+    # Check if user is in MFA pending session
+    mfa_user_id = session.get('mfa_pending_user_id')
+    if not mfa_user_id:
+        flash('Invalid MFA session', 'danger')
+        return redirect(url_for('auth.login'))
+    
+    user = db.session.get(User, mfa_user_id)
+    if not user or not user.mfa_enabled:
+        session.pop('mfa_pending_user_id', None)
+        flash('MFA not configured', 'danger')
+        return redirect(url_for('auth.login'))
+    
+    if request.method == 'POST':
+        code = request.form.get('code', '').strip()
+        
+        # Verify TOTP code or backup code
+        if verify_mfa_code(user, code):
+            # MFA successful - complete login
+            session.pop('mfa_pending_user_id', None)
+            login_user(user, remember=session.get('mfa_remember', False), fresh=True)
+            
+            # Update login time and reset failed attempts
+            user.last_login = get_eat_now()
+            user.failed_login_attempts = 0
+            db.session.commit()
+
+            # Adaptive auth: record successful login after MFA
+            try:
+                adaptive_auth.record_login_attempt(
+                    user_id=user.id,
+                    ip_address=request.remote_addr,
+                    user_agent=request.user_agent.string,
+                    success=True,
+                    accept_language=request.headers.get('Accept-Language', ''),
+                )
+            except Exception as e:
+                app.logger.error(f"Adaptive auth record (MFA success) error: {e}")
+            
+            # Log successful MFA
+            try:
+                comprehensive_audit.log_event(
+                    event_type=AuditEventType.LOGIN,
+                    user_id=user.id,
+                    action='mfa_successful',
+                    ip_address=request.remote_addr,
+                    severity=AuditSeverity.INFO
+                )
+            except Exception as e:
+                app.logger.error(f"Error logging MFA success: {e}")
+
+            # SIEM auth success event (best-effort)
+            try:
+                from utils.siem import emit_auth_event
+
+                emit_auth_event(
+                    user_id=int(user.id),
+                    ip=request.headers.get('X-Forwarded-For') or request.remote_addr,
+                    success=True,
+                    meta={"stage": "mfa"},
+                )
+            except Exception:
+                pass
+            
+            flash('Login successful!', 'success')
+            
+            # Redirect based on role
+            next_page = session.pop('mfa_next_page', None) or url_for('home')
+            return redirect(next_page)
+        else:
+            flash('Invalid verification code', 'danger')
+            # Log failed MFA
+            try:
+                comprehensive_audit.log_event(
+                    event_type=AuditEventType.LOGIN_FAILED,
+                    user_id=user.id,
+                    action='mfa_failed',
+                    ip_address=request.remote_addr,
+                    severity=AuditSeverity.MEDIUM
+                )
+            except Exception as e:
+                app.logger.error(f"Error logging MFA failure: {e}")
+
+            # SIEM auth failure event (best-effort)
+            try:
+                from utils.siem import emit_auth_event
+
+                emit_auth_event(
+                    user_id=int(user.id),
+                    ip=request.headers.get('X-Forwarded-For') or request.remote_addr,
+                    success=False,
+                    meta={"stage": "mfa"},
+                )
+            except Exception:
+                pass
+    
+    return render_template('auth/verify_mfa.html')
+
+
+@app.route('/profile/mfa/setup', methods=['GET', 'POST'])
+@login_required
+def setup_mfa():
+    """Setup MFA for user account"""
+    if current_user.mfa_enabled:
+        flash('MFA is already enabled', 'info')
+        return redirect(url_for('profile'))
+    
+    if request.method == 'POST':
+        code = request.form.get('code', '').strip()
+        
+        # Get temporary secret from session
+        temp_secret = session.get('mfa_temp_secret')
+        if not temp_secret:
+            flash('MFA setup session expired', 'danger')
+            return redirect(url_for('setup_mfa'))
+        
+        # Verify the code
+        totp_valid = MFAManager.verify_totp_code(temp_secret, code)
+        if totp_valid:
+            # Enable MFA
+            setup_user_mfa(current_user, temp_secret)
+            session.pop('mfa_temp_secret', None)
+            
+            # Log MFA enabled
+            try:
+                comprehensive_audit.log_event(
+                    event_type=AuditEventType.MFA_ENABLED,
+                    user_id=current_user.id,
+                    action='mfa_enabled',
+                    ip_address=request.remote_addr,
+                    severity=AuditSeverity.HIGH
+                )
+            except Exception as e:
+                app.logger.error(f"Error logging MFA enabled: {e}")
+            
+            flash('MFA has been enabled successfully', 'success')
+            return redirect(url_for('profile'))
+        else:
+            flash('Invalid verification code', 'danger')
+    
+    # Generate new secret and QR code
+    secret = MFAManager.generate_totp_secret()
+    session['mfa_temp_secret'] = secret
+    
+    # Generate QR code
+    user_email = str(current_user.email)
+    totp_uri = MFAManager.get_totp_uri(secret, user_email)
+    qr_code = MFAManager.generate_qr_code(totp_uri)
+    
+    # Generate backup codes
+    backup_codes = MFAManager.generate_backup_codes()
+    session['mfa_temp_backup_codes'] = backup_codes
+    
+    return render_template('auth/setup_mfa.html', 
+                         qr_code=qr_code, 
+                         secret=secret,
+                         backup_codes=backup_codes)
+
+
+@app.route('/profile/mfa/disable', methods=['POST'])
+@login_required
+def disable_mfa():
+    """Disable MFA for user account"""
+    if not current_user.mfa_enabled:
+        flash('MFA is not enabled', 'info')
+        return redirect(url_for('profile'))
+    
+    # Require password confirmation
+    password = request.form.get('password', '')
+    if not current_user.check_password(password):
+        flash('Invalid password', 'danger')
+        return redirect(url_for('profile'))
+    
+    # Disable MFA
+    current_user.mfa_enabled = False
+    current_user.mfa_secret = None
+    current_user.mfa_backup_codes = None
+    db.session.commit()
+    
+    # Log MFA disabled
+    try:
+        comprehensive_audit.log_event(
+            event_type=AuditEventType.MFA_DISABLED,
+            user_id=current_user.id,
+            action='mfa_disabled',
+            ip_address=request.remote_addr,
+            severity=AuditSeverity.HIGH
+        )
+    except Exception as e:
+        app.logger.error(f"Error logging MFA disabled: {e}")
+    
+    flash('MFA has been disabled', 'warning')
+    return redirect(url_for('profile'))
+
+
+@app.route('/profile/mfa/regenerate-backup-codes', methods=['POST'])
+@login_required
+def regenerate_backup_codes():
+    """Regenerate MFA backup codes"""
+    if not current_user.mfa_enabled:
+        flash('MFA is not enabled', 'danger')
+        return redirect(url_for('profile'))
+    
+    # Generate new backup codes
+    backup_codes = MFAManager.generate_backup_codes()
+    
+    # Hash and store backup codes
+    import json
+    hashed_codes = [generate_password_hash(code) for code in backup_codes]
+    current_user.mfa_backup_codes = json.dumps(hashed_codes)
+    db.session.commit()
+    
+    flash('Backup codes have been regenerated', 'success')
+    return jsonify({'backup_codes': backup_codes})
 
 
 def _send_system_email(
@@ -7894,35 +8745,35 @@ def admin_dashboard():
     if current_user.role != 'admin':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
-    
+
     try:
         total_drugs = db.session.query(func.count(Drug.id)).scalar()
         low_stock = db.session.query(func.count(Drug.id)).filter(
             Drug.stocked_quantity - Drug.sold_quantity < 10
         ).scalar()
-        
+
         expiring_soon = db.session.query(func.count(Drug.id)).filter(
             Drug.expiry_date <= date.today() + timedelta(days=30)
         ).scalar()
-        
+
         # Today's sales
         today_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.date(Sale.created_at) == date.today()
         ).scalar() or 0
-        
+
         # UNIVERSAL FIX: Use extract for month and year - works on all databases
         current_date = datetime.now()
         monthly_sales = db.session.query(func.sum(Sale.total_amount)).filter(
             func.extract('year', Sale.created_at) == current_date.year,
             func.extract('month', Sale.created_at) == current_date.month
         ).scalar() or 0
-        
+
         pending_bills = db.session.query(func.sum(Debtor.amount_owed)).scalar() or 0
-        
+
         last_backup = BackupRecord.query.filter_by(status='completed')\
             .order_by(BackupRecord.timestamp.desc()).first()
         last_backup_time = last_backup.timestamp if last_backup else 'Never'
-        
+
         backup_stats = {
             'total_backups': BackupRecord.query.count(),
             'successful_backups': BackupRecord.query.filter_by(status='completed').count(),
@@ -7931,14 +8782,14 @@ def admin_dashboard():
                 func.coalesce(func.sum(BackupRecord.size_bytes), 0) / (1024 * 1024)
             ).scalar()
         }
-        
+
         active_users = db.session.query(func.count(User.id)).filter_by(is_active=True).scalar()
-        
+
         # Get doctor statistics - ensure these are called
         daily_stats = get_doctor_stats('daily')
         monthly_stats = get_doctor_stats('monthly')
         yearly_stats = get_doctor_stats('yearly')
-        
+
         # Get recent activity
         recent_activity = db.session.query(
             AuditLog.id,
@@ -7952,8 +8803,8 @@ def admin_dashboard():
                 BackupRecord.timestamp.label('created_at'),
                 literal('backup').label('type')
             )
-        ).order_by(text('created_at DESC')).limit(10).all()
-        
+        ).order_by(literal_column('created_at').desc()).limit(10).all()
+
         return render_template('admin/dashboard.html',
             total_drugs=total_drugs,
             low_stock=low_stock,
@@ -7963,17 +8814,111 @@ def admin_dashboard():
             pending_bills=pending_bills,
             last_backup_time=last_backup_time,
             backup_stats=backup_stats,
+            backups_enabled=(app.config.get('BACKUPS_ENABLED', True) is not False),
             active_users=active_users,
             daily_stats=daily_stats,
             monthly_stats=monthly_stats,
             yearly_stats=yearly_stats,
             recent_activity=recent_activity
         )
-    
+
     except Exception as e:
         app.logger.error(f"Error in admin dashboard: {str(e)}")
         flash('An error occurred while loading the dashboard', 'danger')
         return redirect(url_for('home'))
+
+
+@app.route('/admin/security/features', methods=['GET', 'POST'])
+@login_required
+def admin_security_features():
+    """Admin UI to toggle Phase 1/2/3 security feature flags."""
+    if current_user.role != 'admin':
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('home'))
+
+    try:
+        from utils.feature_flags import load_feature_flags, save_feature_flags, apply_flags_to_app_config
+
+        if request.method == 'POST':
+            # Checkbox fields are present only when checked.
+            posted = {
+                # Phase 1
+                'phase1_mfa_enforcement': bool(request.form.get('phase1_mfa_enforcement')),
+                'phase1_message_encryption': bool(request.form.get('phase1_message_encryption')),
+                'phase1_immutable_backups': bool(request.form.get('phase1_immutable_backups')),
+                # Phase 2
+                'phase2_waf': bool(request.form.get('phase2_waf')),
+                'phase2_zero_knowledge': bool(request.form.get('phase2_zero_knowledge')),
+                'phase2_adaptive_auth': bool(request.form.get('phase2_adaptive_auth')),
+                'phase2_ai_threat_detection': bool(request.form.get('phase2_ai_threat_detection')),
+                'phase2_comprehensive_audit': bool(request.form.get('phase2_comprehensive_audit')),
+                # Phase 3
+                'phase3_siem': bool(request.form.get('phase3_siem')),
+                'phase3_uba': bool(request.form.get('phase3_uba')),
+                'phase3_compliance': bool(request.form.get('phase3_compliance')),
+                'phase3_dlp': bool(request.form.get('phase3_dlp')),
+                'phase3_incident_response': bool(request.form.get('phase3_incident_response')),
+            }
+
+            flags = save_feature_flags(posted)
+            apply_flags_to_app_config(app, flags)
+
+            # Best-effort runtime toggling for already-initialized subsystems.
+            try:
+                from utils.siem import get_siem
+
+                siem_client = get_siem()
+                if siem_client is not None:
+                    if app.config.get('SIEM_ENABLED') is False:
+                        siem_client.disable()
+                    else:
+                        siem_client.enable()
+            except Exception:
+                pass
+
+            # Phase 2 runtime toggles
+            try:
+                if app.config.get("ADAPTIVE_AUTH_ENABLED") is False:
+                    adaptive_auth.disable()
+                else:
+                    adaptive_auth.enable()
+            except Exception:
+                pass
+
+            try:
+                if app.config.get("AI_THREAT_DETECTION_ENABLED") is False:
+                    ai_threat_detector.disable()
+                else:
+                    ai_threat_detector.enable()
+            except Exception:
+                pass
+
+            try:
+                if app.config.get("COMPREHENSIVE_AUDIT_ENABLED") is False:
+                    comprehensive_audit.disable()
+                else:
+                    comprehensive_audit.enable()
+            except Exception:
+                pass
+
+            # Phase 1 DB activity monitoring: attach listeners if enabled after being disabled at startup.
+            try:
+                from utils.db_activity_monitor import init_db_activity_monitor
+
+                init_db_activity_monitor(app, db.engine)
+            except Exception:
+                pass
+
+            flash('Security feature flags updated.', 'success')
+            return redirect(url_for('admin_security_features'))
+
+        flags = load_feature_flags()
+        return render_template('admin/security_features.html', flags=flags)
+
+    except Exception as e:
+        app.logger.error(f"Error loading/saving feature flags: {e}")
+        flash('Failed to load security feature flags.', 'danger')
+        return redirect(url_for('admin_dashboard'))
 
 def get_total_beds():
     return Bed.query.count()
@@ -9144,6 +10089,9 @@ def get_next_controlled_drug_number():
 @login_required
 def get_next_drug_number():
     """Generate the next drug number based on the last added drug"""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
     try:
         # Get the last drug by ID (most recently added)
         last_drug = db.session.query(Drug).order_by(Drug.id.desc()).first()
@@ -9179,12 +10127,24 @@ def get_user_details(user_id):
     user = _db_get(User, user_id)
     if not user:
         return {'error': 'User not found'}, 404
+
+    pic = None
+    try:
+        pic = str(getattr(user, 'profile_picture', None) or '').replace('\\', '/').lstrip('/')
+        if pic.startswith('uploads/'):
+            pic = pic[len('uploads/'):]
+        if not pic:
+            pic = None
+    except Exception:
+        pic = None
+
     return {
         'id': user.id,
         'username': user.username,
         'email': user.email,
         'role': user.role,
         'is_active': user.is_active,
+        'profile_picture': pic,
         'last_login': (user.last_login_dt or user.last_login).strftime('%Y-%m-%d %H:%M') if user.last_login_dt else (user.last_login if user.last_login else None)
     }
 @app.route('/admin/users', methods=['GET', 'POST'])
@@ -9194,9 +10154,41 @@ def manage_users():
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
 
+    def _get_cross_role_perms_map(users_list):
+        """Return a dict: user_id -> permission booleans for cross-role switching."""
+        try:
+            from utils.cross_role_access import (
+                PERM_DOCTOR_LABTECH,
+                PERM_PHARMACIST_RECEPTIONIST,
+                load_allowlists,
+            )
+
+            allowlists = load_allowlists()
+            doc_set = allowlists.get(PERM_DOCTOR_LABTECH, set()) or set()
+            pharm_set = allowlists.get(PERM_PHARMACIST_RECEPTIONIST, set()) or set()
+            out = {}
+            for u in users_list or []:
+                try:
+                    uid = int(getattr(u, 'id', None))
+                except Exception:
+                    continue
+                out[uid] = {
+                    'doctor_labtech': uid in doc_set,
+                    'pharmacist_receptionist': uid in pharm_set,
+                }
+            return out
+        except Exception:
+            return {}
+
     def _render_users_with_add_modal(add_user_state: dict) -> str:
         users = User.query.order_by(User.last_login.desc().nullslast(), User.username.asc()).all()
-        return render_template('admin/users.html', users=users, open_add_user_modal=True, add_user_state=add_user_state)
+        return render_template(
+            'admin/users.html',
+            users=users,
+            cross_role_perms=_get_cross_role_perms_map(users),
+            open_add_user_modal=True,
+            add_user_state=add_user_state,
+        )
     
     if request.method == 'POST':
         action = request.form.get('action')
@@ -9385,6 +10377,7 @@ def manage_users():
                         'email': user.email,
                         'role': user.role,
                         'is_active': user.is_active,
+                        'profile_picture': user.profile_picture,
                         'last_login': (user.last_login_dt or user.last_login).strftime('%Y-%m-%d %H:%M:%S') if user.last_login_dt else (user.last_login if user.last_login else None)
                     }
                     
@@ -9392,9 +10385,98 @@ def manage_users():
                     user.email = request.form.get('email')
                     user.role = request.form.get('role')
                     user.is_active = True if request.form.get('is_active') else False
+
+                    # Cross-role allowlists (default deny). Only relevant for doctors/pharmacists.
+                    try:
+                        from utils.cross_role_access import (
+                            PERM_DOCTOR_LABTECH,
+                            PERM_PHARMACIST_RECEPTIONIST,
+                            set_allowed,
+                        )
+
+                        role_norm = str(user.role or '').lower().strip()
+                        allow_doctor_labtech = bool(request.form.get('allow_doctor_labtech'))
+                        allow_pharm_reception = bool(request.form.get('allow_pharmacist_receptionist'))
+
+                        # Enforce safety: clear permissions when role doesn't match.
+                        if role_norm == 'doctor':
+                            set_allowed(user.id, PERM_DOCTOR_LABTECH, allow_doctor_labtech)
+                        else:
+                            set_allowed(user.id, PERM_DOCTOR_LABTECH, False)
+
+                        if role_norm == 'pharmacist':
+                            set_allowed(user.id, PERM_PHARMACIST_RECEPTIONIST, allow_pharm_reception)
+                        else:
+                            set_allowed(user.id, PERM_PHARMACIST_RECEPTIONIST, False)
+                    except Exception:
+                        pass
                     
                     if request.form.get('password'):
                         user.set_password(request.form.get('password'))
+
+                    # Admin-managed profile picture update (optional)
+                    remove_pic = bool(request.form.get('remove_profile_picture'))
+                    file = request.files.get('profile_picture')
+                    if file and getattr(file, 'filename', '') and file.filename != '' and allowed_file(file.filename):
+                        os.makedirs(PRIVATE_PROFILE_PICTURES_DIR, exist_ok=True)
+                        try:
+                            _verify_image_upload(file, allowed_formats={'JPEG', 'PNG', 'GIF'})
+                        except ValueError as ve:
+                            flash(str(ve), 'danger')
+                        else:
+                            filename = secure_filename(file.filename) or 'profile.jpg'
+                            timestamp = str(int(time.time()))
+                            filename = f"user_{user.id}_{timestamp}_{filename}"
+                            filepath = os.path.join(PRIVATE_PROFILE_PICTURES_DIR, filename)
+                            file.save(filepath)
+
+                            try:
+                                _encrypt_upload_file_inplace(filepath)
+                            except Exception:
+                                pass
+
+                            # Delete old profile picture file (best-effort)
+                            if user.profile_picture:
+                                try:
+                                    old_rel = str(user.profile_picture or '').replace('\\', '/').lstrip('/')
+                                except Exception:
+                                    old_rel = ''
+                                if old_rel.startswith('uploads/'):
+                                    old_rel = old_rel[len('uploads/'):]
+
+                                candidates = [
+                                    os.path.join(app.root_path, 'uploads', old_rel),
+                                    os.path.join(app.root_path, 'static', old_rel),
+                                    os.path.join(app.root_path, 'static', 'uploads', old_rel),
+                                ]
+                                for p in candidates:
+                                    try:
+                                        if p and os.path.exists(p):
+                                            os.remove(p)
+                                    except Exception as e:
+                                        app.logger.error(f"Error deleting old profile picture: {str(e)}")
+
+                            user.profile_picture = os.path.join('profile_pictures', filename).replace('\\', '/')
+                    elif remove_pic and user.profile_picture:
+                        try:
+                            old_rel = str(user.profile_picture or '').replace('\\', '/').lstrip('/')
+                        except Exception:
+                            old_rel = ''
+                        if old_rel.startswith('uploads/'):
+                            old_rel = old_rel[len('uploads/'):]
+
+                        candidates = [
+                            os.path.join(app.root_path, 'uploads', old_rel),
+                            os.path.join(app.root_path, 'static', old_rel),
+                            os.path.join(app.root_path, 'static', 'uploads', old_rel),
+                        ]
+                        for p in candidates:
+                            try:
+                                if p and os.path.exists(p):
+                                    os.remove(p)
+                            except Exception as e:
+                                app.logger.error(f"Error deleting old profile picture: {str(e)}")
+                        user.profile_picture = None
                     
                     db.session.commit()
                     
@@ -9403,6 +10485,7 @@ def manage_users():
                         'email': user.email,
                         'role': user.role,
                         'is_active': user.is_active,
+                        'profile_picture': user.profile_picture,
                         'last_login': (user.last_login_dt or user.last_login).strftime('%Y-%m-%d %H:%M:%S') if user.last_login_dt else (user.last_login if user.last_login else None)
                     })
                     
@@ -9421,6 +10504,19 @@ def manage_users():
                     flash('You cannot delete your own account', 'danger')
                 else:
                     try:
+                        # Remove from cross-role allowlists (best-effort) before deleting.
+                        try:
+                            from utils.cross_role_access import (
+                                PERM_DOCTOR_LABTECH,
+                                PERM_PHARMACIST_RECEPTIONIST,
+                                set_allowed,
+                            )
+
+                            set_allowed(user.id, PERM_DOCTOR_LABTECH, False)
+                            set_allowed(user.id, PERM_PHARMACIST_RECEPTIONIST, False)
+                        except Exception:
+                            pass
+
                         log_audit('delete', 'User', user.id, {
                             'username': user.username,
                             'email': user.email,
@@ -9442,7 +10538,7 @@ def manage_users():
     
     # Order users by last login (most recent first) and then by username
     users = User.query.order_by(User.last_login.desc().nullslast(), User.username.asc()).all()
-    return render_template('admin/users.html', users=users)
+    return render_template('admin/users.html', users=users, cross_role_perms=_get_cross_role_perms_map(users))
 
 
 # ============================================
@@ -9497,7 +10593,7 @@ def get_user_ward_assignments(user_id):
             'ward_name': a.ward.name,
             'role': a.role,
             'is_primary': a.is_primary,
-            'created_at': a.created_at.isoformat() if a.created_at else None
+            'created_at': isoformat_eat(a.created_at) if a.created_at else None
         } for a in assignments]
     })
 
@@ -9519,7 +10615,7 @@ def get_user_department_assignments(user_id):
             'department_name': a.department.name,
             'role': a.role,
             'is_primary': a.is_primary,
-            'created_at': a.created_at.isoformat() if a.created_at else None
+            'created_at': isoformat_eat(a.created_at) if a.created_at else None
         } for a in assignments]
     })
 
@@ -14088,6 +15184,10 @@ def backup_management():
     if current_user.role != 'admin':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
+
+    if app.config.get('BACKUPS_ENABLED', True) is False:
+        flash('Backups are currently disabled by feature flags.', 'warning')
+        return redirect(url_for('admin_dashboard'))
     
     if request.method == 'POST':
         action = request.form.get('action')
@@ -14201,6 +15301,11 @@ def backup_management():
             backup = _db_get_or_404(BackupRecord, backup_id)
             
             try:
+                # Immutable backups: disallow deletion unless explicitly overridden.
+                if app.config.get('IMMUTABLE_BACKUPS_ENABLED', True) is True and app.config.get('ALLOW_BACKUP_DELETE') is not True:
+                    flash('Backups are immutable and cannot be deleted (override disabled).', 'warning')
+                    return redirect(url_for('backup_management'))
+
                 # Delete from storage
                 delete_backup_file(backup)
                 
@@ -15302,7 +16407,7 @@ def backup_status(backup_id):
     return jsonify({
         'id': backup.id,
         'status': backup.status,
-        'timestamp': backup.timestamp.isoformat(),
+        'timestamp': isoformat_eat(backup.timestamp),
         'size_bytes': backup.size_bytes,
         'notes': _backup_strip_restore_status(_backup_strip_stats(backup.notes)),
         'stats': stats,
@@ -15322,7 +16427,7 @@ def backup_logs():
     return jsonify([{
         'id': b.id,
         'backup_id': b.backup_id,
-        'timestamp': b.timestamp.isoformat(),
+        'timestamp': isoformat_eat(b.timestamp),
         'type': b.backup_type,
         'status': b.status,
         'size_mb': round(b.size_bytes / (1024 * 1024), 2) if b.size_bytes else None,
@@ -15727,6 +16832,11 @@ def _restore_zip_to_engine(engine, zip_bytes: bytes, allowed_tables: set[str] | 
                 pass
 
             for table_name in restore_tables:
+                # Strict identifier allowlist: only operate on real existing tables
+                # with safe identifier shape.
+                if not _safe_table_name(table_name) or table_name not in existing_tables:
+                    continue
+                table_sql = _quote_ident(table_name)
                 ndjson_name = f"{table_name}.ndjson"
                 json_name = f"{table_name}.json"
                 if ndjson_name not in z.namelist() and json_name not in z.namelist():
@@ -15739,9 +16849,10 @@ def _restore_zip_to_engine(engine, zip_bytes: bytes, allowed_tables: set[str] | 
 
                 # Clear
                 if insp.dialect.name == 'postgresql':
-                    conn.execute(text(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE'))
+                    conn.execute(text(f'TRUNCATE TABLE {table_sql} RESTART IDENTITY CASCADE'))
                 else:
-                    conn.execute(text(f'DELETE FROM "{table_name}"'))
+                    # Use SQLAlchemy Core to avoid string-SQL for data deletes.
+                    conn.execute(table.delete())
                     if insp.dialect.name == 'sqlite':
                         try:
                             conn.execute(text('DELETE FROM sqlite_sequence WHERE name=:n'), {'n': table_name})
@@ -15839,7 +16950,14 @@ def create_backup(backup_id, created_by_user_id=None):
                         try:
                             rc = 0
                             with db.engine.connect() as conn:
-                                result = conn.execution_options(stream_results=True).execute(text(f'SELECT * FROM "{table_name}"'))
+                                if not _safe_table_name(table_name) or table_name not in existing_tables:
+                                    continue
+                                # Use SQLAlchemy Core select to avoid string-SQL.
+                                from sqlalchemy import MetaData, Table, select as sa_select
+
+                                meta = MetaData()
+                                table = Table(table_name, meta, autoload_with=db.engine)
+                                result = conn.execution_options(stream_results=True).execute(sa_select(table))
                                 with zipf.open(f"{table_name}.ndjson", 'w') as zf:
                                     for row in result:
                                         row_dict = {k: _jsonable_value(v) for k, v in dict(row._mapping).items()}
@@ -20012,8 +21130,13 @@ def log_request_info():
         return text[:limit] + "..."
 
     # Minimal, safe log line (always on)
-    patient_id = request.form.get('patient_id')
-    section = request.form.get('section')
+    try:
+        patient_id = request.form.get('patient_id')
+        section = request.form.get('section')
+    except Exception:
+        # Malformed form data (e.g., truncated multipart upload) — skip logging
+        patient_id = None
+        section = None
     app.logger.info(
         "POST %s patient_id=%s section=%s content_length=%s",
         request.path,
@@ -21017,6 +22140,35 @@ def utility_processor():
         'decrypt_data': decrypt_data,
     }
 
+
+def _apply_safe_sort(query, sort_key: str | None, mapping: dict[str, object]):
+    """Apply an allowlisted sort key to a SQLAlchemy query.
+
+    Security notes:
+        - Never pass user input into `text()` for ordering, or build SQL strings.
+    - Only allowlist known sort keys -> SQLAlchemy expressions.
+    - For unknown keys, do nothing (no implicit fallback), preserving current
+      behavior and avoiding unexpected ordering changes.
+
+    Usage:
+        query = _apply_safe_sort(query, request.args.get('sort'), {
+            'name_asc': Model.name.asc(),
+            'name_desc': Model.name.desc(),
+        })
+    """
+    try:
+        key = (sort_key or '').strip()
+    except Exception:
+        key = ''
+
+    order_expr = mapping.get(key)
+    if order_expr is None:
+        return query
+
+    if isinstance(order_expr, (list, tuple)):
+        return query.order_by(*order_expr)
+    return query.order_by(order_expr)
+
 @app.route('/pharmacist/drugs')
 @login_required
 def pharmacist_drugs():
@@ -21048,19 +22200,19 @@ def pharmacist_drugs():
             )
         )
     
-    # Apply sorting
-    if sort_by == 'name_asc':
-        query = query.order_by(Drug.name.asc())
-    elif sort_by == 'name_desc':
-        query = query.order_by(Drug.name.desc())
-    elif sort_by == 'stock_asc':
-        query = query.order_by(Drug.remaining_quantity.asc())
-    elif sort_by == 'stock_desc':
-        query = query.order_by(Drug.remaining_quantity.desc())
-    elif sort_by == 'expiry_asc':
-        query = query.order_by(Drug.expiry_date.asc())
-    elif sort_by == 'expiry_desc':
-        query = query.order_by(Drug.expiry_date.desc())
+    # Apply allowlisted sorting
+    query = _apply_safe_sort(
+        query,
+        sort_by,
+        {
+            'name_asc': Drug.name.asc(),
+            'name_desc': Drug.name.desc(),
+            'stock_asc': Drug.remaining_quantity.asc(),
+            'stock_desc': Drug.remaining_quantity.desc(),
+            'expiry_asc': Drug.expiry_date.asc(),
+            'expiry_desc': Drug.expiry_date.desc(),
+        },
+    )
     
     drugs = query.all()
     
@@ -21835,6 +22987,13 @@ def admin_toggle_ai_dosage_agent():
     return redirect(request.referrer or url_for('manage_dosage'))
 
 
+# Backward-compatible endpoint alias (some templates/JS referenced the older name)
+@app.route('/admin/dosage/assistant-agent/toggle-alias', methods=['POST'])
+@login_required
+def admin_toggle_assistant_dosage_agent():
+    return admin_toggle_ai_dosage_agent()
+
+
 @app.route('/admin/dosage/assistant-agent/run-now', methods=['POST'])
 @login_required
 def admin_run_ai_dosage_agent_now():
@@ -22603,6 +23762,18 @@ def pharmacist_controlled_sale_receipt(sale_id):
     if not sale:
         abort(404)
 
+    # Allow pharmacists to view controlled receipts created by any pharmacist.
+    try:
+        owner_role = (
+            db.session.query(User.role)
+            .filter(User.id == getattr(sale, 'user_id', None))
+            .scalar()
+        )
+    except Exception:
+        owner_role = None
+    if owner_role != 'pharmacist':
+        abort(403)
+
     # Optional cash metadata (when printing/reprinting)
     amount_given = request.args.get('amount_given', type=float)
     change = None
@@ -22629,6 +23800,8 @@ def pharmacist_search_controlled_sales():
     query = db.session.query(ControlledSale).options(
         db.joinedload(ControlledSale.patient)
     ).order_by(ControlledSale.created_at.desc())
+
+    query = query.filter(ControlledSale.user_id == current_user.id)
 
     if q:
         like = f"%{q}%"
@@ -22794,18 +23967,18 @@ def export_drugs():
             )
         )
     
-    if sort_by == 'name_asc':
-        query = query.order_by(Drug.name.asc())
-    elif sort_by == 'name_desc':
-        query = query.order_by(Drug.name.desc())
-    elif sort_by == 'stock_asc':
-        query = query.order_by(Drug.remaining_quantity.asc())
-    elif sort_by == 'stock_desc':
-        query = query.order_by(Drug.remaining_quantity.desc())
-    elif sort_by == 'expiry_asc':
-        query = query.order_by(Drug.expiry_date.asc())
-    elif sort_by == 'expiry_desc':
-        query = query.order_by(Drug.expiry_date.desc())
+    query = _apply_safe_sort(
+        query,
+        sort_by,
+        {
+            'name_asc': Drug.name.asc(),
+            'name_desc': Drug.name.desc(),
+            'stock_asc': Drug.remaining_quantity.asc(),
+            'stock_desc': Drug.remaining_quantity.desc(),
+            'expiry_asc': Drug.expiry_date.asc(),
+            'expiry_desc': Drug.expiry_date.desc(),
+        },
+    )
     
     drugs = query.all()
     
@@ -22854,6 +24027,7 @@ def pharmacist_sales():
             db.joinedload(Sale.items),
             db.joinedload(Sale.patient),
         )
+        .filter(Sale.user_id == current_user.id)
         .order_by(Sale.created_at.desc())
         .limit(50)
         .all()
@@ -22926,6 +24100,10 @@ def api_sale_lookup_by_number(sale_number: str):
     if not sale:
         return jsonify({'error': 'Sale not found'}), 404
 
+    # Non-admins can only look up sales they created.
+    if str(getattr(current_user, 'role', '')).lower().strip() != 'admin' and getattr(sale, 'user_id', None) != current_user.id:
+        return jsonify({'error': 'Forbidden'}), 403
+
     patient_name = None
     if sale.patient:
         patient_name = getattr(sale.patient, 'get_decrypted_name', None) or getattr(sale.patient, 'name', None)
@@ -22972,6 +24150,7 @@ def pharmacist_walkin_sales_api():
                 db.joinedload(Sale.items),
             )
             .filter(Sale.patient_id.is_(None))
+            .filter(Sale.user_id == current_user.id)
             .order_by(Sale.created_at.desc())
             .limit(limit)
             .all()
@@ -22986,11 +24165,7 @@ def pharmacist_walkin_sales_api():
             except Exception:
                 total_qty = 0
 
-            created_at_iso = None
-            try:
-                created_at_iso = (s.created_at.isoformat() if s.created_at else None)
-            except Exception:
-                created_at_iso = None
+            created_at_iso = isoformat_eat(getattr(s, 'created_at', None))
 
             rows.append({
                 'sale_id': s.id,
@@ -23006,6 +24181,107 @@ def pharmacist_walkin_sales_api():
     except Exception as e:
         current_app.logger.error(f"Failed to load walk-in sales: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': 'Failed to load receipts'}), 500
+
+
+@app.route('/pharmacist/api/dispensed/normal-items', methods=['GET'])
+@login_required
+def pharmacist_dispensed_normal_items_api():
+    if current_user.role != 'pharmacist':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        limit = 500
+
+        items = (
+            SaleItem.query
+            .options(
+                db.joinedload(SaleItem.sale).joinedload(Sale.patient),
+                db.joinedload(SaleItem.drug),
+            )
+            .join(Sale, SaleItem.sale_id == Sale.id)
+            .join(User, Sale.user_id == User.id)
+            .filter(User.role == 'pharmacist')
+            .filter(Sale.status == 'completed')
+            .filter(SaleItem.drug_id.isnot(None))
+            .order_by(Sale.created_at.desc(), SaleItem.id.desc())
+            .limit(limit)
+            .all()
+        )
+
+        rows = []
+        for item in items:
+            sale = getattr(item, 'sale', None)
+            drug = getattr(item, 'drug', None)
+
+            created_at_iso = isoformat_eat(getattr(sale, 'created_at', None))
+
+            rows.append({
+                'sale_id': getattr(sale, 'id', None),
+                'sale_number': getattr(sale, 'sale_number', None),
+                'drug_number': getattr(drug, 'drug_number', None) if drug else None,
+                'drug_name': getattr(item, 'drug_name', None) or (getattr(drug, 'name', None) if drug else None),
+                'specification': getattr(item, 'drug_specification', None) or (getattr(drug, 'specification', None) if drug else None),
+                'unit_price': float(getattr(item, 'unit_price', 0) or 0),
+                'quantity': int(getattr(item, 'quantity', 0) or 0),
+                'total_price': float(getattr(item, 'total_price', 0) or 0),
+                'payment_method': getattr(sale, 'payment_method', None) if sale else None,
+                'created_at': created_at_iso,
+            })
+
+        return jsonify({'success': True, 'rows': rows})
+    except Exception as e:
+        current_app.logger.error(f"Failed to load dispensed normal items: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to load dispensed drugs'}), 500
+
+
+@app.route('/pharmacist/api/dispensed/controlled-items', methods=['GET'])
+@login_required
+def pharmacist_dispensed_controlled_items_api():
+    if current_user.role != 'pharmacist':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    try:
+        limit = 500
+
+        items = (
+            ControlledSaleItem.query
+            .options(
+                db.joinedload(ControlledSaleItem.sale).joinedload(ControlledSale.patient),
+                db.joinedload(ControlledSaleItem.controlled_drug),
+            )
+            .join(ControlledSale, ControlledSaleItem.sale_id == ControlledSale.id)
+            .join(User, ControlledSale.user_id == User.id)
+            .filter(User.role == 'pharmacist')
+            .filter(ControlledSale.status == 'completed')
+            .order_by(ControlledSale.created_at.desc(), ControlledSaleItem.id.desc())
+            .limit(limit)
+            .all()
+        )
+
+        rows = []
+        for item in items:
+            sale = getattr(item, 'sale', None)
+            drug = getattr(item, 'controlled_drug', None)
+
+            created_at_iso = isoformat_eat(getattr(sale, 'created_at', None))
+
+            rows.append({
+                'sale_id': getattr(sale, 'id', None),
+                'sale_number': getattr(sale, 'sale_number', None),
+                'drug_number': getattr(drug, 'controlled_drug_number', None) if drug else None,
+                'drug_name': getattr(item, 'controlled_drug_name', None) or (getattr(drug, 'name', None) if drug else None),
+                'specification': getattr(item, 'controlled_drug_specification', None) or (getattr(drug, 'specification', None) if drug else None),
+                'unit_price': float(getattr(item, 'unit_price', 0) or 0),
+                'quantity': int(getattr(item, 'quantity', 0) or 0),
+                'total_price': float(getattr(item, 'total_price', 0) or 0),
+                'payment_method': getattr(sale, 'payment_method', None) if sale else None,
+                'created_at': created_at_iso,
+            })
+
+        return jsonify({'success': True, 'rows': rows})
+    except Exception as e:
+        current_app.logger.error(f"Failed to load dispensed controlled items: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to load dispensed controlled drugs'}), 500
 
 
 @app.route('/pharmacist/cart_sale', methods=['POST'])
@@ -23187,6 +24463,21 @@ def process__cart_sale():
 def generate_receipt(sale_id):
     if current_user.role != 'pharmacist':
         abort(403)
+
+    # Allow pharmacists to view receipts created by any pharmacist.
+    try:
+        sale_owner = (
+            db.session.query(Sale.user_id, User.role)
+            .join(User, Sale.user_id == User.id)
+            .filter(Sale.id == sale_id)
+            .first()
+        )
+    except Exception:
+        sale_owner = None
+    if not sale_owner:
+        abort(404)
+    if getattr(sale_owner, 'role', None) != 'pharmacist':
+        abort(403)
     
     tx = _get_transaction_for_sale(sale_id)
     embedded_requested = request.args.get('embedded') == '1'
@@ -23280,6 +24571,10 @@ def pharmacist_refunds():
 @app.route('/pharmacist/sales/search', methods=['GET'])
 @login_required
 def search_sale():
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('pharmacist', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
     sale_number = request.args.get('sale_number')
     
     sale = Sale.query.filter((Sale.sale_number == sale_number) | 
@@ -23287,6 +24582,10 @@ def search_sale():
     
     if not sale:
         return jsonify({'error': 'Sale not found'}), 404
+
+    # Non-admins can only search their own sales.
+    if user_role != 'admin' and getattr(sale, 'user_id', None) != current_user.id:
+        return jsonify({'error': 'Forbidden'}), 403
     
     items = []
     for item in sale.items:
@@ -23330,6 +24629,10 @@ def search_sale_for_refund():
     
     if not sale:
         return jsonify({'error': 'Sale not found'}), 404
+
+    # Pharmacists can only refund sales they created.
+    if getattr(sale, 'user_id', None) != current_user.id:
+        return jsonify({'error': 'Forbidden'}), 403
     
     items = []
     for item in sale.items:
@@ -23396,6 +24699,11 @@ def process_refund():
         original_sale = db.session.get(Sale, sale_id)
         if not original_sale:
             return jsonify({'success': False, 'error': 'Original sale not found.'}), 404
+
+        # Non-admins can only refund sales they created.
+        user_role = str(current_user.role).lower().strip() if current_user.role else ''
+        if user_role != 'admin' and getattr(original_sale, 'user_id', None) != current_user.id:
+            return jsonify({'success': False, 'error': 'Forbidden'}), 403
 
         # If we received only item IDs, refund the remaining refundable quantity for each.
         if raw_item_ids:
@@ -23551,6 +24859,18 @@ def refund_receipt(refund_id):
     if current_user.role != 'pharmacist':
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
+
+    # Pharmacists can only view receipts for refunds they processed.
+    try:
+        refund_owner_id = db.session.query(Refund.user_id).filter(Refund.id == refund_id).scalar()
+    except Exception:
+        refund_owner_id = None
+    if refund_owner_id is None:
+        flash('Refund not found', 'danger')
+        return redirect(url_for('pharmacist_refunds'))
+    if refund_owner_id != current_user.id:
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('pharmacist_refunds'))
 
     embedded_requested = request.args.get('embedded') == '1'
     
@@ -24082,6 +25402,9 @@ def get_sale_receipt_json(sale_id):
 
         if not sale:
             return jsonify({'error': 'Sale not found'}), 404
+
+        if getattr(sale, 'user_id', None) != current_user.id:
+            return jsonify({'error': 'Forbidden'}), 403
 
         receipt_data = {
             'sale_id': sale.id,
@@ -24682,6 +26005,27 @@ def doctor_old_outpatients():
         title='Old Outpatients',
         category='old_outpatients',
         patients=patients,
+    )
+
+
+@app.route('/doctor/archived-patients', methods=['GET'])
+@login_required
+def doctor_archived_patients():
+    """Doctor-only view of archived (incomplete) patient drafts."""
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    q = Patient.query.filter(Patient.status == 'archived')
+    archived = filter_accessible_patients(q, current_user).order_by(Patient.updated_at.desc(), Patient.id.desc()).all()
+
+    archived_inpatients = [p for p in archived if p.ip_number]
+    archived_outpatients = [p for p in archived if p.op_number and not p.ip_number]
+
+    return render_template(
+        'doctor/archived_patients.html',
+        archived_inpatients=archived_inpatients,
+        archived_outpatients=archived_outpatients,
     )
 
 
@@ -25393,12 +26737,87 @@ def doctor_new_patient():
                     arg_type = (request.args.get('patient_type') or '').strip().upper()
                     patient_type = arg_type if arg_type in {'OP', 'IP'} else 'OP'
 
-                patient_number = generate_patient_number(patient_type)
-
                 insurance_provider_id = request.form.get('insurance_provider_id', type=int)
                 insurance_policy_number = (request.form.get('insurance_policy_number') or '').strip()
                 insurance_member_number = (request.form.get('insurance_member_number') or '').strip()
                 insurance_covers_inpatient = request.form.get('insurance_covers_inpatient') in ('1', 'true', 'True', 'on', 'yes')
+
+                # Resume/edit path: if a patient_id is provided, update the existing row instead of creating a new one.
+                existing_patient = None
+                try:
+                    pid_int = int(patient_id) if patient_id else None
+                except Exception:
+                    pid_int = None
+
+                if pid_int:
+                    existing_patient = db.session.get(Patient, pid_int)
+
+                if existing_patient:
+                    if str(getattr(existing_patient, 'status', '') or '').strip().lower() == 'deleted':
+                        return jsonify({'success': False, 'error': 'Patient is deleted'}), 400
+
+                    if not can_user_access_patient(current_user, existing_patient):
+                        return jsonify({'success': False, 'error': 'You do not have access to this patient'}), 403
+
+                    # Patient type/number are already reserved for this record; keep them immutable.
+                    patient_type = 'IP' if getattr(existing_patient, 'ip_number', None) else 'OP'
+
+                    existing_patient.name = Config.encrypt_data_static(request.form.get('name'))
+                    existing_patient.age = _parse_age_years(request.form.get('age'))
+                    existing_patient.gender = request.form.get('gender')
+                    existing_patient.address = Config.encrypt_data_static(request.form.get('address')) if request.form.get('address') else None
+                    existing_patient.phone = Config.encrypt_data_static(request.form.get('phone')) if request.form.get('phone') else None
+                    existing_patient.destination = request.form.get('destination')
+                    existing_patient.occupation = Config.encrypt_data_static(request.form.get('occupation')) if request.form.get('occupation') else None
+                    existing_patient.religion = request.form.get('religion')
+                    existing_patient.nok_name = Config.encrypt_data_static(request.form.get('nok_name')) if request.form.get('nok_name') else None
+                    existing_patient.nok_contact = Config.encrypt_data_static(request.form.get('nok_contact')) if request.form.get('nok_contact') else None
+                    existing_patient.tca = datetime.strptime(request.form.get('tca'), '%Y-%m-%d').date() if request.form.get('tca') else None
+                    existing_patient.date_of_admission = datetime.strptime(request.form.get('date_of_admission'), '%Y-%m-%d').date() if request.form.get('date_of_admission') else (existing_patient.date_of_admission or date.today())
+                    if str(getattr(existing_patient, 'status', '') or '').strip().lower() == 'archived':
+                        existing_patient.status = 'active'
+                    existing_patient.updated_at = get_eat_now()
+
+                    # Insurance capture at patient registration (best-effort)
+                    try:
+                        if insurance_provider_id and (insurance_policy_number or insurance_member_number):
+                            provider = db.session.get(InsuranceProvider, int(insurance_provider_id))
+                            if provider:
+                                policy = InsurancePolicy(
+                                    patient_id=existing_patient.id,
+                                    provider_id=provider.id,
+                                    policy_number=insurance_policy_number or None,
+                                    member_number=insurance_member_number or None,
+                                    active=True,
+                                    start_date=date.today(),
+                                    notes=f"Captured at registration by Dr. {getattr(current_user, 'full_name', '')}".strip() or None,
+                                    created_at=get_eat_now(),
+                                )
+                                _insurance_policy_set_covers_inpatient(policy, bool(insurance_covers_inpatient))
+
+                                # If created as IP and doesn't cover inpatient, keep inactive so reception won't use it.
+                                if (patient_type or '').strip().upper() == 'IP' and not bool(insurance_covers_inpatient):
+                                    policy.active = False
+
+                                if policy.active:
+                                    try:
+                                        InsurancePolicy.query.filter_by(patient_id=existing_patient.id, active=True).update({'active': False})
+                                    except Exception:
+                                        pass
+                                db.session.add(policy)
+                    except Exception:
+                        pass
+
+                    db.session.commit()
+
+                    return jsonify({
+                        'success': True,
+                        'patient_id': existing_patient.id,
+                        'patient_number': existing_patient.op_number or existing_patient.ip_number,
+                        'next_section': 'chief_complaint'
+                    })
+
+                patient_number = generate_patient_number(patient_type)
                 
                 patient = Patient(
                     op_number=patient_number if patient_type == 'OP' else None,
@@ -25823,6 +27242,42 @@ def doctor_new_patient():
             })
 
     # For GET request - render the form
+    resume_patient_id = None
+    resume_patient_number = ''
+    resume_draft = None
+    resume_patient_type = None
+    raw_resume = (request.args.get('resume_patient_id') or '').strip()
+    if raw_resume:
+        try:
+            resume_patient_id = int(raw_resume)
+        except Exception:
+            resume_patient_id = None
+
+    if resume_patient_id:
+        patient = db.session.get(Patient, resume_patient_id)
+        if not patient or not can_user_access_patient(current_user, patient):
+            resume_patient_id = None
+        else:
+            resume_patient_number = patient.op_number or patient.ip_number or ''
+            resume_patient_type = 'IP' if patient.ip_number else 'OP'
+            try:
+                row = ArchivedPatientDraft.query.filter_by(patient_id=patient.id).first()
+                if row and row.draft_encrypted:
+                    decrypted = Config.decrypt_data_static(row.draft_encrypted)
+                    parsed = json.loads(decrypted) if decrypted else None
+                    if isinstance(parsed, dict):
+                        parsed.setdefault('version', 1)
+                        parsed['patient_id'] = str(patient.id)
+                        values = parsed.get('values')
+                        if not isinstance(values, dict):
+                            values = {}
+                            parsed['values'] = values
+                        values.setdefault('patient_type', resume_patient_type)
+                        values.setdefault('reserved_patient_number', resume_patient_number)
+                        resume_draft = parsed
+            except Exception:
+                resume_draft = None
+
     lab_tests = LabTest.query.all()
     imaging_tests = ImagingTest.query.all()
     drugs = Drug.query.filter(Drug.remaining_quantity > 0).all()
@@ -25847,6 +27302,11 @@ def doctor_new_patient():
 
     lock_patient_type_requested = str(request.args.get('lock_patient_type') or '').strip() in {'1', 'true', 'True', 'yes', 'on'}
     lock_patient_type = bool(lock_patient_type_requested and raw_is_valid)
+
+    # Resume flow: always lock and force type from the existing patient record.
+    if resume_patient_type in {'OP', 'IP'}:
+        preset_patient_type = resume_patient_type
+        lock_patient_type = True
     
     try:
         insurance_providers = InsuranceProvider.query.order_by(InsuranceProvider.name).all()
@@ -25863,7 +27323,211 @@ def doctor_new_patient():
         current_date=date.today().strftime('%Y-%m-%d'),
         preset_patient_type=preset_patient_type,
         lock_patient_type=lock_patient_type,
+        resume_patient_id=resume_patient_id,
+        resume_patient_number=resume_patient_number,
+        resume_draft=resume_draft,
     )
+
+
+def _doctor_purge_patient(patient: 'Patient', *, release_number: bool) -> dict:
+    """Best-effort purge a patient record, optionally releasing OP/IP number for reuse."""
+    if not patient:
+        return {'hard_deleted': False, 'soft_deleted': False, 'released_number': False}
+
+    kind, seq = _patient_number_kind_and_seq(patient)
+
+    # Remove archived draft snapshot first (avoid FK conflicts).
+    try:
+        ArchivedPatientDraft.query.filter_by(patient_id=patient.id).delete()
+    except Exception:
+        pass
+
+    try:
+        _release_patient_bed_if_any(patient)
+    except Exception:
+        pass
+
+    try:
+        db.session.delete(patient)
+        if release_number:
+            _release_patient_number(kind, seq)
+        db.session.commit()
+        return {'hard_deleted': True, 'soft_deleted': False, 'released_number': bool(release_number and kind and seq)}
+    except IntegrityError:
+        db.session.rollback()
+        # FK constraints are expected in this system; fall back to safe soft-delete.
+        try:
+            _release_patient_bed_if_any(patient)
+        except Exception:
+            pass
+        try:
+            patient.status = 'deleted'
+            patient.updated_at = get_eat_now()
+            db.session.commit()
+            return {'hard_deleted': False, 'soft_deleted': True, 'released_number': False}
+        except Exception:
+            db.session.rollback()
+            raise
+
+
+@app.post('/doctor/patient/<int:patient_id>/archive')
+@login_required
+def doctor_archive_patient(patient_id: int):
+    """Archive an in-progress doctor wizard patient and persist an encrypted draft snapshot."""
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': False, 'error': 'Patient not found'}), 404
+
+    if not can_user_access_patient(current_user, patient):
+        return jsonify({'success': False, 'error': 'You do not have access to this patient'}), 403
+
+    data = request.get_json(silent=True) or {}
+    draft = data.get('draft')
+    if not isinstance(draft, dict):
+        # Allow passing the draft object as the top-level JSON.
+        draft = data if isinstance(data, dict) else {}
+
+    current_section_id = (data.get('current_section_id') or draft.get('current_section_id') or '').strip()
+    current_section_index = data.get('current_section_index', None)
+    if current_section_index is None:
+        current_section_index = draft.get('current_section_index', None)
+    try:
+        current_section_index = int(current_section_index) if current_section_index is not None else None
+    except Exception:
+        current_section_index = None
+
+    try:
+        draft_json = json.dumps(draft, separators=(',', ':'), default=str)
+    except Exception:
+        draft_json = '{}'
+
+    try:
+        draft_encrypted = Config.encrypt_data_static(draft_json)
+    except Exception:
+        # If encryption fails, refuse to store plaintext.
+        return jsonify({'success': False, 'error': 'Failed to encrypt draft'}), 500
+
+    try:
+        row = ArchivedPatientDraft.query.filter_by(patient_id=patient.id).first()
+        if not row:
+            row = ArchivedPatientDraft(patient_id=patient.id)
+            db.session.add(row)
+        row.archived_at = get_eat_now()
+        row.archived_by = current_user.id
+        row.current_section_id = current_section_id or None
+        row.current_section_index = current_section_index
+        row.draft_encrypted = draft_encrypted
+
+        patient.status = 'archived'
+        patient.updated_at = get_eat_now()
+        db.session.commit()
+
+        try:
+            log_audit('archive', 'Patient', patient.id, current_user.id, {'status': 'archived'})
+        except Exception:
+            pass
+
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.post('/doctor/patient/<int:patient_id>/cancel')
+@login_required
+def doctor_cancel_patient(patient_id: int):
+    """Cancel a new-patient wizard draft (best-effort delete + number release when safe)."""
+    if current_user.role != 'doctor':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        return jsonify({'success': True, 'message': 'Already removed'}), 200
+
+    if not can_user_access_patient(current_user, patient):
+        return jsonify({'success': False, 'error': 'You do not have access to this patient'}), 403
+
+    try:
+        result = _doctor_purge_patient(patient, release_number=True)
+        try:
+            log_audit('cancel', 'Patient', patient_id, current_user.id, {'hard_deleted': result.get('hard_deleted'), 'soft_deleted': result.get('soft_deleted')})
+        except Exception:
+            pass
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.post('/doctor/patient/<int:patient_id>/resume')
+@login_required
+def doctor_resume_archived_patient(patient_id: int):
+    """Unarchive and resume the doctor wizard for a patient."""
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        flash('Patient not found', 'danger')
+        return redirect(url_for('doctor_archived_patients'))
+
+    if not can_user_access_patient(current_user, patient):
+        flash('You do not have access to this patient', 'danger')
+        return redirect(url_for('doctor_archived_patients'))
+
+    try:
+        patient.status = 'active'
+        patient.updated_at = get_eat_now()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    try:
+        log_audit('resume', 'Patient', patient.id, current_user.id, {'from': 'archived', 'to': 'active'})
+    except Exception:
+        pass
+
+    pt = 'IP' if patient.ip_number else 'OP'
+    return redirect(url_for('doctor_new_patient', resume_patient_id=patient.id, patient_type=pt, lock_patient_type='1'))
+
+
+@app.post('/doctor/patient/<int:patient_id>/purge')
+@login_required
+def doctor_purge_archived_patient(patient_id: int):
+    """Delete an archived patient draft (best-effort) and return to archived list."""
+    if current_user.role != 'doctor':
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('home'))
+
+    patient = db.session.get(Patient, patient_id)
+    if not patient:
+        flash('Patient not found', 'warning')
+        return redirect(url_for('doctor_archived_patients'))
+
+    if not can_user_access_patient(current_user, patient):
+        flash('You do not have access to this patient', 'danger')
+        return redirect(url_for('doctor_archived_patients'))
+
+    try:
+        result = _doctor_purge_patient(patient, release_number=True)
+        if result.get('hard_deleted'):
+            flash('Archived patient deleted successfully.', 'success')
+        elif result.get('soft_deleted'):
+            flash('Patient removed from the list (could not fully delete due to linked records).', 'warning')
+        else:
+            flash('Patient could not be deleted.', 'danger')
+        try:
+            log_audit('delete', 'Patient', patient_id, current_user.id, {'archived_list': True, **result})
+        except Exception:
+            pass
+    except Exception as e:
+        flash(f'Failed to delete patient: {str(e)}', 'danger')
+
+    return redirect(url_for('doctor_archived_patients'))
+
 
 # Assistant Assistant for diagnosis and treatment suggestions
 # NOTE: This legacy class previously overwrote the primary AIService defined earlier in this file.
@@ -27515,6 +29179,209 @@ def api_get_available_beds_for_ward(ward_id):
     })
 
 
+@app.get('/api/wards')
+@login_required
+def api_list_wards():
+    role = str(getattr(current_user, 'role', '') or '').lower().strip()
+    if role not in {'doctor', 'nurse', 'admin'}:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    wards = Ward.query.order_by(Ward.name.asc()).all()
+    return jsonify(
+        {
+            'success': True,
+            'wards': [{'id': int(w.id), 'name': w.name} for w in wards],
+        }
+    )
+
+
+@app.get('/api/wards/<int:ward_id>/beds')
+@login_required
+def api_list_beds_for_ward(ward_id: int):
+    role = str(getattr(current_user, 'role', '') or '').lower().strip()
+    if role not in {'doctor', 'nurse', 'admin'}:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    ward = db.session.get(Ward, int(ward_id))
+    if not ward:
+        return jsonify({'success': False, 'error': 'Ward not found'}), 404
+
+    beds = Bed.query.filter_by(ward_id=ward.id).order_by(Bed.bed_number.asc()).all()
+    return jsonify(
+        {
+            'success': True,
+            'ward': {'id': int(ward.id), 'name': ward.name},
+            'beds': [
+                {
+                    'id': int(b.id),
+                    'bed_number': b.bed_number,
+                    'status': (b.status or '').strip() or 'unknown',
+                }
+                for b in beds
+            ],
+        }
+    )
+
+
+@app.get('/api/outpatient-departments')
+@login_required
+def api_list_outpatient_departments():
+    role = str(getattr(current_user, 'role', '') or '').lower().strip()
+    if role not in {'doctor', 'nurse', 'admin'}:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    rows = OutpatientDepartment.query.filter_by(is_active=True).order_by(OutpatientDepartment.name.asc()).all()
+    return jsonify(
+        {
+            'success': True,
+            'departments': [
+                {'id': int(d.id), 'name': d.name, 'type': d.type}
+                for d in rows
+            ],
+        }
+    )
+
+
+@app.get('/api/emergency-codes')
+@login_required
+def api_list_emergency_codes():
+    role = str(getattr(current_user, 'role', '') or '').lower().strip()
+    if role not in {'doctor', 'nurse', 'admin'}:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    return jsonify({'success': True, 'codes': list_emergency_codes()})
+
+
+@app.post('/api/emergency-codes/trigger')
+@login_required
+def api_trigger_emergency_code():
+    role = str(getattr(current_user, 'role', '') or '').lower().strip()
+    if role not in {'doctor', 'nurse'}:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    data = request.get_json(silent=True) or {}
+    code_key = (data.get('code') or data.get('code_key') or '').strip().lower()
+    scope_type = (data.get('scope_type') or data.get('scope') or 'ward').strip().lower()
+
+    code = get_emergency_code(code_key)
+    if not code:
+        return jsonify({'success': False, 'error': 'Invalid code'}), 400
+
+    ward = None
+    bed = None
+    dept = None
+    room = None
+
+    if scope_type == 'ward':
+        try:
+            ward_id = int(data.get('ward_id'))
+        except Exception:
+            ward_id = None
+
+        try:
+            bed_id = int(data.get('bed_id')) if data.get('bed_id') not in (None, '') else None
+        except Exception:
+            bed_id = None
+
+        if not ward_id:
+            return jsonify({'success': False, 'error': 'Ward is required'}), 400
+
+        ward = db.session.get(Ward, int(ward_id))
+        if not ward:
+            return jsonify({'success': False, 'error': 'Ward not found'}), 404
+
+        if bed_id:
+            bed = db.session.get(Bed, int(bed_id))
+            if not bed or int(getattr(bed, 'ward_id', 0) or 0) != int(ward.id):
+                return jsonify({'success': False, 'error': 'Bed not found in ward'}), 400
+
+        room = f"ward:{int(ward.id)}"
+
+    elif scope_type == 'department':
+        try:
+            dept_id = int(data.get('department_id'))
+        except Exception:
+            dept_id = None
+
+        if not dept_id:
+            return jsonify({'success': False, 'error': 'Department is required'}), 400
+
+        dept = db.session.get(OutpatientDepartment, int(dept_id))
+        if not dept:
+            return jsonify({'success': False, 'error': 'Department not found'}), 404
+
+        room = f"dept:{int(dept.id)}"
+
+    else:
+        return jsonify({'success': False, 'error': 'Invalid scope'}), 400
+
+    try:
+        evt = EmergencyCodeEvent(
+            code_key=code.get('key') or code_key,
+            scope_type=scope_type,
+            ward_id=(ward.id if ward else None),
+            bed_id=(bed.id if bed else None),
+            department_id=(dept.id if dept else None),
+            triggered_by=current_user.id,
+            triggered_at=get_eat_now(),
+            status='active',
+        )
+        db.session.add(evt)
+        db.session.commit()
+    except Exception as e:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+    payload = {
+        'event_id': int(evt.id),
+        'code_key': code.get('key') or code_key,
+        'code_name': code.get('name') or code_key,
+        'severity': code.get('severity') or 'unknown',
+        'overlay_color': code.get('overlay_color') or '#b00020',
+        'scope_type': scope_type,
+        'ward_id': int(ward.id) if ward else None,
+        'ward_name': ward.name if ward else None,
+        'bed_id': int(bed.id) if bed else None,
+        'bed_number': bed.bed_number if bed else None,
+        'department_id': int(dept.id) if dept else None,
+        'department_name': dept.name if dept else None,
+        'triggered_by': {
+            'id': int(current_user.id),
+            'username': getattr(current_user, 'username', None),
+            'role': role,
+        },
+        'triggered_at': isoformat_eat(evt.triggered_at),
+    }
+
+    try:
+        socketio.emit('emergency_code', payload, room=room)
+    except Exception:
+        # best-effort: the event is still logged.
+        pass
+
+    try:
+        log_audit(
+            'emergency_code_trigger',
+            'EmergencyCodeEvent',
+            evt.id,
+            current_user.id,
+            {
+                'code_key': payload.get('code_key'),
+                'scope_type': scope_type,
+                'ward_id': payload.get('ward_id'),
+                'bed_id': payload.get('bed_id'),
+                'department_id': payload.get('department_id'),
+            },
+        )
+    except Exception:
+        pass
+
+    return jsonify({'success': True, 'event_id': int(evt.id)})
+
+
 @app.route('/api/patient/<int:patient_id>/insurance', methods=['GET'])
 @login_required
 def api_get_patient_insurance(patient_id):
@@ -29155,25 +31022,222 @@ def nurse_complete_notification(notification_id):
     return redirect(url_for('nurse_notifications'))
 
 
+_MMC_ACTIVE_ROLE_SESSION_KEY = "mmc_active_role_v1"
+
+
+def _normalize_role(value) -> str:
+    try:
+        return str(value or "").lower().strip()
+    except Exception:
+        return ""
+
+
+def _get_base_role() -> str:
+    return _normalize_role(getattr(current_user, "role", "") or "")
+
+
+def _get_active_role() -> str:
+    """Return the currently active role (base role or a permitted temporary switch)."""
+    base = _get_base_role()
+    if not base:
+        return ""
+
+    # Never allow overriding admin role via session.
+    if base == "admin":
+        try:
+            session.pop(_MMC_ACTIVE_ROLE_SESSION_KEY, None)
+        except Exception:
+            pass
+        return base
+
+    active = _normalize_role(session.get(_MMC_ACTIVE_ROLE_SESSION_KEY) or base)
+    if not active or active == base:
+        return base
+
+    # Validate permitted switches (default deny).
+    try:
+        from utils.cross_role_access import (
+            PERM_DOCTOR_LABTECH,
+            PERM_PHARMACIST_RECEPTIONIST,
+            is_allowed,
+        )
+
+        if base == "doctor" and active == "labtech":
+            if is_allowed(current_user.id, PERM_DOCTOR_LABTECH):
+                return "labtech"
+        if base == "pharmacist" and active == "receptionist":
+            if is_allowed(current_user.id, PERM_PHARMACIST_RECEPTIONIST):
+                return "receptionist"
+    except Exception:
+        pass
+
+    # Invalid/unauthorized session value -> clear and fall back.
+    try:
+        session.pop(_MMC_ACTIVE_ROLE_SESSION_KEY, None)
+    except Exception:
+        pass
+    return base
+
+
+def _set_active_role(role: str | None) -> None:
+    base = _get_base_role()
+    desired = _normalize_role(role)
+    try:
+        if not desired or desired == base:
+            session.pop(_MMC_ACTIVE_ROLE_SESSION_KEY, None)
+        else:
+            session[_MMC_ACTIVE_ROLE_SESSION_KEY] = desired
+    except Exception:
+        return
+
+
+def _can_switch_doctor_to_labtech() -> bool:
+    try:
+        if not current_user.is_authenticated:
+            return False
+        if _get_base_role() != "doctor":
+            return False
+        from utils.cross_role_access import PERM_DOCTOR_LABTECH, is_allowed
+
+        return bool(is_allowed(current_user.id, PERM_DOCTOR_LABTECH))
+    except Exception:
+        return False
+
+
+def _can_switch_pharmacist_to_receptionist() -> bool:
+    try:
+        if not current_user.is_authenticated:
+            return False
+        if _get_base_role() != "pharmacist":
+            return False
+        from utils.cross_role_access import PERM_PHARMACIST_RECEPTIONIST, is_allowed
+
+        return bool(is_allowed(current_user.id, PERM_PHARMACIST_RECEPTIONIST))
+    except Exception:
+        return False
+
+
+@app.before_request
+def _enforce_cross_role_locks():
+    """Lock base-role features when a user is operating in a switched mode."""
+    try:
+        if not current_user.is_authenticated:
+            return None
+    except Exception:
+        return None
+
+    try:
+        base = _get_base_role()
+        active = _get_active_role()
+        path = str(getattr(request, "path", "") or "")
+
+        # Doctor in LabTech mode: lock doctor endpoints.
+        if base == "doctor" and active == "labtech" and (path.startswith("/doctor") or path.startswith("/api/doctor")):
+            flash("Doctor features are locked while in Lab Technician mode. Switch back to Doctor to continue.", "warning")
+            return redirect(url_for("labtech_dashboard"))
+
+        # Pharmacist in Receptionist mode: lock pharmacist endpoints.
+        if base == "pharmacist" and active == "receptionist" and (path.startswith("/pharmacist") or path.startswith("/api/pharmacist")):
+            flash("Pharmacist features are locked while in Receptionist mode. Switch back to Pharmacist to continue.", "warning")
+            return redirect(url_for("receptionist_dashboard"))
+    except Exception:
+        return None
+
+    return None
+
+
 def _require_role(required_roles):
-    """Shared helper to gate routes by user role."""
-    user_role = str(getattr(current_user, 'role', '') or '').lower().strip()
+    """Shared helper to gate routes by the currently active role."""
+    user_role = _get_active_role()
     if isinstance(required_roles, str):
-        required = {required_roles}
+        required = {_normalize_role(required_roles)}
     else:
-        required = {str(r).lower().strip() for r in (required_roles or [])}
+        required = {_normalize_role(r) for r in (required_roles or []) if _normalize_role(r)}
     if user_role not in required:
-        flash('Unauthorized access', 'danger')
+        flash("Unauthorized access", "danger")
         return False
     return True
+
+
+@app.context_processor
+def inject_active_role_context():
+    """Expose base/active roles and switch permissions to templates (non-sensitive)."""
+    try:
+        if not current_user.is_authenticated:
+            return {"mmc_base_role": "", "mmc_active_role": "", "mmc_can_switch_labtech": False, "mmc_can_switch_receptionist": False}
+        base = _get_base_role()
+        active = _get_active_role()
+        return {
+            "mmc_base_role": base,
+            "mmc_active_role": active,
+            "mmc_can_switch_labtech": _can_switch_doctor_to_labtech(),
+            "mmc_can_switch_receptionist": _can_switch_pharmacist_to_receptionist(),
+        }
+    except Exception:
+        return {"mmc_base_role": "", "mmc_active_role": "", "mmc_can_switch_labtech": False, "mmc_can_switch_receptionist": False}
+
+
+@app.post("/role/switch/labtech")
+@login_required
+def switch_role_to_labtech():
+    if _get_base_role() != "doctor" or not _can_switch_doctor_to_labtech():
+        flash("Unauthorized access", "danger")
+        return redirect(url_for("home"))
+    _set_active_role("labtech")
+    try:
+        log_audit("role_switch", "User", current_user.id, None, {"from": "doctor", "to": "labtech"})
+    except Exception:
+        pass
+    return redirect(url_for("labtech_dashboard"))
+
+
+@app.post("/role/switch/doctor")
+@login_required
+def switch_role_to_doctor():
+    if _get_base_role() != "doctor":
+        flash("Unauthorized access", "danger")
+        return redirect(url_for("home"))
+    _set_active_role("doctor")
+    try:
+        log_audit("role_switch", "User", current_user.id, None, {"from": "labtech", "to": "doctor"})
+    except Exception:
+        pass
+    return redirect(url_for("doctor_dashboard"))
+
+
+@app.post("/role/switch/receptionist")
+@login_required
+def switch_role_to_receptionist():
+    if _get_base_role() != "pharmacist" or not _can_switch_pharmacist_to_receptionist():
+        flash("Unauthorized access", "danger")
+        return redirect(url_for("home"))
+    _set_active_role("receptionist")
+    try:
+        log_audit("role_switch", "User", current_user.id, None, {"from": "pharmacist", "to": "receptionist"})
+    except Exception:
+        pass
+    return redirect(url_for("receptionist_dashboard"))
+
+
+@app.post("/role/switch/pharmacist")
+@login_required
+def switch_role_to_pharmacist():
+    if _get_base_role() != "pharmacist":
+        flash("Unauthorized access", "danger")
+        return redirect(url_for("home"))
+    _set_active_role("pharmacist")
+    try:
+        log_audit("role_switch", "User", current_user.id, None, {"from": "receptionist", "to": "pharmacist"})
+    except Exception:
+        pass
+    return redirect(url_for("pharmacist_dashboard"))
 
 
 @app.route('/labtech/dashboard')
 @login_required
 def labtech_dashboard():
-    # Doctors are allowed to access lab workflows via the "Open Lab" entry.
-    # This does NOT grant labtechs access to doctor pages (doctor pages remain doctor-only).
-    if not _require_role({'labtech', 'admin', 'doctor'}):
+    # Doctors may access lab workflows only when explicitly switched into LabTech mode.
+    if not _require_role({'labtech', 'admin'}):
         return redirect(url_for('home'))
 
     pending_count = LabRequest.query.filter(LabRequest.status == 'pending').count()
@@ -29201,7 +31265,7 @@ def labtech_dashboard():
 @app.route('/labtech/lab-requests')
 @login_required
 def labtech_lab_requests():
-    if not _require_role({'labtech', 'admin', 'doctor'}):
+    if not _require_role({'labtech', 'admin'}):
         return redirect(url_for('home'))
 
     status = (request.args.get('status') or '').strip().lower() or None
@@ -29269,7 +31333,7 @@ def labtech_lab_requests():
 @app.route('/labtech/lab-request/<int:request_id>')
 @login_required
 def labtech_lab_request_detail(request_id):
-    if not _require_role({'labtech', 'admin', 'doctor'}):
+    if not _require_role({'labtech', 'admin'}):
         return redirect(url_for('home'))
 
     lab_request = db.session.get(LabRequest, request_id)
@@ -29284,7 +31348,7 @@ def labtech_lab_request_detail(request_id):
 @app.route('/labtech/lab-request/<int:request_id>/complete', methods=['POST'])
 @login_required
 def labtech_complete_lab_request(request_id):
-    if not _require_role({'labtech', 'admin', 'doctor'}):
+    if not _require_role({'labtech', 'admin'}):
         return redirect(url_for('home'))
 
     lab_request = db.session.get(LabRequest, request_id)
@@ -29396,10 +31460,7 @@ def nurse_medication_schedule():
 @app.route('/receptionist')
 @login_required
 def receptionist_dashboard():
-    # Allow both receptionist and pharmacist to access
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
-        flash('Unauthorized access', 'danger')
+    if not _require_role({'receptionist', 'admin'}):
         return redirect(url_for('home'))
     
     # Calculate today's patients
@@ -29445,10 +31506,7 @@ def receptionist_dashboard():
 @app.route('/receptionist/patients')
 @login_required
 def receptionist_patients():
-    # Allow both receptionist and pharmacist to access
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
-        flash('Unauthorized access', 'danger')
+    if not _require_role({'receptionist', 'admin'}):
         return redirect(url_for('home'))
     
     patients = Patient.query.order_by(Patient.created_at.desc()).all()
@@ -29457,10 +31515,7 @@ def receptionist_patients():
 @app.route('/receptionist/patient/<int:patient_id>')
 @login_required
 def receptionist_patient_details(patient_id):
-    # Allow both receptionist and pharmacist to access
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
-        flash('Unauthorized access', 'danger')
+    if not _require_role({'receptionist', 'admin'}):
         return redirect(url_for('home'))
     
     patient = _db_get(Patient, patient_id)
@@ -29506,9 +31561,7 @@ def receptionist_patient_details(patient_id):
 @login_required
 def receptionist_patient_actions(patient_id):
     """Handle patient actions (complete treatment, readmit) from receptionist view"""
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
-        flash('Unauthorized access', 'danger')
+    if not _require_role({'receptionist', 'admin'}):
         return redirect(url_for('home'))
     
     patient = _db_get(Patient, patient_id)
@@ -29543,10 +31596,8 @@ def receptionist_patient_actions(patient_id):
 @app.route('/receptionist/billing', methods=['POST'])
 @login_required
 def create_bill():
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    # Receptionist (and admin) handles billing; pharmacists only dispense.
-    if user_role not in ('receptionist', 'admin'):
-        flash('Unauthorized access', 'danger')
+    # Receptionist (and admin) handles billing.
+    if not _require_role({'receptionist', 'admin'}):
         return redirect(url_for('home'))
 
     def _coerce_int_list(values):
@@ -30091,10 +32142,22 @@ def create_bill():
 @app.route('/receptionist/sale/<int:sale_id>/receipt')
 @login_required
 def receptionist_receipt(sale_id):
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    user_role = _get_active_role()
     if user_role not in ('receptionist', 'admin'):
         flash('Unauthorized access', 'danger')
         return redirect(url_for('home'))
+
+    # Non-admins can only view receipts for bills they created.
+    try:
+        sale_owner_id = db.session.query(Sale.user_id).filter(Sale.id == sale_id).scalar()
+    except Exception:
+        sale_owner_id = None
+    if sale_owner_id is None:
+        flash('Sale not found', 'danger')
+        return redirect(url_for('receptionist_dashboard'))
+    if user_role != 'admin' and sale_owner_id != current_user.id:
+        flash('Unauthorized access', 'danger')
+        return redirect(url_for('receptionist_dashboard'))
     
     tx = _get_transaction_for_sale(sale_id)
     reprint_requested = request.args.get('reprint') == '1'
@@ -30511,6 +32574,8 @@ def _save_prescription_image(file_storage):
     if mimetype and not mimetype.startswith('image/'):
         raise ValueError('Unsupported file type. Prescription must be an image.')
 
+    _verify_image_upload(file_storage, allowed_formats={'JPEG', 'PNG', 'WEBP'})
+
     filename = secure_filename(file_storage.filename) or 'prescription.jpg'
     stamp = datetime.now().strftime('%Y%m%d%H%M%S')
     unique = f"{stamp}_{random.randint(1000, 9999)}_{filename}"
@@ -30519,6 +32584,10 @@ def _save_prescription_image(file_storage):
     os.makedirs(upload_dir, exist_ok=True)
     full_path = os.path.join(upload_dir, unique)
     file_storage.save(full_path)
+    try:
+        _encrypt_upload_file_inplace(full_path)
+    except Exception:
+        pass
     return os.path.join('uploads', 'controlled_prescriptions', unique).replace('\\', '/')
 
 
@@ -30532,6 +32601,9 @@ def _save_prescription_sheet(file_storage):
     if not _allowed_prescription_file(file_storage.filename):
         raise ValueError('Unsupported file type. Use jpg, png, webp, or pdf.')
 
+    if _allowed_prescription_image(file_storage.filename):
+        _verify_image_upload(file_storage, allowed_formats={'JPEG', 'PNG', 'WEBP'})
+
     filename = secure_filename(file_storage.filename)
     stamp = datetime.now().strftime('%Y%m%d%H%M%S')
     unique = f"{stamp}_{random.randint(1000, 9999)}_{filename}"
@@ -30541,7 +32613,249 @@ def _save_prescription_sheet(file_storage):
 
     full_path = os.path.join(upload_dir, unique)
     file_storage.save(full_path)
+    try:
+        _encrypt_upload_file_inplace(full_path)
+    except Exception:
+        pass
     return os.path.join('uploads', 'controlled_prescriptions', unique).replace('\\', '/')
+
+
+
+# ==========================================================
+# Vendor Asset Proxy (first-party CDN passthrough)
+# ==========================================================
+#
+# Firefox/ETP and other privacy features can warn/block third-party storage access for CDN assets.
+# To keep functionality and reduce noisy console warnings, serve a small allow-listed set of
+# version-pinned CDN assets through first-party routes and cache them under instance/vendor_cache.
+#
+# If the server cannot reach the upstream CDN, these routes fall back to a redirect to preserve
+# existing behavior rather than breaking pages.
+
+_VENDOR_BASE_URLS: dict[str, str] = {
+    'jsdelivr': 'https://cdn.jsdelivr.net/',
+    'cdnjs': 'https://cdnjs.cloudflare.com/',
+    'codejquery': 'https://code.jquery.com/',
+}
+
+_VENDOR_ALLOWED_PREFIXES: dict[str, list[str]] = {
+    'jsdelivr': [
+        'npm/bootstrap@5.3.0/dist/',
+        'npm/bootstrap-icons@1.11.1/font/',
+        'npm/select2@4.1.0-rc.0/dist/',
+    ],
+    'cdnjs': [
+        'ajax/libs/font-awesome/5.15.3/',
+        'ajax/libs/font-awesome/5.15.4/',
+        'ajax/libs/jquery/3.7.1/',
+    ],
+    'codejquery': [
+        'jquery-3.7.1.min.js',
+        'jquery-3.7.1.min.map',
+    ],
+}
+
+_VENDOR_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+
+def _vendor_is_allowed(source: str, rel_path: str) -> bool:
+    prefixes = _VENDOR_ALLOWED_PREFIXES.get(source) or []
+    return any(rel_path.startswith(prefix) for prefix in prefixes)
+
+
+def _serve_vendor_asset(source: str, asset_path: str):
+    from flask import abort, redirect, send_file
+
+    base = _VENDOR_BASE_URLS.get(source)
+    if not base:
+        abort(404)
+
+    try:
+        rel = (asset_path or '').replace('\\', '/').lstrip('/')
+    except Exception:
+        rel = ''
+
+    rel_norm = os.path.normpath(rel).replace('\\', '/')
+    if not rel_norm or rel_norm.startswith('../') or rel_norm.startswith('..') or '/..' in rel_norm:
+        abort(404)
+
+    if not _vendor_is_allowed(source, rel_norm):
+        abort(404)
+
+    upstream_url = base + rel_norm
+
+    cache_root = os.path.join(app.instance_path, 'vendor_cache', source)
+    cache_root_abs = os.path.abspath(cache_root)
+    cache_file = os.path.abspath(os.path.join(cache_root, rel_norm))
+    if not cache_file.startswith(cache_root_abs + os.sep):
+        abort(404)
+
+    def _send_cached(path: str):
+        ext = os.path.splitext(path)[1].lower()
+        if ext == '.css':
+            mime = 'text/css'
+        elif ext == '.js':
+            mime = 'application/javascript'
+        elif ext == '.woff2':
+            mime = 'font/woff2'
+        elif ext == '.woff':
+            mime = 'font/woff'
+        elif ext == '.ttf':
+            mime = 'font/ttf'
+        elif ext == '.eot':
+            mime = 'application/vnd.ms-fontobject'
+        elif ext == '.svg':
+            mime = 'image/svg+xml'
+        else:
+            mime, _ = mimetypes.guess_type(path)
+            mime = mime or 'application/octet-stream'
+        response = send_file(path, mimetype=mime, as_attachment=False, conditional=True)
+        try:
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+        except Exception:
+            pass
+        return response
+
+    if os.path.isfile(cache_file):
+        return _send_cached(cache_file)
+
+    try:
+        import requests
+
+        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+
+        with requests.get(upstream_url, stream=True, timeout=(5, 20)) as r:
+            if r.status_code != 200:
+                return redirect(upstream_url, code=302)
+
+            try:
+                content_length = r.headers.get('Content-Length')
+                if content_length and int(content_length) > _VENDOR_MAX_BYTES:
+                    abort(413)
+            except Exception:
+                pass
+
+            tmp_path = cache_file + '.tmp'
+            total = 0
+            with open(tmp_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > _VENDOR_MAX_BYTES:
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+                        abort(413)
+                    f.write(chunk)
+            os.replace(tmp_path, cache_file)
+    except Exception:
+        # Preserve current behavior if the server can't reach the upstream CDN.
+        return redirect(upstream_url, code=302)
+
+    return _send_cached(cache_file)
+
+
+@app.get('/vendor/jsdelivr/<path:asset_path>')
+def vendor_jsdelivr(asset_path: str):
+    return _serve_vendor_asset('jsdelivr', asset_path)
+
+
+@app.get('/vendor/cdnjs/<path:asset_path>')
+def vendor_cdnjs(asset_path: str):
+    return _serve_vendor_asset('cdnjs', asset_path)
+
+
+@app.get('/vendor/codejquery/<path:asset_path>')
+def vendor_codejquery(asset_path: str):
+    return _serve_vendor_asset('codejquery', asset_path)
+
+
+@app.get('/uploads/<path:filename>')
+@login_required
+def serve_private_upload(filename: str):
+    """Serve private uploads to authenticated users.
+
+    Supported:
+    - controlled_prescriptions/* (admin/pharmacist only)
+    - profile_pictures/* (any authenticated user)
+    """
+    try:
+        rel = (filename or '').replace('\\', '/').lstrip('/')
+    except Exception:
+        rel = ''
+
+    # Allow callers to pass stored paths like "uploads/...".
+    if rel.startswith('uploads/'):
+        rel = rel[len('uploads/'):]
+
+    # Basic traversal defense
+    rel_norm = os.path.normpath(rel).replace('\\', '/')
+    if not rel_norm or rel_norm.startswith('../') or rel_norm.startswith('..') or '/..' in rel_norm:
+        abort(404)
+
+    if rel_norm.startswith('controlled_prescriptions/'):
+        role = str(getattr(current_user, 'role', '') or '').lower().strip()
+        if role not in {'admin', 'pharmacist'}:
+            abort(403)
+    elif rel_norm.startswith('profile_pictures/'):
+        # Any authenticated user may view profile pictures.
+        pass
+    else:
+        abort(404)
+
+    uploads_root = os.path.join(app.root_path, 'uploads')
+    full_path = os.path.join(uploads_root, rel_norm)
+
+    # Backward-compatibility: some historical profile pictures may be stored under static/uploads.
+    if not os.path.isfile(full_path) and rel_norm.startswith('profile_pictures/'):
+        static_full = os.path.join(app.root_path, 'static', 'uploads', rel_norm)
+        if os.path.isfile(static_full):
+            # Serve legacy static file; also best-effort migrate to encrypted private storage.
+            try:
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(static_full, 'rb') as f:
+                    raw = f.read()
+                with open(full_path, 'wb') as f:
+                    f.write(raw)
+                try:
+                    _encrypt_upload_file_inplace(full_path)
+                except Exception:
+                    pass
+            except Exception:
+                full_path = static_full
+
+    if not os.path.isfile(full_path):
+        abort(404)
+
+    if _is_encrypted_upload_file(full_path):
+        try:
+            plaintext = _decrypt_upload_file_to_bytes(full_path)
+        except Exception:
+            abort(404)
+
+        mime, _ = mimetypes.guess_type(full_path)
+        mime = mime or 'application/octet-stream'
+        bio = BytesIO(plaintext)
+        bio.seek(0)
+        response = send_file(
+            bio,
+            mimetype=mime,
+            as_attachment=False,
+            download_name=os.path.basename(full_path),
+            conditional=True,
+        )
+    else:
+        response = send_from_directory(uploads_root, rel_norm, as_attachment=False)
+
+    try:
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['Cache-Control'] = 'private, max-age=0'
+    except Exception:
+        pass
+    return response
 
 
 @app.route('/pharmacist/api/controlled-prescriptions/upload-sheet', methods=['POST'])
@@ -30719,6 +33033,10 @@ def get_controlled_drug_status(drug):
 @app.route('/api/patients')
 @login_required
 def api_patients():
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
     search = request.args.get('search', '')
     limit = request.args.get('limit', 10, type=int)
     
@@ -30749,6 +33067,10 @@ def api_patient_details(patient_id: int):
 
     Additive endpoint (was referenced by existing JS but missing in some builds).
     """
+    user_role = str(current_user.role).lower().strip() if current_user.role else ''
+    if user_role not in ('receptionist', 'pharmacist', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
     patient = db.session.get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
@@ -30958,7 +33280,7 @@ def api_receptionist_bills():
             'sale_number': sale.sale_number,
             'total_amount': float(sale.total_amount or 0),
             'payment_method': sale.payment_method,
-            'created_at': sale.created_at.isoformat() if getattr(sale, 'created_at', None) else None,
+            'created_at': isoformat_eat(getattr(sale, 'created_at', None)) if getattr(sale, 'created_at', None) else None,
             'served_by': getattr(getattr(sale, 'user', None), 'username', None),
             'patient': {
                 'id': getattr(patient, 'id', None),
@@ -32278,9 +34600,6 @@ def api_transaction_share_whatsapp(transaction_id: int):
 
     return jsonify({'success': True, 'to': to_msisdn, 'result': result})
 
-@app.route('/api/notifications_list')
-@login_required
-
 def create_notification(user_id, message, url=None):
     """Helper function to create a notification."""
     try:
@@ -32314,6 +34633,10 @@ def mark_notification_read(notification_id):
     notification.is_read = True
     db.session.commit()
     return jsonify({'success': True})
+
+
+@app.route('/api/notifications_list')
+@login_required
 def get_notifications():
     notifications = Notification.query.filter_by(user_id=current_user.id, is_read=False).order_by(Notification.created_at.desc()).all()
     return jsonify([{
@@ -32328,10 +34651,7 @@ def get_notifications():
 @app.route('/receptionist/billing')
 @login_required
 def receptionist_billing():
-    # Allow both receptionist and pharmacist to access
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
-        flash('Unauthorized access', 'danger')
+    if not _require_role({'receptionist', 'admin'}):
         return redirect(url_for('home'))
     
     patients = Patient.query.filter_by(status='active').all()
@@ -32350,9 +34670,8 @@ def receptionist_billing():
 @app.route('/api/patient/<int:patient_id>/requested-services')
 @login_required
 def api_patient_requested_services(patient_id: int):
-    # Allow both receptionist and pharmacist to access
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
+    user_role = _get_active_role()
+    if user_role not in ('receptionist', 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     patient = _db_get(Patient, patient_id)
@@ -32374,7 +34693,7 @@ def api_patient_requested_services(patient_id: int):
                 'service_id': r.service_id,
                 'service_name': (r.service.name if getattr(r, 'service', None) else None),
                 'status': r.status or 'requested',
-                'created_at': r.created_at.isoformat() if getattr(r, 'created_at', None) else None,
+                'created_at': isoformat_eat(r.created_at) if getattr(r, 'created_at', None) else None,
             }
             for r in rows
         ])
@@ -32386,8 +34705,8 @@ def api_patient_requested_services(patient_id: int):
 @app.route('/api/patient/<int:patient_id>/completed-services')
 @login_required
 def api_patient_completed_services(patient_id: int):
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
+    user_role = _get_active_role()
+    if user_role not in ('receptionist', 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     patient = _db_get(Patient, patient_id)
@@ -32418,7 +34737,7 @@ def api_patient_completed_services(patient_id: int):
                 'price': float(getattr(getattr(r, 'service', None), 'price', 0) or 0),
                 'service_price': float(getattr(getattr(r, 'service', None), 'price', 0) or 0),
                 'status': r.status or 'requested',
-                'created_at': r.created_at.isoformat() if getattr(r, 'created_at', None) else None,
+                'created_at': isoformat_eat(r.created_at) if getattr(r, 'created_at', None) else None,
             }
             for r in rows
         ])
@@ -32548,7 +34867,7 @@ def api_doctor_add_requested_service(patient_id: int):
         'service_id': row.service_id,
         'service_name': service.name,
         'status': row.status or 'requested',
-        'created_at': row.created_at.isoformat() if getattr(row, 'created_at', None) else None,
+        'created_at': isoformat_eat(row.created_at) if getattr(row, 'created_at', None) else None,
     }), 201
 
 
@@ -32588,9 +34907,9 @@ def doctor_api_patient_services_done(patient_id: int):
                 'notes': getattr(r, 'notes', None),
                 'status': r.status or 'done',
                 'billed_sale_id': getattr(r, 'billed_sale_id', None),
-                'completed_at': r.completed_at.isoformat() if getattr(r, 'completed_at', None) else None,
-                'updated_at': r.updated_at.isoformat() if getattr(r, 'updated_at', None) else None,
-                'created_at': r.created_at.isoformat() if getattr(r, 'created_at', None) else None,
+                'completed_at': isoformat_eat(r.completed_at) if getattr(r, 'completed_at', None) else None,
+                'updated_at': isoformat_eat(r.updated_at) if getattr(r, 'updated_at', None) else None,
+                'created_at': isoformat_eat(r.created_at) if getattr(r, 'created_at', None) else None,
                 'performed_by_name': (getattr(getattr(r, 'performer', None), 'username', None)),
                 'completed_by_name': (getattr(getattr(r, 'completer', None), 'username', None)),
                 'billed_by_name': (getattr(getattr(r, 'biller', None), 'username', None)),
@@ -32605,9 +34924,8 @@ def doctor_api_patient_services_done(patient_id: int):
 @app.route('/api/patient/<int:patient_id>/prescriptions')
 @login_required
 def api_patient_prescriptions(patient_id: int):
-    # Allow both receptionist and pharmacist to access
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
+    user_role = _get_active_role()
+    if user_role not in ('receptionist', 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     patient = _db_get(Patient, patient_id)
@@ -32651,9 +34969,8 @@ def api_patient_prescriptions(patient_id: int):
 @app.route('/api/patient/<int:patient_id>/controlled-prescriptions')
 @login_required
 def api_patient_controlled_prescriptions(patient_id: int):
-    # Allow both receptionist and pharmacist to access
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
+    user_role = _get_active_role()
+    if user_role not in ('receptionist', 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     patient = _db_get(Patient, patient_id)
@@ -32697,8 +35014,8 @@ def api_patient_controlled_prescriptions(patient_id: int):
 @app.route('/api/patient/<int:patient_id>/completed-labs')
 @login_required
 def api_patient_completed_labs(patient_id: int):
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
+    user_role = _get_active_role()
+    if user_role not in ('receptionist', 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     patient = _db_get(Patient, patient_id)
@@ -32743,8 +35060,8 @@ def api_patient_completed_labs(patient_id: int):
 @app.route('/api/patient/<int:patient_id>/completed-imaging')
 @login_required
 def api_patient_completed_imaging(patient_id: int):
-    user_role = str(current_user.role).lower().strip() if current_user.role else ''
-    if user_role not in ('receptionist', 'pharmacist'):
+    user_role = _get_active_role()
+    if user_role not in ('receptionist', 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     patient = _db_get(Patient, patient_id)
@@ -32797,6 +35114,10 @@ def api_patient_ward_stay_preview(patient_id: int):
     Returns a computed (not persisted) preview so the receptionist UI can show
     an auto-updating daily amount.
     """
+    user_role = _get_active_role()
+    if user_role not in ('receptionist', 'admin'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
     patient = _db_get(Patient, patient_id)
     if not patient:
         return jsonify({'error': 'Patient not found'}), 404
@@ -32886,8 +35207,18 @@ def favicon():
 
 
 # Error handlers
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    """Handle CSRF token validation failures gracefully."""
+    flash('Your session expired or the form token was invalid. Please try again.', 'warning')
+    return redirect(request.referrer or url_for('auth.login'))
+
 @app.errorhandler(400)
 def bad_request(e):
+    # For form submissions, redirect back with a helpful message instead of a static error page
+    if request.method == 'POST' and request.referrer:
+        flash('The form submission was invalid or corrupted. Please try again.', 'warning')
+        return redirect(request.referrer)
     return render_template('errors/400.html'), 400
 
 @app.errorhandler(401)
@@ -35185,7 +37516,7 @@ def api_communication_users():
             # Get online status
             status = UserOnlineStatus.query.filter_by(user_id=user.id).first()
             is_online = status.is_online if status else False
-            last_seen = status.last_seen.isoformat() if (status and status.last_seen) else None
+            last_seen = isoformat_eat(status.last_seen) if (status and status.last_seen) else None
 
             # Conversation settings + blocks (safe fallback if tables not created yet)
             settings = None
@@ -35212,10 +37543,21 @@ def api_communication_users():
                 blocked_by_me = False
                 blocked_me = False
             
+            profile_picture = None
+            try:
+                profile_picture = str(getattr(user, 'profile_picture', '') or '').replace('\\', '/').lstrip('/')
+                if profile_picture.startswith('uploads/'):
+                    profile_picture = profile_picture[len('uploads/'):]
+                if not profile_picture:
+                    profile_picture = None
+            except Exception:
+                profile_picture = None
+
             users_data.append({
                 'id': user.id,
                 'username': user.username,
                 'role': user.role,
+                'profile_picture': profile_picture,
                 'is_online': is_online,
                 'last_seen': last_seen,
                 'unread_count': unread_count,
@@ -35231,6 +37573,101 @@ def api_communication_users():
     except Exception as e:
         app.logger.error(f"Error fetching users: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/communication/e2e/register_key', methods=['POST'])
+@login_required
+def api_communication_e2e_register_key():
+    """Register/update the current user's E2E public key (JWK).
+
+    Private keys must remain client-side.
+    """
+    try:
+        if app.config.get("ZERO_KNOWLEDGE_ENABLED") is False:
+            return jsonify({'success': False, 'error': 'Zero-knowledge encryption disabled'}), 403
+
+        data = request.get_json() or {}
+        kid = (data.get('kid') or '').strip()
+        alg = (data.get('alg') or '').strip()
+        public_jwk = data.get('public_jwk')
+
+        if not kid or not alg or not public_jwk:
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+        allowed_algs = {
+            'RSA-OAEP-256',
+            'RSA-OAEP-256+A256GCM',
+        }
+        if alg not in allowed_algs:
+            return jsonify({'success': False, 'error': 'Unsupported alg'}), 400
+
+        if isinstance(public_jwk, dict):
+            public_jwk_str = json.dumps(public_jwk, separators=(',', ':'), sort_keys=True)
+        elif isinstance(public_jwk, str):
+            public_jwk_str = public_jwk.strip()
+        else:
+            return jsonify({'success': False, 'error': 'Invalid public_jwk'}), 400
+
+        if len(public_jwk_str) > 20000:
+            return jsonify({'success': False, 'error': 'public_jwk too large'}), 400
+
+        # Minimal sanity checks for RSA JWK without being too strict.
+        try:
+            jwk_obj = json.loads(public_jwk_str)
+            if not isinstance(jwk_obj, dict):
+                raise ValueError('JWK must be object')
+            if jwk_obj.get('kty') != 'RSA':
+                return jsonify({'success': False, 'error': 'Unsupported kty'}), 400
+            if not jwk_obj.get('n') or not jwk_obj.get('e'):
+                return jsonify({'success': False, 'error': 'Invalid RSA JWK'}), 400
+        except Exception:
+            return jsonify({'success': False, 'error': 'Invalid public_jwk JSON'}), 400
+
+        row = UserE2EPublicKey.query.filter_by(user_id=current_user.id).first()
+        if row:
+            row.kid = kid
+            row.alg = alg
+            row.public_jwk = public_jwk_str
+        else:
+            row = UserE2EPublicKey(user_id=current_user.id, kid=kid, alg=alg, public_jwk=public_jwk_str)
+            db.session.add(row)
+
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error registering E2E key: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to register key'}), 500
+
+
+@app.route('/api/communication/e2e/public_key/<int:user_id>', methods=['GET'])
+@login_required
+def api_communication_e2e_public_key(user_id: int):
+    """Fetch another user's E2E public key (if registered)."""
+    try:
+        if app.config.get("ZERO_KNOWLEDGE_ENABLED") is False:
+            return jsonify({'success': False, 'error': 'Zero-knowledge encryption disabled'}), 403
+
+        row = UserE2EPublicKey.query.filter_by(user_id=user_id).first()
+        if not row:
+            return jsonify({'success': True, 'key': None})
+
+        try:
+            jwk_obj = json.loads(row.public_jwk) if row.public_jwk else None
+        except Exception:
+            jwk_obj = None
+
+        return jsonify({
+            'success': True,
+            'key': {
+                'kid': row.kid,
+                'alg': row.alg,
+                'public_jwk': jwk_obj,
+            }
+        })
+    except Exception as e:
+        app.logger.error(f"Error fetching E2E key: {str(e)}")
+        return jsonify({'success': False, 'error': 'Failed to fetch key'}), 500
 
 
 @app.route('/api/communication/conversation/<int:other_user_id>', methods=['GET'])
@@ -35326,7 +37763,7 @@ def api_communication_conversation(other_user_id):
                     'replied_to': replied_to_lookup.get(reply_map.get(msg.message_id)),
                     'reactions': reactions_list,
                     'my_reaction': my_reaction_map.get(msg.message_id),
-                    'created_at': msg.created_at.isoformat()
+                    'created_at': isoformat_eat(msg.created_at)
                 })
         except Exception:
             for msg in messages:
@@ -35344,7 +37781,7 @@ def api_communication_conversation(other_user_id):
                     'replied_to': None,
                     'reactions': [],
                     'my_reaction': None,
-                    'created_at': msg.created_at.isoformat()
+                    'created_at': isoformat_eat(msg.created_at)
                 })
         
         return jsonify({
@@ -35440,7 +37877,7 @@ def api_communication_send_message():
                 'replied_to': replied_to_payload,
                 'reactions': [],
                 'my_reaction': None,
-                'created_at': message.created_at.isoformat()
+                'created_at': isoformat_eat(message.created_at)
             }
         })
     
@@ -35552,7 +37989,7 @@ def api_communication_search():
                 'sender_id': m.sender_id,
                 'recipient_id': m.recipient_id,
                 'content': m.content,
-                'created_at': m.created_at.isoformat(),
+                'created_at': isoformat_eat(m.created_at),
             })
 
         return jsonify({'success': True, 'messages': payload})
@@ -35787,16 +38224,28 @@ def api_communication_calls_history():
         for c in rows:
             other_user_id = c.receiver_id if c.caller_id == current_user.id else c.caller_id
             other_user = _db_get(User, other_user_id)
+
+            other_pic = None
+            try:
+                other_pic = str(getattr(other_user, 'profile_picture', None) or '').replace('\\', '/').lstrip('/')
+                if other_pic.startswith('uploads/'):
+                    other_pic = other_pic[len('uploads/'):]
+                if not other_pic:
+                    other_pic = None
+            except Exception:
+                other_pic = None
+
             payload.append({
                 'call_id': c.call_id,
                 'call_type': c.call_type,
                 'call_status': c.call_status,
-                'started_at': c.started_at.isoformat() if c.started_at else None,
-                'answered_at': c.answered_at.isoformat() if c.answered_at else None,
-                'ended_at': c.ended_at.isoformat() if c.ended_at else None,
+                'started_at': isoformat_eat(c.started_at) if c.started_at else None,
+                'answered_at': isoformat_eat(c.answered_at) if c.answered_at else None,
+                'ended_at': isoformat_eat(c.ended_at) if c.ended_at else None,
                 'duration_seconds': int(c.duration_seconds or 0),
                 'other_user_id': other_user_id,
                 'other_user_name': getattr(other_user, 'username', None) if other_user else None,
+                'other_user_profile_picture': other_pic,
                 'direction': 'outgoing' if c.caller_id == current_user.id else 'incoming',
             })
 
@@ -35856,6 +38305,9 @@ def api_communication_answer_call():
         call_log = CallLog.query.filter_by(call_id=call_id).first()
         if not call_log:
             return jsonify({'success': False, 'error': 'Call not found'}), 404
+
+        if int(call_log.receiver_id) != int(current_user.id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         
         call_log.call_status = 'answered'
         call_log.answered_at = get_eat_now()
@@ -35883,6 +38335,9 @@ def api_communication_reject_call():
         call_log = CallLog.query.filter_by(call_id=call_id).first()
         if not call_log:
             return jsonify({'success': False, 'error': 'Call not found'}), 404
+
+        if int(call_log.receiver_id) != int(current_user.id):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         
         call_log.call_status = 'rejected'
         call_log.ended_at = get_eat_now()
@@ -35903,6 +38358,7 @@ def api_communication_end_call():
     try:
         data = request.get_json()
         call_id = data.get('call_id')
+        reason = (data.get('reason') or '').strip().lower() if isinstance(data, dict) else ''
         
         if not call_id:
             return jsonify({'success': False, 'error': 'Missing call_id'}), 400
@@ -35910,9 +38366,26 @@ def api_communication_end_call():
         call_log = CallLog.query.filter_by(call_id=call_id).first()
         if not call_log:
             return jsonify({'success': False, 'error': 'Call not found'}), 404
+
+        if int(current_user.id) not in {int(call_log.caller_id), int(call_log.receiver_id)}:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
         
-        call_log.call_status = 'ended'
-        call_log.ended_at = get_eat_now()
+        now = get_eat_now()
+
+        # Distinguish outcomes for better call history UX.
+        # - If answered: ended normally
+        # - If not answered: timeout -> missed, offline/failed -> failed, otherwise canceled
+        if call_log.answered_at:
+            call_log.call_status = 'ended'
+        else:
+            if reason in {'timeout', 'no_answer', 'missed'}:
+                call_log.call_status = 'missed'
+            elif reason in {'offline', 'failed', 'error'}:
+                call_log.call_status = 'failed'
+            else:
+                call_log.call_status = 'canceled'
+
+        call_log.ended_at = now
         
         # Calculate duration if call was answered
         if call_log.answered_at:
@@ -35975,24 +38448,58 @@ def handle_connect():
 def handle_disconnect():
     """Handle client disconnection"""
     # Update user online status
-    if request.sid in active_sockets:
-        user_id = active_sockets[request.sid]
-        
+    user_id = active_sockets.pop(request.sid, None)
+    if user_id:
+        still_online = False
+        try:
+            still_online = any(int(uid) == int(user_id) for uid in active_sockets.values())
+        except Exception:
+            still_online = any(uid == user_id for uid in active_sockets.values())
+
         status = UserOnlineStatus.query.filter_by(user_id=user_id).first()
         if status:
-            status.is_online = False
             status.last_seen = get_eat_now()
-            status.socket_id = None
-            db.session.commit()
-        
-        # Notify others about status change
-        socketio.emit('user_status_update', {
-            'user_id': user_id,
-            'is_online': False,
-            'last_seen': status.last_seen.isoformat() if (status and status.last_seen) else None
-        }, skip_sid=request.sid)
-        
-        del active_sockets[request.sid]
+
+            if still_online:
+                # User still has another active tab/device connected; keep them online.
+                remaining_sid = None
+                for sid, uid in active_sockets.items():
+                    try:
+                        if int(uid) == int(user_id):
+                            remaining_sid = sid
+                            break
+                    except Exception:
+                        if uid == user_id:
+                            remaining_sid = sid
+                            break
+                status.is_online = True
+                status.socket_id = remaining_sid
+
+                try:
+                    db.session.commit()
+                except Exception:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+            else:
+                status.is_online = False
+                status.socket_id = None
+
+                try:
+                    db.session.commit()
+                except Exception:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+
+                # Notify others about status change (only when user fully goes offline)
+                socketio.emit('user_status_update', {
+                    'user_id': user_id,
+                    'is_online': False,
+                    'last_seen': isoformat_eat(status.last_seen) if status.last_seen else None
+                }, skip_sid=request.sid)
     
     app.logger.info(f'Client disconnected: {request.sid}')
 
@@ -36003,6 +38510,38 @@ def handle_user_connected(data):
     user_id = data.get('user_id')
     if not user_id:
         return
+
+    # Best-effort: join ward/department rooms for targeted broadcasts (e.g., emergency codes).
+    uid_int = None
+    try:
+        uid_int = int(user_id)
+    except Exception:
+        uid_int = None
+    if uid_int:
+        try:
+            join_room(f"user:{uid_int}")
+        except Exception:
+            pass
+
+        try:
+            # Join all ward rooms the user is assigned to
+            for a in UserWardAssignment.query.filter_by(user_id=uid_int).all():
+                try:
+                    join_room(f"ward:{int(a.ward_id)}")
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        try:
+            # Join all outpatient department rooms the user is assigned to
+            for a in UserDepartmentAssignment.query.filter_by(user_id=uid_int).all():
+                try:
+                    join_room(f"dept:{int(a.department_id)}")
+                except Exception:
+                    continue
+        except Exception:
+            pass
     
     # Store socket connection
     active_sockets[request.sid] = user_id
@@ -36022,7 +38561,7 @@ def handle_user_connected(data):
     socketio.emit('user_status_update', {
         'user_id': user_id,
         'is_online': True,
-        'last_seen': status.last_seen.isoformat() if (status and status.last_seen) else None
+        'last_seen': isoformat_eat(status.last_seen) if (status and status.last_seen) else None
     }, skip_sid=request.sid)
 
 
@@ -36043,12 +38582,41 @@ def handle_join_conversation(data):
 
 @socketio.on('send_message')
 def handle_send_message(data):
-    """Handle real-time message sending"""
+    """Handle real-time message sending with encryption - Phase 1"""
     message = data.get('message')
     receiver_id = data.get('receiver_id')
     
     if not message or not receiver_id:
         return
+
+    def _is_e2e_payload(val) -> bool:
+        if not isinstance(val, str):
+            return False
+        s = val.strip()
+        if not (s.startswith('{') and s.endswith('}')):
+            return False
+        try:
+            obj = json.loads(s)
+            return isinstance(obj, dict) and bool(obj.get('e2e')) is True
+        except Exception:
+            return False
+    
+    # Encrypt message content if present - PHASE 1 FEATURE
+    if (
+        app.config.get('MESSAGE_ENCRYPTION_ENABLED', True)
+        and isinstance(message, dict)
+        and 'content' in message
+        and not _is_e2e_payload(message.get('content'))
+    ):
+        try:
+            encrypted_content = message_encryptor.encrypt_message(message['content'])
+            if encrypted_content:
+                message['content'] = encrypted_content
+                message['encrypted'] = True
+            else:
+                app.logger.warning("Message encryption returned None, sending plaintext")
+        except Exception as e:
+            app.logger.error(f"Message encryption failed: {e}, sending plaintext")
     
     # Get receiver's socket
     receiver_socket = None
@@ -36058,9 +38626,23 @@ def handle_send_message(data):
             break
     
     if receiver_socket:
+        # Decrypt message for receiver (happens client-side in production)
+        decrypted_message = dict(message)
+        if (
+            message.get('encrypted')
+            and message.get('content')
+            and not _is_e2e_payload(message.get('content'))
+        ):
+            try:
+                decrypted_content = message_encryptor.decrypt_message(message['content'])
+                if decrypted_content:
+                    decrypted_message['content'] = decrypted_content
+            except Exception as e:
+                app.logger.error(f"Message decryption failed: {e}")
+        
         # Send to specific user
         socketio.emit('new_message', {
-            'message': message
+            'message': decrypted_message
         }, room=receiver_socket)
         
         # Mark message as delivered if receiver is online
@@ -36149,7 +38731,43 @@ def handle_initiate_call(data):
     call_type = data.get('call_type')
     call_id = data.get('call_id')
     caller_name = data.get('caller_name')
-    caller_id = active_sockets.get(request.sid)
+
+    # Prefer database call log as source of truth for who is calling whom.
+    call_log = None
+    try:
+        if call_id:
+            call_log = CallLog.query.filter_by(call_id=call_id).first()
+    except Exception:
+        call_log = None
+
+    caller_id = None
+    caller_profile_picture = None
+    if call_log:
+        caller_id = call_log.caller_id
+        receiver_id = call_log.receiver_id
+        call_type = call_log.call_type or call_type
+        try:
+            caller_user = _db_get(User, caller_id)
+            if caller_user:
+                caller_name = getattr(caller_user, 'username', None) or caller_name
+                caller_profile_picture = getattr(caller_user, 'profile_picture', None)
+        except Exception:
+            pass
+
+        # Mark as ringing when the call is actually delivered to the receiver's socket.
+        try:
+            if str(call_log.call_status or '').strip().lower() == 'initiated':
+                call_log.call_status = 'ringing'
+                db.session.commit()
+        except Exception:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+    # Fallback: use in-memory socket map for caller id.
+    if caller_id is None:
+        caller_id = active_sockets.get(request.sid)
     
     if not receiver_id or not call_type or not call_id:
         return
@@ -36166,8 +38784,29 @@ def handle_initiate_call(data):
             'caller_id': caller_id,
             'caller_name': caller_name,
             'call_type': call_type,
-            'call_id': call_id
+            'call_id': call_id,
+            'caller_profile_picture': caller_profile_picture,
         }, room=receiver_socket)
+    else:
+        # Receiver is not connected. Inform caller (if connected) and mark as failed.
+        try:
+            if call_log and str(call_log.call_status or '').strip().lower() in {'initiated', 'ringing'}:
+                call_log.call_status = 'failed'
+                call_log.ended_at = get_eat_now()
+                db.session.commit()
+        except Exception:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+        try:
+            socketio.emit('call_failed', {
+                'call_id': call_id,
+                'reason': 'offline',
+            }, room=request.sid)
+        except Exception:
+            pass
 
 
 @socketio.on('accept_call')
@@ -36176,7 +38815,18 @@ def handle_accept_call(data):
     call_id = data.get('call_id')
     receiver_id = data.get('receiver_id')
     
-    if not call_id or not receiver_id:
+    if not call_id:
+        return
+
+    if not receiver_id:
+        try:
+            c = CallLog.query.filter_by(call_id=call_id).first()
+            if c:
+                receiver_id = c.caller_id
+        except Exception:
+            receiver_id = None
+
+    if not receiver_id:
         return
     
     # Get caller's socket
@@ -36198,7 +38848,18 @@ def handle_reject_call(data):
     call_id = data.get('call_id')
     receiver_id = data.get('receiver_id')
     
-    if not call_id or not receiver_id:
+    if not call_id:
+        return
+
+    if not receiver_id:
+        try:
+            c = CallLog.query.filter_by(call_id=call_id).first()
+            if c:
+                receiver_id = c.caller_id
+        except Exception:
+            receiver_id = None
+
+    if not receiver_id:
         return
     
     # Get caller's socket
@@ -36220,7 +38881,23 @@ def handle_end_call(data):
     call_id = data.get('call_id')
     receiver_id = data.get('receiver_id')
     
-    if not call_id or not receiver_id:
+    if not call_id:
+        return
+
+    if not receiver_id:
+        try:
+            c = CallLog.query.filter_by(call_id=call_id).first()
+            if c:
+                # End call should notify the other party.
+                sender_user_id = active_sockets.get(request.sid)
+                if sender_user_id == c.caller_id:
+                    receiver_id = c.receiver_id
+                else:
+                    receiver_id = c.caller_id
+        except Exception:
+            receiver_id = None
+
+    if not receiver_id:
         return
     
     # Get other party's socket
@@ -36239,10 +38916,24 @@ def handle_end_call(data):
 @socketio.on('webrtc_offer')
 def handle_webrtc_offer(data):
     """Handle WebRTC offer"""
-    receiver_id = data.get('receiver_id')
     offer = data.get('offer')
     call_id = data.get('call_id')
-    caller_id = active_sockets.get(request.sid)
+    receiver_id = data.get('receiver_id')
+    caller_id = None
+
+    call_log = None
+    try:
+        if call_id:
+            call_log = CallLog.query.filter_by(call_id=call_id).first()
+    except Exception:
+        call_log = None
+
+    if call_log:
+        caller_id = call_log.caller_id
+        receiver_id = call_log.receiver_id
+
+    if caller_id is None:
+        caller_id = active_sockets.get(request.sid)
     
     if not receiver_id or not offer:
         return
@@ -36265,9 +38956,20 @@ def handle_webrtc_offer(data):
 @socketio.on('webrtc_answer')
 def handle_webrtc_answer(data):
     """Handle WebRTC answer"""
-    receiver_id = data.get('receiver_id')
     answer = data.get('answer')
     call_id = data.get('call_id')
+    receiver_id = data.get('receiver_id')
+
+    call_log = None
+    try:
+        if call_id:
+            call_log = CallLog.query.filter_by(call_id=call_id).first()
+    except Exception:
+        call_log = None
+
+    if call_log:
+        # Answer always goes to the caller.
+        receiver_id = call_log.caller_id
     
     if not receiver_id or not answer:
         return
@@ -36289,11 +38991,32 @@ def handle_webrtc_answer(data):
 @socketio.on('webrtc_ice_candidate')
 def handle_webrtc_ice_candidate(data):
     """Handle WebRTC ICE candidate"""
-    receiver_id = data.get('receiver_id')
     candidate = data.get('candidate')
     call_id = data.get('call_id')
+    receiver_id = data.get('receiver_id')
     
-    if not receiver_id or not candidate:
+    if not candidate:
+        return
+
+    call_log = None
+    try:
+        if call_id:
+            call_log = CallLog.query.filter_by(call_id=call_id).first()
+    except Exception:
+        call_log = None
+
+    # Route candidate to the other party based on call log + sender id.
+    if call_log:
+        try:
+            sender_user_id = active_sockets.get(request.sid)
+            if sender_user_id == call_log.caller_id:
+                receiver_id = call_log.receiver_id
+            else:
+                receiver_id = call_log.caller_id
+        except Exception:
+            receiver_id = receiver_id or call_log.receiver_id
+
+    if not receiver_id:
         return
     
     # Get other party's socket
@@ -36369,8 +39092,8 @@ def api_signature_load():
                 'success': True,
                 'signature_data': signature.signature_data,
                 'signature_type': signature.signature_type,
-                'created_at': signature.created_at.isoformat(),
-                'updated_at': signature.updated_at.isoformat()
+                'created_at': isoformat_eat(signature.created_at),
+                'updated_at': isoformat_eat(signature.updated_at)
             })
         else:
             return jsonify({'success': True, 'signature_data': None})
@@ -36426,6 +39149,129 @@ def api_signature_get(user_id):
     
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ============================================
+# Session Security Middleware
+# ============================================
+@app.before_request
+def manage_session_timeout():
+    """
+    Implement session timeout and activity tracking.
+    - Tracks session creation time for absolute timeout
+    - Tracks last activity time for idle timeout
+    - Refreshes session before expiry if user is active
+    """
+    if current_user.is_authenticated:
+        now = datetime.now(timezone.utc)
+        
+        # Track session creation time (first login)
+        if '_session_created_at' not in session:
+            session['_session_created_at'] = now.isoformat()
+        
+        # Check absolute session timeout (e.g., max 24 hours)
+        session_created_str = session.get('_session_created_at')
+        if session_created_str:
+            try:
+                session_created = datetime.fromisoformat(session_created_str)
+                session_age = now - session_created
+                max_age = app.config.get('SESSION_ABSOLUTE_TIMEOUT', timedelta(hours=24))
+                
+                if session_age > max_age:
+                    session.clear()
+                    flash('Your session has expired due to inactivity. Please log in again.', 'warning')
+                    return redirect(url_for('auth.login'))
+            except (ValueError, TypeError):
+                # Invalid session creation time, treat as expired
+                session.clear()
+                return redirect(url_for('auth.login'))
+        
+        # Track last activity and implement idle timeout
+        last_activity_str = session.get('_last_activity')
+        if last_activity_str:
+            try:
+                last_activity = datetime.fromisoformat(last_activity_str)
+                idle_time = now - last_activity
+                idle_timeout = app.config.get('PERMANENT_SESSION_LIFETIME', timedelta(hours=12))
+                
+                if idle_time > idle_timeout:
+                    session.clear()
+                    flash('Your session has expired due to inactivity. Please log in again.', 'warning')
+                    return redirect(url_for('auth.login'))
+                
+                # Refresh session if close to expiry and user is active
+                refresh_threshold = app.config.get('SESSION_REFRESH_THRESHOLD', timedelta(minutes=60))
+                time_until_expiry = idle_timeout - idle_time
+                if time_until_expiry < refresh_threshold:
+                    # Implicitly refreshes the session by updating the activity time
+                    session.modified = True
+            except (ValueError, TypeError):
+                # Invalid last activity time, set it now
+                pass
+        
+        # Update last activity time
+        session['_last_activity'] = now.isoformat()
+
+
+# ============================================
+# Security Headers Middleware
+# ============================================
+@app.after_request
+def set_security_headers(response):
+    """
+    Add comprehensive security headers to all responses.
+    Protects against clickjacking, XSS, MIME sniffing, and other attacks.
+    """
+    # Prevent clickjacking attacks (allow same-origin framing for internal iframes)
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    
+    # Prevent MIME type sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    # Enable XSS protection (legacy browsers)
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    # Strict Transport Security (HSTS) - only in production with HTTPS
+    if not app.config.get('DEBUG') and app.config.get('PREFERRED_URL_SCHEME') == 'https':
+        # max-age=31536000 (1 year), includeSubDomains for all subdomains
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    
+    # Referrer policy - balance between privacy and functionality
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    
+    # Content Security Policy (CSP) - carefully configured to not break existing functionality
+    # This is a baseline policy that allows the app to function while adding security
+    csp_directives = [
+        "default-src 'self'",
+        # Allow required script CDNs used by templates (jQuery, DataTables, socket.io) and FontAwesome kits.
+        # FontAwesome kits load the bootstrap script from kit.fontawesome.com and often fetch assets from
+        # ka-f.fontawesome.com (and sometimes use.fontawesome.com depending on version).
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.socket.io https://code.jquery.com https://cdn.datatables.net https://kit.fontawesome.com https://ka-f.fontawesome.com https://use.fontawesome.com",
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.datatables.net https://ka-f.fontawesome.com https://use.fontawesome.com",
+        "img-src 'self' data: https:",
+        "font-src 'self' data: https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://ka-f.fontawesome.com https://use.fontawesome.com",
+        "connect-src 'self' wss: ws: https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.socket.io https://code.jquery.com https://cdn.datatables.net https://kit.fontawesome.com https://ka-f.fontawesome.com https://use.fontawesome.com",
+        "frame-ancestors 'self'",
+        "base-uri 'self'",
+        "object-src 'none'",
+        "form-action 'self'"
+    ]
+    response.headers['Content-Security-Policy'] = "; ".join(csp_directives)
+    
+    # Permissions Policy (formerly Feature-Policy) - restrict browser features
+    permissions_directives = [
+        "geolocation=()",
+        "microphone=(self)",
+        "camera=(self)",
+        "payment=()",
+        "usb=()",
+        "magnetometer=()",
+        "gyroscope=()",
+        "accelerometer=()"
+    ]
+    response.headers['Permissions-Policy'] = ", ".join(permissions_directives)
+    
+    return response
 
 
 if __name__ == '__main__':

@@ -3540,6 +3540,32 @@
 <script>
 
 window.moneyManagement = {
+    escHtml: function(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
+
+    escJsString: function(value) {
+        // Escapes a value for inclusion inside a single-quoted JS string literal in an HTML attribute.
+        return String(value ?? '')
+            .replace(/\\/g, '\\\\')
+            .replace(/\r/g, '\\r')
+            .replace(/\n/g, '\\n')
+            .replace(/'/g, "\\'")
+            .replace(/</g, '\\x3c');
+    },
+
+    safeClassToken: function(value, fallback = 'unknown') {
+        const raw = String(value ?? '').toLowerCase().trim();
+        if (!raw) return fallback;
+        // Keep to simple CSS class tokens.
+        return /^[a-z0-9_-]+$/.test(raw) ? raw : fallback;
+    },
+
     init: function() {
         this.setupEventListeners();
         this.loadSummaryData();
@@ -3781,12 +3807,15 @@ window.moneyManagement = {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-file-invoice-dollar"></i> Pending Bills (' + data.pending_bills.length + ')</h3>';
                     html += '<div class="table-container"><table class="simple-table"><thead><tr><th>Bill #</th><th>Type</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_bills.forEach(bill => {
+                        const billType = bill?.expense_type ?? '';
+                        const billTypeHtml = moneyManagement.escHtml(billType);
+                        const billTypeJs = moneyManagement.escJsString(billType);
                         html += `<tr>
-                            <td>${bill.expense_number}</td>
-                            <td>${bill.expense_type}</td>
+                            <td>${moneyManagement.escHtml(bill.expense_number)}</td>
+                            <td>${billTypeHtml}</td>
                             <td class="amount-cell">Ksh ${parseFloat(bill.amount).toFixed(2)}</td>
-                            <td>${bill.due_date}</td>
-                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.payBillFromModal(${bill.id}, '${bill.expense_type}', ${bill.amount})">Pay Now</button></td>
+                            <td>${moneyManagement.escHtml(bill.due_date)}</td>
+                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.payBillFromModal(${Number(bill.id)}, '${billTypeJs}', ${Number(bill.amount)})">Pay Now</button></td>
                         </tr>`;
                     });
                     html += '</tbody></table></div>';
@@ -3797,12 +3826,15 @@ window.moneyManagement = {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-user-tie"></i> Pending Payroll (' + data.pending_payroll.length + ')</h3>';
                     html += '<div class="table-container"><table class="simple-table"><thead><tr><th>Payroll #</th><th>Employee</th><th>Amount</th><th>Due Date</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_payroll.forEach(payroll => {
+                        const empName = payroll?.employee_name ?? '';
+                        const empNameHtml = moneyManagement.escHtml(empName);
+                        const empNameJs = moneyManagement.escJsString(empName);
                         html += `<tr>
-                            <td>${payroll.payroll_number}</td>
-                            <td>${payroll.employee_name}</td>
+                            <td>${moneyManagement.escHtml(payroll.payroll_number)}</td>
+                            <td>${empNameHtml}</td>
                             <td class="amount-cell">Ksh ${parseFloat(payroll.amount).toFixed(2)}</td>
-                            <td>${payroll.payment_date}</td>
-                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.payPayrollFromModal(${payroll.id}, '${payroll.employee_name}', ${payroll.amount})">Pay Now</button></td>
+                            <td>${moneyManagement.escHtml(payroll.payment_date)}</td>
+                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.payPayrollFromModal(${Number(payroll.id)}, '${empNameJs}', ${Number(payroll.amount)})">Pay Now</button></td>
                         </tr>`;
                     });
                     html += '</tbody></table></div>';
@@ -3813,11 +3845,14 @@ window.moneyManagement = {
                     html += '<h3 style="margin: 20px 0 10px; color: #667eea;"><i class="fas fa-hand-holding-usd"></i> Pending Debtor Payments (' + data.pending_debtor_payments.length + ')</h3>';
                     html += '<div class="table-container"><table class="simple-table"><thead><tr><th>Debtor</th><th>Amount Owed</th><th>Next Payment</th><th>Actions</th></tr></thead><tbody>';
                     data.pending_debtor_payments.forEach(debtor => {
+                        const debtorName = debtor?.name ?? '';
+                        const debtorNameHtml = moneyManagement.escHtml(debtorName);
+                        const debtorNameJs = moneyManagement.escJsString(debtorName);
                         html += `<tr>
-                            <td>${debtor.name}</td>
+                            <td>${debtorNameHtml}</td>
                             <td class="amount-cell">Ksh ${parseFloat(debtor.amount_owed).toFixed(2)}</td>
-                            <td>${debtor.next_payment_date}</td>
-                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.recordDebtorPaymentFromModal(${debtor.id}, '${debtor.name}')">Record Payment</button></td>
+                            <td>${moneyManagement.escHtml(debtor.next_payment_date)}</td>
+                            <td><button class="btn btn-sm btn-primary" onclick="moneyManagement.recordDebtorPaymentFromModal(${Number(debtor.id)}, '${debtorNameJs}')">Record Payment</button></td>
                         </tr>`;
                     });
                     html += '</tbody></table></div>';
@@ -4041,11 +4076,16 @@ window.moneyManagement = {
                     data.receipts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
                     
                     data.receipts.forEach((receipt, index) => {
+                        const receiptNumberHtml = moneyManagement.escHtml(receipt.receipt_number || '');
+                        const receiptCreatedAtHtml = moneyManagement.escHtml(receipt.created_at || '');
+                        const receiptPaymentDateHtml = moneyManagement.escHtml(receipt.payment_date || '');
+                        const receiptNotesHtml = moneyManagement.escHtml(receipt.notes || '');
+                        const receiptIssuedByHtml = moneyManagement.escHtml(receipt.issued_by || '');
                         const receiptHtml = `
                             <div class="receipt-item">
                                 <div class="receipt-header">
-                                    <span class="receipt-number">${receipt.receipt_number}</span>
-                                    <span class="receipt-date">${receipt.created_at}</span>
+                                    <span class="receipt-number">${receiptNumberHtml}</span>
+                                    <span class="receipt-date">${receiptCreatedAtHtml}</span>
                                 </div>
                                 <div class="receipt-details">
                                     <div class="receipt-detail-row">
@@ -4070,16 +4110,16 @@ window.moneyManagement = {
                                     </div>
                                     <div class="receipt-detail-row">
                                         <span class="receipt-detail-label">Payment Date:</span>
-                                        <span class="receipt-detail-value">${receipt.payment_date}</span>
+                                        <span class="receipt-detail-value">${receiptPaymentDateHtml}</span>
                                     </div>
                                     ${receipt.notes ? `
                                     <div class="receipt-detail-row" style="grid-column: 1 / -1;">
                                         <span class="receipt-detail-label">Notes:</span>
-                                        <span class="receipt-detail-value">${receipt.notes}</span>
+                                        <span class="receipt-detail-value">${receiptNotesHtml}</span>
                                     </div>
                                     ` : ''}
                                 </div>
-                                <div class="receipt-issued-by">Issued by: ${receipt.issued_by}</div>
+                                <div class="receipt-issued-by">Issued by: ${receiptIssuedByHtml}</div>
                             </div>
                         `;
                         receiptsList.append(receiptHtml);
@@ -4251,7 +4291,11 @@ window.moneyManagement = {
         $('#view-lpo-vendor').text(vendor);
         $('#view-lpo-date').text(date);
         $('#view-lpo-total').text('Ksh ' + moneyManagement.formatCurrency(total));
-        $('#view-lpo-status').html(`<span class="status-badge status-${status}">${status.charAt(0).toUpperCase() + status.slice(1)}</span>`);
+
+        const safeStatus = moneyManagement.safeClassToken(status, 'unknown');
+        const label = String(status ?? '').trim();
+        const labelPretty = label ? (label.charAt(0).toUpperCase() + label.slice(1)) : 'Unknown';
+        $('#view-lpo-status').html(`<span class="status-badge status-${safeStatus}">${moneyManagement.escHtml(labelPretty)}</span>`);
         
         // Fetch items from server
         $('#view-lpo-items').html('<p>Loading items...</p>');

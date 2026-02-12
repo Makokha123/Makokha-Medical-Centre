@@ -39,7 +39,13 @@
                     <td>
                         <div class="user-cell">
                             <div class="user-avatar">
-                                <i class="fas fa-user"></i>
+                                {% set pic = (user.profile_picture or '')|replace('\\', '/') %}
+                                {% if pic.startswith('uploads/') %}{% set pic = pic[8:] %}{% endif %}
+                                {% if pic and pic.startswith('profile_pictures/') %}
+                                    <img src="{{ url_for('serve_private_upload', filename=pic) }}" alt="{{ user.username }} profile picture">
+                                {% else %}
+                                    <i class="fas fa-user"></i>
+                                {% endif %}
                             </div>
                             <div class="user-info">
                                 <div class="user-name">{{ user.username }}</div>
@@ -67,7 +73,14 @@
                     </td>
                     <td class="action-btns">
                         <div class="btn-group">
-                            <button class="action-btn btn-primary btn-edit" data-id="{{ user.id }}" data-toggle="modal" data-target="#editUserModal">
+                            <button
+                                class="action-btn btn-primary btn-edit"
+                                data-id="{{ user.id }}"
+                                data-allow-doctor-labtech="{{ '1' if cross_role_perms.get(user.id, {}).get('doctor_labtech') else '0' }}"
+                                data-allow-pharmacist-receptionist="{{ '1' if cross_role_perms.get(user.id, {}).get('pharmacist_receptionist') else '0' }}"
+                                data-toggle="modal"
+                                data-target="#editUserModal"
+                            >
                                 <i class="fas fa-edit"></i>
                             </button>
                             {% if user.id != current_user.id %}
@@ -231,7 +244,7 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
-            <form id="editUserForm" method="POST" action="{{ url_for('manage_users') }}">
+            <form id="editUserForm" method="POST" action="{{ url_for('manage_users') }}" enctype="multipart/form-data">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="action" value="edit">
                 <input type="hidden" id="edit_user_id" name="user_id">
@@ -256,6 +269,34 @@
                             <option value="pharmacist">Pharmacist</option>
                             <option value="receptionist">Receptionist</option>
                         </select>
+                    </div>
+                    <div class="form-group" id="editCrossRoleAccessSection" style="display:none;">
+                        <label>Cross-Role Access</label>
+                        <div class="form-check" id="editCrossRoleDoctorLabtechRow" style="display:none;">
+                            <input type="checkbox" class="form-check-input" id="edit_allow_doctor_labtech" name="allow_doctor_labtech" value="1" disabled>
+                            <label class="form-check-label" for="edit_allow_doctor_labtech">Allow this doctor to open Lab Technician dashboard</label>
+                        </div>
+                        <div class="form-check" id="editCrossRolePharmReceptionRow" style="display:none;">
+                            <input type="checkbox" class="form-check-input" id="edit_allow_pharmacist_receptionist" name="allow_pharmacist_receptionist" value="1" disabled>
+                            <label class="form-check-label" for="edit_allow_pharmacist_receptionist">Allow this pharmacist to open Receptionist dashboard</label>
+                        </div>
+                        <small class="form-text text-muted">Only allowlisted users see the switch buttons; access is enforced server-side.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_profile_picture">Profile Picture</label>
+                        <div class="profile-picture-row">
+                            <div class="user-avatar user-avatar-lg" id="edit_profile_picture_preview" aria-hidden="true">
+                                <i class="fas fa-user"></i>
+                            </div>
+                            <div class="profile-picture-fields">
+                                <input type="file" class="form-control-file" id="edit_profile_picture" name="profile_picture" accept="image/png,image/jpeg,image/gif">
+                                <div class="form-check mt-2">
+                                    <input type="checkbox" class="form-check-input" id="edit_remove_profile_picture" name="remove_profile_picture" value="1">
+                                    <label class="form-check-label" for="edit_remove_profile_picture">Remove current picture</label>
+                                </div>
+                                <small class="form-text text-muted">Accepted formats: PNG, JPG, GIF</small>
+                            </div>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="edit_password">New Password (leave blank to keep current)</label>
@@ -653,6 +694,30 @@
     color: var(--gray-600);
 }
 
+.user-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+}
+
+.user-avatar.user-avatar-lg {
+    width: 72px;
+    height: 72px;
+}
+
+.profile-picture-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.profile-picture-fields {
+    flex: 1;
+    min-width: 0;
+}
+
 .user-name {
     font-weight: 500;
 }
@@ -960,10 +1025,27 @@ $(document).ready(function() {
 
     // Initialize DataTable
 
+    let editUserExistingAvatarSrc = '';
+
+    function setEditProfilePicturePreview(src) {
+        const container = $('#edit_profile_picture_preview');
+        if (!container.length) return;
+        container.empty();
+        const safeSrc = String(src || '').trim();
+        if (safeSrc) {
+            $('<img>', { src: safeSrc, alt: 'Profile picture' }).appendTo(container);
+        } else {
+            $('<i>', { class: 'fas fa-user' }).appendTo(container);
+        }
+    }
+
     $('.btn-edit').click(function() {
         const userId = $(this).data('id');
         // Find the table row and extract data
         const row = $(this).closest('tr');
+        const avatarImg = row.find('.user-avatar img');
+        editUserExistingAvatarSrc = avatarImg.length ? String(avatarImg.attr('src') || '').trim() : '';
+
         const user = {
             id: userId,
             username: row.find('.user-name').text(),
@@ -978,12 +1060,53 @@ $(document).ready(function() {
         $('#edit_email').val(user.email);
         $('#edit_role').val(user.role);
         $('#edit_is_active').prop('checked', user.is_active);
+        // Cross-role allowlists (admin-managed)
+        try {
+            const allowDoctorLabtech = String($(this).data('allowDoctorLabtech') || '').trim().toLowerCase();
+            const allowPharmReception = String($(this).data('allowPharmacistReceptionist') || '').trim().toLowerCase();
+            $('#edit_allow_doctor_labtech').prop('checked', allowDoctorLabtech === '1' || allowDoctorLabtech === 'true');
+            $('#edit_allow_pharmacist_receptionist').prop('checked', allowPharmReception === '1' || allowPharmReception === 'true');
+        } catch (e) {
+            $('#edit_allow_doctor_labtech').prop('checked', false);
+            $('#edit_allow_pharmacist_receptionist').prop('checked', false);
+        }
+        $('#edit_profile_picture').val('');
+        $('#edit_remove_profile_picture').prop('checked', false);
+        setEditProfilePicturePreview(editUserExistingAvatarSrc);
         
         // Show/hide assignment sections based on role
         showAssignmentSectionsForRole(user.role);
         
         // Load ward and department assignments
         loadUserAssignments(user.id);
+    });
+
+    $('#edit_profile_picture').on('change', function() {
+        const file = this.files && this.files[0] ? this.files[0] : null;
+        $('#edit_remove_profile_picture').prop('checked', false);
+        if (!file) {
+            setEditProfilePicturePreview(editUserExistingAvatarSrc);
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            setEditProfilePicturePreview(e && e.target ? e.target.result : '');
+        };
+        reader.readAsDataURL(file);
+    });
+
+    $('#edit_remove_profile_picture').on('change', function() {
+        const checked = $(this).is(':checked');
+        if (checked) {
+            $('#edit_profile_picture').val('');
+            setEditProfilePicturePreview('');
+            return;
+        }
+        const input = document.getElementById('edit_profile_picture');
+        const hasFile = input && input.files && input.files.length > 0;
+        if (!hasFile) {
+            setEditProfilePicturePreview(editUserExistingAvatarSrc);
+        }
     });
         
     // Delete user modal handler
@@ -1103,6 +1226,18 @@ $(document).ready(function() {
         $(this).find('.password-strength-text span').text('None').removeClass('text-danger text-warning text-success');
         $(this).find('.password-requirements i').removeClass('text-success').addClass('text-muted');
         $(this).find('.password-match-text').text('').removeClass('text-danger text-success');
+
+        if (this && this.id === 'editUserModal') {
+            editUserExistingAvatarSrc = '';
+            $('#edit_profile_picture').val('');
+            $('#edit_remove_profile_picture').prop('checked', false);
+            setEditProfilePicturePreview('');
+            $('#edit_allow_doctor_labtech').prop('checked', false).prop('disabled', true);
+            $('#edit_allow_pharmacist_receptionist').prop('checked', false).prop('disabled', true);
+            $('#editCrossRoleAccessSection').hide();
+            $('#editCrossRoleDoctorLabtechRow').hide();
+            $('#editCrossRolePharmReceptionRow').hide();
+        }
     });
     
     // Form validation
@@ -1156,6 +1291,11 @@ $(document).ready(function() {
     function showAssignmentSectionsForRole(role) {
         const wardSection = $('#editWardAssignmentsSection');
         const deptSection = $('#editDepartmentAssignmentsSection');
+        const crossSection = $('#editCrossRoleAccessSection');
+        const docRow = $('#editCrossRoleDoctorLabtechRow');
+        const pharmRow = $('#editCrossRolePharmReceptionRow');
+        const docCb = $('#edit_allow_doctor_labtech');
+        const pharmCb = $('#edit_allow_pharmacist_receptionist');
         
         if (role === 'doctor' || role === 'nurse') {
             wardSection.show();
@@ -1167,6 +1307,29 @@ $(document).ready(function() {
             deptSection.show();
         } else {
             deptSection.hide();
+        }
+
+        // Cross-role allowlists: only show relevant option for the selected role
+        if (role === 'doctor') {
+            crossSection.show();
+            docRow.show();
+            docCb.prop('disabled', false);
+
+            pharmRow.hide();
+            pharmCb.prop('checked', false).prop('disabled', true);
+        } else if (role === 'pharmacist') {
+            crossSection.show();
+            pharmRow.show();
+            pharmCb.prop('disabled', false);
+
+            docRow.hide();
+            docCb.prop('checked', false).prop('disabled', true);
+        } else {
+            crossSection.hide();
+            docRow.hide();
+            pharmRow.hide();
+            docCb.prop('checked', false).prop('disabled', true);
+            pharmCb.prop('checked', false).prop('disabled', true);
         }
     }
     
@@ -1197,6 +1360,15 @@ $(document).ready(function() {
     function renderWardAssignments(assignments) {
         const container = $('#editWardAssignmentsList');
         container.empty();
+
+        function esc(value) {
+            return String(value === null || value === undefined ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
         
         if (assignments.length === 0) {
             container.html('<div class="alert alert-info">No ward assignments</div>');
@@ -1204,16 +1376,19 @@ $(document).ready(function() {
         }
         
         assignments.forEach(function(assignment) {
+            const assignmentId = Number(assignment.id);
+            const wardName = esc(assignment.ward_name || '');
+            const roleName = esc(assignment.role || '');
             const html = `
-                <div class="card mb-2" data-assignment-id="${assignment.id}">
+                <div class="card mb-2" data-assignment-id="${assignmentId}">
                     <div class="card-body p-2">
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
-                                <strong>${assignment.ward_name}</strong>
-                                <span class="badge badge-secondary ml-2">${assignment.role}</span>
+                                <strong>${wardName}</strong>
+                                <span class="badge badge-secondary ml-2">${roleName}</span>
                                 ${assignment.is_primary ? '<span class="badge badge-success ml-1">Primary</span>' : ''}
                             </div>
-                            <button type="button" class="btn btn-sm btn-danger btn-remove-ward" data-assignment-id="${assignment.id}">
+                            <button type="button" class="btn btn-sm btn-danger btn-remove-ward" data-assignment-id="${assignmentId}">
                                 <i class="fas fa-times"></i>
                             </button>
                         </div>
@@ -1228,6 +1403,15 @@ $(document).ready(function() {
     function renderDepartmentAssignments(assignments) {
         const container = $('#editDepartmentAssignmentsList');
         container.empty();
+
+        function esc(value) {
+            return String(value === null || value === undefined ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
         
         if (assignments.length === 0) {
             container.html('<div class="alert alert-info">No department assignments</div>');
@@ -1235,16 +1419,19 @@ $(document).ready(function() {
         }
         
         assignments.forEach(function(assignment) {
+            const assignmentId = Number(assignment.id);
+            const departmentName = esc(assignment.department_name || '');
+            const roleName = esc(assignment.role || '');
             const html = `
-                <div class="card mb-2" data-assignment-id="${assignment.id}">
+                <div class="card mb-2" data-assignment-id="${assignmentId}">
                     <div class="card-body p-2">
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
-                                <strong>${assignment.department_name}</strong>
-                                <span class="badge badge-secondary ml-2">${assignment.role}</span>
+                                <strong>${departmentName}</strong>
+                                <span class="badge badge-secondary ml-2">${roleName}</span>
                                 ${assignment.is_primary ? '<span class="badge badge-success ml-1">Primary</span>' : ''}
                             </div>
-                            <button type="button" class="btn btn-sm btn-danger btn-remove-department" data-assignment-id="${assignment.id}">
+                            <button type="button" class="btn btn-sm btn-danger btn-remove-department" data-assignment-id="${assignmentId}">
                                 <i class="fas fa-times"></i>
                             </button>
                         </div>

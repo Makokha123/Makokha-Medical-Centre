@@ -1,4 +1,16 @@
 // Pharmacist Dashboard Functions
+
+// XSS Protection: Escape HTML special characters
+function escapeHtml(unsafe) {
+    if (unsafe === null || unsafe === undefined) return '';
+    return String(unsafe)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 $(document).ready(function() {
     // Load drugs for dispensing
     function loadDrugs() {
@@ -15,18 +27,22 @@ $(document).ready(function() {
             if (data.length > 0) {
                 let html = '';
                 data.forEach(function(drug) {
+                    // Properly escape drug name for use in HTML and JavaScript
+                    const drugName = escapeHtml(drug.name);
+                    const drugSpec = escapeHtml(drug.specification || 'No specification');
+                    
                     html += `
                         <div class="drug-card" data-id="${drug.id}">
                             <div class="drug-info">
-                                <h5>${drug.name}</h5>
-                                <p>${drug.specification || 'No specification'}</p>
+                                <h5>${drugName}</h5>
+                                <p>${drugSpec}</p>
                                 <div class="drug-meta">
-                                    <span class="price">$${drug.selling_price.toFixed(2)}</span>
-                                    <span class="stock">${drug.remaining_quantity} in stock</span>
+                                    <span class="price">$${parseFloat(drug.selling_price).toFixed(2)}</span>
+                                    <span class="stock">${parseInt(drug.remaining_quantity)} in stock</span>
                                 </div>
                             </div>
                             <div class="drug-actions">
-                                <button class="btn btn-sm btn-add-to-cart" onclick="addToCart(${drug.id}, '${drug.name.replace(/'/g, "\\'")}', ${drug.selling_price})">
+                                <button class="btn btn-sm btn-add-to-cart" data-drug-id="${drug.id}" data-drug-name="${drugName}" data-drug-price="${drug.selling_price}">
                                     <i class="fas fa-cart-plus"></i> Add
                                 </button>
                             </div>
@@ -34,6 +50,14 @@ $(document).ready(function() {
                     `;
                 });
                 $('#pharmaDrugList').html(html);
+                
+                // Add click handlers after inserting HTML
+                $('.btn-add-to-cart').on('click', function() {
+                    const drugId = $(this).data('drug-id');
+                    const drugName = $(this).data('drug-name');
+                    const drugPrice = $(this).data('drug-price');
+                    addToCart(drugId, drugName, drugPrice);
+                });
             } else {
                 $('#pharmaDrugList').html('<div class="empty-list"><i class="fas fa-box-open"></i> No drugs available</div>');
             }

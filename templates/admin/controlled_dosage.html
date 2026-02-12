@@ -452,7 +452,7 @@ function handleAssistantToggleControlled(checkbox) {
     
     const form = document.createElement('form');
     form.method = 'POST';
-    form.action = '{{ url_for("admin_toggle_assistant_dosage_agent") }}';
+    form.action = '{{ url_for("admin_toggle_ai_dosage_agent") }}';
     
     const csrfInput = document.createElement('input');
     csrfInput.type = 'hidden';

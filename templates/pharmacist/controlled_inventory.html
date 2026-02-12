@@ -561,25 +561,31 @@
     }
 
     container.innerHTML = cart.map(i => {
-      const lineTotal = (Number(i.unit_price) || 0) * (Number(i.quantity) || 0);
-      const rxSummary = [i.dosage, i.frequency, i.duration].filter(Boolean).join(' · ');
+      const id = escapeHtml(String(i?.id ?? ''));
+      const name = escapeHtml(String(i?.name ?? ''));
+      const number = escapeHtml(String(i?.number ?? ''));
+      const qty = Math.max(1, Number(i?.quantity) || 1);
+      const unitPrice = Number(i?.unit_price) || 0;
+      const lineTotal = unitPrice * qty;
+      const rxSummaryRaw = [i?.dosage, i?.frequency, i?.duration].filter(Boolean).join(' · ');
+      const rxSummary = escapeHtml(rxSummaryRaw);
       return `
-        <div class="py-2 border-bottom" data-id="${i.id}">
+        <div class="py-2 border-bottom" data-id="${id}">
           <div class="d-flex justify-content-between align-items-start">
             <div class="flex-grow-1">
-              <div class="fw-semibold">${i.name}</div>
-              <div class="text-muted small">${i.number || ''}</div>
+              <div class="fw-semibold">${name}</div>
+              <div class="text-muted small">${number || ''}</div>
               ${rxSummary ? `<div class="text-muted small">Rx: ${rxSummary}</div>` : ''}
               <div class="mt-1">
-                <span class="text-muted">Ksh ${money(i.unit_price)}</span> ×
-                <input type="number" min="1" value="${i.quantity}" data-cart-qty="${i.id}"
+                <span class="text-muted">Ksh ${money(unitPrice)}</span> ×
+                <input type="number" min="1" value="${qty}" data-cart-qty="${id}"
                   class="form-control form-control-sm d-inline-block ms-2" style="max-width: 80px;" />
                 = <span class="fw-semibold">Ksh ${money(lineTotal)}</span>
               </div>
             </div>
             <div class="d-flex flex-column gap-2 ms-2">
-              <button class="btn btn-sm btn-outline-secondary" data-cart-action="rx" data-id="${i.id}"><i class="bi bi-journal-medical"></i> Rx</button>
-              <button class="btn btn-sm btn-outline-danger" data-cart-action="remove" data-id="${i.id}"><i class="bi bi-trash"></i></button>
+              <button class="btn btn-sm btn-outline-secondary" data-cart-action="rx" data-id="${id}"><i class="bi bi-journal-medical"></i> Rx</button>
+              <button class="btn btn-sm btn-outline-danger" data-cart-action="remove" data-id="${id}"><i class="bi bi-trash"></i></button>
             </div>
           </div>
         </div>
@@ -606,25 +612,31 @@
     }
 
     container.innerHTML = cart.map(i => {
-      const lineTotal = (Number(i.unit_price) || 0) * (Number(i.quantity) || 0);
-      const rxSummary = [i.dosage, i.frequency, i.duration].filter(Boolean).join(' · ');
+      const id = escapeHtml(String(i?.id ?? ''));
+      const name = escapeHtml(String(i?.name ?? ''));
+      const number = escapeHtml(String(i?.number ?? ''));
+      const qty = Math.max(1, Number(i?.quantity) || 1);
+      const unitPrice = Number(i?.unit_price) || 0;
+      const lineTotal = unitPrice * qty;
+      const rxSummaryRaw = [i?.dosage, i?.frequency, i?.duration].filter(Boolean).join(' · ');
+      const rxSummary = escapeHtml(rxSummaryRaw);
       return `
-        <div class="py-2 border-bottom" data-id="${i.id}">
+        <div class="py-2 border-bottom" data-id="${id}">
           <div class="d-flex justify-content-between align-items-start">
             <div class="flex-grow-1">
-              <div class="fw-semibold">${i.name}</div>
-              <div class="text-muted small">${i.number || ''}</div>
+              <div class="fw-semibold">${name}</div>
+              <div class="text-muted small">${number || ''}</div>
               ${rxSummary ? `<div class="text-muted small">Rx: ${rxSummary}</div>` : ''}
               <div class="mt-1">
-                <span class="text-muted">Ksh ${money(i.unit_price)}</span> ×
-                <input type="number" min="1" value="${i.quantity}" data-inline-cart-qty="${i.id}"
+                <span class="text-muted">Ksh ${money(unitPrice)}</span> ×
+                <input type="number" min="1" value="${qty}" data-inline-cart-qty="${id}"
                   class="form-control form-control-sm d-inline-block ms-2" style="max-width: 80px;" />
                 = <span class="fw-semibold">Ksh ${money(lineTotal)}</span>
               </div>
             </div>
             <div class="d-flex flex-column gap-2 ms-2">
-              <button class="btn btn-sm btn-outline-secondary" data-inline-cart-action="rx" data-id="${i.id}"><i class="bi bi-journal-medical"></i></button>
-              <button class="btn btn-sm btn-outline-danger" data-inline-cart-action="remove" data-id="${i.id}"><i class="bi bi-trash"></i></button>
+              <button class="btn btn-sm btn-outline-secondary" data-inline-cart-action="rx" data-id="${id}"><i class="bi bi-journal-medical"></i></button>
+              <button class="btn btn-sm btn-outline-danger" data-inline-cart-action="remove" data-id="${id}"><i class="bi bi-trash"></i></button>
             </div>
           </div>
         </div>
@@ -830,25 +842,48 @@
     if (!d) {
       return '<div class="text-muted">No dosage information found (DB or index book).</div>';
     }
-    const rows = (label, value) => `
-      <div class="mb-2">
-        <div class="fw-semibold">${label}</div>
-        <div class="text-muted">${renderBullets(value)}</div>
-      </div>
-    `;
+
+    const drugNumber = safeText(payload?.drug?.drug_number);
+    const drugName = safeText(payload?.drug?.name);
     return `
-      <div class="mb-2"><span class="fw-semibold">Drug:</span> ${escapeHtml(safeText(payload?.drug?.drug_number))} - ${escapeHtml(safeText(payload?.drug?.name))}</div>
-      <hr />
-      ${rows('Indication', d.indication)}
-      ${rows('Contraindication', d.contraindication)}
-      ${rows('Interaction', d.interaction)}
-      ${rows('Side Effects', d.side_effects)}
-      <hr />
-      ${rows('Dosage (Pediatrics)', d.dosage_peds)}
-      ${rows('Dosage (Adults)', d.dosage_adults)}
-      ${rows('Dosage (Geriatrics)', d.dosage_geriatrics)}
-      <hr />
-      ${rows('Important Notes', d.important_notes)}
+      <div class="row">
+        <div class="col-md-6">
+          <h5>Basic Information</h5>
+          <table class="table table-bordered">
+            <tr><th>Drug Number</th><td>${escapeHtml(drugNumber || '-')}</td></tr>
+            <tr><th>Drug Name</th><td>${escapeHtml(drugName || '-')}</td></tr>
+          </table>
+
+          <h5>Medical Information</h5>
+          <table class="table table-bordered">
+            <tr><th>Indication</th><td>${renderBullets(d.indication)}</td></tr>
+            <tr><th>Contraindication</th><td>${renderBullets(d.contraindication)}</td></tr>
+            <tr><th>Drug Interaction</th><td>${renderBullets(d.interaction)}</td></tr>
+            <tr><th>Side Effects</th><td>${renderBullets(d.side_effects)}</td></tr>
+          </table>
+        </div>
+        <div class="col-md-6">
+          <h5>Dosage Information</h5>
+          <div class="card mb-3">
+            <div class="card-header bg-info text-white">Pediatrics</div>
+            <div class="card-body"><div class="card-text dosage-points">${renderBullets(d.dosage_peds)}</div></div>
+          </div>
+          <div class="card mb-3">
+            <div class="card-header bg-primary text-white">Adults</div>
+            <div class="card-body"><div class="card-text dosage-points">${renderBullets(d.dosage_adults)}</div></div>
+          </div>
+          <div class="card">
+            <div class="card-header bg-secondary text-white">Geriatrics</div>
+            <div class="card-body"><div class="card-text dosage-points">${renderBullets(d.dosage_geriatrics)}</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3">
+        <h5>Important Notes</h5>
+        <div class="card">
+          <div class="card-body"><div class="card-text dosage-points">${renderBullets(d.important_notes)}</div></div>
+        </div>
+      </div>
     `;
   }
 

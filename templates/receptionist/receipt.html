@@ -15,7 +15,7 @@
         </div>
     </div>
 
-    <div class="card shadow-sm">
+    <div id="print-area" class="card shadow-sm">
         <div class="card-body">
             <div class="row mb-3">
                 <div class="col-md-6">
@@ -156,6 +156,10 @@
 <style>
 @media print {
     .no-print { display: none !important; }
+    /* Print only the receipt card (hide base layout/sidebar/etc.) */
+    body * { visibility: hidden !important; }
+    #print-area, #print-area * { visibility: visible !important; }
+    #print-area { position: absolute; left: 0; top: 0; width: 100%; }
 }
 </style>
 {% endblock %}

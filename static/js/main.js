@@ -16,6 +16,16 @@ function togglePassword() {
 // Cart functionality for pharmacist
 let cartItems = [];
 
+function escapeHtml(value) {
+    const s = String(value ?? '');
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function addToCart(drugId, drugName, price, quantity = 1, dosage = '', prescriptionItemId = null) {
     // Check if item already in cart
     const existingItem = cartItems.find(item => item.drugId === drugId && item.dosage === dosage);
@@ -74,8 +84,8 @@ function renderCartItem(item) {
     
     cartItemElement.innerHTML = `
         <div class="cart-item-info">
-            <h5>${item.drugName}</h5>
-            ${item.dosage ? `<p>Dosage: ${item.dosage}</p>` : ''}
+            <h5>${escapeHtml(item.drugName)}</h5>
+            ${item.dosage ? `<p>Dosage: ${escapeHtml(item.dosage)}</p>` : ''}
             <p>Price: $${item.price.toFixed(2)}</p>
         </div>
         <div class="cart-item-actions">

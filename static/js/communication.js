@@ -18,8 +18,9 @@ class CommunicationSystem {
         this.isMuted = false;
         this.isVideoEnabled = true;
         this.callDurationInterval = null;
+        this._callRingTimeout = null;
         this.typingTimeout = null;
-        this.eatTimezone = 'Africa/Nairobi'; // EAT timezone
+        this.eatTimezone = (window.__mmcTimezone) || 'Africa/Nairobi'; // User-configurable timezone
 
         // Audio (ringtones) + WebRTC configuration
         this._audioContext = null;
@@ -29,13 +30,42 @@ class CommunicationSystem {
 
         // Messaging UX state
         this._messageCache = new Map();
+        this._usersCache = new Map();
         this._replyToMessageId = null;
         this._isChatBlocked = false;
         this._emojiPickerEl = null;
         this._messageActionsEl = null;
         this._chatSettingsEl = null;
+
+        // Communication settings (per-user, per-device)
+        this._commSettingsKey = null;
+        this._commSettings = null;
+
+        // Offline send queue (best-effort)
+        this._offlineQueueKey = null;
+
+        // Call history UI state
+        this._callHistory = [];
+        this._callHistoryFilter = 'all';
+
+        // Sent-message plaintext cache (localStorage). The sender encrypts
+        // messages with the RECIPIENT's public key, so they cannot decrypt
+        // their own messages when reloading conversation history. We cache
+        // the plaintext locally so the sender always sees their own messages.
+        this._sentCacheKey = null;
+
+        // E2E messaging state (true end-to-end): keys live client-side.
+        this._e2eReady = false;
+        this._e2eKeyCache = new Map(); // userId -> {kid, alg, public_jwk}
         
         this.init();
+
+        // Listen for settings changes to update timezone
+        window.addEventListener('mmc-settings-changed', (e) => {
+            if (e.detail && e.detail.timezone) {
+                this.eatTimezone = e.detail.timezone;
+            }
+        });
     }
 
     init() {
@@ -50,18 +80,256 @@ class CommunicationSystem {
         
         // Setup UI event listeners
         this.setupUIListeners();
+
+        // Offline queue support
+        this._offlineQueueKey = this.currentUserId ? `mmc_comm_offline_queue_v1_${this.currentUserId}` : 'mmc_comm_offline_queue_v1';
+        this._sentCacheKey = this.currentUserId ? `mmc_sent_cache_v1_${this.currentUserId}` : 'mmc_sent_cache_v1';
+        this._commSettingsKey = this.currentUserId ? `mmc_comm_settings_v1_${this.currentUserId}` : 'mmc_comm_settings_v1';
+        this._commSettings = this._loadCommSettings();
+        this.setupOfflineQueueHandlers();
         
         // Setup drag functionality
         this.setupDragFunctionality();
         
         // Load users list
-        this.loadUsers();
+        this.loadUsers().then(() => this.updateFloatIconBadge()).catch(() => {});
         
-        // Request notification permission
+        // Request notification permission (best-effort; user can disable notifications in settings)
         this.requestNotificationPermission();
+
+        // Best-effort: initialize true E2E messaging keys (won't break if unsupported)
+        if (this._isZeroKnowledgeEnabled()) {
+            this.initE2E().catch(() => {});
+        }
 
         // Prepare audio context on first user gesture (autoplay policies)
         this.armAudioOnFirstGesture();
+    }
+
+    _isZeroKnowledgeEnabled() {
+        try {
+            const meta = document.querySelector('meta[name=\"mmc-zero-knowledge-enabled\"]');
+            if (!meta) return true;
+            const v = String(meta.getAttribute('content') || '').trim().toLowerCase();
+            if (!v) return true;
+            return !(v === '0' || v === 'false' || v === 'off' || v === 'no');
+        } catch (_) {
+            return true;
+        }
+    }
+
+    // =============================
+    // TRUE END-TO-END MESSAGING (WebCrypto)
+    // =============================
+
+    async initE2E() {
+        try {
+            if (!this.currentUserId) return;
+            if (!window.crypto || !window.crypto.subtle) return;
+            await this.ensureE2EKeypair();
+            this._e2eReady = true;
+        } catch (e) {
+            this._e2eReady = false;
+        }
+    }
+
+    _b64(bytes) {
+        const bin = String.fromCharCode(...bytes);
+        return btoa(bin);
+    }
+
+    _b64ToBytes(b64) {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return bytes;
+    }
+
+    async _kidFromJwk(jwk) {
+        const s = JSON.stringify(jwk);
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+        const bytes = new Uint8Array(digest);
+        // short-ish base64url-ish id
+        return this._b64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '').slice(0, 22);
+    }
+
+    async ensureE2EKeypair() {
+        const privRaw = localStorage.getItem('mmc_e2e_rsa_private_jwk_v1');
+        const pubRaw = localStorage.getItem('mmc_e2e_rsa_public_jwk_v1');
+        const kidRaw = localStorage.getItem('mmc_e2e_rsa_kid_v1');
+
+        if (privRaw && pubRaw && kidRaw) {
+            // Best-effort sanity
+            const priv = JSON.parse(privRaw);
+            const pub = JSON.parse(pubRaw);
+
+            // Best-effort: ensure server has our public key.
+            fetch('/api/communication/e2e/register_key', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                body: JSON.stringify({
+                    kid: kidRaw,
+                    alg: 'RSA-OAEP-256',
+                    public_jwk: pub
+                })
+            }).catch(() => {});
+            return;
+        }
+
+        const keyPair = await crypto.subtle.generateKey(
+            {
+                name: 'RSA-OAEP',
+                modulusLength: 2048,
+                publicExponent: new Uint8Array([1, 0, 1]),
+                hash: 'SHA-256'
+            },
+            true,
+            ['encrypt', 'decrypt']
+        );
+
+        const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+        const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+        const kid = await this._kidFromJwk(publicJwk);
+
+        localStorage.setItem('mmc_e2e_rsa_public_jwk_v1', JSON.stringify(publicJwk));
+        localStorage.setItem('mmc_e2e_rsa_private_jwk_v1', JSON.stringify(privateJwk));
+        localStorage.setItem('mmc_e2e_rsa_kid_v1', kid);
+
+        // Register public key to server (best-effort)
+        await fetch('/api/communication/e2e/register_key', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': this.getCSRFToken()
+            },
+            body: JSON.stringify({
+                kid,
+                alg: 'RSA-OAEP-256',
+                public_jwk: publicJwk
+            })
+        }).catch(() => {});
+    }
+
+    async _getMyPrivateKey() {
+        const privRaw = localStorage.getItem('mmc_e2e_rsa_private_jwk_v1');
+        if (!privRaw) return null;
+        const jwk = JSON.parse(privRaw);
+        return crypto.subtle.importKey('jwk', jwk, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['decrypt']);
+    }
+
+    async _getRecipientKey(userId) {
+        if (!this._e2eReady) return null;
+        if (this._e2eKeyCache.has(userId)) return this._e2eKeyCache.get(userId);
+
+        const resp = await fetch(`/api/communication/e2e/public_key/${userId}`, {
+            headers: { 'X-CSRFToken': this.getCSRFToken() }
+        });
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        if (!data || !data.success || !data.key || !data.key.public_jwk) {
+            this._e2eKeyCache.set(userId, null);
+            return null;
+        }
+        this._e2eKeyCache.set(userId, data.key);
+        return data.key;
+    }
+
+    _tryParseE2E(content) {
+        if (typeof content !== 'string') return null;
+        const s = content.trim();
+        if (!s.startsWith('{') || !s.endsWith('}')) return null;
+        try {
+            const obj = JSON.parse(s);
+            if (obj && obj.e2e === true) return obj;
+        } catch (_) {}
+        return null;
+    }
+
+    async encryptForRecipient(recipientId, plaintext) {
+        if (!this._e2eReady) return plaintext;
+        const keyInfo = await this._getRecipientKey(recipientId);
+        if (!keyInfo || !keyInfo.public_jwk) return plaintext;
+
+        const publicKey = await crypto.subtle.importKey(
+            'jwk',
+            keyInfo.public_jwk,
+            { name: 'RSA-OAEP', hash: 'SHA-256' },
+            false,
+            ['encrypt']
+        );
+
+        const aesKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const pt = new TextEncoder().encode(plaintext);
+
+        const ctBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, pt);
+        const rawAes = await crypto.subtle.exportKey('raw', aesKey);
+        const ekBuf = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, publicKey, rawAes);
+
+        const payload = {
+            v: 1,
+            e2e: true,
+            alg: 'RSA-OAEP-256+A256GCM',
+            kid: keyInfo.kid,
+            iv: this._b64(new Uint8Array(iv)),
+            ek: this._b64(new Uint8Array(ekBuf)),
+            ct: this._b64(new Uint8Array(ctBuf))
+        };
+
+        return JSON.stringify(payload);
+    }
+
+    async decryptIfNeeded(content) {
+        const obj = this._tryParseE2E(content);
+        if (!obj) return content;
+
+        const privKey = await this._getMyPrivateKey();
+        if (!privKey) return '[Encrypted message]';
+
+        try {
+            const iv = this._b64ToBytes(obj.iv);
+            const ek = this._b64ToBytes(obj.ek);
+            const ct = this._b64ToBytes(obj.ct);
+
+            const rawAes = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privKey, ek);
+            const aesKey = await crypto.subtle.importKey('raw', rawAes, { name: 'AES-GCM' }, false, ['decrypt']);
+            const ptBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, ct);
+            return new TextDecoder().decode(ptBuf);
+        } catch (e) {
+            return '[Encrypted message]';
+        }
+    }
+
+    async prepareMessageForDisplay(message) {
+        if (!message) return message;
+        const display = { ...message };
+
+        // For sender's own messages: prefer the local plaintext cache
+        // because the ciphertext was encrypted to the RECIPIENT's key
+        // and the sender cannot decrypt it.
+        if (display.sender_id === this.currentUserId && !display._raw_content) {
+            const cached = this._getSentPlaintext(display.message_id);
+            if (cached) display._raw_content = cached;
+        }
+
+        if (typeof display.content === 'string') {
+            // Preserve whether the original payload was E2E-encrypted so notifications can
+            // avoid leaking plaintext even after decryption.
+            display._was_e2e = !!this._tryParseE2E(display.content);
+            display.content = await this.decryptIfNeeded(display.content);
+        } else {
+            display._was_e2e = false;
+        }
+
+        if (display.replied_to && typeof display.replied_to.content === 'string') {
+            display.replied_to = { ...display.replied_to };
+            display.replied_to.content = await this.decryptIfNeeded(display.replied_to.content);
+        }
+
+        return display;
     }
 
     armAudioOnFirstGesture() {
@@ -110,6 +378,12 @@ class CommunicationSystem {
             if (this.currentUserId) {
                 this.socket.emit('user_connected', { user_id: this.currentUserId });
             }
+
+            // Refresh unread badge on (re)connect
+            this.updateFloatIconBadge().catch(() => {});
+
+            // Best-effort: flush queued messages after reconnect
+            this.flushOfflineQueue().catch(() => {});
         });
 
         this.socket.on('disconnect', () => {
@@ -155,6 +429,10 @@ class CommunicationSystem {
             this.handleCallEnded(data);
         });
 
+        this.socket.on('call_failed', (data) => {
+            this.handleCallFailed(data);
+        });
+
         // WebRTC signaling events
         this.socket.on('webrtc_offer', (data) => {
             this.handleWebRTCOffer(data);
@@ -169,11 +447,212 @@ class CommunicationSystem {
         });
     }
 
+    setupOfflineQueueHandlers() {
+        try {
+            window.addEventListener('online', () => {
+                this.flushOfflineQueue().catch(() => {});
+            });
+        } catch (_) {
+            // no-op
+        }
+    }
+
+    _readOfflineQueue() {
+        try {
+            const raw = localStorage.getItem(this._offlineQueueKey || 'mmc_comm_offline_queue_v1');
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+            return [];
+        }
+    }
+
+    _writeOfflineQueue(queue) {
+        try {
+            localStorage.setItem(this._offlineQueueKey || 'mmc_comm_offline_queue_v1', JSON.stringify(queue || []));
+        } catch (_) {
+            // no-op
+        }
+    }
+
+    _enqueueOfflineMessage(entry) {
+        const q = this._readOfflineQueue();
+        q.push(entry);
+        this._writeOfflineQueue(q);
+    }
+
+    _removeOfflineMessageByTempId(tempId) {
+        const q = this._readOfflineQueue();
+        const next = q.filter(x => String(x.temp_id) !== String(tempId));
+        this._writeOfflineQueue(next);
+    }
+
+    _removePendingMessageFromUI(tempId) {
+        try {
+            const el = document.querySelector(`[data-message-id="tmp_${tempId}"]`);
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+        } catch (_) {
+            // no-op
+        }
+    }
+
+    async flushOfflineQueue() {
+        if (!this.currentUserId) return;
+        if (!navigator.onLine) return;
+
+        const q = this._readOfflineQueue();
+        if (!q.length) return;
+
+        // Send in order
+        for (const entry of [...q]) {
+            if (!entry || !entry.receiver_id || !entry.content_to_send) continue;
+            try {
+                const response = await fetch('/api/communication/send_message', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': this.getCSRFToken()
+                    },
+                    body: JSON.stringify({
+                        receiver_id: entry.receiver_id,
+                        content: entry.content_to_send,
+                        reply_to_message_id: entry.reply_to_message_id || null
+                    })
+                });
+
+                if (!response.ok) {
+                    // Keep queued
+                    continue;
+                }
+
+                const data = await response.json().catch(() => null);
+                this._removeOfflineMessageByTempId(entry.temp_id);
+
+                // Update UI if we're still in that chat
+                if (this.activeChatUserId && Number(this.activeChatUserId) === Number(entry.receiver_id)) {
+                    this._removePendingMessageFromUI(entry.temp_id);
+                    if (data && data.message) {
+                        // Cache plaintext from the queued entry
+                        if (data.message.sender_id === this.currentUserId && entry.content_to_send) {
+                            this._cacheSentPlaintext(data.message.message_id, entry.content_to_send);
+                        }
+                        const displayMsg = await this.prepareMessageForDisplay(data.message);
+                        this.appendMessage(displayMsg);
+                    }
+                }
+
+                // Emit socket event for real-time delivery
+                if (data && data.message && this.socket && this.socket.connected) {
+                    this.socket.emit('send_message', {
+                        message: data.message,
+                        receiver_id: entry.receiver_id
+                    });
+                }
+            } catch (_) {
+                // Keep queued
+            }
+        }
+    }
+
+    /* ---- Sent-message plaintext cache ---- */
+    _cacheSentPlaintext(messageId, plaintext) {
+        if (!messageId || !plaintext) return;
+        try {
+            const key = this._sentCacheKey;
+            const raw = localStorage.getItem(key);
+            const cache = raw ? JSON.parse(raw) : {};
+            cache[String(messageId)] = plaintext;
+            // Keep the cache bounded (last 500 messages)
+            const keys = Object.keys(cache);
+            if (keys.length > 500) {
+                const toRemove = keys.slice(0, keys.length - 500);
+                toRemove.forEach(k => delete cache[k]);
+            }
+            localStorage.setItem(key, JSON.stringify(cache));
+        } catch (_) {}
+    }
+
+    _getSentPlaintext(messageId) {
+        if (!messageId) return null;
+        try {
+            const raw = localStorage.getItem(this._sentCacheKey);
+            if (!raw) return null;
+            const cache = JSON.parse(raw);
+            return cache[String(messageId)] || null;
+        } catch (_) { return null; }
+    }
+
+    /* ---- Communication settings (localStorage) ---- */
+    _defaultCommSettings() {
+        return {
+            notifications_enabled: true,
+            sounds_enabled: true,
+            message_tone: 'chime',      // chime | pop | beep | none
+            call_ringtone: 'classic'    // classic | fast | slow | none
+        };
+    }
+
+    _normalizeCommSettings(raw) {
+        const defaults = this._defaultCommSettings();
+        const s = { ...defaults, ...(raw && typeof raw === 'object' ? raw : {}) };
+
+        s.notifications_enabled = !!s.notifications_enabled;
+        s.sounds_enabled = !!s.sounds_enabled;
+
+        const allowedMsgTones = new Set(['chime', 'pop', 'beep', 'none']);
+        const allowedCallTones = new Set(['classic', 'fast', 'slow', 'none']);
+        if (!allowedMsgTones.has(String(s.message_tone))) s.message_tone = defaults.message_tone;
+        if (!allowedCallTones.has(String(s.call_ringtone))) s.call_ringtone = defaults.call_ringtone;
+
+        return s;
+    }
+
+    _loadCommSettings() {
+        const defaults = this._defaultCommSettings();
+        try {
+            const key = this._commSettingsKey || 'mmc_comm_settings_v1';
+            const raw = localStorage.getItem(key);
+            if (!raw) return { ...defaults };
+            const parsed = JSON.parse(raw);
+            return this._normalizeCommSettings(parsed);
+        } catch (_) {
+            return { ...defaults };
+        }
+    }
+
+    getCommSettings() {
+        if (!this._commSettings) this._commSettings = this._loadCommSettings();
+        return this._commSettings;
+    }
+
+    setCommSettings(patch) {
+        const current = this.getCommSettings();
+        const next = this._normalizeCommSettings({ ...current, ...(patch || {}) });
+        this._commSettings = next;
+        try {
+            const key = this._commSettingsKey || 'mmc_comm_settings_v1';
+            localStorage.setItem(key, JSON.stringify(next));
+        } catch (_) {
+            // no-op
+        }
+        return next;
+    }
+
     setupUIListeners() {
         // Float icon click
         const floatIcon = document.getElementById('communication-float-icon');
         if (floatIcon) {
             floatIcon.addEventListener('click', () => this.toggleCommunicationModal());
+        }
+
+        // Float icon settings (gear)
+        const floatSettingsBtn = document.getElementById('communication-float-settings-btn');
+        if (floatSettingsBtn) {
+            floatSettingsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.openCommSettings();
+            });
         }
 
         // Close and minimize buttons
@@ -203,14 +682,25 @@ class CommunicationSystem {
         }
         
         if (messageInput) {
-            messageInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
+            // Textarea UX:
+            // - Enter sends
+            // - Shift+Enter inserts newline
+            messageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
                     this.sendMessage();
                 }
             });
             
             messageInput.addEventListener('input', () => {
                 this.handleTyping();
+                // Auto-grow
+                try {
+                    messageInput.style.height = 'auto';
+                    messageInput.style.height = Math.min(messageInput.scrollHeight, 140) + 'px';
+                } catch (_) {
+                    // no-op
+                }
             });
         }
 
@@ -258,10 +748,63 @@ class CommunicationSystem {
             toggleVideoBtn.addEventListener('click', () => this.toggleVideo());
         }
 
+        // Call history UI
+        const openCallHistoryBtn = document.getElementById('open-call-history');
+        if (openCallHistoryBtn) {
+            openCallHistoryBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleCallHistory(true);
+            });
+        }
+
+        // Communication settings UI
+        const openCommSettingsBtn = document.getElementById('open-comm-settings');
+        if (openCommSettingsBtn) {
+            openCommSettingsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleCommSettings(true);
+            });
+        }
+
+        const closeCommSettingsBtn = document.getElementById('close-comm-settings');
+        if (closeCommSettingsBtn) {
+            closeCommSettingsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleCommSettings(false);
+            });
+        }
+
+        this.setupCommSettingsControls();
+
+        const closeCallHistoryBtn = document.getElementById('close-call-history');
+        if (closeCallHistoryBtn) {
+            closeCallHistoryBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggleCallHistory(false);
+            });
+        }
+
+        const refreshCallHistoryBtn = document.getElementById('refresh-call-history');
+        if (refreshCallHistoryBtn) {
+            refreshCallHistoryBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.loadCallHistory().catch(() => {});
+            });
+        }
+
+        document.querySelectorAll('[data-call-filter]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const filter = btn.getAttribute('data-call-filter') || 'all';
+                this.setCallHistoryFilter(filter);
+            });
+        });
+
         const emojiBtn = document.getElementById('emoji-btn');
         if (emojiBtn) {
             emojiBtn.addEventListener('click', (e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 this.toggleEmojiPicker(emojiBtn);
             });
         }
@@ -394,6 +937,16 @@ class CommunicationSystem {
         if (modal) {
             modal.style.display = 'none';
         }
+
+        // Ensure overlays don't remain open between modal toggles
+        try {
+            const callPanel = document.getElementById('call-history-panel');
+            if (callPanel) callPanel.style.display = 'none';
+            const settingsPanel = document.getElementById('comm-settings-panel');
+            if (settingsPanel) settingsPanel.style.display = 'none';
+        } catch (_) {
+            // no-op
+        }
     }
 
     minimizeCommunicationModal() {
@@ -428,10 +981,21 @@ class CommunicationSystem {
         if (!usersList) return;
         
         usersList.innerHTML = '';
+        this._usersCache.clear();
         
         if (users.length === 0) {
             usersList.innerHTML = '<div class="text-center text-muted py-4"><p>No users found</p></div>';
             return;
+        }
+
+        try {
+            (users || []).forEach(u => {
+                if (u && typeof u.id !== 'undefined') {
+                    this._usersCache.set(Number(u.id), u);
+                }
+            });
+        } catch (_) {
+            // no-op
         }
         
         const sortedUsers = [...users].sort((a, b) => {
@@ -450,6 +1014,10 @@ class CommunicationSystem {
             userItem.dataset.userId = user.id;
             
             const onlineBadge = user.is_online ? '<span class="online-badge"></span>' : '';
+            const picUrl = this._profilePicUrl(user.profile_picture);
+            const avatarInner = picUrl
+                ? `<img src="${this.escapeHtml(picUrl)}" alt="">`
+                : '<i class="bi bi-person-circle"></i>';
             
             const pinBadge = user.is_pinned ? '<span class="badge bg-warning text-dark ms-2">Pinned</span>' : '';
             const archivedBadge = user.is_archived ? '<span class="badge bg-secondary ms-2">Archived</span>' : '';
@@ -457,7 +1025,7 @@ class CommunicationSystem {
 
             userItem.innerHTML = `
                 <div class="user-avatar">
-                    <i class="bi bi-person-circle"></i>
+                    ${avatarInner}
                     ${onlineBadge}
                 </div>
                 <div class="user-info">
@@ -488,7 +1056,9 @@ class CommunicationSystem {
         });
     }
 
-    async openChat(user) {
+    async openChat(user, options) {
+        const opts = options || {};
+        const preloadConversation = opts.preloadConversation !== false;
         this.activeChatUserId = user.id;
         this.currentUser = user;
         this._isChatBlocked = !!(user.blocked_by_me || user.blocked_me);
@@ -520,6 +1090,14 @@ class CommunicationSystem {
             }
         }
 
+        const avatarEl = document.getElementById('chat-user-avatar');
+        if (avatarEl) {
+            const picUrl = this._profilePicUrl(user.profile_picture);
+            avatarEl.innerHTML = picUrl
+                ? `<img src="${this.escapeHtml(picUrl)}" alt="">`
+                : '<i class="bi bi-person-circle"></i>';
+        }
+
         this.applyChatBlockedUI();
         
         // Mark user item as active
@@ -528,14 +1106,380 @@ class CommunicationSystem {
         });
         document.querySelector(`.user-item[data-user-id="${user.id}"]`)?.classList.add('active');
         
-        // Load conversation
-        await this.loadConversation(user.id);
+        // Load conversation (optional background preload for faster actions like calling back)
+        if (preloadConversation) {
+            await this.loadConversation(user.id);
+        } else {
+            this.loadConversation(user.id).catch(() => {});
+        }
         
         // Join conversation room
         this.socket.emit('join_conversation', {
             user_id: this.currentUserId,
             other_user_id: user.id
         });
+    }
+
+    // =============================
+    // Communication Settings UI
+    // =============================
+
+    openCommSettings() {
+        // Ensure the modal is visible, then show settings overlay.
+        try {
+            const modal = document.getElementById('communication-modal');
+            if (modal) {
+                modal.style.display = 'flex';
+                modal.classList.remove('minimized');
+            }
+        } catch (_) {
+            // no-op
+        }
+        this.toggleCommSettings(true);
+    }
+
+    toggleCommSettings(show) {
+        const panel = document.getElementById('comm-settings-panel');
+        if (!panel) return;
+
+        if (show) {
+            // Close call log if open (avoid stacked overlays)
+            try {
+                const callPanel = document.getElementById('call-history-panel');
+                if (callPanel) callPanel.style.display = 'none';
+            } catch (_) {}
+
+            panel.style.display = 'flex';
+            this._syncCommSettingsForm();
+        } else {
+            panel.style.display = 'none';
+            // If a ringtone preview is playing, stop it.
+            this.stopAllTones();
+        }
+    }
+
+    _syncCommSettingsForm() {
+        const s = this.getCommSettings();
+        const notif = document.getElementById('comm-enable-notifications');
+        const sounds = document.getElementById('comm-enable-sounds');
+        const msgTone = document.getElementById('comm-message-tone');
+        const callTone = document.getElementById('comm-call-ringtone');
+
+        if (notif) notif.checked = !!s.notifications_enabled;
+        if (sounds) sounds.checked = !!s.sounds_enabled;
+        if (msgTone) msgTone.value = String(s.message_tone || 'chime');
+        if (callTone) callTone.value = String(s.call_ringtone || 'classic');
+    }
+
+    setupCommSettingsControls() {
+        const panel = document.getElementById('comm-settings-panel');
+        if (!panel) return;
+        if (panel.dataset.bound === '1') return;
+        panel.dataset.bound = '1';
+
+        const notif = document.getElementById('comm-enable-notifications');
+        const sounds = document.getElementById('comm-enable-sounds');
+        const msgTone = document.getElementById('comm-message-tone');
+        const callTone = document.getElementById('comm-call-ringtone');
+        const testMsg = document.getElementById('comm-test-message-tone');
+        const testCall = document.getElementById('comm-test-call-ringtone');
+        const reset = document.getElementById('comm-reset-settings');
+
+        // Initial sync
+        this._syncCommSettingsForm();
+
+        if (notif) {
+            notif.addEventListener('change', () => {
+                this.setCommSettings({ notifications_enabled: !!notif.checked });
+            });
+        }
+
+        if (sounds) {
+            sounds.addEventListener('change', () => {
+                this.setCommSettings({ sounds_enabled: !!sounds.checked });
+            });
+        }
+
+        if (msgTone) {
+            msgTone.addEventListener('change', () => {
+                this.setCommSettings({ message_tone: String(msgTone.value || 'chime') });
+            });
+        }
+
+        if (callTone) {
+            callTone.addEventListener('change', () => {
+                this.setCommSettings({ call_ringtone: String(callTone.value || 'classic') });
+            });
+        }
+
+        if (testMsg) {
+            testMsg.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.playMessageTone(null, { force: true, toneId: msgTone ? msgTone.value : null });
+            });
+        }
+
+        if (testCall) {
+            testCall.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.playRingtone({ force: true, ringtoneId: callTone ? callTone.value : null });
+                setTimeout(() => this.stopAllTones(), 2200);
+            });
+        }
+
+        if (reset) {
+            reset.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.setCommSettings(this._defaultCommSettings());
+                this._syncCommSettingsForm();
+            });
+        }
+    }
+
+    // =============================
+    // Call History UI
+    // =============================
+
+    toggleCallHistory(show) {
+        const panel = document.getElementById('call-history-panel');
+        if (!panel) return;
+        if (show) {
+            // Close settings if open (avoid stacked overlays)
+            try {
+                const settingsPanel = document.getElementById('comm-settings-panel');
+                if (settingsPanel) settingsPanel.style.display = 'none';
+            } catch (_) {}
+            panel.style.display = 'flex';
+            this.loadCallHistory().catch(() => {});
+        } else {
+            panel.style.display = 'none';
+        }
+    }
+
+    setCallHistoryFilter(filter) {
+        const normalized = String(filter || 'all').toLowerCase();
+        this._callHistoryFilter = normalized;
+
+        document.querySelectorAll('[data-call-filter]').forEach(btn => {
+            const f = String(btn.getAttribute('data-call-filter') || '').toLowerCase();
+            btn.classList.toggle('active', f === normalized);
+        });
+
+        this.renderCallHistory();
+    }
+
+    _profilePicUrl(relPath) {
+        const raw = String(relPath || '').replace(/\\/g, '/').trim();
+        if (!raw) return '';
+        const normalized = raw.startsWith('uploads/') ? raw.slice('uploads/'.length) : raw;
+        if (!normalized.startsWith('profile_pictures/')) return '';
+        const safePath = normalized.split('/').map(encodeURIComponent).join('/');
+        return `/uploads/${safePath}`;
+    }
+
+    _badge(text, cls) {
+        const b = document.createElement('span');
+        b.className = `badge ${cls}`;
+        b.textContent = text;
+        return b;
+    }
+
+    _callStatusLabel(call) {
+        const status = String(call?.call_status || '').toLowerCase();
+        const direction = String(call?.direction || '').toLowerCase();
+
+        if (status === 'failed') return { text: 'Failed', cls: 'bg-danger' };
+        if (status === 'rejected') return { text: 'Declined', cls: 'bg-warning text-dark' };
+        if (status === 'missed') return { text: direction === 'outgoing' ? 'No answer' : 'Missed', cls: 'bg-danger' };
+        if (status === 'canceled') return { text: direction === 'outgoing' ? 'Canceled' : 'Missed', cls: 'bg-secondary' };
+        if (status === 'answered') return { text: direction === 'outgoing' ? 'Answered' : 'Received', cls: 'bg-success' };
+        if (status === 'ended') return { text: 'Ended', cls: 'bg-success' };
+        if (status === 'ringing') return { text: 'Ringing', cls: 'bg-info text-dark' };
+        if (status === 'initiated') return { text: 'Calling', cls: 'bg-info text-dark' };
+        return { text: status ? status : 'Unknown', cls: 'bg-secondary' };
+    }
+
+    async loadCallHistory() {
+        const meta = document.getElementById('call-history-meta');
+        const list = document.getElementById('call-history-list');
+        if (meta) meta.textContent = 'Loading...';
+        if (list) {
+            list.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2 small">Loading call history...</p></div>';
+        }
+
+        try {
+            const response = await fetch('/api/communication/calls/history', {
+                headers: { 'X-CSRFToken': this.getCSRFToken() }
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error((data && data.error) ? data.error : 'Failed to load call history');
+            }
+
+            this._callHistory = Array.isArray(data.calls) ? data.calls : [];
+            if (meta) meta.textContent = `${this._callHistory.length} calls`;
+            this.renderCallHistory();
+        } catch (e) {
+            console.error('Error loading call history:', e);
+            if (meta) meta.textContent = 'Failed to load';
+            if (list) list.innerHTML = `<div class="text-center text-danger py-4"><p class="small mb-0">${this.escapeHtml(e.message || 'Failed to load call history')}</p></div>`;
+        }
+    }
+
+    renderCallHistory() {
+        const list = document.getElementById('call-history-list');
+        if (!list) return;
+
+        const filter = String(this._callHistoryFilter || 'all').toLowerCase();
+        let calls = Array.isArray(this._callHistory) ? [...this._callHistory] : [];
+
+        if (filter === 'missed') {
+            calls = calls.filter(c => {
+                const st = String(c?.call_status || '').toLowerCase();
+                const dir = String(c?.direction || '').toLowerCase();
+                if (st === 'missed') return true;
+                // Incoming canceled = effectively missed for receiver
+                if (st === 'canceled' && dir === 'incoming') return true;
+                return false;
+            });
+        } else if (filter === 'incoming' || filter === 'outgoing') {
+            calls = calls.filter(c => String(c?.direction || '').toLowerCase() === filter);
+        } else if (filter === 'failed') {
+            calls = calls.filter(c => String(c?.call_status || '').toLowerCase() === 'failed');
+        }
+
+        list.textContent = '';
+        if (!calls.length) {
+            list.innerHTML = '<div class="text-center text-muted py-4"><p class="small mb-0">No calls found.</p></div>';
+            return;
+        }
+
+        const frag = document.createDocumentFragment();
+
+        calls.forEach(call => {
+            const item = document.createElement('div');
+            item.className = 'call-item';
+            item.dataset.callId = String(call.call_id || '');
+
+            const avatar = document.createElement('div');
+            avatar.className = 'call-avatar';
+            const picUrl = this._profilePicUrl(call.other_user_profile_picture);
+            if (picUrl) {
+                const img = document.createElement('img');
+                img.src = picUrl;
+                img.alt = '';
+                avatar.appendChild(img);
+            } else {
+                const icon = document.createElement('i');
+                icon.className = 'bi bi-person-circle';
+                icon.style.fontSize = '24px';
+                icon.style.color = '#6c757d';
+                avatar.appendChild(icon);
+            }
+
+            const details = document.createElement('div');
+            details.className = 'call-details';
+
+            const top = document.createElement('div');
+            top.className = 'call-top';
+
+            const name = document.createElement('div');
+            name.className = 'call-name';
+            name.textContent = call.other_user_name || `User ${call.other_user_id || ''}`;
+
+            const time = document.createElement('div');
+            time.className = 'call-time';
+            try {
+                time.textContent = call.started_at ? this.formatDateTimeEAT(call.started_at) : '';
+            } catch (_) {
+                time.textContent = '';
+            }
+
+            top.appendChild(name);
+            top.appendChild(time);
+
+            const badges = document.createElement('div');
+            badges.className = 'call-badges';
+
+            const direction = String(call.direction || '').toLowerCase();
+            if (direction) {
+                badges.appendChild(this._badge(direction === 'outgoing' ? 'Outgoing' : 'Incoming', direction === 'outgoing' ? 'bg-primary' : 'bg-secondary'));
+            }
+
+            const type = String(call.call_type || '').toLowerCase();
+            if (type) {
+                badges.appendChild(this._badge(type === 'video' ? 'Video' : 'Voice', type === 'video' ? 'bg-info text-dark' : 'bg-light text-dark'));
+            }
+
+            const status = this._callStatusLabel(call);
+            badges.appendChild(this._badge(status.text, status.cls));
+
+            details.appendChild(top);
+            details.appendChild(badges);
+
+            const actions = document.createElement('div');
+            actions.className = 'call-actions';
+
+            const voiceBtn = document.createElement('button');
+            voiceBtn.type = 'button';
+            voiceBtn.className = 'btn btn-sm btn-outline-primary';
+            voiceBtn.title = 'Call (voice)';
+            voiceBtn.innerHTML = '<i class="bi bi-telephone-fill"></i>';
+            voiceBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await this.callBackFromHistory(call, 'voice');
+            });
+
+            const videoBtn = document.createElement('button');
+            videoBtn.type = 'button';
+            videoBtn.className = 'btn btn-sm btn-outline-primary';
+            videoBtn.title = 'Call (video)';
+            videoBtn.innerHTML = '<i class="bi bi-camera-video-fill"></i>';
+            videoBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await this.callBackFromHistory(call, 'video');
+            });
+
+            actions.appendChild(voiceBtn);
+            actions.appendChild(videoBtn);
+
+            item.appendChild(avatar);
+            item.appendChild(details);
+            item.appendChild(actions);
+
+            frag.appendChild(item);
+        });
+
+        list.appendChild(frag);
+    }
+
+    async callBackFromHistory(call, type) {
+        const otherUserId = call && call.other_user_id ? Number(call.other_user_id) : null;
+        if (!otherUserId) return;
+
+        try {
+            const cached = this._usersCache.get(otherUserId);
+            if (cached) {
+                await this.openChat(cached, { preloadConversation: false });
+            } else {
+                await this.loadUsers();
+                const cached2 = this._usersCache.get(otherUserId);
+                if (cached2) {
+                    await this.openChat(cached2, { preloadConversation: false });
+                } else {
+                    this.activeChatUserId = otherUserId;
+                    this.currentUser = { id: otherUserId, username: call.other_user_name || 'User', is_online: false };
+                }
+            }
+
+            this.toggleCallHistory(false);
+            await this.initiateCall(type);
+        } catch (e) {
+            console.error('Error calling back from history:', e);
+            this.showError('Failed to start call');
+        }
     }
 
     async loadConversation(otherUserId) {
@@ -552,7 +1496,7 @@ class CommunicationSystem {
             
             const data = await response.json();
             this.activeConversation = data.conversation;
-            this.displayMessages(data.messages);
+            await this.displayMessages(data.messages);
             
             // Mark messages as read
             this.markMessagesAsRead(otherUserId);
@@ -561,7 +1505,7 @@ class CommunicationSystem {
         }
     }
 
-    displayMessages(messages) {
+    async displayMessages(messages) {
         const messagesContainer = document.getElementById('messages-container');
         if (!messagesContainer) return;
         
@@ -572,9 +1516,10 @@ class CommunicationSystem {
             return;
         }
         
-        messages.forEach(message => {
-            this.appendMessage(message, false);
-        });
+        for (const message of messages) {
+            const displayMsg = await this.prepareMessageForDisplay(message);
+            this.appendMessage(displayMsg, false);
+        }
         
         // Scroll to bottom
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -599,6 +1544,9 @@ class CommunicationSystem {
         // Generate tick marks for sent messages
         let tickMarks = '';
         if (isSent) {
+            if (message.is_pending) {
+                tickMarks = '<span class="message-ticks pending"><i class="bi bi-clock"></i></span>';
+            } else
             if (message.is_read) {
                 // Two blue ticks for read
                 tickMarks = '<span class="message-ticks read"><i class="bi bi-check-all"></i></span>';
@@ -612,9 +1560,11 @@ class CommunicationSystem {
         }
         
         const deletedText = '<em class="text-muted">This message was deleted</em>';
+        const rawReply = (message && message.replied_to && typeof message.replied_to.content === 'string') ? message.replied_to.content : '';
+        const replyIsE2E = typeof rawReply === 'string' && this._tryParseE2E(rawReply);
         const repliedTo = message.replied_to ? `
             <div class="message-reply-preview">
-                <div class="reply-snippet">${this.escapeHtml(message.replied_to.content || '')}</div>
+                <div class="reply-snippet">${this.escapeHtml(replyIsE2E ? '[Encrypted message]' : (rawReply || ''))}</div>
             </div>
         ` : '';
 
@@ -627,10 +1577,16 @@ class CommunicationSystem {
         const editedLabel = message.is_edited ? '<span class="message-edited">edited</span>' : '';
         const starLabel = message.is_starred ? '<i class="bi bi-star-fill message-star" title="Starred"></i>' : '';
 
+        const rawContent = (message && typeof message._raw_content === 'string') ? message._raw_content : message.content;
+        const contentIsE2E = typeof rawContent === 'string' && this._tryParseE2E(rawContent);
+        const contentHtml = message.is_deleted
+            ? deletedText
+            : this.escapeHtml(contentIsE2E ? '[Encrypted message]' : (rawContent || ''));
+
         messageDiv.innerHTML = `
             <div class="message-bubble">
                 ${repliedTo}
-                <div class="message-content">${message.is_deleted ? deletedText : this.escapeHtml(message.content)}</div>
+                <div class="message-content">${contentHtml}</div>
                 ${reactionsHtml}
                 <div class="message-time">
                     ${editedLabel}
@@ -640,6 +1596,20 @@ class CommunicationSystem {
                 </div>
             </div>
         `;
+
+        if (contentIsE2E && !message.is_deleted) {
+            this.decryptIfNeeded(rawContent).then((pt) => {
+                const el = messageDiv.querySelector('.message-content');
+                if (el) el.innerHTML = this.escapeHtml(pt || '[Encrypted message]');
+            });
+        }
+
+        if (replyIsE2E && message.replied_to) {
+            this.decryptIfNeeded(rawReply).then((pt) => {
+                const el = messageDiv.querySelector('.reply-snippet');
+                if (el) el.innerHTML = this.escapeHtml(pt || '[Encrypted message]');
+            });
+        }
 
         this.attachMessageInteractionHandlers(messageDiv);
         
@@ -661,7 +1631,53 @@ class CommunicationSystem {
             return;
         }
         
+        const tempId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const createdAt = new Date().toISOString();
+        const receiverId = this.activeChatUserId;
+        const replyToId = this._replyToMessageId;
+
+        // Clear input early for snappy UX
+        messageInput.value = '';
         try {
+            messageInput.style.height = 'auto';
+        } catch (_) {}
+
+        // Append a pending message immediately
+        this.appendMessage({
+            message_id: `tmp_${tempId}`,
+            sender_id: this.currentUserId,
+            receiver_id: receiverId,
+            content,
+            _raw_content: content,
+            created_at: createdAt,
+            is_pending: true,
+            is_delivered: false,
+            is_read: false,
+            is_edited: false,
+            is_starred: false,
+            reactions: []
+        });
+
+        // Clear reply state
+        this.clearReply();
+
+        try {
+            // Best-effort: encrypt for recipient if they have an E2E public key.
+            const outgoingContent = await this.encryptForRecipient(receiverId, content);
+
+            // If offline, queue and exit
+            if (!navigator.onLine) {
+                this._enqueueOfflineMessage({
+                    temp_id: tempId,
+                    receiver_id: receiverId,
+                    content_to_send: outgoingContent,
+                    reply_to_message_id: replyToId,
+                    created_at: createdAt
+                });
+                this.showError('Offline: message queued and will send when back online.');
+                return;
+            }
+
             const response = await fetch('/api/communication/send_message', {
                 method: 'POST',
                 headers: {
@@ -669,38 +1685,56 @@ class CommunicationSystem {
                     'X-CSRFToken': this.getCSRFToken()
                 },
                 body: JSON.stringify({
-                    receiver_id: this.activeChatUserId,
-                    content: content,
-                    reply_to_message_id: this._replyToMessageId
+                    receiver_id: receiverId,
+                    content: outgoingContent,
+                    reply_to_message_id: replyToId
                 })
             });
-            
+
             if (!response.ok) {
                 throw new Error('Failed to send message');
             }
-            
-            const data = await response.json();
-            
-            // Clear input
-            messageInput.value = '';
 
-            // Clear reply state
-            this.clearReply();
+            const data = await response.json().catch(() => null);
 
-            // Append immediately for sender
+            // Replace pending with server message
+            this._removePendingMessageFromUI(tempId);
             if (data && data.message) {
-                this.appendMessage(data.message);
+                // Preserve what the sender typed locally so their UI never flashes ciphertext.
+                // Ciphertext is still sent/stored and used for delivery.
+                if (data.message.sender_id === this.currentUserId) {
+                    data.message._raw_content = content;
+                    // Cache plaintext so future loads of this conversation show it.
+                    this._cacheSentPlaintext(data.message.message_id, content);
+                }
+                const displayMsg = await this.prepareMessageForDisplay(data.message);
+                this.appendMessage(displayMsg);
             }
-            
+
             // Emit socket event for real-time delivery
-            this.socket.emit('send_message', {
-                message: data.message,
-                receiver_id: this.activeChatUserId
-            });
-            
+            if (this.socket) {
+                this.socket.emit('send_message', {
+                    // Important: emit raw server payload (ciphertext) for receiver.
+                    message: data ? data.message : null,
+                    receiver_id: receiverId
+                });
+            }
         } catch (error) {
+            // Queue on failure (including transient network errors)
+            try {
+                const outgoingContent = await this.encryptForRecipient(receiverId, content);
+                this._enqueueOfflineMessage({
+                    temp_id: tempId,
+                    receiver_id: receiverId,
+                    content_to_send: outgoingContent,
+                    reply_to_message_id: replyToId,
+                    created_at: createdAt
+                });
+                this.showError('Message queued and will retry automatically.');
+            } catch (_) {
+                this.showError('Failed to send message');
+            }
             console.error('Error sending message:', error);
-            this.showError('Failed to send message');
         }
     }
 
@@ -715,16 +1749,28 @@ class CommunicationSystem {
         
         // If message is from current conversation, append it
         if (message.sender_id === this.activeChatUserId) {
-            this.appendMessage(message);
+            this.prepareMessageForDisplay(message).then((displayMsg) => {
+                this.appendMessage(displayMsg);
+            });
             
             // Mark as read immediately
             this.markMessagesAsRead(this.activeChatUserId);
         } else {
             // Update unread count
             this.updateUnreadCount(message.sender_id);
-            
-            // Show notification
-            this.showNotification(message);
+
+            // Respect per-chat mute/block settings (best-effort from cached user list)
+            const senderId = Number(message.sender_id);
+            const cached = this._usersCache.get(senderId);
+            const suppress = !!(cached && (cached.is_muted || cached.blocked_by_me || cached.blocked_me));
+
+            // Show notification + play tone
+            this.prepareMessageForDisplay(message).then((displayMsg) => {
+                if (!suppress) {
+                    this.playMessageTone(displayMsg);
+                    this.showNotification(displayMsg);
+                }
+            });
         }
     }
 
@@ -790,7 +1836,7 @@ class CommunicationSystem {
 
     async markMessagesAsRead(senderId) {
         try {
-            await fetch('/api/communication/mark_read', {
+            const resp = await fetch('/api/communication/mark_read', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -800,6 +1846,28 @@ class CommunicationSystem {
                     sender_id: senderId
                 })
             });
+
+            if (resp && resp.ok) {
+                // Clear per-user unread badge in the sidebar (best-effort)
+                try {
+                    const userItem = document.querySelector(`.user-item[data-user-id="${senderId}"]`);
+                    const badge = userItem ? userItem.querySelector('.unread-badge') : null;
+                    if (badge) badge.remove();
+                } catch (_) {
+                    // no-op
+                }
+
+                // Update cached user state
+                try {
+                    const cached = this._usersCache.get(Number(senderId));
+                    if (cached) cached.unread_count = 0;
+                } catch (_) {
+                    // no-op
+                }
+
+                // Refresh float icon badge
+                this.updateFloatIconBadge().catch(() => {});
+            }
         } catch (error) {
             console.error('Error marking messages as read:', error);
         }
@@ -973,7 +2041,15 @@ class CommunicationSystem {
         const preview = document.getElementById('reply-preview');
         const text = document.getElementById('reply-preview-text');
         if (preview && text) {
-            text.textContent = (message.content || '').slice(0, 160);
+            const raw = (message && typeof message._raw_content === 'string') ? message._raw_content : message.content;
+            if (typeof raw === 'string' && this._tryParseE2E(raw)) {
+                text.textContent = '[Encrypted message]';
+                this.decryptIfNeeded(raw).then((pt) => {
+                    text.textContent = (pt || '[Encrypted message]').slice(0, 160);
+                });
+            } else {
+                text.textContent = (message.content || '').slice(0, 160);
+            }
             preview.style.display = 'flex';
         }
     }
@@ -991,20 +2067,24 @@ class CommunicationSystem {
         if (next === null) return;
 
         try {
+            const recipientId = msg.recipient_id;
+            const outgoingContent = recipientId ? await this.encryptForRecipient(recipientId, next) : next;
             const response = await fetch(`/api/communication/message/${messageId}/edit`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': this.getCSRFToken()
                 },
-                body: JSON.stringify({ content: next })
+                body: JSON.stringify({ content: outgoingContent })
             });
             const data = await response.json();
             if (!response.ok || !data.success) {
                 throw new Error(data.error || 'Failed to edit message');
             }
 
-            msg.content = data.message.content;
+            // Keep plaintext for UI; stash raw ciphertext separately.
+            msg._raw_content = data.message.content;
+            msg.content = await this.decryptIfNeeded(data.message.content);
             msg.is_edited = true;
             this._messageCache.set(messageId, msg);
             this.updateMessageElement(messageId);
@@ -1092,6 +2172,12 @@ class CommunicationSystem {
         const msg = this._messageCache.get(messageId);
         if (!el || !msg) return;
 
+        const rawContent = (typeof msg._raw_content === 'string') ? msg._raw_content : msg.content;
+        const isE2E = !!this._tryParseE2E(rawContent);
+        const contentHtml = msg.is_deleted
+            ? '<em class="text-muted">This message was deleted</em>'
+            : this.escapeHtml(isE2E ? '[Encrypted message]' : (rawContent || ''));
+
         // Re-render using the same logic as appendMessage
         const isSent = msg.sender_id === this.currentUserId;
         el.className = `message ${isSent ? 'sent' : 'received'}`;
@@ -1104,10 +2190,11 @@ class CommunicationSystem {
             else tickMarks = '<span class="message-ticks sent"><i class="bi bi-check"></i></span>';
         }
 
-        const deletedText = '<em class="text-muted">This message was deleted</em>';
+        const rawReply = (msg && msg.replied_to && typeof msg.replied_to.content === 'string') ? msg.replied_to.content : '';
+        const replyIsE2E = typeof rawReply === 'string' && this._tryParseE2E(rawReply);
         const repliedTo = msg.replied_to ? `
             <div class="message-reply-preview">
-                <div class="reply-snippet">${this.escapeHtml(msg.replied_to.content || '')}</div>
+                <div class="reply-snippet">${this.escapeHtml(replyIsE2E ? '[Encrypted message]' : (rawReply || ''))}</div>
             </div>
         ` : '';
 
@@ -1123,7 +2210,7 @@ class CommunicationSystem {
         el.innerHTML = `
             <div class="message-bubble">
                 ${repliedTo}
-                <div class="message-content">${msg.is_deleted ? deletedText : this.escapeHtml(msg.content)}</div>
+                <div class="message-content">${contentHtml}</div>
                 ${reactionsHtml}
                 <div class="message-time">
                     ${editedLabel}
@@ -1133,6 +2220,20 @@ class CommunicationSystem {
                 </div>
             </div>
         `;
+
+        if (isE2E && !msg.is_deleted) {
+            this.decryptIfNeeded(rawContent).then((pt) => {
+                const c = el.querySelector('.message-content');
+                if (c) c.innerHTML = this.escapeHtml(pt || '[Encrypted message]');
+            });
+        }
+
+        if (replyIsE2E && msg.replied_to) {
+            this.decryptIfNeeded(rawReply).then((pt) => {
+                const c = el.querySelector('.reply-snippet');
+                if (c) c.innerHTML = this.escapeHtml(pt || '[Encrypted message]');
+            });
+        }
 
         this.attachMessageInteractionHandlers(el);
     }
@@ -1155,7 +2256,7 @@ class CommunicationSystem {
 
             document.addEventListener('click', (e) => {
                 if (this._emojiPickerEl && this._emojiPickerEl.style.display === 'block') {
-                    if (!this._emojiPickerEl.contains(e.target) && e.target !== anchorEl) {
+                    if (!this._emojiPickerEl.contains(e.target) && !(anchorEl && anchorEl.contains(e.target))) {
                         this._emojiPickerEl.style.display = 'none';
                     }
                 }
@@ -1239,22 +2340,39 @@ class CommunicationSystem {
             '🀄','🕐','🕑','🕒','🕓','🕔','🕕','🕖','🕗','🕘','🕙','🕚','🕛','🕜','🕝','🕞','🕟','🕠','🕡','🕢',
             '🕣','🕤','🕥','🕦','🕧'
         ];
-        this._emojiPickerEl.innerHTML = `
-            <div class="emoji-grid">
-                ${emojis.map(e => `<span class="emoji-item" data-emoji="${this.escapeHtml(e)}">${this.escapeHtml(e)}</span>`).join('')}
-            </div>
-        `;
-        this._emojiPickerEl.querySelectorAll('.emoji-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                const emoji = e.currentTarget.getAttribute('data-emoji');
+
+        // Build the picker contents safely (avoid innerHTML).
+        if (this._emojiPickerEl.dataset.built !== '1') {
+            this._emojiPickerEl.textContent = '';
+            const grid = document.createElement('div');
+            grid.className = 'emoji-grid';
+            const frag = document.createDocumentFragment();
+
+            emojis.forEach((emoji) => {
+                const item = document.createElement('span');
+                item.className = 'emoji-item';
+                item.setAttribute('data-emoji', emoji);
+                item.textContent = emoji;
+                frag.appendChild(item);
+            });
+
+            grid.appendChild(frag);
+            this._emojiPickerEl.appendChild(grid);
+            this._emojiPickerEl.dataset.built = '1';
+
+            // Event delegation for performance (single handler).
+            this._emojiPickerEl.addEventListener('click', (e) => {
+                const target = e.target && e.target.closest ? e.target.closest('.emoji-item') : null;
+                if (!target) return;
+                const emoji = target.getAttribute('data-emoji') || target.textContent || '';
                 const input = document.getElementById('message-input');
-                if (input) {
+                if (input && emoji) {
                     input.value = `${input.value || ''}${emoji}`;
                     input.focus();
                 }
                 this._emojiPickerEl.style.display = 'none';
             });
-        });
+        }
 
         const rect = anchorEl.getBoundingClientRect();
         const left = Math.max(8, Math.min(rect.left, window.innerWidth - 280));
@@ -1296,6 +2414,14 @@ class CommunicationSystem {
             if (!response.ok || !data.success) {
                 throw new Error(data.error || 'Search failed');
             }
+
+            try {
+                if (Array.isArray(data.messages) && data.messages.length) {
+                    await Promise.all(data.messages.map(m => this.prepareMessageForDisplay(m)));
+                }
+            } catch (_) {
+                // no-op
+            }
             if (meta) {
                 meta.style.display = 'block';
                 meta.textContent = `${data.messages.length} result(s)`;
@@ -1312,12 +2438,12 @@ class CommunicationSystem {
             el.id = 'chat-settings-popover';
             el.style.position = 'fixed';
             el.style.zIndex = '10001';
-            el.style.minWidth = '220px';
+            el.style.minWidth = '170px';
             el.style.background = '#fff';
             el.style.border = '1px solid rgba(0,0,0,0.12)';
             el.style.borderRadius = '10px';
             el.style.boxShadow = '0 8px 24px rgba(0,0,0,0.18)';
-            el.style.padding = '10px';
+            el.style.padding = '8px';
             el.style.display = 'none';
             document.body.appendChild(el);
             this._chatSettingsEl = el;
@@ -1343,12 +2469,12 @@ class CommunicationSystem {
         const blockedByMe = !!user.blocked_by_me;
 
         this._chatSettingsEl.innerHTML = `
-            <div style="font-weight:600; font-size:13px; margin-bottom:8px;">Chat Settings</div>
+            <div style="font-weight:600; font-size:12px; margin-bottom:6px;">Chat Settings</div>
             <div style="display:flex; flex-direction:column; gap:6px;">
-                <button type="button" class="btn btn-sm btn-light text-start" data-setting="mute">${isMuted ? 'Unmute' : 'Mute'}</button>
-                <button type="button" class="btn btn-sm btn-light text-start" data-setting="pin">${isPinned ? 'Unpin' : 'Pin'}</button>
-                <button type="button" class="btn btn-sm btn-light text-start" data-setting="archive">${isArchived ? 'Unarchive' : 'Archive'}</button>
-                <button type="button" class="btn btn-sm btn-danger text-start" data-setting="block">${blockedByMe ? 'Unblock user' : 'Block user'}</button>
+                <button type="button" class="btn btn-sm btn-light text-start" style="padding:6px 8px; font-size:12px;" data-setting="mute">${isMuted ? 'Unmute' : 'Mute'}</button>
+                <button type="button" class="btn btn-sm btn-light text-start" style="padding:6px 8px; font-size:12px;" data-setting="pin">${isPinned ? 'Unpin' : 'Pin'}</button>
+                <button type="button" class="btn btn-sm btn-light text-start" style="padding:6px 8px; font-size:12px;" data-setting="archive">${isArchived ? 'Unarchive' : 'Archive'}</button>
+                <button type="button" class="btn btn-sm btn-danger text-start" style="padding:6px 8px; font-size:12px;" data-setting="block">${blockedByMe ? 'Unblock user' : 'Block user'}</button>
             </div>
         `;
 
@@ -1366,7 +2492,7 @@ class CommunicationSystem {
         });
 
         const rect = anchorEl.getBoundingClientRect();
-        const left = Math.max(8, Math.min(rect.left - 160, window.innerWidth - 260));
+        const left = Math.max(8, Math.min(rect.left - 120, window.innerWidth - 220));
         const top = Math.max(8, rect.bottom + 8);
         this._chatSettingsEl.style.left = `${left}px`;
         this._chatSettingsEl.style.top = `${top}px`;
@@ -1518,10 +2644,34 @@ class CommunicationSystem {
             // Show call UI (waiting for answer)
             this.showCallUI(type, 'outgoing');
             this.playOutgoingTone();
+            this.startOutgoingCallTimeout();
             
         } catch (error) {
             console.error('Error initiating call:', error);
+            this.clearOutgoingCallTimeout();
             this.showError('Failed to initiate call. Please check your media permissions.');
+        }
+    }
+
+    startOutgoingCallTimeout() {
+        this.clearOutgoingCallTimeout();
+        // Auto-end unanswered outgoing calls (marks as missed on server).
+        this._callRingTimeout = setTimeout(() => {
+            try {
+                if (this._callRole !== 'caller' || !this.callId) return;
+                // If still waiting, end as timeout/missed.
+                this.endCall('timeout');
+                this.showError('No answer (missed call).');
+            } catch (_) {
+                // no-op
+            }
+        }, 35000);
+    }
+
+    clearOutgoingCallTimeout() {
+        if (this._callRingTimeout) {
+            clearTimeout(this._callRingTimeout);
+            this._callRingTimeout = null;
         }
     }
 
@@ -1550,14 +2700,61 @@ class CommunicationSystem {
             document.getElementById('incoming-call-type').textContent = 
                 `Incoming ${data.call_type === 'video' ? 'Video' : 'Voice'} Call`;
         }
+
+        // Render avatar (best-effort)
+        try {
+            const avatarBox = document.querySelector('#incoming-call .caller-avatar');
+            if (avatarBox) {
+                const picUrl = this._profilePicUrl(data && data.caller_profile_picture);
+                avatarBox.innerHTML = picUrl
+                    ? `<img src="${this.escapeHtml(picUrl)}" alt="" style="width:96px;height:96px;border-radius:50%;object-fit:cover;">`
+                    : '<i class="bi bi-person-circle display-1"></i>';
+            }
+        } catch (_) {
+            // no-op
+        }
         
         // Play ringtone (optional)
         this.playRingtone();
+
+        // OS notification (best-effort; requires Notification permission).
+        this.showIncomingCallNotification(data);
+    }
+
+    showIncomingCallNotification(data) {
+        try {
+            const s = this.getCommSettings();
+            if (!s.notifications_enabled) return;
+            if (!('Notification' in window) || Notification.permission !== 'granted') return;
+            const callerName = (data && data.caller_name) ? String(data.caller_name) : 'Unknown';
+            const callType = (data && data.call_type) ? String(data.call_type) : 'voice';
+            const title = `Incoming ${callType === 'video' ? 'Video' : 'Voice'} Call`;
+            const notification = new Notification(title, {
+                body: `From ${callerName}`,
+                icon: '/static/images/icon-192.png',
+                badge: '/static/images/icon-192.png'
+            });
+            notification.onclick = () => {
+                try {
+                    window.focus();
+                    // Ensure call modal is visible
+                    const callModal = document.getElementById('call-modal');
+                    const incomingCall = document.getElementById('incoming-call');
+                    if (callModal) callModal.style.display = 'flex';
+                    if (incomingCall) incomingCall.style.display = 'block';
+                } catch (_) {
+                    // no-op
+                }
+            };
+        } catch (_) {
+            // no-op
+        }
     }
 
     async acceptCall() {
         try {
             this.stopAllTones();
+            this.clearOutgoingCallTimeout();
             // Request media permissions
             const constraints = {
                 audio: true,
@@ -1599,6 +2796,7 @@ class CommunicationSystem {
     async rejectCall() {
         try {
             this.stopAllTones();
+            this.clearOutgoingCallTimeout();
             await fetch('/api/communication/reject_call', {
                 method: 'POST',
                 headers: {
@@ -1623,9 +2821,10 @@ class CommunicationSystem {
         }
     }
 
-    async endCall() {
+    async endCall(reason) {
         try {
             this.stopAllTones();
+            this.clearOutgoingCallTimeout();
             await fetch('/api/communication/end_call', {
                 method: 'POST',
                 headers: {
@@ -1633,7 +2832,8 @@ class CommunicationSystem {
                     'X-CSRFToken': this.getCSRFToken()
                 },
                 body: JSON.stringify({
-                    call_id: this.callId
+                    call_id: this.callId,
+                    reason: reason || ''
                 })
             });
             
@@ -1651,6 +2851,7 @@ class CommunicationSystem {
 
     handleCallAccepted(data) {
         this.stopAllTones();
+        this.clearOutgoingCallTimeout();
         // Caller starts WebRTC offer after callee accepts
         this.startCallerWebRTC();
         this.showCallUI(this.callType, 'active');
@@ -1658,12 +2859,26 @@ class CommunicationSystem {
 
     handleCallRejected(data) {
         this.stopAllTones();
+        this.clearOutgoingCallTimeout();
         this.showError('Call was rejected');
         this.cleanupCall();
     }
 
     handleCallEnded(data) {
         this.stopAllTones();
+        this.clearOutgoingCallTimeout();
+        this.cleanupCall();
+    }
+
+    handleCallFailed(data) {
+        this.stopAllTones();
+        this.clearOutgoingCallTimeout();
+        const reason = (data && data.reason) ? String(data.reason) : 'failed';
+        if (reason === 'offline') {
+            this.showError('User is offline. Call failed.');
+        } else {
+            this.showError('Call failed.');
+        }
         this.cleanupCall();
     }
 
@@ -1707,8 +2922,25 @@ class CommunicationSystem {
         this.peerConnection.ontrack = (event) => {
             if (event.streams && event.streams[0]) {
                 this.remoteStream = event.streams[0];
+                const ct = String(this.callType || '').toLowerCase();
                 const remoteVideo = document.getElementById('remote-video');
-                if (remoteVideo) remoteVideo.srcObject = this.remoteStream;
+                if (remoteVideo) {
+                    remoteVideo.srcObject = this.remoteStream;
+                    try { remoteVideo.muted = (ct === 'voice'); } catch (_) {}
+                    try { remoteVideo.play && remoteVideo.play().catch(() => {}); } catch (_) {}
+                }
+
+                // For voice calls, keep a dedicated audio element so audio isn't lost when the video UI is hidden.
+                const remoteAudio = document.getElementById('remote-audio');
+                if (remoteAudio) {
+                    if (ct === 'voice') {
+                        remoteAudio.srcObject = this.remoteStream;
+                        try { remoteAudio.play && remoteAudio.play().catch(() => {}); } catch (_) {}
+                    } else {
+                        try { remoteAudio.pause && remoteAudio.pause(); } catch (_) {}
+                        try { remoteAudio.srcObject = null; } catch (_) {}
+                    }
+                }
             }
         };
 
@@ -1809,6 +3041,19 @@ class CommunicationSystem {
             const outgoingStatus = document.getElementById('outgoing-call-status');
             if (calleeName) calleeName.textContent = this.currentUser?.username || 'User';
             if (outgoingStatus) outgoingStatus.textContent = type === 'video' ? 'Calling (video)...' : 'Calling...';
+
+            // Render callee avatar (best-effort)
+            try {
+                const avatarBox = document.querySelector('#outgoing-call .caller-avatar');
+                if (avatarBox) {
+                    const picUrl = this._profilePicUrl(this.currentUser && this.currentUser.profile_picture);
+                    avatarBox.innerHTML = picUrl
+                        ? `<img src="${this.escapeHtml(picUrl)}" alt="" style="width:96px;height:96px;border-radius:50%;object-fit:cover;">`
+                        : '<i class="bi bi-person-circle display-1"></i>';
+                }
+            } catch (_) {
+                // no-op
+            }
             return;
         }
 
@@ -1832,6 +3077,19 @@ class CommunicationSystem {
                 
                 document.getElementById('active-caller-name').textContent = 
                     this.currentUser?.username || 'Unknown';
+
+                // Best-effort avatar for voice calls
+                try {
+                    const avatarBox = voiceCallDisplay ? voiceCallDisplay.querySelector('.caller-avatar') : null;
+                    if (avatarBox) {
+                        const picUrl = this._profilePicUrl(this.currentUser && this.currentUser.profile_picture);
+                        avatarBox.innerHTML = picUrl
+                            ? `<img src="${this.escapeHtml(picUrl)}" alt="" style="width:96px;height:96px;border-radius:50%;object-fit:cover;">`
+                            : '<i class="bi bi-person-circle display-1"></i>';
+                    }
+                } catch (_) {
+                    // no-op
+                }
             }
             
             // Start call duration timer
@@ -1933,17 +3191,95 @@ class CommunicationSystem {
         this.isVideoEnabled = true;
     }
 
-    playRingtone() {
+    _playToneSequence(steps, baseGain) {
+        if (!this._audioContext) return;
+        try {
+            let t = this._audioContext.currentTime;
+            (steps || []).forEach((step) => {
+                const freq = Number(step.frequency || 440);
+                const durationMs = Math.max(30, Number(step.durationMs || 120));
+                const gapMs = Math.max(0, Number(step.gapMs || 0));
+                const gain = (typeof step.gain === 'number') ? step.gain : baseGain;
+
+                const osc = this._audioContext.createOscillator();
+                const g = this._audioContext.createGain();
+
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, t);
+
+                // Small envelope to reduce clicks
+                const start = t;
+                const end = t + durationMs / 1000;
+                const safeGain = Math.max(0.0001, Number(gain || 0.06));
+                g.gain.setValueAtTime(0.0001, start);
+                g.gain.exponentialRampToValueAtTime(safeGain, Math.min(end, start + 0.01));
+                g.gain.exponentialRampToValueAtTime(0.0001, end);
+
+                osc.connect(g);
+                g.connect(this._audioContext.destination);
+
+                osc.start(start);
+                osc.stop(end + 0.02);
+
+                t += (durationMs + gapMs) / 1000;
+            });
+        } catch (_) {
+            // no-op
+        }
+    }
+
+    playMessageTone(_message, opts = {}) {
+        const s = this.getCommSettings();
+        const force = !!opts.force;
+        if (!force && !s.sounds_enabled) return;
+        if (this.callId) return; // don't interrupt calls
+
+        const toneId = String(opts.toneId || s.message_tone || 'chime');
+        if (!toneId || toneId === 'none') return;
+
+        if (toneId === 'pop') {
+            this._playToneSequence([
+                { frequency: 740, durationMs: 70, gapMs: 0 }
+            ], 0.06);
+            return;
+        }
+
+        if (toneId === 'beep') {
+            this._playToneSequence([
+                { frequency: 520, durationMs: 65, gapMs: 40 },
+                { frequency: 520, durationMs: 65, gapMs: 0 }
+            ], 0.05);
+            return;
+        }
+
+        // Default: chime
+        this._playToneSequence([
+            { frequency: 880, durationMs: 85, gapMs: 55 },
+            { frequency: 1320, durationMs: 120, gapMs: 0 }
+        ], 0.055);
+    }
+
+    playRingtone(opts = {}) {
+        const s = this.getCommSettings();
+        const force = !!opts.force;
+        if (!force && !s.sounds_enabled) return;
+
+        const ringtoneId = String(opts.ringtoneId || s.call_ringtone || 'classic');
+        if (!ringtoneId || ringtoneId === 'none') return;
+
+        const patterns = {
+            classic: { frequency: 440, onMs: 700, offMs: 1300, gain: 0.08 },
+            fast: { frequency: 520, onMs: 350, offMs: 550, gain: 0.07 },
+            slow: { frequency: 392, onMs: 900, offMs: 1700, gain: 0.08 }
+        };
+
         this.stopAllTones();
-        this._toneStopFn = this.startBeepPattern({
-            frequency: 440,
-            onMs: 700,
-            offMs: 1300,
-            gain: 0.08
-        });
+        this._toneStopFn = this.startBeepPattern(patterns[ringtoneId] || patterns.classic);
     }
 
     playOutgoingTone() {
+        const s = this.getCommSettings();
+        if (!s.sounds_enabled) return;
         this.stopAllTones();
         this._toneStopFn = this.startBeepPattern({
             frequency: 480,
@@ -2025,23 +3361,49 @@ class CommunicationSystem {
     }
 
     showNotification(message) {
-        if ('Notification' in window && Notification.permission === 'granted') {
-            const notification = new Notification('New Message', {
-                body: message.content,
-                icon: '/static/images/icon-192.png',
-                badge: '/static/images/icon-192.png'
-            });
-            
-            notification.onclick = () => {
-                window.focus();
-                this.toggleCommunicationModal();
-                // Open chat with sender
-                const userItem = document.querySelector(`.user-item[data-user-id="${message.sender_id}"]`);
-                if (userItem) {
-                    userItem.click();
+        const s = this.getCommSettings();
+        if (!s.notifications_enabled) return;
+
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+        const senderId = message ? Number(message.sender_id) : null;
+        const cached = senderId ? this._usersCache.get(senderId) : null;
+        const senderName = cached && cached.username ? String(cached.username) : '';
+
+        const body = (message && message._was_e2e)
+            ? '[Encrypted message]'
+            : (message && message.content ? String(message.content) : '');
+
+        const title = senderName ? `New message from ${senderName}` : 'New Message';
+        const notification = new Notification(title, {
+            body: body.length > 160 ? body.slice(0, 157) + '...' : body,
+            icon: '/static/images/icon-192.png',
+            badge: '/static/images/icon-192.png'
+        });
+
+        notification.onclick = () => {
+            try { window.focus(); } catch (_) {}
+
+            // Ensure the communication modal is visible (do not toggle closed).
+            try {
+                const modal = document.getElementById('communication-modal');
+                if (modal) {
+                    modal.style.display = 'flex';
+                    modal.classList.remove('minimized');
                 }
+            } catch (_) {}
+
+            // Open chat with sender (best-effort)
+            const openSender = () => {
+                const userItem = document.querySelector(`.user-item[data-user-id="${senderId}"]`);
+                if (userItem) userItem.click();
             };
-        }
+
+            openSender();
+            if (senderId && !document.querySelector(`.user-item[data-user-id="${senderId}"]`)) {
+                this.loadUsers().then(() => openSender()).catch(() => {});
+            }
+        };
     }
 
     showError(message) {
@@ -2066,14 +3428,64 @@ class CommunicationSystem {
         return meta ? meta.content : '';
     }
 
+    _normalizeIsoForJs(dateString) {
+        // Normalize common Python/SQL formats into an ISO string JS Date can parse reliably.
+        // - Converts space to 'T'
+        // - Truncates microseconds to milliseconds
+        // - If no timezone info is present, assumes EAT (+03:00)
+        if (typeof dateString !== 'string') return '';
+        let s = dateString.trim();
+        if (!s) return '';
+
+        if (s.includes(' ') && !s.includes('T')) {
+            s = s.replace(' ', 'T');
+        }
+
+        // Truncate fractional seconds to milliseconds (JS Date precision)
+        s = s.replace(/\.(\d{3})\d+(?=(Z|[+-]\d{2}:?\d{2})?$)/, '.$1');
+
+        const hasTz = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+        const looksLikeIso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(s);
+        if (!hasTz && looksLikeIso) {
+            s = `${s}+03:00`;
+        }
+
+        return s;
+    }
+
+    _parseServerDate(value) {
+        if (!value) return null;
+        if (value instanceof Date) return value;
+
+        if (typeof value === 'number') return new Date(value);
+
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (!trimmed) return null;
+            if (/^\d+$/.test(trimmed)) {
+                return new Date(parseInt(trimmed, 10));
+            }
+            const normalized = this._normalizeIsoForJs(trimmed);
+            const d = new Date(normalized || trimmed);
+            return isNaN(d.getTime()) ? null : d;
+        }
+
+        try {
+            const d = new Date(value);
+            return isNaN(d.getTime()) ? null : d;
+        } catch (_) {
+            return null;
+        }
+    }
+
     formatTimeEAT(dateString) {
         /**
          * Format time to EAT (East Africa Time) timezone
          * Converts ISO timestamp to EAT and displays in 24-hour HH:MM format
          */
         try {
-            // Parse the ISO string to Date object
-            const date = new Date(dateString);
+            const date = this._parseServerDate(dateString);
+            if (!date) return '';
             
             // Get time in EAT timezone using Intl.DateTimeFormat
             const eatTime = new Intl.DateTimeFormat('en-GB', {
@@ -2087,7 +3499,7 @@ class CommunicationSystem {
         } catch (error) {
             console.error('Error formatting time:', error);
             // Fallback to local time if timezone conversion fails
-            const date = new Date(dateString);
+            const date = this._parseServerDate(dateString) || new Date();
             const hours = date.getHours().toString().padStart(2, '0');
             const minutes = date.getMinutes().toString().padStart(2, '0');
             return `${hours}:${minutes}`;
@@ -2100,7 +3512,8 @@ class CommunicationSystem {
          * Used for detailed timestamps
          */
         try {
-            const date = new Date(dateString);
+            const date = this._parseServerDate(dateString);
+            if (!date) return '';
             
             return date.toLocaleString('en-US', {
                 timeZone: this.eatTimezone,
@@ -2113,7 +3526,8 @@ class CommunicationSystem {
             });
         } catch (error) {
             console.error('Error formatting datetime:', error);
-            return new Date(dateString).toLocaleString();
+            const d = this._parseServerDate(dateString);
+            return d ? d.toLocaleString() : '';
         }
     }
 

@@ -469,6 +469,23 @@ document.addEventListener('DOMContentLoaded', function() {
     const endDateInput = document.getElementById('endDate');
     const granularitySelect = document.getElementById('granularitySelect');
 
+    function esc(value) {
+        return String(value ?? '').replace(/[&<>"]/g, (c) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+        }[c] || c));
+    }
+
+    function safeHref(url) {
+        const raw = String(url ?? '').trim();
+        if (!raw) return '#';
+        // Allow same-site relative links only.
+        if (raw.startsWith('/')) return raw;
+        return '#';
+    }
+
     function startOfLocalDay(date) {
         return new Date(date.getFullYear(), date.getMonth(), date.getDate());
     }
@@ -803,8 +820,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     dataTableBody.innerHTML += `
                         <tr>
                             <td><span class="badge bg-primary">${idx + 1}</span></td>
-                            <td><strong>${item.name}</strong></td>
-                            <td style="text-align: center;"><span class="badge bg-info">${item.units_sold}</span></td>
+                            <td><strong>${esc(item.name)}</strong></td>
+                            <td style="text-align: center;"><span class="badge bg-info">${Number(item.units_sold || 0)}</span></td>
                             <td style="text-align: right;">Ksh.${item.total_sales.toFixed(2)}</td>
                             <td style="text-align: right;"><strong style="color: #198754;">Ksh.${item.profit.toFixed(2)}</strong></td>
                         </tr>
@@ -841,8 +858,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     dataTableBody.innerHTML += `
                         <tr>
                             <td><span class="badge bg-primary">${idx + 1}</span></td>
-                            <td><strong>${item.patient_name || 'Unknown'}</strong></td>
-                            <td>${testsSummary}</td>
+                            <td><strong>${esc(item.patient_name || 'Unknown')}</strong></td>
+                            <td>${tests.length ? tests.map(t => `${esc(t.test_name)} ×${Number(t.count || 0)} (Ksh.${Number(t.amount || 0).toFixed(2)})`).join('<br>') : testsSummary}</td>
                             <td style="text-align: center;"><span class="badge bg-info">${item.total_count || 0}</span></td>
                             <td style="text-align: right;"><strong style="color: #198754;">Ksh.${Number(item.total_revenue || 0).toFixed(2)}</strong></td>
                         </tr>
@@ -876,8 +893,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     dataTableBody.innerHTML += `
                         <tr>
                             <td><span class="badge bg-primary">${idx + 1}</span></td>
-                            <td><span class="badge ${badge}">${category}</span></td>
-                            <td><strong>${item.name || ''}</strong></td>
+                            <td><span class="badge ${badge}">${esc(category)}</span></td>
+                            <td><strong>${esc(item.name || '')}</strong></td>
                             <td style="text-align: center;"><span class="badge bg-info">${item.units || 0}</span></td>
                             <td style="text-align: right;"><strong style="color: #198754;">Ksh.${Number(item.total_revenue || 0).toFixed(2)}</strong></td>
                         </tr>
@@ -911,21 +928,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 data.data.forEach((s, idx) => {
                     const name = (s.customer_name || s.patient_name || '').trim() || 'Unknown';
-                    const receiptUrl = s.receipt_url || '#';
+                    const receiptUrl = safeHref(s.receipt_url || '#');
                     const imgPath = s.prescription_image_path || '';
-                    const imgUrl = imgPath ? `/${imgPath}` : '';
+                    const imgUrl = imgPath ? safeHref(`/${String(imgPath).replace(/^\/+/, '')}`) : '';
                     const links = `
-                        <a class="btn btn-sm btn-outline-primary" href="${receiptUrl}" target="_blank">Receipt</a>
-                        ${imgUrl ? `<a class="btn btn-sm btn-outline-secondary" href="${imgUrl}" target="_blank">Prescription</a>` : ''}
+                        <a class="btn btn-sm btn-outline-primary" href="${receiptUrl}" target="_blank" rel="noopener noreferrer">Receipt</a>
+                        ${imgUrl ? `<a class="btn btn-sm btn-outline-secondary" href="${imgUrl}" target="_blank" rel="noopener noreferrer">Prescription</a>` : ''}
                     `;
 
                     dataTableBody.innerHTML += `
                         <tr>
                             <td><span class="badge bg-primary">${idx + 1}</span></td>
-                            <td><strong>${s.sale_number || ''}</strong></td>
-                            <td>${s.created_at || ''}</td>
-                            <td>${name}</td>
-                            <td>${s.drug_name || ''}</td>
+                            <td><strong>${esc(s.sale_number || '')}</strong></td>
+                            <td>${esc(s.created_at || '')}</td>
+                            <td>${esc(name)}</td>
+                            <td>${esc(s.drug_name || '')}</td>
                             <td style="text-align: center;"><span class="badge bg-info">${Number(s.quantity || 0)}</span></td>
                             <td style="text-align: right;">Ksh.${Number(s.unit_price || 0).toFixed(2)}</td>
                             <td style="text-align: right;"><strong style="color:#198754;">Ksh.${Number(s.line_total || 0).toFixed(2)}</strong></td>
@@ -1013,7 +1030,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const breakdownTitle = document.getElementById('periodBreakdownTitle');
         if (breakdownTitle) {
             // Keep the wording strict for the requested behavior
-            breakdownTitle.innerHTML = `<i class="fas fa-calendar-alt"></i> ${reportName} — ${effectiveName(effective)} Breakdown`;
+            breakdownTitle.innerHTML = `<i class="fas fa-calendar-alt"></i> ${esc(reportName)} — ${esc(effectiveName(effective))} Breakdown`;
         }
 
         const periodTh = document.getElementById('periodBreakdownPeriodLabel');
@@ -1047,12 +1064,12 @@ document.addEventListener('DOMContentLoaded', function() {
         // Receipts/Expenses titles include selected period granularity context
         const receiptsTitle = document.getElementById('periodReceiptsTitle');
         if (receiptsTitle) {
-            receiptsTitle.innerHTML = `<i class="fas fa-receipt"></i> ${reportName} Receipts (Selected Period: ${selected || 'daily'})`;
+            receiptsTitle.innerHTML = `<i class="fas fa-receipt"></i> ${esc(reportName)} Receipts (Selected Period: ${esc(selected || 'daily')})`;
         }
 
         const expensesTitle = document.getElementById('periodExpensesTitle');
         if (expensesTitle) {
-            expensesTitle.innerHTML = `<i class="fas fa-file-invoice-dollar"></i> Expenses (Selected Period: ${selected || 'daily'})`;
+            expensesTitle.innerHTML = `<i class="fas fa-file-invoice-dollar"></i> Expenses (Selected Period: ${esc(selected || 'daily')})`;
         }
 
         // Receipts table header labels
@@ -1100,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const profit = Number(top.profits?.[idx] || 0);
                 summaryBody.innerHTML += `
                     <tr>
-                        <td>${label}</td>
+                        <td>${esc(label)}</td>
                         <td style="text-align:right;">Ksh.${sales.toFixed(2)}</td>
                         <td style="text-align:right;">${pct.toFixed(2)}%</td>
                         <td style="text-align:right;"><strong style="color:#198754;">Ksh.${profit.toFixed(2)}</strong></td>
@@ -1198,7 +1215,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const u = Number(units[idx] || 0);
             body.innerHTML += `
                 <tr>
-                    <td><strong>${lbl}</strong></td>
+                    <td><strong>${esc(lbl)}</strong></td>
                     <td style="text-align:right;">Ksh.${a.toFixed(2)}</td>
                     <td style="text-align:right;">${u}</td>
                 </tr>
@@ -1223,15 +1240,18 @@ document.addEventListener('DOMContentLoaded', function() {
             const amount = Number(r.total_amount || 0);
             const pm = r.payment_method || '';
             const url = r.receipt_url || '';
-            const linkHtml = url ? `<a class="btn btn-sm btn-outline-primary" href="${url}" target="_blank">Receipt</a>` : '<span class="text-muted">—</span>';
+            const safeUrl = safeHref(url);
+            const linkHtml = (safeUrl && safeUrl !== '#')
+                ? `<a class="btn btn-sm btn-outline-primary" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Receipt</a>`
+                : '<span class="text-muted">—</span>';
 
             body.innerHTML += `
                 <tr>
-                    <td>${when}</td>
-                    <td><strong>${ref}</strong></td>
-                    <td>${name}</td>
+                    <td>${esc(when)}</td>
+                    <td><strong>${esc(ref)}</strong></td>
+                    <td>${esc(name)}</td>
                     <td style="text-align:right;"><strong style="color:#198754;">Ksh.${amount.toFixed(2)}</strong></td>
-                    <td>${pm}</td>
+                    <td>${esc(pm)}</td>
                     <td>${linkHtml}</td>
                 </tr>
             `;
@@ -1260,12 +1280,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             body.innerHTML += `
                 <tr>
-                    <td>${when}</td>
-                    <td><strong>${no}</strong></td>
-                    <td>${type}</td>
-                    <td>${desc}</td>
+                    <td>${esc(when)}</td>
+                    <td><strong>${esc(no)}</strong></td>
+                    <td>${esc(type)}</td>
+                    <td>${esc(desc)}</td>
                     <td style="text-align:right;"><strong style="color:#dc3545;">Ksh.${amount.toFixed(2)}</strong></td>
-                    <td>${status}</td>
+                    <td>${esc(status)}</td>
                 </tr>
             `;
         });
@@ -2209,21 +2229,44 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateStatBoxes(data) {
-        const patientPct = data.charts.patient_percentage || 0;
-        const counterPct = data.charts.overcounter_percentage || 0;
+        const patientPct = Number(data?.charts?.patient_percentage || 0);
+        const counterPct = Number(data?.charts?.overcounter_percentage || 0);
         
         document.getElementById('patientSalesValue').textContent = `Ksh.${(data.charts.patient_sales || 0).toFixed(2)}`;
-        document.getElementById('patientUnitsValue').innerHTML = `${data.charts.patient_units || 0} units <span style="color: #667eea; font-weight: bold;">(${patientPct}%)</span>`;
+        (function setUnitsWithPct(elId, unitsValue, pctValue, style) {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            const units = Number(unitsValue || 0);
+            const pct = Number(pctValue || 0);
+            el.textContent = '';
+            el.appendChild(document.createTextNode(`${units} units `));
+            const span = document.createElement('span');
+            span.setAttribute('style', style);
+            span.textContent = `(${pct}%)`;
+            el.appendChild(span);
+        })('patientUnitsValue', data?.charts?.patient_units, patientPct, 'color: #667eea; font-weight: bold;');
         document.getElementById('overthecounterSalesValue').textContent = `Ksh.${(data.charts.overcounter_sales || 0).toFixed(2)}`;
-        document.getElementById('overthecounterUnitsValue').innerHTML = `${data.charts.overcounter_units || 0} units <span style="color: #f77f00; font-weight: bold;">(${counterPct}%)</span>`;
+        (function setUnitsWithPct(elId, unitsValue, pctValue, style) {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            const units = Number(unitsValue || 0);
+            const pct = Number(pctValue || 0);
+            el.textContent = '';
+            el.appendChild(document.createTextNode(`${units} units `));
+            const span = document.createElement('span');
+            span.setAttribute('style', style);
+            span.textContent = `(${pct}%)`;
+            el.appendChild(span);
+        })('overthecounterUnitsValue', data?.charts?.overcounter_units, counterPct, 'color: #f77f00; font-weight: bold;');
     }
     
     function showError(message) {
         document.getElementById('reportResults').style.display = 'block';
         document.getElementById('reportDisplay').style.display = 'none';
+        const safeMsg = esc(message);
         document.getElementById('reportResults').innerHTML = `
             <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <i class="fas fa-exclamation-circle"></i> <strong>Error:</strong> ${message}
+                <i class="fas fa-exclamation-circle"></i> <strong>Error:</strong> ${safeMsg}
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
         `;

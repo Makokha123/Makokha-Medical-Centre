@@ -286,13 +286,16 @@ $(document).ready(function () {
     const transactionId = $(this).data('id');
     $.get(`/admin/transactions/${transactionId}`, function (data) {
       $('#view_transaction_id').text(data.transaction_number);
-      $('#view_transaction_type').html(`
-        <span class="badge ${data.transaction_type === 'sale' ? 'badge-success' :
-          data.transaction_type === 'refund' ? 'badge-danger' :
-            data.transaction_type === 'expense' ? 'badge-warning' : 'badge-info'}">
-          ${data.transaction_type.charAt(0).toUpperCase() + data.transaction_type.slice(1)}
-        </span>
-      `);
+      (function renderTypeBadge() {
+        const raw = String((data && data.transaction_type) || '').toLowerCase();
+        const badgeClass = raw === 'sale' ? 'badge-success'
+          : raw === 'refund' ? 'badge-danger'
+          : raw === 'expense' ? 'badge-warning'
+          : 'badge-info';
+        const label = raw ? (raw.charAt(0).toUpperCase() + raw.slice(1)) : 'Unknown';
+        const $badge = $('<span>', { class: `badge ${badgeClass}` }).text(label);
+        $('#view_transaction_type').empty().append($badge);
+      })();
       $('#view_amount').text(formatKsh(data.amount));
       $('#view_created_at').text(new Date(data.created_at).toLocaleString());
       $('#view_user_name').text(data.user.username);

@@ -1,5 +1,6 @@
 import os
 from typing import List, Optional, Sequence, Tuple
+from datetime import timedelta
 
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet, InvalidToken
@@ -81,6 +82,14 @@ class Config:
     REMEMBER_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = _get_env("SESSION_COOKIE_SAMESITE", "Lax")
     PREFERRED_URL_SCHEME = _get_env("PREFERRED_URL_SCHEME", "https")
+    
+    # Session timeout and security
+    # Default session lifetime: 12 hours for regular users
+    PERMANENT_SESSION_LIFETIME = timedelta(hours=_parse_int(_get_env("SESSION_LIFETIME_HOURS", "12"), 12))
+    # Session refresh threshold: refresh session if less than 1 hour remaining (prevents session expiry during active use)
+    SESSION_REFRESH_THRESHOLD = timedelta(minutes=_parse_int(_get_env("SESSION_REFRESH_MINUTES", "60"), 60))
+    # Absolute session timeout: maximum 24 hours regardless of activity
+    SESSION_ABSOLUTE_TIMEOUT = timedelta(hours=_parse_int(_get_env("SESSION_ABSOLUTE_HOURS", "24"), 24))
 
     # In production, SECRET_KEY and SECURITY_PASSWORD_SALT must be provided. For development, fall back to ephemeral keys with warnings.
     SECRET_KEY = _get_env("SECRET_KEY")
@@ -208,6 +217,13 @@ class Config:
         """
         if not data or not isinstance(data, str):
             return ""
+        # Feature flag: Database encryption at rest.
+        # When disabled, keep values as plaintext for new writes (reads remain compatible).
+        try:
+            if current_app.config.get("DB_ENCRYPTION_AT_REST_ENABLED") is False:
+                return data
+        except Exception:
+            pass
         if not cls.fernet:
             raise RuntimeError("Fernet not initialized. Call Config.init_fernet(app) at startup.")
         try:
@@ -224,15 +240,23 @@ class Config:
         """
         if not encrypted_data or not isinstance(encrypted_data, str):
             return ""
+        s = encrypted_data.strip()
+        if not s:
+            return ""
+        # Backward/forward compatibility: if a value does not look like a Fernet token,
+        # treat it as plaintext. This supports mixed datasets when encryption-at-rest is
+        # toggled off for new writes.
+        if not s.startswith("gAAAA"):
+            return encrypted_data
         if not cls.fernet:
             raise RuntimeError("Fernet not initialized. Call Config.init_fernet(app) at startup.")
         try:
-            return cls.fernet.decrypt(encrypted_data.encode()).decode()
+            return cls.fernet.decrypt(s.encode()).decode()
         except InvalidToken:
             # Try legacy keys (if any), decryption-only
             for f in cls.legacy_fernets:
                 try:
-                    return f.decrypt(encrypted_data.encode()).decode()
+                    return f.decrypt(s.encode()).decode()
                 except Exception:
                     continue
             current_app.logger.error("Decryption failed: Invalid token for current and legacy keys.")

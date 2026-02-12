@@ -195,6 +195,20 @@
     <script>
     $(document).ready(function() {
         let currentPrescriptionId = null;
+
+        function esc(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function safeToastType(type) {
+            const allowed = new Set(['primary', 'secondary', 'success', 'danger', 'warning', 'info', 'light', 'dark']);
+            return allowed.has(type) ? type : 'secondary';
+        }
         
         // Sample data for demonstration (replace with actual API calls)
         const samplePrescriptions = [
@@ -292,12 +306,20 @@
                 let html = '';
                 if (samplePrescriptions && samplePrescriptions.length > 0) {
                     samplePrescriptions.forEach(prescription => {
+                        const pidStr = String(prescription.id ?? '');
+                        const pidPadded = /^\d+$/.test(pidStr) ? pidStr.padStart(4, '0') : pidStr;
+                        const patientName = esc(prescription.patient_name);
+                        const patientNumber = esc(prescription.patient_number);
+                        const doctorName = esc(prescription.doctor_name);
+                        const createdAt = esc(prescription.created_at);
+                        const itemsCount = Number.isFinite(Number(prescription.items_count)) ? Number(prescription.items_count) : 0;
+
                         const statusBadge = prescription.status === 'pending' ? 
                             '<span class="badge bg-warning">Pending</span>' : 
                             '<span class="badge bg-success">Dispensed</span>';
                         
                         const actionBtn = prescription.status === 'pending' ?
-                            `<button class="btn btn-sm btn-primary view-prescription" data-id="${prescription.id}">
+                            `<button class="btn btn-sm btn-primary view-prescription" data-id="${esc(pidStr)}">
                                 <i class="fas fa-eye me-1"></i> View
                             </button>` :
                             `<button class="btn btn-sm btn-secondary" disabled>
@@ -306,11 +328,11 @@
                         
                         html += `
                             <tr>
-                                <td>PR-${prescription.id.toString().padStart(4, '0')}</td>
-                                <td>${prescription.patient_name} (${prescription.patient_number})</td>
-                                <td>Dr. ${prescription.doctor_name}</td>
-                                <td>${prescription.created_at}</td>
-                                <td>${prescription.items_count}</td>
+                                <td>PR-${esc(pidPadded)}</td>
+                                <td>${patientName} (${patientNumber})</td>
+                                <td>Dr. ${doctorName}</td>
+                                <td>${createdAt}</td>
+                                <td>${itemsCount}</td>
                                 <td>${statusBadge}</td>
                                 <td>${actionBtn}</td>
                             </tr>
@@ -342,22 +364,31 @@
                 let allInStock = true;
                 
                 samplePrescriptionDetails.items.forEach(item => {
-                    const inStock = item.drug.remaining_quantity >= item.quantity;
+                    const remainingQty = Number(item?.drug?.remaining_quantity ?? 0);
+                    const neededQty = Number(item?.quantity ?? 0);
+                    const inStock = remainingQty >= neededQty;
                     if (!inStock) allInStock = false;
+
+                    const drugName = esc(item?.drug_name);
+                    const drugNumber = esc(item?.drug_number);
+                    const dosage = esc(item?.dosage);
+                    const frequency = esc(item?.frequency);
+                    const duration = esc(item?.duration);
+                    const notes = esc(item?.notes || '-');
                     
                     const stockStatus = inStock ? 
-                        `<span class="badge bg-success">In Stock (${item.drug.remaining_quantity})</span>` : 
-                        `<span class="badge bg-danger">Low Stock (${item.drug.remaining_quantity} available, needs ${item.quantity})</span>`;
+                        `<span class="badge bg-success">In Stock (${remainingQty})</span>` : 
+                        `<span class="badge bg-danger">Low Stock (${remainingQty} available, needs ${neededQty})</span>`;
                     
                     itemsHtml += `
                         <tr>
-                            <td>${item.drug_name} (${item.drug_number})</td>
-                            <td>${item.dosage}</td>
-                            <td>${item.frequency}</td>
-                            <td>${item.duration}</td>
-                            <td>${item.quantity}</td>
+                            <td>${drugName} (${drugNumber})</td>
+                            <td>${dosage}</td>
+                            <td>${frequency}</td>
+                            <td>${duration}</td>
+                            <td>${neededQty}</td>
                             <td>${stockStatus}</td>
-                            <td>${item.notes || '-'}</td>
+                            <td>${notes}</td>
                         </tr>
                     `;
                 });
@@ -369,11 +400,11 @@
                 const content = `
                     <div class="row mb-3">
                         <div class="col-md-6">
-                            <p><strong>Patient:</strong> ${samplePrescriptionDetails.patient_name} (${samplePrescriptionDetails.patient_number})</p>
-                            <p><strong>Doctor:</strong> ${samplePrescriptionDetails.doctor_name}</p>
+                            <p><strong>Patient:</strong> ${esc(samplePrescriptionDetails.patient_name)} (${esc(samplePrescriptionDetails.patient_number)})</p>
+                            <p><strong>Doctor:</strong> ${esc(samplePrescriptionDetails.doctor_name)}</p>
                         </div>
                         <div class="col-md-6">
-                            <p><strong>Prescription Date:</strong> ${samplePrescriptionDetails.created_at}</p>
+                            <p><strong>Prescription Date:</strong> ${esc(samplePrescriptionDetails.created_at)}</p>
                             <p><strong>Status:</strong> ${statusBadge}</p>
                         </div>
                     </div>
@@ -399,7 +430,7 @@
                     
                     ${samplePrescriptionDetails.notes ? `
                     <div class="alert alert-info mt-3">
-                        <strong>Doctor's Notes:</strong> ${samplePrescriptionDetails.notes}
+                        <strong>Doctor's Notes:</strong> ${esc(samplePrescriptionDetails.notes)}
                     </div>
                     ` : ''}
                     
@@ -451,10 +482,8 @@
                     
                     // Show success toast/notification
                     showToast('success', 'Prescription Dispensed', `
-                        Prescription dispensed successfully!<br>
-                        Sale Number: ${response.sale_number}<br>
-                        Total Amount: KES ${response.total_amount.toFixed(2)}
-                    `);
+                        Prescription dispensed successfully!\nSale Number: ${esc(response.sale_number)}\nTotal Amount: KES ${Number(response.total_amount).toFixed(2)}
+                    `.trim());
                     
                     // Refresh prescriptions list
                     loadPrescriptions();
@@ -472,12 +501,15 @@
         
         // Show toast notification
         function showToast(type, title, message) {
+            const safeType = safeToastType(type);
+            const safeTitle = esc(title);
+            const safeMessage = esc(message).replace(/\n/g, '<br>');
             const toast = $(`
-                <div class="toast align-items-center text-white bg-${type} border-0 position-fixed bottom-0 end-0 m-3" role="alert" aria-live="assertive" aria-atomic="true">
+                <div class="toast align-items-center text-white bg-${safeType} border-0 position-fixed bottom-0 end-0 m-3" role="alert" aria-live="assertive" aria-atomic="true">
                     <div class="d-flex">
                         <div class="toast-body">
-                            <strong>${title}</strong><br>
-                            ${message}
+                            <strong>${safeTitle}</strong><br>
+                            ${safeMessage}
                         </div>
                         <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
                     </div>

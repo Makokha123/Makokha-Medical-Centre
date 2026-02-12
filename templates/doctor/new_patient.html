@@ -680,6 +680,13 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
             <div class="form-navigation">
                 <input type="hidden" name="section" id="current_section" value="biodata">
                 <input type="hidden" name="patient_id" id="patient_id" value="">
+                <input type="hidden" name="reserved_patient_number" id="reserved_patient_number" value="">
+                <button type="button" class="btn btn-outline-warning" id="archivePatientBtn" title="Archive and continue later">
+                    <i class="fas fa-archive"></i> Archive
+                </button>
+                <button type="button" class="btn btn-outline-danger" id="cancelPatientBtn" title="Cancel and delete this draft">
+                    <i class="fas fa-times-circle"></i> Cancel
+                </button>
                 <button type="button" class="btn btn-secondary" id="prevBtn">Previous</button>
                 <button type="button" class="btn btn-primary" id="nextBtn">Next</button>
                 <a class="btn btn-success" id="endBtn" style="display:none;" href="{{ url_for('doctor_patients') }}">End</a>
@@ -694,27 +701,18 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="doctorDosageModalLabel"><i class="fas fa-pills"></i> Dosage Information</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <div class="text-muted mb-2" id="doctorDosageSource"></div>
                 <div id="doctorDosageBody" class="small text-muted">Loading...</div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
 </div>
-
-<!-- DataTables and other JS libraries -->
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
-<script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap4.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 
 <style>
 /* Professional outline styling for assistant outputs (display-only) */
@@ -752,10 +750,18 @@ This summary will help Doctor Assistant generate accurate diagnosis suggestions 
 </style>
 
 <script>
-$(document).ready(function() {
+(function mmcWaitForJQuery() {
+    if (!window.jQuery) {
+        return window.setTimeout(mmcWaitForJQuery, 25);
+    }
+    $(document).ready(function() {
     // Optional preset coming from OP/IP pages (keeps existing wizard flow intact)
     const MMC_PRESET_PATIENT_TYPE = {{ (preset_patient_type or '')|tojson }};
     const MMC_LOCK_PATIENT_TYPE = {{ (lock_patient_type or False)|tojson }};
+    const MMC_RESUME_PATIENT_ID = {{ (resume_patient_id or none)|tojson }};
+    const MMC_RESUME_PATIENT_NUMBER = {{ (resume_patient_number or '')|tojson }};
+    const MMC_RESUME_DRAFT = {{ (resume_draft or none)|tojson }};
+    const MMC_IS_RESUME = Boolean(MMC_RESUME_PATIENT_ID);
 
     // Function to get CSRF token
     function getCSRFToken() {
@@ -867,25 +873,52 @@ $(document).ready(function() {
         if (!d) {
             return '<div class="text-muted">No dosage information found (DB or index book).</div>';
         }
-        const rows = (label, value) => `
-            <div class="mb-2">
-                <div class="font-weight-bold">${label}</div>
-                <div class="text-muted">${renderBullets(value)}</div>
-            </div>
-        `;
+
         return `
-            <div class="mb-2"><strong>Drug:</strong> ${escapeHtml(safeText(payload.drug.drug_number))} - ${escapeHtml(safeText(payload.drug.name))}</div>
-            <hr/>
-            ${rows('Indication', d.indication)}
-            ${rows('Contraindication', d.contraindication)}
-            ${rows('Interaction', d.interaction)}
-            ${rows('Side Effects', d.side_effects)}
-            <hr/>
-            ${rows('Dosage (Pediatrics)', d.dosage_peds)}
-            ${rows('Dosage (Adults)', d.dosage_adults)}
-            ${rows('Dosage (Geriatrics)', d.dosage_geriatrics)}
-            <hr/>
-            ${rows('Important Notes', d.important_notes)}
+            <div class="row">
+                <div class="col-md-6">
+                    <h5>Basic Information</h5>
+                    <table class="table table-bordered">
+                        <tr>
+                            <th>Drug Number</th>
+                            <td>${escapeHtml(safeText(payload.drug.drug_number) || '-')}</td>
+                        </tr>
+                        <tr>
+                            <th>Drug Name</th>
+                            <td>${escapeHtml(safeText(payload.drug.name) || '-')}</td>
+                        </tr>
+                    </table>
+
+                    <h5>Medical Information</h5>
+                    <table class="table table-bordered">
+                        <tr><th>Indication</th><td>${renderBullets(d.indication)}</td></tr>
+                        <tr><th>Contraindication</th><td>${renderBullets(d.contraindication)}</td></tr>
+                        <tr><th>Drug Interaction</th><td>${renderBullets(d.interaction)}</td></tr>
+                        <tr><th>Side Effects</th><td>${renderBullets(d.side_effects)}</td></tr>
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <h5>Dosage Information</h5>
+                    <div class="card mb-3">
+                        <div class="card-header bg-info text-white">Pediatrics</div>
+                        <div class="card-body"><div class="card-text dosage-points">${renderBullets(d.dosage_peds)}</div></div>
+                    </div>
+                    <div class="card mb-3">
+                        <div class="card-header bg-primary text-white">Adults</div>
+                        <div class="card-body"><div class="card-text dosage-points">${renderBullets(d.dosage_adults)}</div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header bg-secondary text-white">Geriatrics</div>
+                        <div class="card-body"><div class="card-text dosage-points">${renderBullets(d.dosage_geriatrics)}</div></div>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-3">
+                <h5>Important Notes</h5>
+                <div class="card">
+                    <div class="card-body"><div class="card-text dosage-points">${renderBullets(d.important_notes)}</div></div>
+                </div>
+            </div>
         `;
     }
 
@@ -902,7 +935,14 @@ $(document).ready(function() {
         const url = isControlled ? `/doctor/controlled-drugs/${drugId}/dosage` : `/doctor/drugs/${drugId}/dosage`;
         $('#doctorDosageSource').text('');
         $('#doctorDosageBody').html('<div class="text-muted">Loading...</div>');
-        $('#doctorDosageModal').modal('show');
+        try {
+            const el = document.getElementById('doctorDosageModal');
+            if (el && window.bootstrap && bootstrap.Modal) {
+                bootstrap.Modal.getOrCreateInstance(el).show();
+            }
+        } catch (e) {
+            // best-effort
+        }
 
         $.get(url)
             .done(function(data) {
@@ -948,15 +988,22 @@ $(document).ready(function() {
 
     // Generate patient number when type is selected
     $('#patient_type').change(function() {
-        if ($(this).val()) {
-            $('#patient_number').val('Generating...');
-            const type = $(this).val();
-            // Call server to generate number
-            $.get('/generate_patient_number?type=' + type, function(data) {
-                $('#patient_number').val(data.number);
-            }).fail(function() {
-                $('#patient_number').val('Error generating number');
-            });
+        const type = String($(this).val() || '').trim();
+        const reserved = String($('#reserved_patient_number').val() || '').trim();
+
+        if (type) {
+            if (reserved) {
+                // Resume/after-save: keep showing the reserved number (do not preview a new one).
+                $('#patient_number').val(reserved);
+            } else {
+                $('#patient_number').val('Generating...');
+                // Call server to preview next number (display-only; reservation happens on biodata save)
+                $.get('/generate_patient_number?type=' + encodeURIComponent(type), function(data) {
+                    $('#patient_number').val((data && data.number) ? data.number : '');
+                }).fail(function() {
+                    $('#patient_number').val('Error generating number');
+                });
+            }
         } else {
             $('#patient_number').val('');
         }
@@ -1403,6 +1450,28 @@ $(document).ready(function() {
         $('#endBtn').toggle(index === sections.length - 1);
     }
 
+    function mmcResetWizardToStart() {
+        // Clear the draft from localStorage
+        clearDraft();
+
+        // Reset form to start fresh for next patient
+        try { $('#patientForm')[0].reset(); } catch (e) { /* ignore */ }
+        try { $('#patient_id').val(''); } catch (e) { /* ignore */ }
+        try { $('#reserved_patient_number').val(''); } catch (e) { /* ignore */ }
+        try { $('#patient_number').val(''); } catch (e) { /* ignore */ }
+
+        // Clear prescription items except first
+        try { $('.prescription-item').not(':first').remove(); } catch (e) { /* ignore */ }
+        try {
+            $('.prescription-item').find('input').val('');
+            $('.prescription-item').find('select').val('').trigger('change');
+        } catch (e) { /* ignore */ }
+
+        currentSection = 0;
+        showSection(0);
+        try { window.scrollTo(0, 0); } catch (e) { /* ignore */ }
+    }
+
     // Handle End button click - save and reset for next patient
     $('#endBtn').click(function(e) {
         e.preventDefault();
@@ -1419,35 +1488,95 @@ $(document).ready(function() {
             // Show success message
             alert('Patient record completed successfully!');
             
-            // Reset form to start fresh for next patient
-            $('#patientForm')[0].reset();
-            $('#patient_id').val('');
-            currentSection = 0;
-            showSection(0);
-            
-            // Clear prescription items except first
-            $('.prescription-item').not(':first').remove();
-            $('.prescription-item').find('input').val('');
-            $('.prescription-item').find('select').val('').trigger('change');
-            
-            // Scroll to top
-            window.scrollTo(0, 0);
+            mmcResetWizardToStart();
         }).catch(error => {
             console.error('Error completing patient record:', error);
             if (confirm('Error saving final section: ' + error + '\n\nDo you still want to close and start a new patient?')) {
                 // Reset anyway if user confirms
-                try {
-                    localStorage.removeItem(MMC_DRAFT_KEY);
-                } catch (err) {}
-                $('#patientForm')[0].reset();
-                $('#patient_id').val('');
-                currentSection = 0;
-                showSection(0);
-                window.scrollTo(0, 0);
+                mmcResetWizardToStart();
             }
         });
     });
     
+    // Archive the current patient draft (server-side encrypted snapshot) and reset the wizard.
+    $('#archivePatientBtn').on('click', function() {
+        const patientId = String($('#patient_id').val() || '').trim();
+        if (!patientId) {
+            alert('Please save patient biodata first.');
+            return;
+        }
+
+        if (!confirm('Archive this patient and continue later from Archived Patients?')) {
+            return;
+        }
+
+        // Capture the latest in-browser state, then send the full draft snapshot.
+        saveDraftNow();
+        const draft = safeLoadDraft() || {};
+
+        $.ajax({
+            url: `/doctor/patient/${encodeURIComponent(patientId)}/archive`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ draft: draft }),
+            success: function(resp) {
+                if (resp && resp.success) {
+                    alert('Patient archived. You can resume from Archived Patients.');
+                    mmcResetWizardToStart();
+                } else {
+                    alert((resp && resp.error) ? resp.error : 'Failed to archive patient.');
+                }
+            },
+            error: function(xhr) {
+                let msg = 'Failed to archive patient.';
+                try {
+                    const r = xhr.responseJSON;
+                    if (r && r.error) msg = r.error;
+                } catch (e) { /* ignore */ }
+                alert(msg);
+            }
+        });
+    });
+
+    // Cancel: wipe the draft and (best-effort) delete the patient record + release OP/IP number when safe.
+    $('#cancelPatientBtn').on('click', function() {
+        if (!confirm('Cancel this patient entry? This will delete the draft and reset the form.')) {
+            return;
+        }
+
+        const patientId = String($('#patient_id').val() || '').trim();
+        if (!patientId) {
+            mmcResetWizardToStart();
+            return;
+        }
+
+        $.ajax({
+            url: `/doctor/patient/${encodeURIComponent(patientId)}/cancel`,
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({}),
+            success: function(resp) {
+                if (resp && resp.success) {
+                    let msg = 'Cancelled.';
+                    if (resp.hard_deleted) msg = 'Patient deleted (number released when safe).';
+                    else if (resp.soft_deleted) msg = 'Patient removed from list (could not fully delete due to linked records).';
+                    alert(msg);
+                    mmcResetWizardToStart();
+                } else {
+                    alert((resp && resp.error) ? resp.error : 'Failed to cancel patient.');
+                }
+            },
+            error: function(xhr) {
+                let msg = 'Failed to cancel patient.';
+                try {
+                    const r = xhr.responseJSON;
+                    if (r && r.error) msg = r.error;
+                } catch (e) { /* ignore */ }
+                alert(msg);
+            }
+        });
+    });
+
     // Update section validation (summary is now optional)
     function validateCurrentSection() {
         const currentSectionId = sections.eq(currentSection).attr('id');
@@ -1478,7 +1607,11 @@ $(document).ready(function() {
                         }
                         // Ensure the UI shows the exact reserved/saved number after biodata save.
                         if (response.patient_number) {
-                            try { $('#patient_number').val(String(response.patient_number)); } catch (e) { /* ignore */ }
+                            try {
+                                const pn = String(response.patient_number);
+                                $('#patient_number').val(pn);
+                                $('#reserved_patient_number').val(pn);
+                            } catch (e) { /* ignore */ }
                         }
                         scheduleDraftSave();
                         resolve(response);
@@ -1519,10 +1652,29 @@ $(document).ready(function() {
 
     // Restore draft (fields + patient_id + current section)
     (function restoreDraft() {
-        const draft = safeLoadDraft();
+        let draft = safeLoadDraft();
+
+        // Resume flow: prefer the encrypted server snapshot over any local draft (avoids mixing patients).
+        if (MMC_IS_RESUME && MMC_RESUME_DRAFT && typeof MMC_RESUME_DRAFT === 'object') {
+            draft = MMC_RESUME_DRAFT;
+            try { safeSaveDraft(draft); } catch (e) { /* ignore */ }
+        }
+
         if (!draft || draft.version !== 1) {
             currentSection = 0;
             showSection(0);
+            // If storage is unavailable but we are resuming, keep the reserved number visible.
+            if (MMC_IS_RESUME) {
+                try {
+                    if (MMC_RESUME_PATIENT_ID) $('#patient_id').val(String(MMC_RESUME_PATIENT_ID));
+                } catch (e) { /* ignore */ }
+                try {
+                    if (MMC_RESUME_PATIENT_NUMBER) {
+                        $('#reserved_patient_number').val(String(MMC_RESUME_PATIENT_NUMBER));
+                        $('#patient_number').val(String(MMC_RESUME_PATIENT_NUMBER));
+                    }
+                } catch (e) { /* ignore */ }
+            }
             return;
         }
 
@@ -1531,6 +1683,13 @@ $(document).ready(function() {
 
         if (draft.patient_id) {
             $('#patient_id').val(draft.patient_id);
+        }
+        // Ensure the reserved number is present during resume even if an older draft omitted it.
+        if (MMC_IS_RESUME && MMC_RESUME_PATIENT_NUMBER) {
+            try {
+                const cur = String($('#reserved_patient_number').val() || '').trim();
+                if (!cur) $('#reserved_patient_number').val(String(MMC_RESUME_PATIENT_NUMBER));
+            } catch (e) { /* ignore */ }
         }
 
         // Restore section index when possible
@@ -1598,7 +1757,7 @@ $(document).ready(function() {
                 if (response.success) {
                     $('#review-suggestions').html(
                         `<div class="alert alert-success">
-                            <button type="button" class="close" data-dismiss="alert">&times;</button>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                             <h5>Suggested Review of Systems Questions</h5>
                             ${formatAssistantText(response.questions)}
                         </div>`
@@ -1641,7 +1800,7 @@ $(document).ready(function() {
                 if (response.success) {
                     $('#hpi-suggestions').html(
                         `<div class="alert alert-success">
-                            <button type="button" class="close" data-dismiss="alert">&times;</button>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                             <h5>Suggested HPI Questions</h5>
                             ${formatAssistantText(response.questions)}
                         </div>`
@@ -1848,7 +2007,7 @@ $(document).ready(function() {
                 if (response.success) {
                     $('#treatment-suggestions').html(
                         `<div class="alert alert-success">
-                            <button type="button" class="close" data-dismiss="alert">&times;</button>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                             <h5>Suggested Treatment Plan</h5>
                             ${formatAssistantText(response.treatment_plan)}
                         </div>`
@@ -1895,7 +2054,7 @@ $(document).ready(function() {
                 if (response.success) {
                     $('#lab-analysis-results').html(
                         `<div class="alert alert-success">
-                            <button type="button" class="close" data-dismiss="alert">&times;</button>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                             <h5>Lab Results Analysis</h5>
                             ${formatAssistantText(response.analysis)}
                         </div>`
@@ -2044,7 +2203,8 @@ $(document).ready(function() {
             $('#summary-section').removeClass('highlight-required');
         }, 3000);
     }
-});
+    });
+})();
 </script>
 
 <style>

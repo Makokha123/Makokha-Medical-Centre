@@ -290,6 +290,15 @@ $(document).ready(function() {
     
     // Store current filter state
     var currentFilter = 'all';
+
+    function esc(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
     
     // Edit button handler
     $('#controlledDrugsTable').on('click', '.btn-edit', function() {
@@ -312,48 +321,48 @@ $(document).ready(function() {
                 ${data.dosage ? `
                 <div class="dosage-section">
                     <h6><i class="fas fa-info-circle"></i> Indications</h6>
-                    <p>${data.dosage.indication || 'Not specified'}</p>
+                    <p>${esc(data.dosage.indication) || 'Not specified'}</p>
                 </div>
                 
                 <div class="dosage-section">
                     <h6><i class="fas fa-ban"></i> Contraindications</h6>
-                    <p>${data.dosage.contraindication || 'Not specified'}</p>
+                    <p>${esc(data.dosage.contraindication) || 'Not specified'}</p>
                 </div>
                 
                 <div class="dosage-section">
                     <h6><i class="fas fa-exchange-alt"></i> Drug Interactions</h6>
-                    <p>${data.dosage.interaction || 'Not specified'}</p>
+                    <p>${esc(data.dosage.interaction) || 'Not specified'}</p>
                 </div>
                 
                 <div class="dosage-section">
                     <h6><i class="fas fa-exclamation-triangle"></i> Side Effects</h6>
-                    <p>${data.dosage.side_effects || 'Not specified'}</p>
+                    <p>${esc(data.dosage.side_effects) || 'Not specified'}</p>
                 </div>
                 
                 <div class="row">
                     <div class="col-md-4">
                         <div class="dosage-section">
                             <h6><i class="fas fa-child"></i> Pediatric Dosage</h6>
-                            <p>${data.dosage.dosage_peds || 'Not specified'}</p>
+                            <p>${esc(data.dosage.dosage_peds) || 'Not specified'}</p>
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="dosage-section">
                             <h6><i class="fas fa-user-md"></i> Adult Dosage</h6>
-                            <p>${data.dosage.dosage_adults || 'Not specified'}</p>
+                            <p>${esc(data.dosage.dosage_adults) || 'Not specified'}</p>
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="dosage-section">
                             <h6><i class="fas fa-user-clock"></i> Geriatric Dosage</h6>
-                            <p>${data.dosage.dosage_geriatrics || 'Not specified'}</p>
+                            <p>${esc(data.dosage.dosage_geriatrics) || 'Not specified'}</p>
                         </div>
                     </div>
                 </div>
                 
                 <div class="dosage-section">
                     <h6><i class="fas fa-sticky-note"></i> Important Notes</h6>
-                    <p>${data.dosage.important_notes || 'Not specified'}</p>
+                    <p>${esc(data.dosage.important_notes) || 'Not specified'}</p>
                 </div>
                 ` : `<p class="text-muted">No dosage information available for this drug.</p>`}
             `;
@@ -405,9 +414,9 @@ $(document).ready(function() {
                 }
             },
             columns: [
-                { data: 'controlled_drug_number' },
-                { data: 'name' },
-                { data: 'specification', defaultContent: '' },
+                { data: 'controlled_drug_number', render: $.fn.dataTable.render.text() },
+                { data: 'name', render: $.fn.dataTable.render.text() },
+                { data: 'specification', defaultContent: '', render: $.fn.dataTable.render.text() },
                 { 
                     data: 'buying_price',
                     render: function(data) {

@@ -8,7 +8,8 @@
     <div class="profile-section">
         <div class="profile-picture-container">
             {% if user.profile_picture %}
-                <img src="{{ url_for('static', filename=user.profile_picture) }}" alt="Profile Picture" class="profile-picture">
+                {% set _pic = (user.profile_picture|string)|replace('uploads/', '') %}
+                <img src="{{ url_for('serve_private_upload', filename=_pic) }}" alt="Profile Picture" class="profile-picture">
             {% else %}
                 <div class="profile-picture-placeholder">
                     <i class="fas fa-user-circle"></i>
@@ -16,6 +17,7 @@
             {% endif %}
             
             <form method="POST" enctype="multipart/form-data" class="profile-picture-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="file" name="profile_picture" id="profile_picture" accept="image/*" style="display: none;">
                 <label for="profile_picture" class="btn btn-primary">Change Photo</label>
                 <button type="submit" class="btn btn-success">Save Changes</button>
@@ -24,6 +26,7 @@
         
         <div class="profile-details">
             <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
                     <label for="username">Username</label>
                     <input type="text" id="username" name="username" value="{{ user.username }}" required>
@@ -136,4 +139,13 @@ document.getElementById('profile_picture').addEventListener('change', function(e
     }
 }
 </style>
+
+<!-- System Settings Section -->
+<div class="container mt-4 mb-4">
+    <div class="card">
+        <div class="card-body">
+            <div id="mmc-settings-root"></div>
+        </div>
+    </div>
+</div>
 {% endblock %}

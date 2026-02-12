@@ -6,6 +6,12 @@
             <div class="d-flex align-items-center justify-content-between">
                 <h5 class="mb-0"><i class="bi bi-chat-dots-fill me-2"></i>Messages</h5>
                 <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-light" id="open-call-history" title="Call log" aria-label="Call log">
+                        <i class="bi bi-clock-history"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-light" id="open-comm-settings" title="Settings" aria-label="Settings">
+                        <i class="bi bi-gear"></i>
+                    </button>
                     <button class="btn btn-sm btn-outline-light" id="minimize-chat" title="Minimize">
                         <i class="bi bi-dash-lg"></i>
                     </button>
@@ -31,6 +37,115 @@
                         </div>
                         <p class="mt-2 small">Loading users...</p>
                     </div>
+                </div>
+            </div>
+
+            <!-- Call History Panel (overlay) -->
+            <div class="call-history-panel" id="call-history-panel" style="display:none;">
+                <div class="call-history-header">
+                    <div>
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-clock-history"></i>
+                            <strong>Call Log</strong>
+                        </div>
+                        <div class="small text-muted" id="call-history-meta">Loading...</div>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="refresh-call-history" title="Refresh">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="close-call-history" title="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="call-history-filters px-3 py-2">
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Call log filters">
+                        <button type="button" class="btn btn-outline-secondary active" data-call-filter="all">All</button>
+                        <button type="button" class="btn btn-outline-secondary" data-call-filter="missed">Missed</button>
+                        <button type="button" class="btn btn-outline-secondary" data-call-filter="incoming">Incoming</button>
+                        <button type="button" class="btn btn-outline-secondary" data-call-filter="outgoing">Outgoing</button>
+                        <button type="button" class="btn btn-outline-secondary" data-call-filter="failed">Failed</button>
+                    </div>
+                </div>
+
+                <div class="call-history-list" id="call-history-list">
+                    <div class="text-center text-muted py-4">
+                        <div class="spinner-border spinner-border-sm" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 small">Loading call history...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Communication Settings Panel (overlay) -->
+            <div class="comm-settings-panel" id="comm-settings-panel" style="display:none;">
+                <div class="comm-settings-header">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-gear"></i>
+                        <strong>Communication Settings</strong>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="close-comm-settings" title="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="comm-settings-body p-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="comm-enable-notifications">
+                        <label class="form-check-label" for="comm-enable-notifications">Enable notifications</label>
+                    </div>
+
+                    <div class="form-check form-switch mt-2">
+                        <input class="form-check-input" type="checkbox" id="comm-enable-sounds">
+                        <label class="form-check-label" for="comm-enable-sounds">Enable sounds</label>
+                    </div>
+
+                    <hr class="my-3">
+
+                    <div class="row g-2">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small fw-bold">Message tone</label>
+                            <div class="input-group input-group-sm">
+                                <select class="form-select" id="comm-message-tone">
+                                    <option value="chime">Chime</option>
+                                    <option value="pop">Pop</option>
+                                    <option value="beep">Beep</option>
+                                    <option value="none">None</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="comm-test-message-tone" title="Test message tone">
+                                    <i class="bi bi-volume-up"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small fw-bold">Incoming call ringtone</label>
+                            <div class="input-group input-group-sm">
+                                <select class="form-select" id="comm-call-ringtone">
+                                    <option value="classic">Classic</option>
+                                    <option value="fast">Fast</option>
+                                    <option value="slow">Slow</option>
+                                    <option value="none">None</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" type="button" id="comm-test-call-ringtone" title="Test call ringtone">
+                                    <i class="bi bi-volume-up"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 mt-3">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="comm-reset-settings">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Reset defaults
+                        </button>
+                    </div>
+
+                    <div class="small text-muted mt-2">Settings are stored on this device for your account.</div>
                 </div>
             </div>
 
@@ -110,11 +225,11 @@
 
                     <!-- Message Input -->
                     <div class="message-input">
-                        <button class="btn btn-outline-secondary emoji-picker-btn" id="emoji-btn" title="Emoji">
+                        <button class="btn btn-link emoji-picker-btn" id="emoji-btn" title="Emoji" aria-label="Emoji">
                             <i class="bi bi-emoji-smile"></i>
                         </button>
-                        <input type="text" class="form-control message-input-field" id="message-input" placeholder="Type a message..." autocomplete="off" autocorrect="off" autocapitalize="sentences">
-                        <button class="btn btn-primary send-message-btn" id="send-message-btn">
+                        <textarea class="form-control message-input-field" id="message-input" placeholder="Type a message..." rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences"></textarea>
+                        <button class="btn btn-link send-message-btn" id="send-message-btn" aria-label="Send">
                             <i class="bi bi-send-fill"></i>
                         </button>
                     </div>
@@ -165,6 +280,8 @@
 
             <!-- Active Call -->
             <div class="active-call" id="active-call" style="display: none;">
+                <!-- Dedicated audio element for voice calls (keeps audio playing even when video UI is hidden) -->
+                <audio id="remote-audio" autoplay style="display:none;"></audio>
                 <!-- Video Container -->
                 <div class="video-container" id="video-container" style="display: none;">
                     <video id="remote-video" class="remote-video" autoplay playsinline></video>
@@ -217,6 +334,131 @@
     z-index: 9999;
     display: flex;
     flex-direction: column;
+}
+
+.communication-container {
+    position: relative;
+}
+
+.call-history-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 10002;
+    background: white;
+    border-radius: 12px;
+    display: none;
+    flex-direction: column;
+}
+
+.comm-settings-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 10003;
+    background: white;
+    border-radius: 12px;
+    display: none;
+    flex-direction: column;
+}
+
+.comm-settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #fff;
+}
+
+.comm-settings-body {
+    flex: 1;
+    overflow-y: auto;
+    background: #f8f9fa;
+}
+
+.call-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #fff;
+}
+
+.call-history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 12px;
+    background: #f8f9fa;
+}
+
+.call-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 12px;
+    margin-bottom: 8px;
+}
+
+.call-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f1f3f5;
+    flex: 0 0 auto;
+}
+
+.call-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.call-details {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.call-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.call-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.call-time {
+    font-size: 12px;
+    color: #6c757d;
+    white-space: nowrap;
+}
+
+.call-badges {
+    margin-top: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.call-actions {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
 }
 
 @keyframes slideUp {
@@ -305,6 +547,14 @@
     position: relative;
 }
 
+.user-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+}
+
 .user-avatar .online-badge {
     position: absolute;
     bottom: 2px;
@@ -363,10 +613,62 @@
 }
 
 .chat-header {
-    padding: 15px 20px;
+    padding: 10px 15px;
     border-bottom: 1px solid #e0e0e0;
     background: white;
     flex-shrink: 0;
+}
+
+/* Keep chat header controls on one row */
+.chat-header > .d-flex {
+    flex-wrap: nowrap;
+    gap: 8px;
+}
+
+.chat-header .flex-grow-1 {
+    min-width: 0;
+}
+
+#chat-user-name,
+#chat-user-status {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    align-items: center;
+    flex-wrap: nowrap;
+}
+
+.chat-action-btn {
+    padding: 4px 6px !important;
+    min-width: 30px;
+    height: 30px;
+    border-radius: 6px;
+}
+
+.chat-action-btn i {
+    font-size: 13px;
+}
+
+/* Back button: icon-only, no background */
+.back-to-users {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: #000 !important;
+}
+
+.back-to-users:hover,
+.back-to-users:focus,
+.back-to-users:active {
+    background: transparent !important;
+    color: #000 !important;
+    opacity: 0.85;
 }
 
 .chat-search-bar {
@@ -387,7 +689,8 @@
 .messages-container {
     flex: 1;
     overflow-y: auto;
-    padding: 20px;
+    padding: 12px 12px;
+    padding-bottom: 60px; /* keep last message visible above input */
     background: #f8f9fa;
 }
 
@@ -405,10 +708,11 @@
 }
 
 .message-bubble {
-    max-width: 60%;
-    padding: 10px 15px;
+    max-width: 80%;
+    padding: 8px 11px;
     border-radius: 12px;
     word-wrap: break-word;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 .message.sent .message-bubble {
@@ -566,11 +870,17 @@
     font-style: italic;
 }
 
+.message-ticks.pending {
+    color: #6c757d;
+}
+
 /* Message Input */
 .message-input {
     padding: 15px 20px;
     border-top: 1px solid #e0e0e0;
     display: flex;
+    flex-direction: row;
+    align-items: center;
     gap: 10px;
     background: white;
     flex-shrink: 0;
@@ -607,8 +917,17 @@
     text-overflow: ellipsis;
 }
 
-.message-input input {
+.message-input .message-input-field {
     flex: 1;
+    resize: none;
+    overflow: hidden;
+}
+
+.emoji-picker-btn,
+.send-message-btn {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
 /* Call Modal */
@@ -713,17 +1032,30 @@
 /* Responsive Design for All Screen Sizes */
 
 /* Back button hidden by default */
+#communication-modal .back-to-users,
 .back-to-users {
     display: none !important;
-    padding: 0;
-    margin-right: 8px;
-    font-size: 20px;
-    color: #333;
+    padding: 0 !important;
+    margin-right: 4px;
+    font-size: 16px !important;
+    color: #000;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    flex-shrink: 0;
+    width: 28px !important;
+    height: 28px !important;
+    max-width: 28px !important;
+    min-width: 28px !important;
+    align-items: center;
+    justify-content: center;
+    line-height: 1 !important;
 }
 
 /* Extra Small Phones (320px - 480px) - MOBILE FIRST */
 @media (max-width: 480px) {
     .communication-modal {
+        height: 100dvh !important;
         width: 100% !important;
         height: 100% !important;
         top: 0 !important;
@@ -763,8 +1095,16 @@
     }
 
     /* Show back button on mobile */
+    #communication-modal .back-to-users,
     .back-to-users {
         display: inline-flex !important;
+        padding: 0 !important;
+        width: 28px !important;
+        height: 28px !important;
+        max-width: 28px !important;
+        min-width: 28px !important;
+        font-size: 16px !important;
+        line-height: 1 !important;
     }
 
     /* User list optimizations */
@@ -827,15 +1167,15 @@
     }
 
     .chat-action-btn {
-        padding: 4px 6px !important;
-        font-size: 13px !important;
-        min-width: 28px;
-        height: 28px;
+        padding: 3px 5px !important;
+        font-size: 12px !important;
+        min-width: 26px;
+        height: 26px;
         border-radius: 6px;
     }
 
     .chat-action-btn i {
-        font-size: 13px;
+        font-size: 12px;
     }
 
     /* Messages container */
@@ -886,6 +1226,9 @@
     /* Typing indicator - reduced */
     .typing-indicator {
         padding: 6px 12px;
+        position: sticky;
+        bottom: calc(44px + env(safe-area-inset-bottom));
+        z-index: 11;
     }
 
     .typing-dots span {
@@ -911,32 +1254,47 @@
     }
 
     /* Message Input - OPTIMIZED for mobile typing */
+    #communication-modal .message-input,
     .message-input {
-        padding: 8px 10px;
-        gap: 6px;
+        padding: 8px 10px !important;
+        gap: 6px !important;
         background: white;
         position: sticky;
-        bottom: 0;
+        bottom: env(safe-area-inset-bottom);
         z-index: 10;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        flex-wrap: nowrap !important;
     }
 
     /* Emoji picker button - reduced */
+    #communication-modal .emoji-picker-btn,
     .emoji-picker-btn {
-        padding: 6px 8px !important;
-        font-size: 16px !important;
-        min-width: 36px;
-        height: 36px;
-        flex-shrink: 0;
-        border-radius: 8px;
+        padding: 4px !important;
+        font-size: 18px !important;
+        min-width: 32px !important;
+        max-width: 32px !important;
+        width: 32px !important;
+        height: 32px !important;
+        flex-shrink: 0 !important;
+        border-radius: 8px !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #6c757d !important;
+        line-height: 1 !important;
     }
 
     /* Message input field - increased length, prevent rotation */
+    #communication-modal .message-input-field,
     .message-input-field {
-        flex: 1;
+        flex: 1 !important;
+        min-width: 0 !important;
         font-size: 14px !important; /* Prevent zoom on iOS */
-        padding: 8px 10px;
-        min-height: 36px;
-        border-radius: 18px;
+        padding: 8px 10px !important;
+        min-height: 36px !important;
+        border-radius: 18px !important;
         /* Prevent text rotation */
         writing-mode: horizontal-tb !important;
         text-orientation: mixed !important;
@@ -945,15 +1303,24 @@
     }
 
     /* Send button - reduced */
+    #communication-modal .send-message-btn,
     .send-message-btn {
-        padding: 6px 10px !important;
-        font-size: 15px !important;
-        min-width: 36px;
-        height: 36px;
-        flex-shrink: 0;
-        border-radius: 50%;
+        padding: 4px !important;
+        font-size: 18px !important;
+        min-width: 32px !important;
+        max-width: 32px !important;
+        width: 32px !important;
+        height: 32px !important;
+        flex-shrink: 0 !important;
+        border-radius: 8px !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #0d6efd !important;
+        line-height: 1 !important;
     }
 
+    #communication-modal .send-message-btn i,
     .send-message-btn i {
         font-size: 15px;
     }
@@ -1050,8 +1417,16 @@
     }
 
     /* Show back button */
+    #communication-modal .back-to-users,
     .back-to-users {
         display: inline-flex !important;
+        padding: 0 !important;
+        width: 28px !important;
+        height: 28px !important;
+        max-width: 28px !important;
+        min-width: 28px !important;
+        font-size: 16px !important;
+        line-height: 1 !important;
     }
 
     /* Chat header - reduced sizes */
@@ -1098,37 +1473,72 @@
     }
 
     .message-time {
-        font-size: 10px;
+        font-size: 9px;
     }
 
     /* Message input */
+    #communication-modal .message-input,
     .message-input {
-        padding: 10px 12px;
-        gap: 8px;
+        padding: 10px 12px !important;
+        gap: 8px !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        flex-wrap: nowrap !important;
     }
 
+    #communication-modal .emoji-picker-btn,
     .emoji-picker-btn {
-        padding: 7px 9px !important;
-        font-size: 17px !important;
-        min-width: 38px;
-        height: 38px;
+        padding: 4px !important;
+        font-size: 18px !important;
+        min-width: 32px !important;
+        max-width: 32px !important;
+        width: 32px !important;
+        height: 32px !important;
+        flex-shrink: 0 !important;
+        border-radius: 8px !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #6c757d !important;
+        line-height: 1 !important;
     }
 
+    #communication-modal .message-input-field,
     .message-input-field {
+        flex: 1 !important;
+        min-width: 0 !important;
         font-size: 14px !important;
-        padding: 9px 12px;
-        min-height: 38px;
+        padding: 8px 10px !important;
+        min-height: 36px !important;
+        border-radius: 18px !important;
         /* Prevent text rotation */
         writing-mode: horizontal-tb !important;
         text-orientation: mixed !important;
         direction: ltr !important;
+        unicode-bidi: normal !important;
     }
 
+    #communication-modal .send-message-btn,
     .send-message-btn {
-        padding: 7px 11px !important;
-        font-size: 16px !important;
-        min-width: 38px;
-        height: 38px;
+        padding: 4px !important;
+        font-size: 18px !important;
+        min-width: 32px !important;
+        max-width: 32px !important;
+        width: 32px !important;
+        height: 32px !important;
+        flex-shrink: 0 !important;
+        border-radius: 8px !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #0d6efd !important;
+        line-height: 1 !important;
+    }
+
+    #communication-modal .send-message-btn i,
+    .send-message-btn i {
+        font-size: 15px;
     }
 
     /* Call elements */
@@ -1142,6 +1552,212 @@
         height: 52px;
         font-size: 20px;
     }
+}
+
+/* Desktop & Tablet (768px+) - match the compact mobile look without changing layout */
+@media (min-width: 768px) {
+    #communication-modal .chat-header {
+        padding: 8px 10px;
+    }
+
+    #communication-modal .chat-header .user-avatar {
+        width: 36px;
+        height: 36px;
+        font-size: 18px;
+        margin-right: 8px !important;
+    }
+
+    #communication-modal .chat-user-name-header {
+        font-size: 13px !important;
+        line-height: 1.2;
+        font-weight: 600;
+    }
+
+    #communication-modal .chat-user-status-text {
+        font-size: 10px !important;
+        display: block;
+        line-height: 1.1;
+        margin-top: 2px;
+    }
+
+    #communication-modal .chat-actions {
+        gap: 4px;
+    }
+
+    #communication-modal .chat-action-btn {
+        padding: 3px 5px !important;
+        font-size: 12px !important;
+        min-width: 26px;
+        height: 26px;
+        border-radius: 6px;
+    }
+
+    #communication-modal .chat-action-btn i {
+        font-size: 12px;
+    }
+
+    #communication-modal .messages-container {
+        padding: 12px 8px;
+        padding-bottom: 60px;
+    }
+
+    #communication-modal .message-bubble {
+        max-width: 70%;
+        padding: 8px 11px;
+        font-size: 13px;
+        line-height: 1.4;
+    }
+
+    #communication-modal .message-time {
+        font-size: 9px;
+        margin-top: 3px;
+    }
+
+    #communication-modal .message-edited {
+        font-size: 9px;
+    }
+
+    #communication-modal .reaction-chip {
+        padding: 2px 6px;
+        font-size: 11px;
+        gap: 3px;
+    }
+
+    #communication-modal .typing-indicator {
+        padding: 6px 12px;
+        position: sticky;
+        bottom: calc(44px + env(safe-area-inset-bottom));
+        z-index: 11;
+    }
+
+    #communication-modal .typing-dots span {
+        width: 5px;
+        height: 5px;
+    }
+
+    #communication-modal .typing-text {
+        font-size: 11px;
+    }
+
+    #communication-modal .reply-preview {
+        padding: 8px 12px;
+    }
+
+    #communication-modal .reply-preview-label {
+        font-size: 10px;
+    }
+
+    #communication-modal .reply-preview-text {
+        font-size: 12px;
+    }
+
+    #communication-modal .message-input {
+        padding: 8px 10px;
+        gap: 6px;
+        background: white;
+        position: sticky;
+        bottom: env(safe-area-inset-bottom);
+        z-index: 10;
+    }
+
+    #communication-modal .emoji-picker-btn {
+        padding: 4px !important;
+        font-size: 18px !important;
+        min-width: 32px;
+        height: 32px;
+        flex-shrink: 0;
+        border-radius: 8px;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #6c757d !important;
+    }
+
+    #communication-modal .message-input-field {
+        flex: 1;
+        min-width: 0;
+        font-size: 14px !important;
+        padding: 8px 10px;
+        min-height: 36px;
+        border-radius: 18px;
+        writing-mode: horizontal-tb !important;
+        text-orientation: mixed !important;
+        direction: ltr !important;
+        unicode-bidi: normal !important;
+    }
+
+    #communication-modal .send-message-btn {
+        padding: 4px !important;
+        font-size: 18px !important;
+        min-width: 32px;
+        height: 32px;
+        flex-shrink: 0;
+        border-radius: 8px;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #0d6efd !important;
+    }
+
+    #communication-modal .send-message-btn i {
+        font-size: 15px;
+    }
+
+    #communication-modal .chat-search-bar {
+        padding: 8px 12px;
+    }
+
+    #communication-modal .chat-search-bar input {
+        font-size: 13px;
+        padding: 6px 10px;
+    }
+
+    #communication-modal .chat-search-bar .btn {
+        padding: 4px 8px;
+        font-size: 12px;
+    }
+}
+
+/*
+ * Namespacing guard: prevent generic chat styles from other pages/stylesheets
+ * (e.g., WhatsApp-like UI) overriding the communication modal.
+ */
+#communication-modal .chat-header {
+    padding: 10px 15px;
+    border-bottom: 1px solid #e0e0e0;
+    background: white;
+    flex-shrink: 0;
+}
+
+#communication-modal .chat-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    align-items: center;
+    flex-wrap: nowrap;
+}
+
+#communication-modal .chat-action-btn {
+    padding: 4px 6px !important;
+    min-width: 30px;
+    height: 30px;
+    border-radius: 6px;
+}
+
+#communication-modal .chat-action-btn i {
+    font-size: 13px;
+}
+
+#communication-modal .messages-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 12px;
+    padding-bottom: 60px;
+    background: #f8f9fa;
+}
+
+#communication-modal .message-input {
+    background: white;
 }
 
 /* Tablets Portrait (768px - 1024px) */
@@ -1413,11 +2029,12 @@
     width: 100%;
     text-align: left;
     border: none;
-    background: white;
-    padding: 10px 14px;
-    font-size: 14px;
+    background: transparent;
+    padding: 7px 10px;
+    font-size: 13px;
+    color: #000;
     border-bottom: 1px solid #f0f0f0;
-    transition: background-color 0.2s;
+    transition: opacity 0.15s;
 }
 
 .message-actions-popover .btn:last-child {
@@ -1425,13 +2042,26 @@
 }
 
 .message-actions-popover .btn:hover {
-    background-color: var(--hover-color);
+    background: transparent;
+    opacity: 0.85;
 }
 
 .message-actions-popover .btn i {
-    margin-right: 10px;
+    margin-right: 8px;
     width: 16px;
     text-align: center;
+    color: inherit;
+    font-size: 13px;
+}
+
+/* Chat settings popover (created dynamically in JS) */
+#chat-settings-popover {
+    font-size: 13px;
+}
+
+#chat-settings-popover .btn {
+    padding: 6px 8px;
+    font-size: 13px;
 }
 
 /* Quick reactions row */
@@ -1466,7 +2096,7 @@
     }
 
     .message-actions-popover .btn {
-        padding: 8px 11px;
+        padding: 6px 9px;
         font-size: 12px;
     }
 

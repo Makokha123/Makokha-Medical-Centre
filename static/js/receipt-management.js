@@ -5,6 +5,16 @@
 
 window.receiptManagement = {
     currentReceipt: null,
+
+    escapeHtml: function(value) {
+        const s = String(value ?? '');
+        return s
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
     
     /**
      * Generate receipt after payment
@@ -90,13 +100,13 @@ window.receiptManagement = {
                 
                 <div style="text-align: center; margin-bottom: 15px;">
                     <h3 style="margin: 5px 0; font-size: 16px;">RECEIPT</h3>
-                    <p style="margin: 2px 0; font-weight: bold; color: #667eea;">Receipt #: ${receipt.receipt_number}</p>
+                    <p style="margin: 2px 0; font-weight: bold; color: #667eea;">Receipt #: ${this.escapeHtml(receipt.receipt_number)}</p>
                 </div>
                 
                 <div style="margin-bottom: 15px; font-size: 12px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                         <span><strong>Date:</strong></span>
-                        <span>${receipt.payment_date || receipt.created_at}</span>
+                        <span>${this.escapeHtml(receipt.payment_date || receipt.created_at)}</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                         <span><strong>Amount:</strong></span>
@@ -104,12 +114,12 @@ window.receiptManagement = {
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                         <span><strong>Payment Method:</strong></span>
-                        <span>${receipt.payment_method || 'Cash'}</span>
+                        <span>${this.escapeHtml(receipt.payment_method || 'Cash')}</span>
                     </div>
                     ${receipt.description ? `
                     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                         <span><strong>Description:</strong></span>
-                        <span>${receipt.description}</span>
+                        <span>${this.escapeHtml(receipt.description)}</span>
                     </div>
                     ` : ''}
                 </div>
@@ -117,7 +127,7 @@ window.receiptManagement = {
                 <div style="border-top: 1px dashed #999; border-bottom: 1px dashed #999; padding: 15px 0; margin: 15px 0;">
                     <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 8px;">
                         <span><strong>Issued By:</strong></span>
-                        <span>${receipt.issued_by}</span>
+                        <span>${this.escapeHtml(receipt.issued_by)}</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 12px;">
                         <span><strong>Status:</strong></span>
@@ -244,12 +254,12 @@ window.receiptManagement = {
             html += `
                 <div style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; background: #fafafa;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <strong style="color: #667eea;">${receipt.receipt_number}</strong>
-                        <span style="font-size: 12px; color: #999;">${receipt.created_at}</span>
+                        <strong style="color: #667eea;">${this.escapeHtml(receipt.receipt_number)}</strong>
+                        <span style="font-size: 12px; color: #999;">${this.escapeHtml(receipt.created_at)}</span>
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px;">
                         <div><span style="color: #666;">Amount:</span> <strong style="color: #28a745;">Ksh ${this.formatMoney(receipt.amount)}</strong></div>
-                        <div><span style="color: #666;">Method:</span> ${receipt.payment_method || 'Cash'}</div>
+                        <div><span style="color: #666;">Method:</span> ${this.escapeHtml(receipt.payment_method || 'Cash')}</div>
                     </div>
                     <div style="margin-top: 8px; display: flex; gap: 8px;">
                         <button class="btn btn-primary" onclick="receiptManagement.viewReceipt(${receipt.id})" style="font-size: 11px; padding: 6px 12px;">

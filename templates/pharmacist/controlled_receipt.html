@@ -16,9 +16,10 @@
     </div>
   </div>
 
-  <div class="card">
+  <div id="print-area" class="card">
     <div class="card-body">
       <div class="text-center mb-3">
+        <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Clinic Logo" style="height: 48px;" class="mb-2">
         <h4 class="mb-0">MAKOKHA MEDICAL CENTRE</h4>
         <div class="text-muted">CONTROLLED DRUGS RECEIPT</div>
       </div>
@@ -141,6 +142,11 @@
 @media print {
   .no-print { display: none !important; }
   body { background: #fff; }
+
+  /* Print only the receipt card (hide base layout/sidebar/etc.) */
+  body * { visibility: hidden !important; }
+  #print-area, #print-area * { visibility: visible !important; }
+  #print-area { position: absolute; left: 0; top: 0; width: 100%; }
   
   /* Hide signature drawing tools and buttons */
   .signature-drawing { display: none !important; }

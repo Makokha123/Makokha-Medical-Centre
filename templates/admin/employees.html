@@ -171,7 +171,8 @@
         <div class="employee-card">
             <div class="employee-avatar" aria-hidden="true">
                 {% if employee.user and employee.user.profile_picture %}
-                    <img src="{{ url_for('static', filename=employee.user.profile_picture) }}" alt="{{ employee.name }}">
+                    {% set _pic = (employee.user.profile_picture|string)|replace('uploads/', '') %}
+                    <img src="{{ url_for('serve_private_upload', filename=_pic) }}" alt="{{ employee.name }}">
                 {% else %}
                     {{ (employee.name[:1] if employee.name else 'E')|upper }}
                 {% endif %}

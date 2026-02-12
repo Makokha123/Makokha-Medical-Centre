@@ -418,7 +418,10 @@ $(document).ready(function() {
             }
         }).fail(function(xhr) {
             const msg = (xhr.responseJSON && xhr.responseJSON.error) || 'Failed to load backup verification data';
-            $('#verificationResults').html('<div class="alert alert-danger"><i class="fas fa-times-circle"></i> ' + msg + '</div>');
+            const $alert = $('<div>', { class: 'alert alert-danger' })
+                .append($('<i>', { class: 'fas fa-times-circle' }))
+                .append(document.createTextNode(' ' + String(msg || '')));
+            $('#verificationResults').empty().append($alert);
         });
     });
     
